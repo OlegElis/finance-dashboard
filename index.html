@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>УПР.Финансы</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;600;700;800&display=swap');
   :root {
@@ -109,6 +110,13 @@
   .state-box .sub{font-size:12px;color:var(--text3);}
   .hidden{display:none!important;}
   .percent-row td{font-style:italic;color:var(--text3)!important;font-size:11px;}
+
+  /* ── Bank two-column layout ── */
+  .bank-layout{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
+  .bank-charts{display:flex;flex-direction:column;gap:14px;}
+  .chart-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;}
+  .chart-title{font-family:var(--head);font-size:12px;font-weight:700;color:var(--text);margin-bottom:12px;}
+  .chart-wrap{position:relative;height:160px;}
 
   /* ── Bank collapsible section ── */
   .section-header-toggle{cursor:pointer;user-select:none;}
@@ -218,7 +226,7 @@
         <label>Дата окончания</label>
         <input type="date" id="fDateTo" onchange="renderActiveTab()" />
       </div>
-      <div class="filter-group">
+      <div class="filter-group" id="groupingFilter">
         <label>Группировка</label>
         <select id="fPeriodType" onchange="renderActiveTab()">
           <option value="month">По месяцам</option>
@@ -317,6 +325,7 @@ function onDataLoaded(){
   document.getElementById('setupWrap').classList.add('hidden');
   document.getElementById('dashWrap').classList.remove('hidden');
   document.getElementById('dashWrap').style.display='flex';
+  document.getElementById('groupingFilter').style.display='none';
   renderActiveTab();
 }
 
@@ -360,6 +369,7 @@ function switchTab(name){
   document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
   ['bank','dds','opiu','fot'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   document.getElementById('fotFilters').style.display=name==='fot'?'block':'none';
+  document.getElementById('groupingFilter').style.display=name==='bank'?'none':'block';
   renderActiveTab();
 }
 function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);}
@@ -415,7 +425,77 @@ function renderBank(f){
     return hdr+`<tbody class="bank-section-body" id="${id}">${rows}</tbody>`;
   };
 
-  el.innerHTML=kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table" style="font-size:11px"><thead><tr><th style="width:40%">Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead>${buildSection(pretax,'Денежные средства до налогового оформления:')}${buildSection(ds,'Денежные средства:')}${buildSection(unk,'Требует классификации')}<tbody><tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
+  // Берём последний год из данных, последний месяц этого года
+  const allDates=RAW.map(r=>parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU])).filter(Boolean);
+  const curYear=allDates.length?Math.max(...allDates.map(d=>d.getFullYear())):new Date().getFullYear();
+  const monthsOfYear=allDates.filter(d=>d.getFullYear()===curYear).map(d=>d.getMonth()+1);
+  const curMonth=monthsOfYear.length?Math.max(...monthsOfYear):new Date().getMonth()+1;
+
+  const monthLabels=MONTHS_FULL.map(m=>m.slice(0,3));
+  const yearInc=new Array(12).fill(0),yearOut=new Array(12).fill(0);
+  const daysInMonth=new Date(curYear,curMonth,0).getDate();
+  const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0);
+  const allYears=[...new Set(allDates.map(d=>d.getFullYear()))].sort();
+  const allYearsInc=allYears.map(()=>0),allYearsOut=allYears.map(()=>0);
+
+  RAW.forEach(row=>{
+    const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
+    if(!d)return;
+    const inc=parseNum(row[COL.INCOME]),out=Math.abs(parseNum(row[COL.OUTCOME]));
+    const yi=allYears.indexOf(d.getFullYear());
+    if(yi>=0){allYearsInc[yi]+=inc;allYearsOut[yi]+=out;}
+    if(d.getFullYear()===curYear){
+      const mi=d.getMonth();
+      yearInc[mi]+=inc;yearOut[mi]+=out;
+      if(d.getMonth()+1===curMonth){const di=d.getDate()-1;dayInc[di]+=inc;dayOut[di]+=out;}
+    }
+  });
+
+  const tableHtml=`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table" style="font-size:11px"><thead><tr><th style="width:40%">Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead>${buildSection(ds,'Денежные средства:')}${buildSection(pretax,'Денежные средства до налогового оформления:')}${buildSection(unk,'Требует классификации')}<tbody><tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
+
+  const chartsHtml=`<div class="bank-charts">
+    <div class="chart-card">
+      <div class="chart-title">Движение по годам</div>
+      <div class="chart-wrap"><canvas id="chartAllYears"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Движение по месяцам — ${curYear}</div>
+      <div class="chart-wrap"><canvas id="chartYear"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Движение по дням — ${MONTHS_FULL[curMonth-1]} ${curYear}</div>
+      <div class="chart-wrap"><canvas id="chartMonth"></canvas></div>
+    </div>
+  </div>`;
+
+  el.innerHTML=kpiHtml+`<div class="bank-layout">${tableHtml}${chartsHtml}</div>`;
+
+  // Рендер графиков после вставки в DOM
+  const chartOpts=(labels,incData,outData)=>({
+    type:'bar',
+    data:{
+      labels,
+      datasets:[
+        {label:'Поступления',data:incData,backgroundColor:'rgba(22,163,74,0.7)',borderRadius:3},
+        {label:'Списания',data:outData,backgroundColor:'rgba(220,38,38,0.7)',borderRadius:3}
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:10}}},
+        y:{grid:{color:'#f0f1f5'},ticks:{font:{size:10},callback:v=>v>=1e6?(v/1e6).toFixed(1)+'М':v>=1e3?(v/1e3).toFixed(0)+'К':v}}
+      }
+    }
+  });
+
+  if(window._bankChartAllYears)window._bankChartAllYears.destroy();
+  if(window._bankChartYear)window._bankChartYear.destroy();
+  if(window._bankChartMonth)window._bankChartMonth.destroy();
+  window._bankChartAllYears=new Chart(document.getElementById('chartAllYears'),chartOpts(allYears.map(String),allYearsInc,allYearsOut));
+  window._bankChartYear=new Chart(document.getElementById('chartYear'),chartOpts(monthLabels,yearInc,yearOut));
+  window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartOpts([...Array(daysInMonth).keys()].map(i=>i+1),dayInc,dayOut));
 }
 
 function renderDDS(f){
