@@ -47,6 +47,8 @@
   .filter-group label{display:block;font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;}
   .filter-group select{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none;cursor:pointer;min-width:130px;transition:border-color 0.15s;}
   .filter-group select:focus{border-color:var(--accent);}
+  .filter-group input[type="date"]{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none;cursor:pointer;min-width:130px;transition:border-color 0.15s;}
+  .filter-group input[type="date"]:focus{border-color:var(--accent);}
   .content{padding:24px 28px;flex:1;}
 
   /* ── Setup panel ── */
@@ -68,7 +70,7 @@
   .setup-hint code{background:#dbeafe;padding:1px 5px;border-radius:3px;font-size:10px;}
 
   /* ── KPI cards ── */
-  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:22px;}
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;}
   .kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:6px;}
   .kpi-card.green{border-top:3px solid var(--income);}
   .kpi-card.red{border-top:3px solid var(--outcome);}
@@ -201,24 +203,20 @@
     </div>
     <div class="filters" id="filtersBar">
       <div class="filter-group">
-        <label>Направление</label>
-        <select id="fDirection" onchange="renderActiveTab()"><option value="">Все направления</option></select>
+        <label>Дата начала</label>
+        <input type="date" id="fDateFrom" onchange="renderActiveTab()" />
       </div>
       <div class="filter-group">
-        <label>Период</label>
+        <label>Дата окончания</label>
+        <input type="date" id="fDateTo" onchange="renderActiveTab()" />
+      </div>
+      <div class="filter-group">
+        <label>Группировка</label>
         <select id="fPeriodType" onchange="renderActiveTab()">
-          <option value="year">По годам</option>
-          <option value="quarter">По кварталам</option>
           <option value="month">По месяцам</option>
+          <option value="quarter">По кварталам</option>
+          <option value="year">По годам</option>
         </select>
-      </div>
-      <div class="filter-group">
-        <label>Год</label>
-        <select id="fYear" onchange="renderActiveTab()"><option value="">Все годы</option></select>
-      </div>
-      <div class="filter-group">
-        <label>Месяц</label>
-        <select id="fMonth" onchange="renderActiveTab()"><option value="">Все месяцы</option></select>
       </div>
       <div class="filter-group" id="fotFilters" style="display:none">
         <label>Детализация ФОТ</label>
@@ -261,9 +259,17 @@ function periodSortKey(k,mode){if(mode==='year')return k;if(mode==='quarter'){co
 function setStatus(dot,text){document.getElementById('statusDot').className='status-dot '+dot;document.getElementById('statusText').textContent=text;}
 function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const cls=numClass(v);const display=typeof val==='number'?fmt(val):(val||'—');return`<td class="${cls} ${extra}">${display}</td>`;}
 
-function getFilters(){return{direction:document.getElementById('fDirection').value,periodType:document.getElementById('fPeriodType').value,year:document.getElementById('fYear').value,month:document.getElementById('fMonth').value,fotDetail:document.getElementById('fFotDetail').value};}
-function applyBaseFilters(data,f){return data.filter(row=>{if(f.direction&&String(row[COL.ACTIVITY_DIR]||'').trim()!==f.direction)return false;if(f.year&&String(getYear(row))!==f.year)return false;if(f.month){const m=getMonth(row);if(!m||MONTHS_FULL[m-1]!==f.month)return false;}const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);return inc!==0||out!==0;});}
-function buildFilterOptions(data){const dirs=[...new Set(data.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort();const years=[...new Set(data.map(r=>getYear(r)).filter(Boolean))].sort((a,b)=>b-a);const sel=(id,vals,placeholder)=>{const el=document.getElementById(id);const cur=el.value;el.innerHTML=`<option value="">${placeholder}</option>`+vals.map(v=>`<option value="${v}">${v}</option>`).join('');if(vals.includes(cur))el.value=cur;};sel('fDirection',dirs,'Все направления');sel('fYear',years.map(String),'Все годы');sel('fMonth',MONTHS_FULL,'Все месяцы');}
+function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${day}`;}
+function getFilters(){return{dateFrom:document.getElementById('fDateFrom').value,dateTo:document.getElementById('fDateTo').value,periodType:document.getElementById('fPeriodType').value,fotDetail:document.getElementById('fFotDetail').value};}
+function applyBaseFilters(data,f){return data.filter(row=>{const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);if(f.dateFrom&&d&&toIso(d)<f.dateFrom)return false;if(f.dateTo&&d&&toIso(d)>f.dateTo)return false;const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);return inc!==0||out!==0;});}
+function buildFilterOptions(data){
+  const dates=data.map(r=>parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU])).filter(Boolean);
+  if(!dates.length)return;
+  const minD=new Date(Math.min(...dates)),maxD=new Date(Math.max(...dates));
+  const fromEl=document.getElementById('fDateFrom'),toEl=document.getElementById('fDateTo');
+  if(!fromEl.value)fromEl.value=toIso(minD);
+  if(!toEl.value)toEl.value=toIso(maxD);
+}
 
 function showSetup(){
   document.getElementById('setupWrap').classList.remove('hidden');
@@ -350,21 +356,10 @@ function switchTab(name){
 }
 function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);}
 
-let BANK_TXNS={};
-function toggleBankAccount(accKey){
-  const row=document.querySelector(`.bank-account-row[data-acc="${CSS.escape(accKey)}"]`);
-  const detail=document.getElementById('bank-detail-'+btoa(encodeURIComponent(accKey)).replace(/=/g,''));
-  if(!row||!detail)return;
-  const isOpen=row.classList.contains('expanded');
-  row.classList.toggle('expanded',!isOpen);
-  detail.classList.toggle('open',!isOpen);
-}
-
 function renderBank(f){
   const el=document.getElementById('tabBank');
-  const data=applyBaseFilters(RAW,{...f,direction:'',year:'',month:''});
+  const data=applyBaseFilters(RAW,f);
   const map=new Map();
-  BANK_TXNS={};
   data.forEach(row=>{
     let acc=String(row[COL.ACCOUNT]||'').trim()||'⚠️ Нет реквизитов';
     const fnsRaw=String(row[COL.FNS]||'').toLowerCase().trim();
@@ -374,60 +369,28 @@ function renderBank(f){
     if(!map.has(acc))map.set(acc,{name:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0});
     const e=map.get(acc);e.inc+=inc;e.out+=out;
     if(e.fns===-1&&(isFns||isNoFns))e.fns=isFns?1:0;
-    if(!BANK_TXNS[acc])BANK_TXNS[acc]=[];
-    BANK_TXNS[acc].push(row);
   });
-  const fns=[],nofns=[],unk=[];
-  map.forEach(a=>{a.total=a.inc+a.out;(a.fns===1?fns:a.fns===0?nofns:unk).push(a);});
-  [fns,nofns,unk].forEach(arr=>arr.sort((a,b)=>b.total-a.total));
+  const ds=[],pretax=[],unk=[];
+  map.forEach(a=>{a.total=a.inc+a.out;(a.fns===0?ds:a.fns===1?pretax:unk).push(a);});
+  [ds,pretax,unk].forEach(arr=>arr.sort((a,b)=>b.total-a.total));
   let totInc=0,totOut=0,totAll=0;
-  [...fns,...nofns,...unk].forEach(a=>{totInc+=a.inc;totOut+=a.out;totAll+=a.total;});
+  [...ds,...pretax,...unk].forEach(a=>{totInc+=a.inc;totOut+=a.out;totAll+=a.total;});
   const saldo=totInc+totOut;
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div><div class="kpi-sub">руб.</div></div>
     <div class="kpi-card red"><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}</div><div class="kpi-sub">руб.</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">руб.</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Счетов ФНС</div><div class="kpi-value">${fns.length}</div><div class="kpi-sub">из ${map.size} счетов</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${map.size}</div><div class="kpi-sub">${data.length.toLocaleString('ru-RU')} транзакций</div></div>
   </div>`;
 
-  const makeDetailId=acc=>btoa(encodeURIComponent(acc)).replace(/=/g,'');
-  const MAX_TXN=20;
-  const buildDetailRows=acc=>{
-    const txns=(BANK_TXNS[acc]||[]).slice().sort((a,b)=>{
-      const da=parseDate(a[COL.DATE_DDS])||parseDate(a[COL.DATE_OPIU])||new Date(0);
-      const db=parseDate(b[COL.DATE_DDS])||parseDate(b[COL.DATE_OPIU])||new Date(0);
-      return db-da;
-    });
-    const shown=txns.slice(0,MAX_TXN);
-    const more=txns.length>MAX_TXN?`<div class="bank-more">ещё ${txns.length-MAX_TXN} транзакций...</div>`:'';
-    const rows=shown.map(r=>{
-      const date=String(r[COL.DATE_DDS]||r[COL.DATE_OPIU]||'—');
-      const counterparty=String(r[COL.SECOND_SIDE]||'—').trim();
-      const purpose=String(r[COL.PURPOSE]||r[COL.ARTICLE_NAME]||'—').trim();
-      const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
-      const amt=inc!==0?inc:out;
-      const cls=amt>0?'num-positive':'num-negative';
-      return`<tr><td>${date}</td><td>${counterparty}</td><td>${purpose}</td><td class="num ${cls}">${fmt(amt)}</td></tr>`;
-    }).join('');
-    return`<table class="bank-detail-table"><thead><tr><th>Дата</th><th>Контрагент</th><th>Назначение</th><th class="num">Сумма</th></tr></thead><tbody>${rows}</tbody></table>${more}`;
-  };
-
-  const buildAccountRow=(a,badgeClass,badgeText)=>{
-    const did=makeDetailId(a.name);
-    const escapedAcc=a.name.replace(/"/g,'&quot;');
-    return`<tr class="bank-account-row" data-acc="${escapedAcc}" onclick="toggleBankAccount('${escapedAcc.replace(/'/g,"\\'")}')">
-      <td>▶</td><td><span class="badge ${badgeClass}">${badgeText}</span> ${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>
-      <tr class="bank-detail-row"><td colspan="5"><div class="bank-detail-inner" id="bank-detail-${did}">${buildDetailRows(a.name)}</div></td></tr>`;
-  };
-
-  const buildSection=(arr,label,badgeClass,badgeText)=>{
+  const buildSection=(arr,label)=>{
     if(!arr.length)return'';
-    const rows=arr.map(a=>buildAccountRow(a,badgeClass,badgeText)).join('');
+    const rows=arr.map(a=>`<tr><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
     const si=arr.reduce((s,a)=>s+a.inc,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
-    return`<tr class="section-header"><td colspan="2">${label}</td><td></td><td></td><td></td></tr>${rows}<tr class="subtotal"><td></td><td>Итого</td>${td(si)}${td(so)}${td(st)}</tr>`;
+    return`<tr class="section-header"><td colspan="4">${label}</td></tr>${rows}<tr class="subtotal"><td>Итого</td>${td(si)}${td(so)}${td(st)}</tr>`;
   };
 
-  el.innerHTML=kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов · ${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th>Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead><tbody>${buildSection(fns,'ФНС — Налоговая выручка','badge-fns','ДА')}${buildSection(nofns,'Денежные средства (не ФНС)','badge-nofns','НЕТ')}${buildSection(unk,'Требует классификации','badge-unknown','?')}<tr class="total"><td></td><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
+  el.innerHTML=kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th>Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead><tbody>${buildSection(ds,'Денежные средства:')}${buildSection(pretax,'Денежные средства до налогового оформления:')}${buildSection(unk,'Требует классификации')}<tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
 }
 
 function renderDDS(f){
@@ -608,6 +571,7 @@ function emptyState(msg='Нет данных',sub='Попробуй измени
 (function init(){
   const{sheetId,apiKey}=loadSavedCredentials();
   if(sheetId&&apiKey)connectAndLoad();
+  else loadDemo();
 })();
 </script>
 </body>
