@@ -107,6 +107,23 @@
   .state-box .sub{font-size:12px;color:var(--text3);}
   .hidden{display:none!important;}
   .percent-row td{font-style:italic;color:var(--text3)!important;font-size:11px;}
+
+  /* ── Bank expandable rows ── */
+  .bank-account-row{cursor:pointer;user-select:none;}
+  .bank-account-row:hover td{background:var(--accent-light)!important;}
+  .bank-account-row td:first-child{width:28px;text-align:center;font-size:12px;color:var(--text3);transition:transform 0.15s;}
+  .bank-account-row.expanded td:first-child{transform:rotate(90deg);color:var(--accent);}
+  .bank-detail-row td{padding:0!important;border-top:none!important;}
+  .bank-detail-inner{overflow:hidden;max-height:0;transition:max-height 0.25s ease;}
+  .bank-detail-inner.open{max-height:600px;}
+  .bank-detail-table{width:100%;border-collapse:collapse;font-size:11px;background:var(--surface2);}
+  .bank-detail-table th{padding:6px 16px 6px 40px;text-align:left;font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.8px;border-bottom:1px solid var(--border);}
+  .bank-detail-table th.num{text-align:right;}
+  .bank-detail-table td{padding:5px 16px 5px 40px;border-top:1px solid var(--border);color:var(--text2);white-space:nowrap;text-align:left;}
+  .bank-detail-table td.num{text-align:right;}
+  .bank-detail-table tr:last-child td{border-bottom:2px solid var(--border);}
+  .bank-detail-table tr:hover td{background:#eef2fb;}
+  .bank-more{padding:6px 40px;font-size:10px;color:var(--text3);font-style:italic;border-top:1px solid var(--border);}
 </style>
 </head>
 <body>
@@ -253,6 +270,14 @@ function showSetup(){
   document.getElementById('dashWrap').classList.add('hidden');
 }
 
+function loadSavedCredentials(){
+  const sheetId=localStorage.getItem('fin_sheetId')||'';
+  const apiKey=localStorage.getItem('fin_apiKey')||'';
+  if(sheetId)document.getElementById('sheetId').value=sheetId;
+  if(apiKey)document.getElementById('apiKey').value=apiKey;
+  return{sheetId,apiKey};
+}
+
 async function connectAndLoad(){
   const sheetId=document.getElementById('sheetId').value.trim();
   const apiKey=document.getElementById('apiKey').value.trim();
@@ -266,6 +291,8 @@ async function connectAndLoad(){
     const rows=json.values||[];
     if(rows.length<2)throw new Error('Нет данных в RawData');
     RAW=rows.slice(1).map(r=>{while(r.length<15)r.push('');return r.map((v,i)=>{if(i===COL.INCOME||i===COL.OUTCOME)return parseNum(v);return v;});});
+    localStorage.setItem('fin_sheetId',sheetId);
+    localStorage.setItem('fin_apiKey',apiKey);
     onDataLoaded();
   }catch(e){setStatus('error','Ошибка: '+e.message);alert('Ошибка:\n'+e.message);}
 }
@@ -323,10 +350,21 @@ function switchTab(name){
 }
 function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);}
 
+let BANK_TXNS={};
+function toggleBankAccount(accKey){
+  const row=document.querySelector(`.bank-account-row[data-acc="${CSS.escape(accKey)}"]`);
+  const detail=document.getElementById('bank-detail-'+btoa(encodeURIComponent(accKey)).replace(/=/g,''));
+  if(!row||!detail)return;
+  const isOpen=row.classList.contains('expanded');
+  row.classList.toggle('expanded',!isOpen);
+  detail.classList.toggle('open',!isOpen);
+}
+
 function renderBank(f){
   const el=document.getElementById('tabBank');
   const data=applyBaseFilters(RAW,{...f,direction:'',year:'',month:''});
   const map=new Map();
+  BANK_TXNS={};
   data.forEach(row=>{
     let acc=String(row[COL.ACCOUNT]||'').trim()||'⚠️ Нет реквизитов';
     const fnsRaw=String(row[COL.FNS]||'').toLowerCase().trim();
@@ -336,6 +374,8 @@ function renderBank(f){
     if(!map.has(acc))map.set(acc,{name:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0});
     const e=map.get(acc);e.inc+=inc;e.out+=out;
     if(e.fns===-1&&(isFns||isNoFns))e.fns=isFns?1:0;
+    if(!BANK_TXNS[acc])BANK_TXNS[acc]=[];
+    BANK_TXNS[acc].push(row);
   });
   const fns=[],nofns=[],unk=[];
   map.forEach(a=>{a.total=a.inc+a.out;(a.fns===1?fns:a.fns===0?nofns:unk).push(a);});
@@ -349,13 +389,45 @@ function renderBank(f){
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">руб.</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Счетов ФНС</div><div class="kpi-value">${fns.length}</div><div class="kpi-sub">из ${map.size} счетов</div></div>
   </div>`;
+
+  const makeDetailId=acc=>btoa(encodeURIComponent(acc)).replace(/=/g,'');
+  const MAX_TXN=20;
+  const buildDetailRows=acc=>{
+    const txns=(BANK_TXNS[acc]||[]).slice().sort((a,b)=>{
+      const da=parseDate(a[COL.DATE_DDS])||parseDate(a[COL.DATE_OPIU])||new Date(0);
+      const db=parseDate(b[COL.DATE_DDS])||parseDate(b[COL.DATE_OPIU])||new Date(0);
+      return db-da;
+    });
+    const shown=txns.slice(0,MAX_TXN);
+    const more=txns.length>MAX_TXN?`<div class="bank-more">ещё ${txns.length-MAX_TXN} транзакций...</div>`:'';
+    const rows=shown.map(r=>{
+      const date=String(r[COL.DATE_DDS]||r[COL.DATE_OPIU]||'—');
+      const counterparty=String(r[COL.SECOND_SIDE]||'—').trim();
+      const purpose=String(r[COL.PURPOSE]||r[COL.ARTICLE_NAME]||'—').trim();
+      const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+      const amt=inc!==0?inc:out;
+      const cls=amt>0?'num-positive':'num-negative';
+      return`<tr><td>${date}</td><td>${counterparty}</td><td>${purpose}</td><td class="num ${cls}">${fmt(amt)}</td></tr>`;
+    }).join('');
+    return`<table class="bank-detail-table"><thead><tr><th>Дата</th><th>Контрагент</th><th>Назначение</th><th class="num">Сумма</th></tr></thead><tbody>${rows}</tbody></table>${more}`;
+  };
+
+  const buildAccountRow=(a,badgeClass,badgeText)=>{
+    const did=makeDetailId(a.name);
+    const escapedAcc=a.name.replace(/"/g,'&quot;');
+    return`<tr class="bank-account-row" data-acc="${escapedAcc}" onclick="toggleBankAccount('${escapedAcc.replace(/'/g,"\\'")}')">
+      <td>▶</td><td><span class="badge ${badgeClass}">${badgeText}</span> ${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>
+      <tr class="bank-detail-row"><td colspan="5"><div class="bank-detail-inner" id="bank-detail-${did}">${buildDetailRows(a.name)}</div></td></tr>`;
+  };
+
   const buildSection=(arr,label,badgeClass,badgeText)=>{
     if(!arr.length)return'';
-    const rows=arr.map(a=>`<tr><td><span class="badge ${badgeClass}">${badgeText}</span></td><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
+    const rows=arr.map(a=>buildAccountRow(a,badgeClass,badgeText)).join('');
     const si=arr.reduce((s,a)=>s+a.inc,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
     return`<tr class="section-header"><td colspan="2">${label}</td><td></td><td></td><td></td></tr>${rows}<tr class="subtotal"><td></td><td>Итого</td>${td(si)}${td(so)}${td(st)}</tr>`;
   };
-  el.innerHTML=kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов · ${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th>ФНС</th><th>Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead><tbody>${buildSection(fns,'ФНС — Налоговая выручка','badge-fns','ДА')}${buildSection(nofns,'Денежные средства (не ФНС)','badge-nofns','НЕТ')}${buildSection(unk,'Требует классификации','badge-unknown','?')}<tr class="total"><td></td><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
+
+  el.innerHTML=kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов · ${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th>Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead><tbody>${buildSection(fns,'ФНС — Налоговая выручка','badge-fns','ДА')}${buildSection(nofns,'Денежные средства (не ФНС)','badge-nofns','НЕТ')}${buildSection(unk,'Требует классификации','badge-unknown','?')}<tr class="total"><td></td><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
 }
 
 function renderDDS(f){
@@ -532,6 +604,11 @@ function renderFOT(f){
 }
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
+
+(function init(){
+  const{sheetId,apiKey}=loadSavedCredentials();
+  if(sheetId&&apiKey)connectAndLoad();
+})();
 </script>
 </body>
 </html>
