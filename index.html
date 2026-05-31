@@ -94,6 +94,8 @@
   .report-table th:first-child,.report-table th:nth-child(2){text-align:left;}
   .report-table td{padding:8px 16px;text-align:right;border-top:1px solid var(--border);white-space:nowrap;color:var(--text2);}
   .report-table td:first-child,.report-table td:nth-child(2){text-align:left;}
+  .bank-table td:nth-child(2){text-align:right;}
+  .bank-table td:first-child{text-align:left;}
   .report-table tr:hover td{background:var(--surface2);}
   .report-table tr.total td{background:var(--surface2);color:var(--text);font-weight:700;border-top:2px solid var(--border);}
   .report-table tr.subtotal td{background:#f8faff;color:var(--text);font-weight:600;}
@@ -376,7 +378,7 @@ function renderBank(f){
     const isNoFns=['нет','false','0','-'].includes(fnsRaw);
     const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
     const key=acc||'__noreq__';
-    if(!map.has(key))map.set(key,{name:acc||'Нет реквизитов',raw:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0});
+    if(!map.has(key))map.set(key,{name:acc||'— без счёта —',raw:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0});
     const e=map.get(key);e.inc+=inc;e.out+=out;
     if(e.fns===-1&&(isFns||isNoFns))e.fns=isFns?1:0;
   });
@@ -419,6 +421,37 @@ function renderBank(f){
       <td style="text-align:right;font-weight:700" class="${numClass(st)}">${fmt(st)}</td>
     </tr></tbody>`;
     return hdr+`<tbody class="bank-section-body" id="${id}">${rows}</tbody>`;
+  };
+
+  // Секция "Денежные средства" с подгруппами ООО / ИП / Прочее
+  const buildDsSection=(arr)=>{
+    if(!arr.length)return'';
+    const id='bank-sec-'+(sectionIdx++);
+    const si=arr.reduce((s,a)=>s+a.inc,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
+    const isOOO=n=>/^(ООО|ОАО|ЗАО|ПАО|АО)\b/i.test(n);
+    const isIP=n=>/^ИП\b/i.test(n);
+    const ooo=arr.filter(a=>isOOO(a.name));
+    const ip=arr.filter(a=>isIP(a.name));
+    const other=arr.filter(a=>!isOOO(a.name)&&!isIP(a.name));
+    const subGroup=(subarr,label,gid)=>{
+      if(!subarr.length)return'';
+      const gi=subarr.reduce((s,a)=>s+a.inc,0),go=subarr.reduce((s,a)=>s+a.out,0),gt=subarr.reduce((s,a)=>s+a.total,0);
+      const hdrRow=`<tr class="sub-hdr" onclick="toggleSubGroup(this,'${gid}')">
+        <td><span class="toggle-arrow">▼</span>${label} <span style="font-weight:400;color:var(--text3)">(${subarr.length})</span></td>
+        <td style="text-align:right;color:var(--income)">${fmt(gi)}</td>
+        <td style="text-align:right;color:var(--outcome)">${fmt(go)}</td>
+        <td style="text-align:right" class="${numClass(gt)}">${fmt(gt)}</td>
+      </tr>`;
+      const rows=subarr.map(a=>`<tr class="sub-row" data-group="${gid}"><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
+      return hdrRow+rows;
+    };
+    const hdr=`<tbody id="${id}-hdr"><tr class="section-header section-header-toggle" onclick="toggleBankSection('${id}')">
+      <td style="width:40%"><span class="toggle-arrow">▼</span>Денежные средства:</td>
+      <td style="text-align:right;color:var(--income);font-weight:700">${fmt(si)}</td>
+      <td style="text-align:right;color:var(--outcome);font-weight:700">${fmt(so)}</td>
+      <td style="text-align:right;font-weight:700" class="${numClass(st)}">${fmt(st)}</td>
+    </tr></tbody>`;
+    return hdr+`<tbody class="bank-section-body" id="${id}">${subGroup(ooo,'ООО','ds-ooo')}${subGroup(ip,'ИП','ds-ip')}${subGroup(other,'Прочее','ds-other')}</tbody>`;
   };
 
   // Секция "До налогового оформления" с подгруппами Кассы ЦФО и Карты ФЛ
@@ -478,7 +511,7 @@ function renderBank(f){
     }
   });
 
-  const tableHtml=`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table" style="font-size:11px"><thead><tr><th style="width:40%">Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead>${buildSection(ds,'Денежные средства:')}${buildPretaxSection(pretaxMain,pretaxKassy,pretaxCards)}${buildSection(noReq,'Нет реквизитов:')}${buildSection(unk,'Требует классификации:')}<tbody><tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
+  const tableHtml=`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table bank-table" style="font-size:11px"><thead><tr><th style="width:40%">Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead>${buildDsSection(ds)}${buildPretaxSection(pretaxMain,pretaxKassy,pretaxCards)}${noReq.length?buildSection(noReq,'Нет реквизитов:'):''}${buildSection(unk,'Требует классификации:')}<tbody><tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
 
   const chartsHtml=`<div class="bank-charts">
     <div class="chart-card">
