@@ -386,22 +386,32 @@ function renderBank(f){
   const el=document.getElementById('tabBank');
   const data=applyBaseFilters(RAW,f);
   const map=new Map();
+  const isCardAcc=name=>/карт|card|fl\b|ФЛ\b|физ\.?\s*лиц/i.test(name);
   data.forEach(row=>{
-    let acc=String(row[COL.ACCOUNT]||'').trim()||'⚠️ Нет реквизитов';
+    const rawAcc=String(row[COL.ACCOUNT]||'').trim();
+    let acc=rawAcc||'';
     const fnsRaw=String(row[COL.FNS]||'').toLowerCase().trim();
     const isFns=['да','true','1','+'].includes(fnsRaw);
     const isNoFns=['нет','false','0','-'].includes(fnsRaw);
     const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
-    if(!map.has(acc))map.set(acc,{name:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0});
-    const e=map.get(acc);e.inc+=inc;e.out+=out;
+    const key=acc||'__noreq__';
+    if(!map.has(key))map.set(key,{name:acc||'Нет реквизитов',raw:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0});
+    const e=map.get(key);e.inc+=inc;e.out+=out;
     if(e.fns===-1&&(isFns||isNoFns))e.fns=isFns?1:0;
   });
-  // ДА (fns===1) → Денежные средства, НЕТ (fns===0) → До налогового оформления
-  const ds=[],pretax=[],unk=[];
-  map.forEach(a=>{a.total=a.inc+a.out;(a.fns===1?ds:a.fns===0?pretax:unk).push(a);});
-  [ds,pretax,unk].forEach(arr=>arr.sort((a,b)=>b.total-a.total));
+  // ДА → Денежные средства, НЕТ → До налогового оформления, карты → Карты ФЛ, нет реквизитов → отдельно
+  const ds=[],pretax=[],cards=[],noReq=[],unk=[];
+  map.forEach(a=>{
+    a.total=a.inc+a.out;
+    if(a.raw===''){noReq.push(a);return;}
+    if(isCardAcc(a.name)){cards.push(a);return;}
+    if(a.fns===1)ds.push(a);
+    else if(a.fns===0)pretax.push(a);
+    else unk.push(a);
+  });
+  [ds,pretax,cards,noReq,unk].forEach(arr=>arr.sort((a,b)=>b.total-a.total));
   let totInc=0,totOut=0,totAll=0;
-  [...pretax,...ds,...unk].forEach(a=>{totInc+=a.inc;totOut+=a.out;totAll+=a.total;});
+  [...ds,...pretax,...cards,...noReq,...unk].forEach(a=>{totInc+=a.inc;totOut+=a.out;totAll+=a.total;});
   const saldo=totInc+totOut;
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div><div class="kpi-sub">руб.</div></div>
@@ -423,6 +433,21 @@ function renderBank(f){
       <td style="text-align:right;font-weight:700" class="${numClass(st)}">${fmt(st)}</td>
     </tr></tbody>`;
     return hdr+`<tbody class="bank-section-body" id="${id}">${rows}</tbody>`;
+  };
+
+  // Карты ФЛ: агрегированная строка + раскрываемый список карт
+  const buildCardsSection=(arr)=>{
+    if(!arr.length)return'';
+    const id='bank-sec-'+(sectionIdx++);
+    const si=arr.reduce((s,a)=>s+a.inc,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
+    const cardRows=arr.map(a=>`<tr style="font-size:10px"><td style="padding-left:28px;color:var(--text3)">${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
+    const hdr=`<tbody id="${id}-hdr"><tr class="section-header section-header-toggle" onclick="toggleBankSection('${id}')">
+      <td style="width:40%"><span class="toggle-arrow">▼</span>Карты ФЛ <span style="font-weight:400;color:var(--text3)">(${arr.length} карт)</span></td>
+      <td style="text-align:right;color:var(--income);font-weight:700">${fmt(si)}</td>
+      <td style="text-align:right;color:var(--outcome);font-weight:700">${fmt(so)}</td>
+      <td style="text-align:right;font-weight:700" class="${numClass(st)}">${fmt(st)}</td>
+    </tr></tbody>`;
+    return hdr+`<tbody class="bank-section-body collapsed-body" id="${id}">${cardRows}</tbody>`;
   };
 
   // Берём последний год/месяц из данных, но не позже сегодня
@@ -452,7 +477,7 @@ function renderBank(f){
     }
   });
 
-  const tableHtml=`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table" style="font-size:11px"><thead><tr><th style="width:40%">Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead>${buildSection(ds,'Денежные средства:')}${buildSection(pretax,'Денежные средства до налогового оформления:')}${buildSection(unk,'Требует классификации')}<tbody><tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
+  const tableHtml=`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table" style="font-size:11px"><thead><tr><th style="width:40%">Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead>${buildSection(ds,'Денежные средства:')}${buildSection(pretax,'Денежные средства до налогового оформления:')}${buildCardsSection(cards)}${buildSection(noReq,'Нет реквизитов:')}${buildSection(unk,'Требует классификации:')}<tbody><tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
 
   const chartsHtml=`<div class="bank-charts">
     <div class="chart-card">
