@@ -75,8 +75,8 @@
   .setup-hint code{background:#dbeafe;padding:1px 5px;border-radius:3px;font-size:10px;}
 
   /* ── KPI strip ── */
-  .kpi-grid{display:flex;gap:0;margin-bottom:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow);}
-  .kpi-card{flex:1;padding:6px 14px;display:flex;flex-direction:column;gap:2px;border-right:1px solid var(--border);}
+  .kpi-grid{display:flex;gap:0;margin-bottom:6px;margin-top:-4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow);}
+  .kpi-card{flex:1;padding:5px 14px;display:flex;flex-direction:column;gap:1px;border-right:1px solid var(--border);}
   .kpi-card:last-child{border-right:none;}
   .kpi-card.green{border-left:3px solid var(--income);}
   .kpi-card.red{border-left:3px solid var(--outcome);}
@@ -127,7 +127,7 @@
   .txn-header{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;border-bottom:1px solid var(--border);background:var(--header-dark);border-radius:10px 10px 0 0;}
   .txn-header .table-title{color:#fff;font-size:12px;}
   .txn-header .table-count{color:#8da4c0;font-size:10px;}
-  .txn-scroll{overflow-x:hidden;max-height:369px;overflow-y:auto;}/* 23px thead + 18×19px rows */
+  .txn-scroll{overflow-x:hidden;max-height:407px;overflow-y:auto;}/* 23px thead + 20×19px rows */
   .txn-table{width:100%;border-collapse:collapse;font-size:10px;table-layout:fixed;}
   .txn-table th{background:var(--surface2);padding:3px 5px;text-align:center;font-size:10px;font-weight:600;color:var(--text2);white-space:nowrap;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1;overflow:hidden;text-overflow:ellipsis;}
   .txn-table th.num{text-align:center;}
@@ -377,6 +377,9 @@ function bankFilterByAccount(accName){
   const same=_bankFilter.accs&&_bankFilter.accs.length===1&&_bankFilter.accs[0]===accName;
   _bankFilter=same?{accs:null,label:null}:{accs:[accName],label:accName};
   bankApplyFilter();
+  // Фильтруем таблицу операций по счёту
+  _bankTxnFilter.accs=same?null:[accName];
+  bankApplyTxnFilter();
 }
 
 function bankFilterByGroup(label,accNames){
@@ -441,6 +444,46 @@ function bankFillTxn(reset){
   if(lbl){const rem=all.length-window._bankTxnOffset;lbl.textContent=rem>0?`ещё ${rem.toLocaleString('ru-RU')}`:'';}
 }
 window.bankLoadMoreTxn=function(){bankFillTxn(false);};
+
+// Фильтр таблицы операций
+let _bankTxnFilter={accs:null,date:null}; // accs: массив счетов, date: {y,m,d}
+function bankApplyTxnFilter(){
+  const all=window._bankTxnData||[];
+  const f=_bankTxnFilter;
+  window._bankTxnDataFiltered=all.filter(r=>{
+    if(f.accs&&!f.accs.includes(String(r[COL.ACCOUNT]||'').trim()))return false;
+    if(f.date){
+      const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
+      if(!d)return false;
+      if(d.getFullYear()!==f.date.y||d.getMonth()+1!==f.date.m||d.getDate()!==f.date.d)return false;
+    }
+    return true;
+  });
+  // Сохраняем оригинал и подменяем на отфильтрованный
+  const orig=window._bankTxnData;
+  window._bankTxnData=window._bankTxnDataFiltered;
+  bankFillTxn(true);
+  window._bankTxnData=orig;
+  // Обновляем счётчик
+  const cnt=document.getElementById('txnCount');
+  if(cnt)cnt.textContent=(window._bankTxnDataFiltered.length.toLocaleString('ru-RU'))+' транзакций'+(f.accs||f.date?' (фильтр)':'');
+  // Показываем/скрываем кнопку сброса фильтра таблицы
+  const btn=document.getElementById('txnFilterReset');
+  if(btn)btn.style.display=(f.accs||f.date)?'inline-flex':'none';
+}
+window.bankTxnFilterByDay=function(yr,mo,day){
+  const same=_bankTxnFilter.date&&_bankTxnFilter.date.y===yr&&_bankTxnFilter.date.m===mo&&_bankTxnFilter.date.d===day;
+  _bankTxnFilter.date=same?null:{y:yr,m:mo,d:day};
+  bankApplyTxnFilter();
+};
+window.bankTxnFilterByAcc=function(accs){
+  _bankTxnFilter.accs=accs;
+  bankApplyTxnFilter();
+};
+window.bankTxnResetFilter=function(){
+  _bankTxnFilter={accs:null,date:null};
+  bankApplyTxnFilter();
+};
 
 window.bankShowCard=function(idx){
   const r=window._bankTxnData[idx];if(!r)return;
@@ -579,6 +622,7 @@ function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank
 
 
 function bankUpdateDays(yr,mo){
+  if(window._bankChartData)window._bankChartData._currentMonth=mo;
   const daysInMonth=new Date(yr,mo,0).getDate();
   const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0);
   RAW.forEach(row=>{
@@ -872,7 +916,7 @@ function renderBank(f){
   });
 
   const txnHtml=`<div class="txn-wrap">
-    <div class="txn-header"><span class="table-title">Операции</span><span class="table-count" id="txnCount">${window._bankTxnData.length.toLocaleString('ru-RU')} транзакций</span></div>
+    <div class="txn-header"><span class="table-title">Операции</span><span class="table-count" id="txnCount">${window._bankTxnData.length.toLocaleString('ru-RU')} транзакций</span><button id="txnFilterReset" onclick="bankTxnResetFilter()" style="display:none;margin-left:8px;padding:2px 8px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3)">× сброс</button></div>
     <div class="txn-scroll"><table class="txn-table">
       <colgroup>
         <col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer">
@@ -950,6 +994,16 @@ function renderBank(f){
         {label:'Списания',data:outData,backgroundColor:outColors,borderRadius:2}
       ]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+        onClick:(evt,items)=>{
+          if(!items.length)return;
+          const day=items[0].index+1;
+          const d=window._bankChartData;
+          const yr=+(document.getElementById('bankChartYearSel')?.value||d.curYear);
+          const mo=d._currentMonth||d.curMonth;
+          bankTxnFilterByDay(yr,mo,day);
+          // Прокрутить к таблице операций
+          document.querySelector('.txn-wrap')?.scrollIntoView({behavior:'smooth',block:'nearest'});
+        },
         scales:{
           x:{grid:{display:false},ticks:{font:{size:9},color:(ctx)=>{
             const lbl=ctx.tick?.label;const dow=Array.isArray(lbl)?lbl[1]:null;
