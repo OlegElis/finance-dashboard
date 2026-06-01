@@ -122,6 +122,21 @@
   .hidden{display:none!important;}
   .percent-row td{font-style:italic;color:var(--text3)!important;font-size:11px;}
 
+  /* ── Transactions table ── */
+  .txn-wrap{margin-top:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);}
+  .txn-header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--header-dark);border-radius:12px 12px 0 0;}
+  .txn-header .table-title{color:#fff;}
+  .txn-header .table-count{color:#8da4c0;}
+  .txn-scroll{overflow-x:auto;max-height:340px;overflow-y:auto;}
+  .txn-table{width:100%;border-collapse:collapse;font-size:11px;}
+  .txn-table th{background:var(--surface2);padding:6px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);white-space:nowrap;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1;}
+  .txn-table th.num{text-align:right;}
+  .txn-table td{padding:5px 12px;border-top:1px solid var(--border);white-space:nowrap;color:var(--text-body);font-variant-numeric:tabular-nums;}
+  .txn-table td.num{text-align:right;}
+  .txn-table tr:hover td{background:var(--surface2);}
+  .txn-table tr.txn-income td.num-val{color:var(--income);}
+  .txn-table tr.txn-expense td.num-val{color:var(--outcome);}
+
   /* ── Bank two-column layout ── */
   .bank-layout{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
   .bank-charts{display:flex;flex-direction:column;gap:14px;}
@@ -723,7 +738,47 @@ function renderBank(f){
     </div>
   </div>`;
 
-  el.innerHTML=kpiHtml+`<div class="bank-layout">${tableHtml}${chartsHtml}</div>`;
+  // Таблица транзакций
+  const txnData=data.slice().sort((a,b)=>{
+    const da=parseDate(a[COL.DATE_DDS])||parseDate(a[COL.DATE_OPIU])||new Date(0);
+    const db=parseDate(b[COL.DATE_DDS])||parseDate(b[COL.DATE_OPIU])||new Date(0);
+    return db-da;
+  });
+  const txnRows=txnData.map(r=>{
+    const date=String(r[COL.DATE_DDS]||r[COL.DATE_OPIU]||'—');
+    const acc=String(r[COL.ACCOUNT]||'—').trim();
+    const type=String(r[COL.TYPE]||'').trim();
+    const counterparty=String(r[COL.SECOND_SIDE]||'—').trim();
+    const article=String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'—').trim();
+    const purpose=String(r[COL.PURPOSE]||'—').trim();
+    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    const isInc=inc>0;
+    const cls=isInc?'txn-income':'txn-expense';
+    return`<tr class="${cls}">
+      <td>${date}</td>
+      <td>${acc}</td>
+      <td style="color:var(--text3)">${type}</td>
+      <td>${counterparty}</td>
+      <td>${article}</td>
+      <td class="num num-val">${isInc?fmt(inc):'—'}</td>
+      <td class="num num-val">${out<0?fmt(out):'—'}</td>
+      <td class="num" style="color:var(--text2)">${fmt(inc+out)}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;color:var(--text3)" title="${purpose}">${purpose}</td>
+    </tr>`;
+  }).join('');
+
+  const txnHtml=`<div class="txn-wrap">
+    <div class="txn-header"><span class="table-title">Операции</span><span class="table-count">${txnData.length.toLocaleString('ru-RU')} транзакций</span></div>
+    <div class="txn-scroll"><table class="txn-table">
+      <thead><tr>
+        <th>Дата</th><th>Счёт</th><th>Тип</th><th>Контрагент</th><th>Статья</th>
+        <th class="num">Поступление</th><th class="num">Списание</th><th class="num">Итого</th><th>Назначение</th>
+      </tr></thead>
+      <tbody>${txnRows}</tbody>
+    </table></div>
+  </div>`;
+
+  el.innerHTML=kpiHtml+`<div class="bank-layout">${tableHtml}${chartsHtml}</div>`+txnHtml;
 
   const scaleOpts={
     x:{grid:{display:false},ticks:{font:{size:10}}},
