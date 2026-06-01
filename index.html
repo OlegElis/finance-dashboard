@@ -380,10 +380,16 @@ function bankUpdateDays(yr,mo){
     dayOut[d.getDate()-1]+=Math.abs(parseNum(row[COL.OUTCOME]));
   });
   if(!window._bankChartMonth)return;
-  window._bankChartMonth.data.labels=[...Array(daysInMonth).keys()].map(i=>i+1);
-  window._bankChartMonth.data.datasets[0].data=dayInc;
-  window._bankChartMonth.data.datasets[1].data=dayOut;
-  window._bankChartMonth.update();
+  const fn=window._bankChartData?._chartDaysFn;
+  if(fn){
+    window._bankChartMonth.destroy();
+    window._bankChartMonth=new Chart(document.getElementById('chartMonth'),fn(yr,mo,dayInc,dayOut));
+  } else {
+    window._bankChartMonth.data.labels=[...Array(daysInMonth).keys()].map(i=>i+1);
+    window._bankChartMonth.data.datasets[0].data=dayInc;
+    window._bankChartMonth.data.datasets[1].data=dayOut;
+    window._bankChartMonth.update();
+  }
   // Обновляем заголовок нижнего графика
   const titleEl=document.querySelector('.bank-charts .chart-card:last-child .chart-title');
   if(titleEl)titleEl.textContent=`Движение по дням — ${MONTHS_FULL[mo-1]} ${yr}`;
@@ -686,16 +692,31 @@ function renderBank(f){
       scales:scaleOpts}
   });
 
-  const chartSimple=(labels,incData,outData)=>({
-    type:'bar',
-    data:{labels,datasets:[
-      {label:'Поступления',data:incData,backgroundColor:'rgba(34,139,70,0.82)',borderRadius:2},
-      {label:'Списания',data:outData,backgroundColor:'rgba(185,28,28,0.82)',borderRadius:2}
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-      scales:{x:{grid:{display:false},ticks:{font:{size:10}}},
-              y:{grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>v>=1e6?(v/1e6).toFixed(1)+'М':v>=1e3?(v/1e3).toFixed(0)+'К':v}}}}
-  });
+  const DOW=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+  const makeDayLabels=(yr,mo,days)=>[...Array(days).keys()].map(i=>{const dow=new Date(yr,mo-1,i+1).getDay();return[String(i+1),DOW[dow]];});
+  const makeDayColors=(yr,mo,days,weekdayColor,weekendColor)=>[...Array(days).keys()].map(i=>{const dow=new Date(yr,mo-1,i+1).getDay();return(dow===0||dow===6)?weekendColor:weekdayColor;});
+
+  const chartDays=(yr,mo,incData,outData)=>{
+    const days=new Date(yr,mo,0).getDate();
+    const labels=makeDayLabels(yr,mo,days);
+    const incColors=makeDayColors(yr,mo,days,'rgba(34,139,70,0.82)','rgba(34,139,70,0.38)');
+    const outColors=makeDayColors(yr,mo,days,'rgba(185,28,28,0.82)','rgba(185,28,28,0.38)');
+    return{type:'bar',
+      data:{labels,datasets:[
+        {label:'Поступления',data:incData,backgroundColor:incColors,borderRadius:2},
+        {label:'Списания',data:outData,backgroundColor:outColors,borderRadius:2}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+        scales:{
+          x:{grid:{display:false},ticks:{font:{size:9},color:(ctx)=>{
+            const lbl=ctx.tick?.label;const dow=Array.isArray(lbl)?lbl[1]:null;
+            return(dow==='Сб'||dow==='Вс')?'#c0392b':'#666';
+          }}},
+          y:{grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>v>=1e6?(v/1e6).toFixed(1)+'М':v>=1e3?(v/1e3).toFixed(0)+'К':v}}
+        }
+      }
+    };
+  };
 
   if(window._bankChartMain)window._bankChartMain.destroy();
   if(window._bankChartMonth)window._bankChartMonth.destroy();
@@ -706,7 +727,8 @@ function renderBank(f){
   const yearsBal=d.allYears.map((_,i)=>{bal+=d.allYearsInc[i]-d.allYearsOut[i];return Math.round(bal);});
 
   window._bankChartMain=new Chart(document.getElementById('chartMain'),makeMainChart(d.allYears.map(String),d.allYearsInc,d.allYearsOut,yearsBal));
-  window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartSimple([...Array(d.daysInMonth).keys()].map(i=>i+1),d.dayInc,d.dayOut));
+  window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartDays(d.curYear,d.curMonth,d.dayInc,d.dayOut));
+  window._bankChartData._chartDaysFn=chartDays;
 }
 
 function renderDDS(f){
