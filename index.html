@@ -128,6 +128,7 @@
   .chart-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow);}
   .chart-title{font-family:var(--head);font-size:12px;font-weight:700;color:var(--text);margin-bottom:12px;}
   .chart-wrap{position:relative;height:160px;}
+  .chart-wrap canvas{cursor:pointer;}
   .chart-controls{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
   .chart-toggle{display:flex;background:var(--surface2);border-radius:6px;overflow:hidden;border:1px solid var(--border);}
   .chart-toggle button{padding:4px 12px;border:none;background:transparent;cursor:pointer;font-family:var(--sans);font-size:11px;font-weight:500;color:var(--text2);transition:all 0.15s;}
@@ -368,6 +369,32 @@ function switchTab(name){
   renderActiveTab();
 }
 function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);}
+
+function bankUpdateDays(yr,mo){
+  const daysInMonth=new Date(yr,mo,0).getDate();
+  const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0);
+  RAW.forEach(row=>{
+    const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
+    if(!d||d.getFullYear()!==yr||d.getMonth()+1!==mo)return;
+    dayInc[d.getDate()-1]+=parseNum(row[COL.INCOME]);
+    dayOut[d.getDate()-1]+=Math.abs(parseNum(row[COL.OUTCOME]));
+  });
+  if(!window._bankChartMonth)return;
+  window._bankChartMonth.data.labels=[...Array(daysInMonth).keys()].map(i=>i+1);
+  window._bankChartMonth.data.datasets[0].data=dayInc;
+  window._bankChartMonth.data.datasets[1].data=dayOut;
+  window._bankChartMonth.update();
+  // Обновляем заголовок нижнего графика
+  const titleEl=document.querySelector('.bank-charts .chart-card:last-child .chart-title');
+  if(titleEl)titleEl.textContent=`Движение по дням — ${MONTHS_FULL[mo-1]} ${yr}`;
+  // Подсвечиваем выбранный столбец
+  const d2=window._bankChartData;
+  window._bankChartMain.data.datasets[0].backgroundColor=
+    window._bankChartMain.data.labels.map((_,i)=>i===mo-1?'rgba(34,139,70,1)':'rgba(34,139,70,0.82)');
+  window._bankChartMain.data.datasets[1].backgroundColor=
+    window._bankChartMain.data.labels.map((_,i)=>i===mo-1?'rgba(185,28,28,1)':'rgba(185,28,28,0.82)');
+  window._bankChartMain.update();
+}
 
 function bankChartSwitch(mode){
   const d=window._bankChartData;
@@ -636,7 +663,26 @@ function renderBank(f){
       {type:'line',label:'Остаток ДС',data:balData,borderColor:'#C8A84B',backgroundColor:'rgba(200,168,75,0.18)',fill:'origin',borderWidth:2,pointRadius:2.5,pointBackgroundColor:'#C8A84B',tension:0.3,yAxisID:'y2'}
     ]},
     options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:10}}},
+      plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:10}},
+        tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(Math.abs(ctx.raw)>=1e6?(ctx.raw/1e6).toFixed(2)+'М':(ctx.raw/1e3).toFixed(0)+'К')}}},
+      onClick:(evt,items)=>{
+        if(!items.length)return;
+        const idx=items[0].index;
+        const d=window._bankChartData;
+        const isMonths=document.getElementById('btnMonths')?.classList.contains('active');
+        if(isMonths){
+          // Клик на месяц → обновить нижний график по дням
+          const yr=+(document.getElementById('bankChartYearSel')?.value||d.curYear);
+          const mo=idx+1;
+          bankUpdateDays(yr,mo);
+        } else {
+          // Клик на год → переключить верхний на месяцы этого года
+          const yr=d.allYears[idx];
+          const sel=document.getElementById('bankChartYearSel');
+          if(sel){sel.value=yr;sel.style.display='';}
+          bankChartSwitch('months');
+        }
+      },
       scales:scaleOpts}
   });
 
