@@ -383,8 +383,7 @@ function bankUpdateOpeningBal(){
   const inc=window._bankChartMain.data.datasets[0].data;
   const out=window._bankChartMain.data.datasets[1].data;
   const opening=parseNum(val)||0;
-  let b=opening;
-  window._bankChartMain.data.datasets[3].data=inc.map((v,i)=>{b+=v-out[i];return Math.round(b);});
+  window._bankChartMain.data.datasets[2].data=calcBalWithOpening(inc,out,opening);
   window._bankChartMain.update();
 }
 
@@ -436,10 +435,8 @@ function bankChartSwitch(mode){
     window._bankChartMain.data.labels=d.allYears.map(String);
     window._bankChartMain.data.datasets[0].data=d.allYearsInc;
     window._bankChartMain.data.datasets[1].data=d.allYearsOut;
-    const yBal=calcBal(d.allYearsInc,d.allYearsOut);
-    window._bankChartMain.data.datasets[2].data=yBal;
-    const opening=parseNum(document.getElementById('openingBalance')?.value||'0')||0;
-    window._bankChartMain.data.datasets[3].data=calcBal(d.allYearsInc.map((v,i)=>i===0?v+opening:v),d.allYearsOut);
+    const op=getOpeningBal();
+    window._bankChartMain.data.datasets[2].data=calcBalWithOpening(d.allYearsInc,d.allYearsOut,op);
   } else {
     btnM&&btnM.classList.add('active');
     btnY&&btnY.classList.remove('active');
@@ -450,10 +447,7 @@ function bankChartSwitch(mode){
     window._bankChartMain.data.labels=d.monthLabels;
     window._bankChartMain.data.datasets[0].data=yd.inc;
     window._bankChartMain.data.datasets[1].data=yd.out;
-    const mBal=calcBal(yd.inc,yd.out);
-    window._bankChartMain.data.datasets[2].data=mBal;
-    const op=parseNum(document.getElementById('openingBalance')?.value||'0')||0;
-    window._bankChartMain.data.datasets[3].data=calcBal(yd.inc.map((v,i)=>i===0?v+op:v),yd.out);
+    window._bankChartMain.data.datasets[2].data=calcBalWithOpening(yd.inc,yd.out,getOpeningBal());
   }
   window._bankChartMain.update();
 }
@@ -687,17 +681,16 @@ function renderBank(f){
   };
 
   const getOpeningBal=()=>{const v=document.getElementById('openingBalance')?.value||'0';return parseNum(v)||0;};
-  const calcBalAbs=(inc,out,opening)=>{let b=opening;return inc.map((v,i)=>{b+=v-out[i];return Math.round(b);});};
+  const calcBalWithOpening=(inc,out,opening)=>{let b=opening;return inc.map((v,i)=>{b+=v-out[i];return Math.round(b);});};
 
-  const makeMainChart=(labels,incData,outData,balData)=>{
+  const makeMainChart=(labels,incData,outData)=>{
   const opening=getOpeningBal();
-  const balAbs=calcBalAbs(incData,outData,opening);
+  const balData=calcBalWithOpening(incData,outData,opening);
   return({
     data:{labels,datasets:[
       {type:'bar',label:'Поступления',data:incData,backgroundColor:'rgba(34,139,70,0.82)',borderRadius:2,yAxisID:'y'},
       {type:'bar',label:'Списания',data:outData,backgroundColor:'rgba(185,28,28,0.82)',borderRadius:2,yAxisID:'y'},
-      {type:'line',label:'Остаток (от 0)',data:balData,borderColor:'#C8A84B',backgroundColor:'rgba(200,168,75,0.12)',fill:'origin',borderWidth:1.5,pointRadius:2,pointBackgroundColor:'#C8A84B',tension:0.3,yAxisID:'y2',borderDash:[4,3]},
-      {type:'line',label:'Остаток (факт)',data:balAbs,borderColor:'#E87C25',backgroundColor:'rgba(232,124,37,0.10)',fill:'origin',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#E87C25',tension:0.3,yAxisID:'y2'}
+      {type:'line',label:'Остаток ДС',data:balData,borderColor:'#E87C25',backgroundColor:'rgba(232,124,37,0.13)',fill:'origin',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#E87C25',tension:0.3,yAxisID:'y2'}
     ]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:10}},
@@ -753,11 +746,7 @@ function renderBank(f){
   if(window._bankChartMonth)window._bankChartMonth.destroy();
   const d=window._bankChartData;
 
-  // Считаем нарастающий остаток по годам
-  let bal=0;
-  const yearsBal=d.allYears.map((_,i)=>{bal+=d.allYearsInc[i]-d.allYearsOut[i];return Math.round(bal);});
-
-  window._bankChartMain=new Chart(document.getElementById('chartMain'),makeMainChart(d.allYears.map(String),d.allYearsInc,d.allYearsOut,yearsBal));
+  window._bankChartMain=new Chart(document.getElementById('chartMain'),makeMainChart(d.allYears.map(String),d.allYearsInc,d.allYearsOut));
   window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartDays(d.curYear,d.curMonth,d.dayInc,d.dayOut));
   window._bankChartData._chartDaysFn=chartDays;
 }
