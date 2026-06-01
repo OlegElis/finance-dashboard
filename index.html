@@ -134,6 +134,11 @@
   .chart-toggle button{padding:4px 12px;border:none;background:transparent;cursor:pointer;font-family:var(--sans);font-size:11px;font-weight:500;color:var(--text2);transition:all 0.15s;}
   .chart-toggle button.active{background:var(--accent);color:#fff;}
   .chart-year-sel{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--sans);font-size:11px;color:var(--text);background:var(--surface);outline:none;cursor:pointer;}
+  .acc-row-selectable{cursor:pointer;}
+  .acc-row-selectable:hover td{background:#e4edf7!important;}
+  .acc-row-selectable.selected td{background:#d0e3f7!important;font-weight:600;}
+  .acc-filter-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;background:var(--accent);color:#fff;border-radius:12px;font-size:10px;font-weight:600;margin-left:8px;cursor:pointer;}
+  .acc-filter-badge:hover{background:#1a3c6e;}
   .chart-opening-bal{display:flex;align-items:center;gap:6px;margin-left:auto;}
   .chart-opening-bal label{font-size:10px;color:var(--text3);white-space:nowrap;}
   .chart-opening-bal input{width:110px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--sans);font-size:11px;color:var(--text);background:var(--surface);outline:none;text-align:right;font-variant-numeric:tabular-nums;}
@@ -304,6 +309,50 @@ function getMonth(row){const d=parseDate(row[COL.DATE_OPIU])||parseDate(row[COL.
 function getPeriodKey(row,mode){const year=getYear(row),month=getMonth(row);if(!year)return null;if(mode==='year')return String(year);if(mode==='quarter')return`Q${Math.ceil((month||1)/3)} ${year}`;if(!month)return null;return`${MONTHS_FULL[month-1]} ${year}`;}
 function periodSortKey(k,mode){if(mode==='year')return k;if(mode==='quarter'){const[q,y]=k.split(' ');return`${y}-${q}`;}const parts=k.split(' ');const mi=MONTHS_FULL.indexOf(parts[0])+1;return`${parts[1]}-${String(mi).padStart(2,'0')}`;}
 function calcBalWithOpening(inc,out,opening){let b=opening;return inc.map((v,i)=>{b+=v-out[i];return Math.round(b);});}
+
+let _bankSelectedAcc=null;
+
+function bankFilterByAccount(accName){
+  // Если кликнули на уже выбранный — сбрасываем
+  if(_bankSelectedAcc===accName){
+    _bankSelectedAcc=null;
+  } else {
+    _bankSelectedAcc=accName;
+  }
+  // Обновляем подсветку строк
+  document.querySelectorAll('.acc-row-selectable').forEach(tr=>{
+    tr.classList.toggle('selected', tr.dataset.acc===_bankSelectedAcc);
+  });
+  // Обновляем бейдж фильтра
+  const badge=document.getElementById('accFilterBadge');
+  if(badge){badge.style.display=_bankSelectedAcc?'inline-flex':'none';badge.querySelector('span').textContent=_bankSelectedAcc;}
+  // Перестраиваем данные графиков
+  bankRebuildChartData();
+}
+
+function bankRebuildChartData(){
+  const d=window._bankChartData;
+  if(!d)return;
+  const filterAcc=_bankSelectedAcc;
+  const src=filterAcc?RAW.filter(r=>String(r[COL.ACCOUNT]||'').trim()===filterAcc):RAW;
+
+  const allYearsInc=d.allYears.map(()=>0),allYearsOut=d.allYears.map(()=>0);
+  const yearDataByYear={};
+  d.allYears.forEach(yr=>yearDataByYear[yr]={inc:new Array(12).fill(0),out:new Array(12).fill(0)});
+
+  src.forEach(row=>{
+    const dt=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
+    if(!dt)return;
+    const inc=parseNum(row[COL.INCOME]),out=Math.abs(parseNum(row[COL.OUTCOME]));
+    const yi=d.allYears.indexOf(dt.getFullYear());
+    if(yi>=0){allYearsInc[yi]+=inc;allYearsOut[yi]+=out;}
+    const yd=yearDataByYear[dt.getFullYear()];
+    if(yd){yd.inc[dt.getMonth()]+=inc;yd.out[dt.getMonth()]+=Math.abs(parseNum(row[COL.OUTCOME]));}
+  });
+
+  d.allYearsInc=allYearsInc;d.allYearsOut=allYearsOut;d.yearDataByYear=yearDataByYear;
+  bankChartSwitch(document.getElementById('btnMonths')?.classList.contains('active')?'months':'years');
+}
 
 function setStatus(dot,text){document.getElementById('statusDot').className='status-dot '+dot;document.getElementById('statusText').textContent=text;}
 function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const cls=numClass(v);const display=typeof val==='number'?fmt(val):(val||'—');return`<td class="${cls} ${extra}">${display}</td>`;}
@@ -509,7 +558,7 @@ function renderBank(f){
     if(!arr.length)return'';
     const id='bank-sec-'+(sectionIdx++);
     const si=arr.reduce((s,a)=>s+a.inc,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
-    const rows=arr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
+    const rows=arr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr class="acc-row-selectable${_bankSelectedAcc===a.name?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${a.name.replace(/'/g,"\\'")}')"><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
     const hdr=`<tbody id="${id}-hdr"><tr class="section-header section-header-toggle" onclick="toggleBankSection('${id}')">
       <td style="width:40%;color:var(--accent);font-size:13px"><span class="toggle-arrow">▼</span>${label}</td>
       <td style="text-align:right;color:var(--income);font-weight:600;font-size:13px;font-variant-numeric:tabular-nums">${fmt(si)}</td>
@@ -611,7 +660,7 @@ function renderBank(f){
   const buildNoReqSection=(arr)=>{
     const id='bank-sec-'+(sectionIdx++);
     const si=arr.reduce((s,a)=>s+a.inc,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
-    const rows=arr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
+    const rows=arr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr class="acc-row-selectable${_bankSelectedAcc===a.name?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${a.name.replace(/'/g,"\\'")}')"><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
     const hdr=`<tbody id="${id}-hdr"><tr class="section-header section-header-toggle" onclick="toggleBankSection('${id}')">
       <td style="width:40%;color:var(--accent);font-size:13px"><span class="toggle-arrow">▼</span>Без реквизитов:</td>
       <td style="text-align:right;color:var(--income);font-weight:600;font-size:13px;font-variant-numeric:tabular-nums">${fmt(si)}</td>
@@ -648,6 +697,7 @@ function renderBank(f){
         </div>
         <select id="bankChartYearSel" class="chart-year-sel" style="display:none" onchange="bankChartSwitch('months')">${yearOptHtml}</select>
         <span id="chartMainTitle" style="font-size:12px;font-weight:600;color:var(--text);margin-left:4px">Движение по годам</span>
+        <span id="accFilterBadge" class="acc-filter-badge" style="display:none" onclick="bankFilterByAccount(_bankSelectedAcc)">× <span></span></span>
       </div>
       <div class="chart-wrap"><canvas id="chartMain"></canvas></div>
     </div>
