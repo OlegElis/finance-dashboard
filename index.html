@@ -134,6 +134,10 @@
   .chart-toggle button{padding:4px 12px;border:none;background:transparent;cursor:pointer;font-family:var(--sans);font-size:11px;font-weight:500;color:var(--text2);transition:all 0.15s;}
   .chart-toggle button.active{background:var(--accent);color:#fff;}
   .chart-year-sel{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--sans);font-size:11px;color:var(--text);background:var(--surface);outline:none;cursor:pointer;}
+  .chart-opening-bal{display:flex;align-items:center;gap:6px;margin-left:auto;}
+  .chart-opening-bal label{font-size:10px;color:var(--text3);white-space:nowrap;}
+  .chart-opening-bal input{width:110px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--sans);font-size:11px;color:var(--text);background:var(--surface);outline:none;text-align:right;font-variant-numeric:tabular-nums;}
+  .chart-opening-bal input:focus{border-color:var(--accent);}
 
   /* ── Bank collapsible section ── */
   .section-header-toggle{cursor:pointer;user-select:none;}
@@ -370,6 +374,20 @@ function switchTab(name){
 }
 function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);}
 
+function bankUpdateOpeningBal(){
+  const val=document.getElementById('openingBalance')?.value||'0';
+  localStorage.setItem('fin_openingBal',val);
+  if(!window._bankChartMain||!window._bankChartData)return;
+  const d=window._bankChartData;
+  const isMonths=document.getElementById('btnMonths')?.classList.contains('active');
+  const inc=window._bankChartMain.data.datasets[0].data;
+  const out=window._bankChartMain.data.datasets[1].data;
+  const opening=parseNum(val)||0;
+  let b=opening;
+  window._bankChartMain.data.datasets[3].data=inc.map((v,i)=>{b+=v-out[i];return Math.round(b);});
+  window._bankChartMain.update();
+}
+
 function bankUpdateDays(yr,mo){
   const daysInMonth=new Date(yr,mo,0).getDate();
   const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0);
@@ -420,7 +438,8 @@ function bankChartSwitch(mode){
     window._bankChartMain.data.datasets[1].data=d.allYearsOut;
     const yBal=calcBal(d.allYearsInc,d.allYearsOut);
     window._bankChartMain.data.datasets[2].data=yBal;
-    window._bankChartMain.data.datasets[2].fill='origin';
+    const opening=parseNum(document.getElementById('openingBalance')?.value||'0')||0;
+    window._bankChartMain.data.datasets[3].data=calcBal(d.allYearsInc.map((v,i)=>i===0?v+opening:v),d.allYearsOut);
   } else {
     btnM&&btnM.classList.add('active');
     btnY&&btnY.classList.remove('active');
@@ -433,7 +452,8 @@ function bankChartSwitch(mode){
     window._bankChartMain.data.datasets[1].data=yd.out;
     const mBal=calcBal(yd.inc,yd.out);
     window._bankChartMain.data.datasets[2].data=mBal;
-    window._bankChartMain.data.datasets[2].fill='origin';
+    const op=parseNum(document.getElementById('openingBalance')?.value||'0')||0;
+    window._bankChartMain.data.datasets[3].data=calcBal(yd.inc.map((v,i)=>i===0?v+op:v),yd.out);
   }
   window._bankChartMain.update();
 }
@@ -645,6 +665,10 @@ function renderBank(f){
         </div>
         <select id="bankChartYearSel" class="chart-year-sel" style="display:none" onchange="bankChartSwitch('months')">${yearOptHtml}</select>
         <span id="chartMainTitle" style="font-size:12px;font-weight:600;color:var(--text);margin-left:4px">Движение по годам</span>
+        <div class="chart-opening-bal">
+          <label>Входящий остаток:</label>
+          <input type="text" id="openingBalance" placeholder="0,00" value="${(localStorage.getItem('fin_openingBal')||'0')}" onchange="bankUpdateOpeningBal()" oninput="bankUpdateOpeningBal()">
+        </div>
       </div>
       <div class="chart-wrap"><canvas id="chartMain"></canvas></div>
     </div>
@@ -662,11 +686,18 @@ function renderBank(f){
     y2:{type:'linear',position:'right',grid:{display:false},ticks:{font:{size:9},color:'#C8A84B',callback:v=>v>=1e6?(v/1e6).toFixed(1)+'М':v>=1e3?(v/1e3).toFixed(0)+'К':v},title:{display:true,text:'Остаток',color:'#C8A84B',font:{size:9}}}
   };
 
-  const makeMainChart=(labels,incData,outData,balData)=>({
+  const getOpeningBal=()=>{const v=document.getElementById('openingBalance')?.value||'0';return parseNum(v)||0;};
+  const calcBalAbs=(inc,out,opening)=>{let b=opening;return inc.map((v,i)=>{b+=v-out[i];return Math.round(b);});};
+
+  const makeMainChart=(labels,incData,outData,balData)=>{
+  const opening=getOpeningBal();
+  const balAbs=calcBalAbs(incData,outData,opening);
+  return({
     data:{labels,datasets:[
       {type:'bar',label:'Поступления',data:incData,backgroundColor:'rgba(34,139,70,0.82)',borderRadius:2,yAxisID:'y'},
       {type:'bar',label:'Списания',data:outData,backgroundColor:'rgba(185,28,28,0.82)',borderRadius:2,yAxisID:'y'},
-      {type:'line',label:'Остаток ДС',data:balData,borderColor:'#C8A84B',backgroundColor:'rgba(200,168,75,0.18)',fill:'origin',borderWidth:2,pointRadius:2.5,pointBackgroundColor:'#C8A84B',tension:0.3,yAxisID:'y2'}
+      {type:'line',label:'Остаток (от 0)',data:balData,borderColor:'#C8A84B',backgroundColor:'rgba(200,168,75,0.12)',fill:'origin',borderWidth:1.5,pointRadius:2,pointBackgroundColor:'#C8A84B',tension:0.3,yAxisID:'y2',borderDash:[4,3]},
+      {type:'line',label:'Остаток (факт)',data:balAbs,borderColor:'#E87C25',backgroundColor:'rgba(232,124,37,0.10)',fill:'origin',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#E87C25',tension:0.3,yAxisID:'y2'}
     ]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:10}},
@@ -690,7 +721,7 @@ function renderBank(f){
         }
       },
       scales:scaleOpts}
-  });
+  });};
 
   const DOW=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
   const makeDayLabels=(yr,mo,days)=>[...Array(days).keys()].map(i=>{const dow=new Date(yr,mo-1,i+1).getDay();return[String(i+1),DOW[dow]];});
