@@ -128,6 +128,11 @@
   .chart-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow);}
   .chart-title{font-family:var(--head);font-size:12px;font-weight:700;color:var(--text);margin-bottom:12px;}
   .chart-wrap{position:relative;height:160px;}
+  .chart-controls{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+  .chart-toggle{display:flex;background:var(--surface2);border-radius:6px;overflow:hidden;border:1px solid var(--border);}
+  .chart-toggle button{padding:4px 12px;border:none;background:transparent;cursor:pointer;font-family:var(--sans);font-size:11px;font-weight:500;color:var(--text2);transition:all 0.15s;}
+  .chart-toggle button.active{background:var(--accent);color:#fff;}
+  .chart-year-sel{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--sans);font-size:11px;color:var(--text);background:var(--surface);outline:none;cursor:pointer;}
 
   /* ── Bank collapsible section ── */
   .section-header-toggle{cursor:pointer;user-select:none;}
@@ -366,6 +371,35 @@ function switchTab(name){
 }
 function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);}
 
+function bankChartSwitch(mode){
+  const d=window._bankChartData;
+  if(!d||!window._bankChartMain)return;
+  const btnY=document.getElementById('btnYears');
+  const btnM=document.getElementById('btnMonths');
+  const sel=document.getElementById('bankChartYearSel');
+  const title=document.getElementById('chartMainTitle');
+  if(mode==='years'){
+    btnY&&btnY.classList.add('active');
+    btnM&&btnM.classList.remove('active');
+    if(sel)sel.style.display='none';
+    if(title)title.textContent='Движение по годам';
+    window._bankChartMain.data.labels=d.allYears.map(String);
+    window._bankChartMain.data.datasets[0].data=d.allYearsInc;
+    window._bankChartMain.data.datasets[1].data=d.allYearsOut;
+  } else {
+    btnM&&btnM.classList.add('active');
+    btnY&&btnY.classList.remove('active');
+    if(sel)sel.style.display='';
+    const yr=sel?+sel.value:d.curYear;
+    const yd=d.yearDataByYear[yr]||{inc:new Array(12).fill(0),out:new Array(12).fill(0)};
+    if(title)title.textContent=`Движение по месяцам — ${yr}`;
+    window._bankChartMain.data.labels=d.monthLabels;
+    window._bankChartMain.data.datasets[0].data=yd.inc;
+    window._bankChartMain.data.datasets[1].data=yd.out;
+  }
+  window._bankChartMain.update();
+}
+
 function toggleBankSection(id){
   const body=document.getElementById(id);
   const header=document.getElementById(id+'-hdr');
@@ -549,14 +583,32 @@ function renderBank(f){
 
   const tableHtml=`<div class="table-wrap"><div class="table-header"><span class="table-title">Свод по денежным средствам</span><span class="table-count">${map.size} счетов</span></div><div class="table-scroll"><table class="report-table bank-table"><thead><tr><th style="width:40%">Счёт</th><th>Поступление</th><th>Списание</th><th>Итого</th></tr></thead>${buildDsSection(ds)}${buildPretaxSection(pretaxMain,pretaxKassy,pretaxCards)}${buildNoReqSection(noReq)}<tbody><tr class="total"><td>ИТОГО</td>${td(totInc)}${td(totOut)}${td(totAll)}</tr></tbody></table></div></div>`;
 
+  // Сохраняем данные для переключения
+  window._bankChartData={allYears,allYearsInc,allYearsOut,monthLabels,yearDataByYear:{},curYear,curMonth,daysInMonth,dayInc,dayOut};
+  // Данные по месяцам для каждого года
+  allYears.forEach(yr=>{
+    const inc=new Array(12).fill(0),out=new Array(12).fill(0);
+    RAW.forEach(row=>{
+      const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
+      if(!d||d.getFullYear()!==yr)return;
+      inc[d.getMonth()]+=parseNum(row[COL.INCOME]);
+      out[d.getMonth()]+=Math.abs(parseNum(row[COL.OUTCOME]));
+    });
+    window._bankChartData.yearDataByYear[yr]={inc,out};
+  });
+
+  const yearOptHtml=allYears.map(y=>`<option value="${y}"${y===curYear?'selected':''}>${y}</option>`).join('');
   const chartsHtml=`<div class="bank-charts">
     <div class="chart-card">
-      <div class="chart-title">Движение по годам</div>
-      <div class="chart-wrap"><canvas id="chartAllYears"></canvas></div>
-    </div>
-    <div class="chart-card">
-      <div class="chart-title">Движение по месяцам — ${curYear}</div>
-      <div class="chart-wrap"><canvas id="chartYear"></canvas></div>
+      <div class="chart-controls">
+        <div class="chart-toggle">
+          <button id="btnYears" class="active" onclick="bankChartSwitch('years')">По годам</button>
+          <button id="btnMonths" onclick="bankChartSwitch('months')">По месяцам</button>
+        </div>
+        <select id="bankChartYearSel" class="chart-year-sel" style="display:none" onchange="bankChartSwitch('months')">${yearOptHtml}</select>
+        <span id="chartMainTitle" style="font-size:12px;font-weight:600;color:var(--text);margin-left:4px">Движение по годам</span>
+      </div>
+      <div class="chart-wrap"><canvas id="chartMain"></canvas></div>
     </div>
     <div class="chart-card">
       <div class="chart-title">Движение по дням — ${MONTHS_FULL[curMonth-1]} ${curYear}</div>
@@ -566,32 +618,22 @@ function renderBank(f){
 
   el.innerHTML=kpiHtml+`<div class="bank-layout">${tableHtml}${chartsHtml}</div>`;
 
-  // Рендер графиков после вставки в DOM
   const chartOpts=(labels,incData,outData)=>({
     type:'bar',
-    data:{
-      labels,
-      datasets:[
-        {label:'Поступления',data:incData,backgroundColor:'rgba(30,92,58,0.75)',borderRadius:2},
-        {label:'Списания',data:outData,backgroundColor:'rgba(139,32,32,0.75)',borderRadius:2}
-      ]
-    },
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false}},
-      scales:{
-        x:{grid:{display:false},ticks:{font:{size:10}}},
-        y:{grid:{color:'#f0f1f5'},ticks:{font:{size:10},callback:v=>v>=1e6?(v/1e6).toFixed(1)+'М':v>=1e3?(v/1e3).toFixed(0)+'К':v}}
-      }
-    }
+    data:{labels,datasets:[
+      {label:'Поступления',data:incData,backgroundColor:'rgba(30,92,58,0.75)',borderRadius:2},
+      {label:'Списания',data:outData,backgroundColor:'rgba(139,32,32,0.75)',borderRadius:2}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:10}}},
+              y:{grid:{color:'#f0f1f5'},ticks:{font:{size:10},callback:v=>v>=1e6?(v/1e6).toFixed(1)+'М':v>=1e3?(v/1e3).toFixed(0)+'К':v}}}}
   });
 
-  if(window._bankChartAllYears)window._bankChartAllYears.destroy();
-  if(window._bankChartYear)window._bankChartYear.destroy();
+  if(window._bankChartMain)window._bankChartMain.destroy();
   if(window._bankChartMonth)window._bankChartMonth.destroy();
-  window._bankChartAllYears=new Chart(document.getElementById('chartAllYears'),chartOpts(allYears.map(String),allYearsInc,allYearsOut));
-  window._bankChartYear=new Chart(document.getElementById('chartYear'),chartOpts(monthLabels,yearInc,yearOut));
-  window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartOpts([...Array(daysInMonth).keys()].map(i=>i+1),dayInc,dayOut));
+  const d=window._bankChartData;
+  window._bankChartMain=new Chart(document.getElementById('chartMain'),chartOpts(d.allYears.map(String),d.allYearsInc,d.allYearsOut));
+  window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartOpts([...Array(d.daysInMonth).keys()].map(i=>i+1),d.dayInc,d.dayOut));
 }
 
 function renderDDS(f){
