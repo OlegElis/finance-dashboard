@@ -357,6 +357,28 @@ function bankApplyFilter(){
   bankRebuildChartData();
 }
 
+const TXN_PAGE=500;
+function bankFillTxn(reset){
+  if(reset)window._bankTxnOffset=0;
+  const all=window._bankTxnData||[];
+  const offset=window._bankTxnOffset||0;
+  const slice=all.slice(offset,offset+TXN_PAGE);
+  const body=document.getElementById('txnBody');
+  if(!body)return;
+  const dateStr=r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
+  const html=slice.map(r=>{
+    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]),tot=inc+out;
+    return`<tr><td>${dateStr(r)}</td><td>${r[COL.ACCOUNT]||'—'}</td><td style="font-size:10px">${r[COL.TYPE]||'—'}</td><td style="font-size:10px">${r[COL.SECOND_SIDE]||'—'}</td><td style="font-size:10px">${r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'—'}</td><td class="${inc>0?'num-positive':''} num">${inc?fmt(inc):'—'}</td><td class="${out<0?'num-negative':''} num">${out?fmt(out):'—'}</td><td class="${numClass(tot)} num">${fmt(tot)}</td><td style="font-size:10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r[COL.PURPOSE]||'—'}</td></tr>`;
+  }).join('');
+  if(reset){body.innerHTML=html;}else{body.insertAdjacentHTML('beforeend',html);}
+  window._bankTxnOffset=offset+slice.length;
+  const moreEl=document.getElementById('txnMore');
+  const lbl=document.getElementById('txnMoreLabel');
+  if(moreEl){moreEl.style.display=window._bankTxnOffset<all.length?'block':'none';}
+  if(lbl){const rem=all.length-window._bankTxnOffset;lbl.textContent=rem>0?`ещё ${rem.toLocaleString('ru-RU')}`:'';}
+}
+window.bankLoadMoreTxn=function(){bankFillTxn(false);};
+
 function bankRebuildChartData(){
   const d=window._bankChartData;
   if(!d)return;
@@ -738,47 +760,30 @@ function renderBank(f){
     </div>
   </div>`;
 
-  // Таблица транзакций
-  const txnData=data.slice().sort((a,b)=>{
+  // Таблица транзакций — сортировка и хранение в глобальной переменной
+  window._bankTxnData=data.slice().sort((a,b)=>{
     const da=parseDate(a[COL.DATE_DDS])||parseDate(a[COL.DATE_OPIU])||new Date(0);
     const db=parseDate(b[COL.DATE_DDS])||parseDate(b[COL.DATE_OPIU])||new Date(0);
     return db-da;
   });
-  const txnRows=txnData.map(r=>{
-    const date=String(r[COL.DATE_DDS]||r[COL.DATE_OPIU]||'—');
-    const acc=String(r[COL.ACCOUNT]||'—').trim();
-    const type=String(r[COL.TYPE]||'').trim();
-    const counterparty=String(r[COL.SECOND_SIDE]||'—').trim();
-    const article=String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'—').trim();
-    const purpose=String(r[COL.PURPOSE]||'—').trim();
-    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
-    const isInc=inc>0;
-    const cls=isInc?'txn-income':'txn-expense';
-    return`<tr class="${cls}">
-      <td>${date}</td>
-      <td>${acc}</td>
-      <td style="color:var(--text3)">${type}</td>
-      <td>${counterparty}</td>
-      <td>${article}</td>
-      <td class="num num-val">${isInc?fmt(inc):'—'}</td>
-      <td class="num num-val">${out<0?fmt(out):'—'}</td>
-      <td class="num" style="color:var(--text2)">${fmt(inc+out)}</td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;color:var(--text3)" title="${purpose}">${purpose}</td>
-    </tr>`;
-  }).join('');
 
   const txnHtml=`<div class="txn-wrap">
-    <div class="txn-header"><span class="table-title">Операции</span><span class="table-count">${txnData.length.toLocaleString('ru-RU')} транзакций</span></div>
+    <div class="txn-header"><span class="table-title">Операции</span><span class="table-count" id="txnCount">${window._bankTxnData.length.toLocaleString('ru-RU')} транзакций</span></div>
     <div class="txn-scroll"><table class="txn-table">
       <thead><tr>
         <th>Дата</th><th>Счёт</th><th>Тип</th><th>Контрагент</th><th>Статья</th>
         <th class="num">Поступление</th><th class="num">Списание</th><th class="num">Итого</th><th>Назначение</th>
       </tr></thead>
-      <tbody>${txnRows}</tbody>
+      <tbody id="txnBody"></tbody>
     </table></div>
+    <div id="txnMore" style="display:none;padding:10px 20px;text-align:center;border-top:1px solid var(--border)">
+      <button onclick="bankLoadMoreTxn()" style="padding:6px 20px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer;font-size:11px;font-family:var(--sans)">Показать ещё 500</button>
+      <span id="txnMoreLabel" style="margin-left:10px;font-size:11px;color:var(--text3)"></span>
+    </div>
   </div>`;
 
   el.innerHTML=kpiHtml+`<div class="bank-layout">${tableHtml}${chartsHtml}</div>`+txnHtml;
+  bankFillTxn(true);
 
   const scaleOpts={
     x:{grid:{display:false},ticks:{font:{size:10}}},
