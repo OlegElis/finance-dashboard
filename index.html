@@ -227,6 +227,23 @@
   .bank-detail-table tr:last-child td{border-bottom:2px solid var(--border);}
   .bank-detail-table tr:hover td{background:#eef2fb;}
   .bank-more{padding:6px 40px;font-size:10px;color:var(--text3);font-style:italic;border-top:1px solid var(--border);}
+
+  /* ── DDS tree ── */
+  .dds-tree{width:100%;border-collapse:collapse;font-size:11px;}
+  .dds-tree td{padding:4px 8px;border-top:1px solid var(--border);}
+  .dds-sec td{background:#f0f4ff;font-weight:700;font-size:12px;cursor:pointer;}
+  .dds-sec:hover td{background:#e0e8ff;}
+  .dds-art td{background:#f8f9fa;font-weight:600;cursor:pointer;}
+  .dds-art:hover td{background:#f0f0f0;}
+  .dds-sub td{background:var(--surface);font-weight:500;cursor:pointer;}
+  .dds-sub:hover td{background:var(--surface2);}
+  .dds-txn td{background:var(--surface);font-size:10px;color:var(--text2);}
+  .dds-txn:hover td{background:var(--surface2);}
+  .dds-arrow{display:inline-block;margin-right:6px;font-size:10px;}
+  .dds-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .dds-extra-filters{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:11px;}
+  .dds-extra-filters label{color:var(--text2);}
+  .dds-extra-filters select{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:11px;outline:none;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -539,7 +556,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
-  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
+  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDir:''},
   opiu:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
   fot:{dateFrom:'',dateTo:'',periodType:'direction',fotDetail:'direction',preset:'all'}
 };
@@ -1098,56 +1115,121 @@ function renderBank(f){
   bankChartSwitch('months');
 }
 
+window.ddsTgl=function(nodeId){
+  const childClass='dds-child-'+nodeId;
+  const children=document.querySelectorAll('.'+childClass);
+  const hdrRow=document.querySelector('[data-node="'+nodeId+'"]');
+  const arrow=hdrRow?hdrRow.querySelector('.dds-arrow'):null;
+  const isOpen=arrow&&arrow.textContent==='▼';
+  if(isOpen){
+    document.querySelectorAll('[class*="dds-child-'+nodeId+'"]').forEach(r=>r.style.display='none');
+    if(arrow)arrow.textContent='▶';
+  }else{
+    children.forEach(r=>r.style.display='');
+    if(arrow)arrow.textContent='▼';
+  }
+};
+
 function renderDDS(f){
   const el=document.getElementById('tabDds');
-  const mode=f.periodType;
-  const data=applyBaseFilters(RAW,f).filter(r=>String(r[COL.TYPE]||'').trim().toLowerCase()!=='перемещение');
-  if(!data.length){el.innerHTML=emptyState();return;}
-  const periodsSet=new Set(),psk={};
-  const grand={inc:{},out:{}};
-  const sections={};
-  ['001_','002_','003_'].forEach(k=>sections[k]={inc:{},out:{},incSub:{},outArt:{}});
+  let data=applyBaseFilters(RAW,f).filter(r=>String(r[COL.TYPE]||'').trim().toLowerCase()!=='перемещение');
+  // Build unique activity directions for the extra filter
+  const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  if(f.activityDir){data=data.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===f.activityDir);}
+  if(!data.length){
+    const dirOpts=allDirs.map(d=>`<option value="${d}"${f.activityDir===d?' selected':''}>${d}</option>`).join('');
+    el.innerHTML=renderFilterBar('dds')+`<div class="dds-extra-filters"><label>Направление:</label><select onchange="_tabFilters['dds'].activityDir=this.value;renderActiveTab()"><option value="">Все направления</option>${dirOpts}</select></div>`+emptyState();
+    return;
+  }
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
+  const c=v=>String(v||'').trim()||'—';
+  const fmtNum=(v)=>{if(!v||v===0)return'—';return v.toLocaleString('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:0});};
+  const sectionNames={'001_':'I. Операционная деятельность','002_':'II. Финансовая деятельность','003_':'III. Инвестиционная деятельность','other':'IV. Прочее'};
+  const secOrder=['001_','002_','003_','other'];
+  // Build tree: sec → art → sub → rows
+  const tree={};
+  secOrder.forEach(sk=>{tree[sk]={inc:0,out:0,arts:{}};});
   data.forEach(row=>{
-    const pk=getPeriodKey(row,mode);if(!pk)return;
-    periodsSet.add(pk);psk[pk]=periodSortKey(pk,mode);
-    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
     const cfRaw=String(row[COL.FIN_OP]||'').trim();
-    const cfKey=cfRaw.startsWith('001_')?'001_':cfRaw.startsWith('002_')?'002_':cfRaw.startsWith('003_')?'003_':null;
-    if(inc!==0)grand.inc[pk]=(grand.inc[pk]||0)+inc;
-    if(out!==0)grand.out[pk]=(grand.out[pk]||0)+out;
-    if(cfKey){
-      const sec=sections[cfKey];
-      if(inc!==0){const sub=String(row[COL.ARTICLE_NAME]||row[COL.ARTICLE_CODE]||'Без подстатьи').trim();sec.inc[pk]=(sec.inc[pk]||0)+inc;if(!sec.incSub[sub])sec.incSub[sub]={};sec.incSub[sub][pk]=(sec.incSub[sub][pk]||0)+inc;}
-      if(out!==0){const art=String(row[COL.ARTICLE_CODE]||'Без статьи').trim();sec.out[pk]=(sec.out[pk]||0)+out;if(!sec.outArt[art])sec.outArt[art]={};sec.outArt[art][pk]=(sec.outArt[art][pk]||0)+out;}
-    }
+    const sk=cfRaw.startsWith('001_')?'001_':cfRaw.startsWith('002_')?'002_':cfRaw.startsWith('003_')?'003_':'other';
+    const art=String(row[COL.ARTICLE_CODE]||'Без статьи').trim();
+    const sub=String(row[COL.ARTICLE_NAME]||'Без подстатьи').trim();
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    tree[sk].inc+=inc;tree[sk].out+=out;
+    if(!tree[sk].arts[art])tree[sk].arts[art]={inc:0,out:0,subs:{}};
+    tree[sk].arts[art].inc+=inc;tree[sk].arts[art].out+=out;
+    if(!tree[sk].arts[art].subs[sub])tree[sk].arts[art].subs[sub]={inc:0,out:0,rows:[]};
+    tree[sk].arts[art].subs[sub].inc+=inc;tree[sk].arts[art].subs[sub].out+=out;
+    tree[sk].arts[art].subs[sub].rows.push(row);
   });
-  const periods=[...periodsSet].sort((a,b)=>psk[a].localeCompare(psk[b]));
-  const np=periods.length;
-  const totalInc=periods.map(p=>grand.inc[p]||0);
-  const totalOut=periods.map(p=>grand.out[p]||0);
-  const saldo=periods.map((_,i)=>totalInc[i]+totalOut[i]);
-  let running=0;
-  const cumSaldo=saldo.map(s=>{running+=s;return running;});
+  // KPI
+  const totalInc=data.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
+  const totalOut=data.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
+  const totalNet=totalInc+totalOut;
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totalInc.reduce((a,b)=>a+b,0))}</div></div>
-    <div class="kpi-card red"><div class="kpi-label">Выплаты</div><div class="kpi-value negative">${fmt(totalOut.reduce((a,b)=>a+b,0))}</div></div>
-    <div class="kpi-card ${running>=0?'green':'red'}"><div class="kpi-label">Кумулятивное сальдо</div><div class="kpi-value ${running>=0?'positive':'negative'}">${fmt(running)}</div></div>
-    <div class="kpi-card blue"><div class="kpi-label">Периодов</div><div class="kpi-value">${np}</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totalInc)}</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Выплаты</div><div class="kpi-value negative">${fmt(totalOut)}</div></div>
+    <div class="kpi-card ${totalNet>=0?'green':'red'}"><div class="kpi-label">Кумулятивное сальдо</div><div class="kpi-value ${totalNet>=0?'positive':'negative'}">${fmt(totalNet)}</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Операций</div><div class="kpi-value">${data.length.toLocaleString('ru-RU')}</div></div>
   </div>`;
-  const ths=periods.map(p=>`<th>${p}</th>`).join('');
-  const trRow=(label,vals,cls='')=>`<tr class="${cls}"><td></td><td>${label}</td>${vals.map(v=>td(v)).join('')}<td class="${numClass(vals.reduce((a,b)=>a+(typeof b==='number'?b:0),0))}">${fmt(vals.reduce((a,b)=>a+(typeof b==='number'?b:0),0))}</td></tr>`;
-  const sectionNames={'001_':'I. Операционная деятельность','002_':'II. Финансовая деятельность','003_':'III. Инвестиционная деятельность'};
-  let sectHtml='';
-  ['001_','002_','003_'].forEach(k=>{
-    const sec=sections[k];
-    sectHtml+=`<tr class="section-header"><td></td><td>${sectionNames[k]}</td>${periods.map(()=>'<td></td>').join('')}<td></td></tr>`;
-    Object.entries(sec.incSub).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([sub,byP])=>{const vals=periods.map(p=>byP[p]||0);sectHtml+=`<tr><td></td><td style="padding-left:24px;font-size:11px">▸ ${sub}</td>${vals.map(v=>td(v)).join('')}<td class="${numClass(vals.reduce((a,b)=>a+b,0))}">${fmt(vals.reduce((a,b)=>a+b,0))}</td></tr>`;});
-    Object.entries(sec.outArt).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([art,byP])=>{const vals=periods.map(p=>byP[p]||0);sectHtml+=`<tr><td></td><td style="padding-left:24px;font-size:11px">▸ ${art}</td>${vals.map(v=>td(v)).join('')}<td class="${numClass(vals.reduce((a,b)=>a+b,0))}">${fmt(vals.reduce((a,b)=>a+b,0))}</td></tr>`;});
-    const secTot=periods.map(p=>(sec.inc[p]||0)+(sec.out[p]||0));
-    sectHtml+=trRow(`Итого по разделу:`,secTot,'subtotal');
-    sectHtml+=`<tr><td colspan="${np+3}"></td></tr>`;
+  // Build table rows
+  let rows='';
+  secOrder.forEach((sk,si)=>{
+    const sec=tree[sk];
+    const hasData=sec.inc!==0||sec.out!==0;
+    if(!hasData)return;
+    const secNet=sec.inc+sec.out;
+    const secNodeId='s'+si;
+    rows+=`<tr class="dds-sec" data-node="${secNodeId}" onclick="ddsTgl('${secNodeId}')">
+      <td><span class="dds-arrow">▶</span>${sectionNames[sk]}</td>
+      <td class="dds-num num-positive">${fmtNum(sec.inc)}</td>
+      <td class="dds-num num-negative">${fmtNum(sec.out)}</td>
+      <td class="dds-num ${secNet>=0?'num-positive':'num-negative'}">${fmtNum(secNet)}</td>
+    </tr>`;
+    Object.keys(sec.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
+      const artData=sec.arts[art];
+      const artNet=artData.inc+artData.out;
+      const artNodeId=secNodeId+'-a'+ai;
+      rows+=`<tr class="dds-art dds-child-${secNodeId}" data-node="${artNodeId}" style="display:none" onclick="ddsTgl('${artNodeId}')">
+        <td style="padding-left:24px"><span class="dds-arrow">▶</span>${art}</td>
+        <td class="dds-num num-positive">${fmtNum(artData.inc)}</td>
+        <td class="dds-num num-negative">${fmtNum(artData.out)}</td>
+        <td class="dds-num ${artNet>=0?'num-positive':'num-negative'}">${fmtNum(artNet)}</td>
+      </tr>`;
+      Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
+        const subData=artData.subs[sub];
+        const subNet=subData.inc+subData.out;
+        const subNodeId=artNodeId+'-sub'+subi;
+        rows+=`<tr class="dds-sub dds-child-${artNodeId}" data-node="${subNodeId}" style="display:none" onclick="ddsTgl('${subNodeId}')">
+          <td style="padding-left:48px"><span class="dds-arrow">▶</span>${sub}</td>
+          <td class="dds-num num-positive">${fmtNum(subData.inc)}</td>
+          <td class="dds-num num-negative">${fmtNum(subData.out)}</td>
+          <td class="dds-num ${subNet>=0?'num-positive':'num-negative'}">${fmtNum(subNet)}</td>
+        </tr>`;
+        subData.rows.forEach(row=>{
+          const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+          const amtVal=inc!==0?inc:out;
+          const amtCls=amtVal>0?'num-positive':'num-negative';
+          rows+=`<tr class="dds-txn dds-child-${subNodeId}" style="display:none">
+            <td style="padding-left:72px">${ds(row[COL.DATE_DDS])}</td>
+            <td>${c(row[COL.TYPE])}</td>
+            <td>${c(row[COL.OFFER_ID])}</td>
+            <td class="dds-num ${amtCls}">${fmtNum(amtVal)}</td>
+            <td>${c(row[COL.FNS])}</td>
+            <td>${c(row[COL.ACCOUNT])}</td>
+            <td>${c(row[COL.ANALYTICS])}</td>
+            <td>${c(row[COL.SECOND_SIDE])}</td>
+            <td>${c(row[COL.PURPOSE])}</td>
+            <td>${c(row[COL.ACTIVITY_DIR])}</td>
+            <td>${c(row[COL.FIN_OP])}</td>
+          </tr>`;
+        });
+      });
+    });
   });
-  el.innerHTML=renderFilterBar('dds')+kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Движение денежных средств</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк · ${np} периодов</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>${trRow('ПОСТУПЛЕНИЯ',totalInc,'subtotal')}${trRow('ВЫПЛАТЫ',totalOut,'subtotal')}${trRow('САЛЬДО ПЕРИОДА',saldo,'subtotal')}${trRow('КУМУЛЯТИВНОЕ САЛЬДО',cumSaldo,'subtotal')}<tr><td colspan="${np+3}" style="height:8px"></td></tr>${sectHtml}</tbody></table></div></div>`;
+  const dirOpts=allDirs.map(d=>`<option value="${d}"${f.activityDir===d?' selected':''}>${d}</option>`).join('');
+  const extraFilters=`<div class="dds-extra-filters"><label>Направление:</label><select onchange="_tabFilters['dds'].activityDir=this.value;renderActiveTab()"><option value="">Все направления</option>${dirOpts}</select></div>`;
+  el.innerHTML=renderFilterBar('dds')+extraFilters+kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Движение денежных средств</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="dds-tree"><thead><tr><th style="text-align:left;padding:6px 8px;font-size:11px;background:var(--surface2);border-bottom:1px solid var(--border)">Раздел / Статья / Подстатья</th><th style="text-align:right;padding:6px 8px;font-size:11px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--income)">Поступления</th><th style="text-align:right;padding:6px 8px;font-size:11px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--outcome)">Списания</th><th style="text-align:right;padding:6px 8px;font-size:11px;background:var(--surface2);border-bottom:1px solid var(--border)">Итого</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 function renderOPIU(f){
