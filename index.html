@@ -1160,7 +1160,7 @@ function renderDDS(f){
   const mode=f.periodType||'month';
 
   // Period type selector
-  const ptOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
+  const ptOpts=[{v:'day',l:'По дням'},{v:'week',l:'По неделям'},{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
 
   // Apply extra filters
   let data=baseData;
@@ -1209,9 +1209,19 @@ function renderDDS(f){
   const getDDSPeriodKey=row=>{
     const d=parseDate(row[COL.DATE_DDS]);
     if(!d)return null;
-    const y=d.getFullYear(),m=d.getMonth()+1;
+    const y=d.getFullYear(),m=d.getMonth()+1,day=d.getDate();
     if(mode==='year')return String(y);
     if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;
+    if(mode==='week'){
+      // ISO-неделя
+      const tmp=new Date(Date.UTC(y,m-1,day));
+      const dayNum=tmp.getUTCDay()||7;
+      tmp.setUTCDate(tmp.getUTCDate()+4-dayNum);
+      const yearStart=new Date(Date.UTC(tmp.getUTCFullYear(),0,1));
+      const wk=Math.ceil(((tmp-yearStart)/86400000+1)/7);
+      return`Нед ${String(wk).padStart(2,'0')} ${tmp.getUTCFullYear()}`;
+    }
+    if(mode==='day')return`${String(day).padStart(2,'0')}.${String(m).padStart(2,'0')}.${y}`;
     return`${MONTHS_FULL[m-1]} ${y}`;
   };
 
@@ -1245,7 +1255,12 @@ function renderDDS(f){
     artMap[art].subs[sub].rows.push(row);
   });
 
-  const periods=[...periodsSet].sort((a,b)=>periodSortKey(a,mode).localeCompare(periodSortKey(b,mode)));
+  const ddsSortKey=k=>{
+    if(mode==='day')return k.split('.').reverse().join(''); // dd.mm.yyyy → yyyymmdd
+    if(mode==='week'){const[,wk,y]=k.match(/Нед (\d+) (\d+)/)||[];return`${y}${wk}`;}
+    return periodSortKey(k,mode);
+  };
+  const periods=[...periodsSet].sort((a,b)=>ddsSortKey(a).localeCompare(ddsSortKey(b)));
   const nPeriods=periods.length;
   const totalCols=2+nPeriods; // name col + period cols + итого col
 
