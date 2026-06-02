@@ -1140,8 +1140,6 @@ window.ddsTgl=function(nodeId){
 
 function renderDDS(f){
   const el=document.getElementById('tabDds');
-  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const numClass=v=>v>0?'color:var(--income)':v<0?'color:var(--outcome)':'';
 
   // Base filtered data (no перемещение), used for building year/month dropdowns
   const baseData=applyBaseFilters(RAW,f).filter(r=>String(r[COL.TYPE]||'').trim().toLowerCase()!=='перемещение');
@@ -1158,16 +1156,23 @@ function renderDDS(f){
   // Build direction options from all RAW data
   const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
 
+  // Period type
+  const mode=f.periodType||'month';
+
+  // Period type selector
+  const ptOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
+
   // Apply extra filters
   let data=baseData;
   if(f.activityDir)data=data.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===f.activityDir);
   if(f.year)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d&&d.getFullYear()===+f.year;});
   if(f.month)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d&&d.getMonth()+1===+f.month;});
 
-  // Build year/month/direction filter bar
+  // Build year/month/direction/period filter bar
   const yearOpts=allYears.map(y=>`<option value="${y}"${f.year==y?'selected':''}>${y}</option>`).join('');
   const monthOpts=allMonths.map(m=>`<option value="${m}"${f.month==m?'selected':''}>${MONTHS_SHORT[m-1]}</option>`).join('');
   const dirOpts=allDirs.map(d=>`<option value="${d}"${f.activityDir===d?'selected':''}>${d}</option>`).join('');
+  const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
   const extraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
     <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].year=this.value;_tabFilters['dds'].month='';renderDDS(getFilters())"><option value="">Все</option>${yearOpts}</select>
@@ -1175,6 +1180,8 @@ function renderDDS(f){
     <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].month=this.value;renderDDS(getFilters())"><option value="">Все</option>${monthOpts}</select>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].activityDir=this.value;renderDDS(getFilters())"><option value="">Все</option>${dirOpts}</select>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>
+    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].periodType=this.value;renderDDS(getFilters())">${ptOptsHtml}</select>
   </div>`;
 
   if(!data.length){
@@ -1193,164 +1200,221 @@ function renderDDS(f){
     <div class="kpi-card blue"><div class="kpi-label">Операций</div><div class="kpi-value">${data.length.toLocaleString('ru-RU')}</div></div>
   </div>`;
 
-  // Build tree: sec → incArts/outArts → sub → rows
+  // Section metadata
   const secOrder=['001_','002_','003_','other'];
   const sectionNames={'001_':'I. ОПЕРАЦИОННАЯ ДЕЯТЕЛЬНОСТЬ','002_':'II. ФИНАНСОВАЯ ДЕЯТЕЛЬНОСТЬ','003_':'III. ИНВЕСТИЦИОННАЯ ДЕЯТЕЛЬНОСТЬ','other':'IV. ПРОЧЕЕ'};
   const sectionRoman={'001_':'I','002_':'II','003_':'III','other':'IV'};
+
+  // Build tree with period amounts
   const tree={};
-  secOrder.forEach(sk=>{tree[sk]={inc:0,out:0,incArts:{},outArts:{}};});
+  secOrder.forEach(sk=>{tree[sk]={perInc:{},perOut:{},incArts:{},outArts:{}};});
+  const periodsSet=new Set();
+
   data.forEach(row=>{
+    const pk=getPeriodKey(row,mode);
+    if(!pk)return;
+    periodsSet.add(pk);
     const cfRaw=String(row[COL.FIN_OP]||'').trim();
     const sk=cfRaw.startsWith('001_')?'001_':cfRaw.startsWith('002_')?'002_':cfRaw.startsWith('003_')?'003_':'other';
     const art=String(row[COL.ARTICLE_CODE]||'Без статьи').trim();
     const sub=String(row[COL.ARTICLE_NAME]||'Без подстатьи').trim();
-    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
-    tree[sk].inc+=inc;tree[sk].out+=out;
-    const target=inc>0?tree[sk].incArts:tree[sk].outArts;
-    if(!target[art])target[art]={inc:0,out:0,subs:{}};
-    target[art].inc+=inc;target[art].out+=out;
-    if(!target[art].subs[sub])target[art].subs[sub]={inc:0,out:0,rows:[]};
-    target[art].subs[sub].inc+=inc;target[art].subs[sub].out+=out;
-    target[art].subs[sub].rows.push(row);
+    const inc=parseNum(row[COL.INCOME]);
+    const out=parseNum(row[COL.OUTCOME]);
+    // Section level
+    tree[sk].perInc[pk]=(tree[sk].perInc[pk]||0)+inc;
+    tree[sk].perOut[pk]=(tree[sk].perOut[pk]||0)+out;
+    // Article level (split by inc/out)
+    const artMap=inc>0?tree[sk].incArts:tree[sk].outArts;
+    if(!artMap[art])artMap[art]={perInc:{},perOut:{},subs:{}};
+    artMap[art].perInc[pk]=(artMap[art].perInc[pk]||0)+inc;
+    artMap[art].perOut[pk]=(artMap[art].perOut[pk]||0)+out;
+    // Sub level
+    if(!artMap[art].subs[sub])artMap[art].subs[sub]={perInc:{},perOut:{},rows:[]};
+    artMap[art].subs[sub].perInc[pk]=(artMap[art].subs[sub].perInc[pk]||0)+inc;
+    artMap[art].subs[sub].perOut[pk]=(artMap[art].subs[sub].perOut[pk]||0)+out;
+    artMap[art].subs[sub].rows.push(row);
   });
 
-  // Row builder helpers
-  const secRow=(secNodeId,parentNodeId,label,inc,out)=>{
-    const net=inc+out;
-    return `<tr class="dds-sec" data-node="${secNodeId}">
-      <td colspan="4" style="padding-left:8px;font-weight:700;font-size:12px;color:var(--accent);background:#eef2ff">${label}</td>
-      <td style="text-align:right;font-weight:700;color:var(--income);background:#eef2ff;padding:4px 6px;white-space:nowrap">${inc?fmt(inc):''}</td>
-      <td style="text-align:right;font-weight:700;color:var(--outcome);background:#eef2ff;padding:4px 6px;white-space:nowrap">${out?fmt(out):''}</td>
-      <td style="text-align:right;font-weight:700;background:#eef2ff;padding:4px 6px;white-space:nowrap;${numClass(net)}">${fmt(net)}</td>
-      <td colspan="9" style="background:#eef2ff"></td>
+  const periods=[...periodsSet].sort((a,b)=>periodSortKey(a,mode).localeCompare(periodSortKey(b,mode)));
+  const nPeriods=periods.length;
+  const totalCols=2+nPeriods; // name col + period cols + итого col
+
+  // Table header
+  const thead=`<thead><tr style="position:sticky;top:0;z-index:2">
+    <th style="text-align:left;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:220px;position:sticky;left:0;z-index:3">Раздел / Статья / Подстатья</th>
+    ${periods.map(p=>`<th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:90px">${p}</th>`).join('')}
+    <th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:90px">ИТОГО</th>
+  </tr></thead>`;
+
+  // Helper: build period+total cells from perInc and perOut maps
+  const periodCells=(perInc,perOut,bgColor='',bold=false)=>{
+    const style=`text-align:right;padding:3px 8px;white-space:nowrap;font-size:11px;${bgColor?'background:'+bgColor+';':''}${bold?'font-weight:700;':''}`;
+    return periods.map(p=>{
+      const inc=perInc[p]||0,out=perOut[p]||0,net=inc+out;
+      if(net===0&&inc===0&&out===0)return`<td style="${style}"></td>`;
+      const cls=net>0?'color:var(--income)':net<0?'color:var(--outcome)':'';
+      return`<td style="${style}${cls}">${fmt(net)}</td>`;
+    }).join('')+
+    (()=>{
+      const tInc=Object.values(perInc).reduce((a,b)=>a+b,0);
+      const tOut=Object.values(perOut).reduce((a,b)=>a+b,0);
+      const net=tInc+tOut;
+      const cls=net>0?'color:var(--income)':net<0?'color:var(--outcome)':'';
+      return`<td style="${style}${cls};border-left:1px solid var(--border)">${fmt(net)}</td>`;
+    })();
+  };
+
+  // Section row
+  const secRow=(secNodeId,label,perInc,perOut)=>{
+    return`<tr class="dds-sec" data-node="${secNodeId}">
+      <td style="padding:5px 8px;font-weight:700;font-size:12px;color:var(--accent);background:#eef2ff;position:sticky;left:0;z-index:1">${label}</td>
+      ${periodCells(perInc,perOut,'#eef2ff',true)}
     </tr>`;
   };
-  const groupRow=(nodeId,parentNodeId,label,inc,out)=>{
-    const net=inc+out;
-    return `<tr class="dds-group dds-child-${parentNodeId}" data-node="${nodeId}" onclick="ddsTgl('${nodeId}')">
-      <td colspan="4" style="padding-left:20px;font-weight:600;font-size:11px;background:#f5f7ff;cursor:pointer"><span class="dds-arrow">▶</span>${label}</td>
-      <td style="text-align:right;font-weight:600;color:var(--income);background:#f5f7ff;padding:4px 6px;white-space:nowrap">${inc?fmt(inc):''}</td>
-      <td style="text-align:right;font-weight:600;color:var(--outcome);background:#f5f7ff;padding:4px 6px;white-space:nowrap">${out?fmt(out):''}</td>
-      <td style="text-align:right;font-weight:600;background:#f5f7ff;padding:4px 6px;white-space:nowrap;${numClass(net)}">${net!==0?fmt(net):''}</td>
-      <td colspan="9" style="background:#f5f7ff"></td>
+
+  // Group row (ПОСТУПЛЕНИЯ/ВЫПЛАТЫ)
+  const groupRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
+    return`<tr class="dds-group dds-child-${parentNodeId}" data-node="${nodeId}" onclick="ddsTgl('${nodeId}')">
+      <td style="padding:4px 8px 4px 20px;font-weight:600;font-size:11px;background:#f5f7ff;cursor:pointer;position:sticky;left:0;z-index:1"><span class="dds-arrow">▶</span>${label}</td>
+      ${periodCells(perInc,perOut,'#f5f7ff',true)}
     </tr>`;
   };
-  const artRow=(nodeId,parentNodeId,label,inc,out)=>{
-    const net=inc+out;
-    return `<tr class="dds-art dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
-      <td colspan="4" style="padding-left:36px;font-weight:600;font-size:11px;cursor:pointer"><span class="dds-arrow">▶</span>${label}</td>
-      <td style="text-align:right;color:var(--income);padding:4px 6px;white-space:nowrap">${inc?fmt(inc):''}</td>
-      <td style="text-align:right;color:var(--outcome);padding:4px 6px;white-space:nowrap">${out?fmt(out):''}</td>
-      <td style="text-align:right;padding:4px 6px;white-space:nowrap;${numClass(net)}">${net!==0?fmt(net):''}</td>
-      <td colspan="9"></td>
+
+  // Article row
+  const artRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
+    return`<tr class="dds-art dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
+      <td style="padding:3px 8px 3px 36px;font-weight:600;font-size:11px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface)"><span class="dds-arrow">▶</span>${label}</td>
+      ${periodCells(perInc,perOut,'',false)}
     </tr>`;
   };
-  const subRow=(nodeId,parentNodeId,label,inc,out)=>{
-    const net=inc+out;
-    return `<tr class="dds-sub dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
-      <td colspan="4" style="padding-left:52px;font-size:11px;cursor:pointer"><span class="dds-arrow">▶</span>${label}</td>
-      <td style="text-align:right;color:var(--income);padding:4px 6px;white-space:nowrap;font-size:11px">${inc?fmt(inc):''}</td>
-      <td style="text-align:right;color:var(--outcome);padding:4px 6px;white-space:nowrap;font-size:11px">${out?fmt(out):''}</td>
-      <td style="text-align:right;padding:4px 6px;white-space:nowrap;font-size:11px;${numClass(net)}">${net!==0?fmt(net):''}</td>
-      <td colspan="9"></td>
+
+  // SubArticle row
+  const subRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
+    return`<tr class="dds-sub dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
+      <td style="padding:3px 8px 3px 52px;font-size:11px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface)"><span class="dds-arrow">▶</span>${label}</td>
+      ${periodCells(perInc,perOut,'',false)}
     </tr>`;
   };
-  const txnRow=(parentNodeId,row)=>{
-    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
-    const td=(content,extra='')=>`<td style="padding:2px 5px;white-space:nowrap;font-size:10px;color:var(--text2);${extra}">${content||''}</td>`;
-    return `<tr class="dds-txn dds-child-${parentNodeId}" style="display:none">
-      ${td(ds(row[COL.DATE_DDS]),'padding-left:68px;text-align:center')}
-      ${td(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
-      ${td(String(row[COL.TYPE]||''),'text-align:center')}
-      ${td(String(row[COL.OFFER_ID]||''))}
-      <td style="padding:2px 5px;white-space:nowrap;font-size:10px;text-align:right;${inc>0?'color:var(--income)':''}">${inc?fmt(inc):''}</td>
-      <td style="padding:2px 5px;white-space:nowrap;font-size:10px;text-align:right;${out<0?'color:var(--outcome)':''}">${out?fmt(out):''}</td>
-      ${td('')}
-      ${td(String(row[COL.FNS]||''),'text-align:center')}
-      ${td(String(row[COL.ACCOUNT]||''))}
-      ${td(String(row[COL.ARTICLE_CODE]||''))}
-      ${td(String(row[COL.ARTICLE_NAME]||''))}
-      ${td(String(row[COL.ANALYTICS]||''),'text-align:center')}
-      ${td(String(row[COL.SECOND_SIDE]||''))}
-      ${td(String(row[COL.PURPOSE]||''))}
-      ${td(String(row[COL.ACTIVITY_DIR]||''))}
-      ${td(String(row[COL.FIN_OP]||''))}
+
+  // Transaction block row - one row per subarticle with mini-table inside
+  const txnBlockRow=(parentNodeId,rows)=>{
+    const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+    const c=v=>String(v||'').trim();
+    const miniHeaders=`<tr style="position:sticky;top:0;background:#f8f9ff">
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">ДДС</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">ОПиУ</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Тип операции</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">ID Offer</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--income);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff;text-align:right">Поступление</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--outcome);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff;text-align:right">Списание</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff;text-align:center">ФНС</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Реквизиты счёта</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Статья</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Подстатья</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff;text-align:center">Аналитика</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Контрагент</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Назначение</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Направление</th>
+      <th style="padding:3px 6px;font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--border);background:#f0f3ff">Фин. операция</th>
+    </tr>`;
+    const miniRows=rows.map(row=>{
+      const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+      return`<tr style="border-top:1px solid var(--border)">
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap;text-align:center">${ds(row[COL.DATE_DDS])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap;text-align:center">${dsOpiu(row[COL.DATE_OPIU])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap;text-align:center">${c(row[COL.TYPE])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.OFFER_ID])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap;text-align:right;${inc>0?'color:var(--income)':''}">${inc?fmt(inc):''}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap;text-align:right;${out<0?'color:var(--outcome)':''}">${out?fmt(out):''}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap;text-align:center">${c(row[COL.FNS])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.ACCOUNT])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.ARTICLE_CODE])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.ARTICLE_NAME])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap;text-align:center">${c(row[COL.ANALYTICS])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.SECOND_SIDE])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.PURPOSE])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.ACTIVITY_DIR])}</td>
+        <td style="padding:2px 6px;font-size:10px;white-space:nowrap">${c(row[COL.FIN_OP])}</td>
+      </tr>`;
+    }).join('');
+    return`<tr class="dds-txn-block dds-child-${parentNodeId}" style="display:none">
+      <td colspan="${totalCols}" style="padding:0;border-top:1px solid var(--border)">
+        <div style="overflow-x:auto;margin-left:68px">
+          <table style="border-collapse:collapse;font-size:10px;min-width:100%">
+            <thead>${miniHeaders}</thead>
+            <tbody>${miniRows}</tbody>
+          </table>
+        </div>
+      </td>
     </tr>`;
   };
-  const totalRow=(roman,inc,out)=>{
-    const net=inc+out;
-    return `<tr class="dds-total-row">
-      <td colspan="4" style="padding:5px 8px;font-weight:700;font-size:11px;border-top:2px solid var(--border)">ИТОГО ПО РАЗДЕЛУ ${roman}:</td>
-      <td style="text-align:right;font-weight:700;color:var(--income);padding:5px 6px;border-top:2px solid var(--border);white-space:nowrap">${inc?fmt(inc):''}</td>
-      <td style="text-align:right;font-weight:700;color:var(--outcome);padding:5px 6px;border-top:2px solid var(--border);white-space:nowrap">${out?fmt(out):''}</td>
-      <td style="text-align:right;font-weight:700;padding:5px 6px;border-top:2px solid var(--border);white-space:nowrap;${numClass(net)}">${fmt(net)}</td>
-      <td colspan="9" style="border-top:2px solid var(--border)"></td>
-    </tr><tr><td colspan="16" style="height:8px"></td></tr>`;
+
+  // ИТОГО row
+  const totalRow=(roman,perInc,perOut)=>{
+    const cells=periodCells(perInc,perOut,'',true);
+    return`<tr class="dds-total-row">
+      <td style="padding:5px 8px;font-weight:700;font-size:11px;border-top:2px solid var(--border);position:sticky;left:0;background:var(--surface)">ИТОГО ПО РАЗДЕЛУ ${roman}:</td>
+      ${cells.replace(/font-size:11px/g,'font-size:11px;border-top:2px solid var(--border)')}
+    </tr><tr><td colspan="${totalCols}" style="height:8px"></td></tr>`;
   };
 
   // Build rows
   let rows='';
   secOrder.forEach((sk,si)=>{
     const sec=tree[sk];
-    if(sec.inc===0&&sec.out===0)return;
+    const secTotalInc=Object.values(sec.perInc).reduce((a,b)=>a+b,0);
+    const secTotalOut=Object.values(sec.perOut).reduce((a,b)=>a+b,0);
+    if(secTotalInc===0&&secTotalOut===0)return;
     const secNodeId='ds'+si;
     const hasInc=Object.keys(sec.incArts).length>0;
     const hasOut=Object.keys(sec.outArts).length>0;
 
-    rows+=secRow(secNodeId,null,sectionNames[sk],sec.inc,sec.out);
+    rows+=secRow(secNodeId,sectionNames[sk],sec.perInc,sec.perOut);
 
     if(hasInc){
-      const incTotal=Object.values(sec.incArts).reduce((s,a)=>s+a.inc,0);
       const incGroupId=secNodeId+'-inc';
-      rows+=groupRow(incGroupId,secNodeId,'ПОСТУПЛЕНИЯ',incTotal,0);
+      const grpInc={},grpOut={};
+      Object.values(sec.incArts).forEach(a=>{
+        Object.entries(a.perInc).forEach(([p,v])=>{grpInc[p]=(grpInc[p]||0)+v;});
+        Object.entries(a.perOut).forEach(([p,v])=>{grpOut[p]=(grpOut[p]||0)+v;});
+      });
+      rows+=groupRow(incGroupId,secNodeId,'ПОСТУПЛЕНИЯ',grpInc,grpOut);
       Object.keys(sec.incArts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
         const artData=sec.incArts[art];
         const artNodeId=incGroupId+'-a'+ai;
-        rows+=artRow(artNodeId,incGroupId,art,artData.inc,artData.out);
+        rows+=artRow(artNodeId,incGroupId,art,artData.perInc,artData.perOut);
         Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
           const subData=artData.subs[sub];
           const subNodeId=artNodeId+'-s'+subi;
-          rows+=subRow(subNodeId,artNodeId,sub,subData.inc,subData.out);
-          subData.rows.forEach(row=>{rows+=txnRow(subNodeId,row);});
+          rows+=subRow(subNodeId,artNodeId,sub,subData.perInc,subData.perOut);
+          rows+=txnBlockRow(subNodeId,subData.rows);
         });
       });
     }
 
     if(hasOut){
-      const outTotal=Object.values(sec.outArts).reduce((s,a)=>s+a.out,0);
       const outGroupId=secNodeId+'-out';
-      rows+=groupRow(outGroupId,secNodeId,'ВЫПЛАТЫ',0,outTotal);
+      const grpInc={},grpOut={};
+      Object.values(sec.outArts).forEach(a=>{
+        Object.entries(a.perInc).forEach(([p,v])=>{grpInc[p]=(grpInc[p]||0)+v;});
+        Object.entries(a.perOut).forEach(([p,v])=>{grpOut[p]=(grpOut[p]||0)+v;});
+      });
+      rows+=groupRow(outGroupId,secNodeId,'ВЫПЛАТЫ',grpInc,grpOut);
       Object.keys(sec.outArts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
         const artData=sec.outArts[art];
         const artNodeId=outGroupId+'-a'+ai;
-        rows+=artRow(artNodeId,outGroupId,art,artData.inc,artData.out);
+        rows+=artRow(artNodeId,outGroupId,art,artData.perInc,artData.perOut);
         Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
           const subData=artData.subs[sub];
           const subNodeId=artNodeId+'-s'+subi;
-          rows+=subRow(subNodeId,artNodeId,sub,subData.inc,subData.out);
-          subData.rows.forEach(row=>{rows+=txnRow(subNodeId,row);});
+          rows+=subRow(subNodeId,artNodeId,sub,subData.perInc,subData.perOut);
+          rows+=txnBlockRow(subNodeId,subData.rows);
         });
       });
     }
 
-    rows+=totalRow(sectionRoman[sk],sec.inc,sec.out);
+    rows+=totalRow(sectionRoman[sk],sec.perInc,sec.perOut);
   });
-
-  const thead=`<thead><tr>
-    <th colspan="4" style="text-align:left;padding:4px 8px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Раздел / Статья / Подстатья</th>
-    <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--income)">Поступление</th>
-    <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--outcome)">Списание</th>
-    <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Итого</th>
-    <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">ФНС</th>
-    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Реквизиты счёта</th>
-    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Статья</th>
-    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Подстатья</th>
-    <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Аналитика</th>
-    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Контрагент</th>
-    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Назначение</th>
-    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Направление</th>
-    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Фин. операция</th>
-  </tr></thead>`;
 
   el.innerHTML=renderFilterBar('dds')+extraFilters+kpiHtml+
     `<div class="table-wrap">
@@ -1358,8 +1422,8 @@ function renderDDS(f){
         <span class="table-title">Движение денежных средств</span>
         <span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span>
       </div>
-      <div class="table-scroll">
-        <table class="dds-tree">
+      <div class="table-scroll" style="overflow-x:auto">
+        <table class="dds-tree" style="min-width:600px">
           ${thead}
           <tbody>${rows}</tbody>
         </table>
