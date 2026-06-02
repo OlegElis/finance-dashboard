@@ -231,14 +231,18 @@
   /* ── DDS tree ── */
   .dds-tree{width:100%;border-collapse:collapse;font-size:11px;}
   .dds-tree td{padding:4px 8px;border-top:1px solid var(--border);}
-  .dds-sec td{background:#f0f4ff;font-weight:700;font-size:12px;cursor:pointer;}
+  .dds-sec td{background:#eef2ff;font-weight:700;font-size:12px;cursor:pointer;}
   .dds-sec:hover td{background:#e0e8ff;}
+  .dds-group td{background:#f5f7ff;font-weight:600;font-size:11px;cursor:pointer;}
+  .dds-group:hover td{background:#eaecff;}
   .dds-art td{background:#f8f9fa;font-weight:600;cursor:pointer;}
   .dds-art:hover td{background:#f0f0f0;}
   .dds-sub td{background:var(--surface);font-weight:500;cursor:pointer;}
   .dds-sub:hover td{background:var(--surface2);}
   .dds-txn td{background:var(--surface);font-size:10px;color:var(--text2);}
   .dds-txn:hover td{background:var(--surface2);}
+  .dds-total-row td{background:var(--surface);}
+  .dds-extra-filters select{font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);}
   .dds-arrow{display:inline-block;margin-right:6px;font-size:10px;}
   .dds-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
   .dds-extra-filters{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:11px;}
@@ -556,7 +560,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
-  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDir:''},
+  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDir:'',year:'',month:''},
   opiu:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
   fot:{dateFrom:'',dateTo:'',periodType:'direction',fotDetail:'direction',preset:'all'}
 };
@@ -1136,36 +1140,48 @@ window.ddsTgl=function(nodeId){
 
 function renderDDS(f){
   const el=document.getElementById('tabDds');
-  let data=applyBaseFilters(RAW,f).filter(r=>String(r[COL.TYPE]||'').trim().toLowerCase()!=='перемещение');
-  // Build unique activity directions for the extra filter
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const numClass=v=>v>0?'color:var(--income)':v<0?'color:var(--outcome)':'';
+
+  // Base filtered data (no перемещение), used for building year/month dropdowns
+  const baseData=applyBaseFilters(RAW,f).filter(r=>String(r[COL.TYPE]||'').trim().toLowerCase()!=='перемещение');
+
+  // Build year options from baseData
+  const allYears=[...new Set(baseData.map(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>a-b);
+
+  // Build month options for selected year (or all)
+  const yearForMonths=f.year?+f.year:null;
+  const monthsSource=yearForMonths?baseData.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d&&d.getFullYear()===yearForMonths;}):baseData;
+  const allMonths=[...new Set(monthsSource.map(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d?d.getMonth()+1:null;}).filter(Boolean))].sort((a,b)=>a-b);
+  const MONTHS_SHORT=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+
+  // Build direction options from all RAW data
   const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  if(f.activityDir){data=data.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===f.activityDir);}
+
+  // Apply extra filters
+  let data=baseData;
+  if(f.activityDir)data=data.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===f.activityDir);
+  if(f.year)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d&&d.getFullYear()===+f.year;});
+  if(f.month)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return d&&d.getMonth()+1===+f.month;});
+
+  // Build year/month/direction filter bar
+  const yearOpts=allYears.map(y=>`<option value="${y}"${f.year==y?'selected':''}>${y}</option>`).join('');
+  const monthOpts=allMonths.map(m=>`<option value="${m}"${f.month==m?'selected':''}>${MONTHS_SHORT[m-1]}</option>`).join('');
+  const dirOpts=allDirs.map(d=>`<option value="${d}"${f.activityDir===d?'selected':''}>${d}</option>`).join('');
+  const extraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;">
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
+    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].year=this.value;_tabFilters['dds'].month='';renderDDS(getFilters())"><option value="">Все</option>${yearOpts}</select>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
+    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].month=this.value;renderDDS(getFilters())"><option value="">Все</option>${monthOpts}</select>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
+    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].activityDir=this.value;renderDDS(getFilters())"><option value="">Все</option>${dirOpts}</select>
+  </div>`;
+
   if(!data.length){
-    const dirOpts=allDirs.map(d=>`<option value="${d}"${f.activityDir===d?' selected':''}>${d}</option>`).join('');
-    el.innerHTML=renderFilterBar('dds')+`<div class="dds-extra-filters"><label>Направление:</label><select onchange="_tabFilters['dds'].activityDir=this.value;renderActiveTab()"><option value="">Все направления</option>${dirOpts}</select></div>`+emptyState();
+    el.innerHTML=renderFilterBar('dds')+extraFilters+emptyState();
     return;
   }
-  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
-  const c=v=>String(v||'').trim()||'—';
-  const fmtNum=(v)=>{if(!v||v===0)return'—';return v.toLocaleString('ru-RU',{minimumFractionDigits:0,maximumFractionDigits:0});};
-  const sectionNames={'001_':'I. Операционная деятельность','002_':'II. Финансовая деятельность','003_':'III. Инвестиционная деятельность','other':'IV. Прочее'};
-  const secOrder=['001_','002_','003_','other'];
-  // Build tree: sec → art → sub → rows
-  const tree={};
-  secOrder.forEach(sk=>{tree[sk]={inc:0,out:0,arts:{}};});
-  data.forEach(row=>{
-    const cfRaw=String(row[COL.FIN_OP]||'').trim();
-    const sk=cfRaw.startsWith('001_')?'001_':cfRaw.startsWith('002_')?'002_':cfRaw.startsWith('003_')?'003_':'other';
-    const art=String(row[COL.ARTICLE_CODE]||'Без статьи').trim();
-    const sub=String(row[COL.ARTICLE_NAME]||'Без подстатьи').trim();
-    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
-    tree[sk].inc+=inc;tree[sk].out+=out;
-    if(!tree[sk].arts[art])tree[sk].arts[art]={inc:0,out:0,subs:{}};
-    tree[sk].arts[art].inc+=inc;tree[sk].arts[art].out+=out;
-    if(!tree[sk].arts[art].subs[sub])tree[sk].arts[art].subs[sub]={inc:0,out:0,rows:[]};
-    tree[sk].arts[art].subs[sub].inc+=inc;tree[sk].arts[art].subs[sub].out+=out;
-    tree[sk].arts[art].subs[sub].rows.push(row);
-  });
+
   // KPI
   const totalInc=data.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
   const totalOut=data.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
@@ -1176,83 +1192,180 @@ function renderDDS(f){
     <div class="kpi-card ${totalNet>=0?'green':'red'}"><div class="kpi-label">Кумулятивное сальдо</div><div class="kpi-value ${totalNet>=0?'positive':'negative'}">${fmt(totalNet)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Операций</div><div class="kpi-value">${data.length.toLocaleString('ru-RU')}</div></div>
   </div>`;
-  // Build table rows
+
+  // Build tree: sec → incArts/outArts → sub → rows
+  const secOrder=['001_','002_','003_','other'];
+  const sectionNames={'001_':'I. ОПЕРАЦИОННАЯ ДЕЯТЕЛЬНОСТЬ','002_':'II. ФИНАНСОВАЯ ДЕЯТЕЛЬНОСТЬ','003_':'III. ИНВЕСТИЦИОННАЯ ДЕЯТЕЛЬНОСТЬ','other':'IV. ПРОЧЕЕ'};
+  const sectionRoman={'001_':'I','002_':'II','003_':'III','other':'IV'};
+  const tree={};
+  secOrder.forEach(sk=>{tree[sk]={inc:0,out:0,incArts:{},outArts:{}};});
+  data.forEach(row=>{
+    const cfRaw=String(row[COL.FIN_OP]||'').trim();
+    const sk=cfRaw.startsWith('001_')?'001_':cfRaw.startsWith('002_')?'002_':cfRaw.startsWith('003_')?'003_':'other';
+    const art=String(row[COL.ARTICLE_CODE]||'Без статьи').trim();
+    const sub=String(row[COL.ARTICLE_NAME]||'Без подстатьи').trim();
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    tree[sk].inc+=inc;tree[sk].out+=out;
+    const target=inc>0?tree[sk].incArts:tree[sk].outArts;
+    if(!target[art])target[art]={inc:0,out:0,subs:{}};
+    target[art].inc+=inc;target[art].out+=out;
+    if(!target[art].subs[sub])target[art].subs[sub]={inc:0,out:0,rows:[]};
+    target[art].subs[sub].inc+=inc;target[art].subs[sub].out+=out;
+    target[art].subs[sub].rows.push(row);
+  });
+
+  // Row builder helpers
+  const secRow=(secNodeId,parentNodeId,label,inc,out)=>{
+    const net=inc+out;
+    const childClass=parentNodeId?`dds-child-${parentNodeId}`:'';
+    return `<tr class="dds-sec ${childClass}" data-node="${secNodeId}" style="${parentNodeId?'display:none':''}" onclick="ddsTgl('${secNodeId}')">
+      <td colspan="4" style="padding-left:8px;font-weight:700;font-size:12px;color:var(--accent);background:#eef2ff;cursor:pointer"><span class="dds-arrow">▶</span>${label}</td>
+      <td style="text-align:right;font-weight:700;color:var(--income);background:#eef2ff;padding:4px 6px;white-space:nowrap">${inc?fmt(inc):''}</td>
+      <td style="text-align:right;font-weight:700;color:var(--outcome);background:#eef2ff;padding:4px 6px;white-space:nowrap">${out?fmt(out):''}</td>
+      <td style="text-align:right;font-weight:700;background:#eef2ff;padding:4px 6px;white-space:nowrap;${numClass(net)}">${fmt(net)}</td>
+      <td colspan="9" style="background:#eef2ff"></td>
+    </tr>`;
+  };
+  const groupRow=(nodeId,parentNodeId,label,inc,out)=>{
+    const net=inc+out;
+    return `<tr class="dds-group dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
+      <td colspan="4" style="padding-left:20px;font-weight:600;font-size:11px;background:#f5f7ff;cursor:pointer"><span class="dds-arrow">▶</span>${label}</td>
+      <td style="text-align:right;font-weight:600;color:var(--income);background:#f5f7ff;padding:4px 6px;white-space:nowrap">${inc?fmt(inc):''}</td>
+      <td style="text-align:right;font-weight:600;color:var(--outcome);background:#f5f7ff;padding:4px 6px;white-space:nowrap">${out?fmt(out):''}</td>
+      <td style="text-align:right;font-weight:600;background:#f5f7ff;padding:4px 6px;white-space:nowrap;${numClass(net)}">${net!==0?fmt(net):''}</td>
+      <td colspan="9" style="background:#f5f7ff"></td>
+    </tr>`;
+  };
+  const artRow=(nodeId,parentNodeId,label,inc,out)=>{
+    const net=inc+out;
+    return `<tr class="dds-art dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
+      <td colspan="4" style="padding-left:36px;font-weight:600;font-size:11px;cursor:pointer"><span class="dds-arrow">▶</span>${label}</td>
+      <td style="text-align:right;color:var(--income);padding:4px 6px;white-space:nowrap">${inc?fmt(inc):''}</td>
+      <td style="text-align:right;color:var(--outcome);padding:4px 6px;white-space:nowrap">${out?fmt(out):''}</td>
+      <td style="text-align:right;padding:4px 6px;white-space:nowrap;${numClass(net)}">${net!==0?fmt(net):''}</td>
+      <td colspan="9"></td>
+    </tr>`;
+  };
+  const subRow=(nodeId,parentNodeId,label,inc,out)=>{
+    const net=inc+out;
+    return `<tr class="dds-sub dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
+      <td colspan="4" style="padding-left:52px;font-size:11px;cursor:pointer"><span class="dds-arrow">▶</span>${label}</td>
+      <td style="text-align:right;color:var(--income);padding:4px 6px;white-space:nowrap;font-size:11px">${inc?fmt(inc):''}</td>
+      <td style="text-align:right;color:var(--outcome);padding:4px 6px;white-space:nowrap;font-size:11px">${out?fmt(out):''}</td>
+      <td style="text-align:right;padding:4px 6px;white-space:nowrap;font-size:11px;${numClass(net)}">${net!==0?fmt(net):''}</td>
+      <td colspan="9"></td>
+    </tr>`;
+  };
+  const txnRow=(parentNodeId,row)=>{
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    const td=(content,extra='')=>`<td style="padding:2px 5px;white-space:nowrap;font-size:10px;color:var(--text2);${extra}">${content||''}</td>`;
+    return `<tr class="dds-txn dds-child-${parentNodeId}" style="display:none">
+      ${td(ds(row[COL.DATE_DDS]),'padding-left:68px;text-align:center')}
+      ${td(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
+      ${td(String(row[COL.TYPE]||''),'text-align:center')}
+      ${td(String(row[COL.OFFER_ID]||''))}
+      <td style="padding:2px 5px;white-space:nowrap;font-size:10px;text-align:right;${inc>0?'color:var(--income)':''}">${inc?fmt(inc):''}</td>
+      <td style="padding:2px 5px;white-space:nowrap;font-size:10px;text-align:right;${out<0?'color:var(--outcome)':''}">${out?fmt(out):''}</td>
+      ${td('')}
+      ${td(String(row[COL.FNS]||''),'text-align:center')}
+      ${td(String(row[COL.ACCOUNT]||''))}
+      ${td(String(row[COL.ARTICLE_CODE]||''))}
+      ${td(String(row[COL.ARTICLE_NAME]||''))}
+      ${td(String(row[COL.ANALYTICS]||''),'text-align:center')}
+      ${td(String(row[COL.SECOND_SIDE]||''))}
+      ${td(String(row[COL.PURPOSE]||''))}
+      ${td(String(row[COL.ACTIVITY_DIR]||''))}
+      ${td(String(row[COL.FIN_OP]||''))}
+    </tr>`;
+  };
+  const totalRow=(roman,inc,out)=>{
+    const net=inc+out;
+    return `<tr class="dds-total-row">
+      <td colspan="4" style="padding:5px 8px;font-weight:700;font-size:11px;border-top:2px solid var(--border)">ИТОГО ПО РАЗДЕЛУ ${roman}:</td>
+      <td style="text-align:right;font-weight:700;color:var(--income);padding:5px 6px;border-top:2px solid var(--border);white-space:nowrap">${inc?fmt(inc):''}</td>
+      <td style="text-align:right;font-weight:700;color:var(--outcome);padding:5px 6px;border-top:2px solid var(--border);white-space:nowrap">${out?fmt(out):''}</td>
+      <td style="text-align:right;font-weight:700;padding:5px 6px;border-top:2px solid var(--border);white-space:nowrap;${numClass(net)}">${fmt(net)}</td>
+      <td colspan="9" style="border-top:2px solid var(--border)"></td>
+    </tr><tr><td colspan="16" style="height:8px"></td></tr>`;
+  };
+
+  // Build rows
   let rows='';
   secOrder.forEach((sk,si)=>{
     const sec=tree[sk];
-    const hasData=sec.inc!==0||sec.out!==0;
-    if(!hasData)return;
-    const secNet=sec.inc+sec.out;
-    const secNodeId='s'+si;
-    rows+=`<tr class="dds-sec" data-node="${secNodeId}" onclick="ddsTgl('${secNodeId}')">
-      <td><span class="dds-arrow">▶</span>${sectionNames[sk]}</td>
-      <td class="dds-num num-positive">${fmtNum(sec.inc)}</td>
-      <td class="dds-num num-negative">${fmtNum(sec.out)}</td>
-      <td class="dds-num ${secNet>=0?'num-positive':'num-negative'}">${fmtNum(secNet)}</td>
-    </tr>`;
-    Object.keys(sec.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
-      const artData=sec.arts[art];
-      const artNet=artData.inc+artData.out;
-      const artNodeId=secNodeId+'-a'+ai;
-      rows+=`<tr class="dds-art dds-child-${secNodeId}" data-node="${artNodeId}" style="display:none" onclick="ddsTgl('${artNodeId}')">
-        <td style="padding-left:24px"><span class="dds-arrow">▶</span>${art}</td>
-        <td class="dds-num num-positive">${fmtNum(artData.inc)}</td>
-        <td class="dds-num num-negative">${fmtNum(artData.out)}</td>
-        <td class="dds-num ${artNet>=0?'num-positive':'num-negative'}">${fmtNum(artNet)}</td>
-      </tr>`;
-      Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
-        const subData=artData.subs[sub];
-        const subNet=subData.inc+subData.out;
-        const subNodeId=artNodeId+'-sub'+subi;
-        rows+=`<tr class="dds-sub dds-child-${artNodeId}" data-node="${subNodeId}" style="display:none" onclick="ddsTgl('${subNodeId}')">
-          <td style="padding-left:48px"><span class="dds-arrow">▶</span>${sub}</td>
-          <td class="dds-num num-positive">${fmtNum(subData.inc)}</td>
-          <td class="dds-num num-negative">${fmtNum(subData.out)}</td>
-          <td class="dds-num ${subNet>=0?'num-positive':'num-negative'}">${fmtNum(subNet)}</td>
-        </tr>`;
-        subData.rows.forEach(row=>{
-          const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
-          rows+=`<tr class="dds-txn dds-child-${subNodeId}" style="display:none">
-            <td style="padding-left:72px;text-align:center">${ds(row[COL.DATE_DDS])}</td>
-            <td style="text-align:center">${dsOpiu(row[COL.DATE_OPIU])}</td>
-            <td style="text-align:center">${c(row[COL.TYPE])}</td>
-            <td>${c(row[COL.OFFER_ID])}</td>
-            <td class="dds-num ${inc>0?'num-positive':''}">${inc?fmt(inc):''}</td>
-            <td class="dds-num ${out<0?'num-negative':''}">${out?fmt(out):''}</td>
-            <td style="text-align:center">${c(row[COL.FNS])}</td>
-            <td>${c(row[COL.ACCOUNT])}</td>
-            <td>${c(row[COL.ARTICLE_CODE])}</td>
-            <td>${c(row[COL.ARTICLE_NAME])}</td>
-            <td style="text-align:center">${c(row[COL.ANALYTICS])}</td>
-            <td>${c(row[COL.SECOND_SIDE])}</td>
-            <td>${c(row[COL.PURPOSE])}</td>
-            <td>${c(row[COL.ACTIVITY_DIR])}</td>
-            <td>${c(row[COL.FIN_OP])}</td>
-          </tr>`;
+    if(sec.inc===0&&sec.out===0)return;
+    const secNodeId='ds'+si;
+    const hasInc=Object.keys(sec.incArts).length>0;
+    const hasOut=Object.keys(sec.outArts).length>0;
+
+    rows+=secRow(secNodeId,null,sectionNames[sk],sec.inc,sec.out);
+
+    if(hasInc){
+      const incTotal=Object.values(sec.incArts).reduce((s,a)=>s+a.inc,0);
+      const incGroupId=secNodeId+'-inc';
+      rows+=groupRow(incGroupId,secNodeId,'ПОСТУПЛЕНИЯ',incTotal,0);
+      Object.keys(sec.incArts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
+        const artData=sec.incArts[art];
+        const artNodeId=incGroupId+'-a'+ai;
+        rows+=artRow(artNodeId,incGroupId,art,artData.inc,artData.out);
+        Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
+          const subData=artData.subs[sub];
+          const subNodeId=artNodeId+'-s'+subi;
+          rows+=subRow(subNodeId,artNodeId,sub,subData.inc,subData.out);
+          subData.rows.forEach(row=>{rows+=txnRow(subNodeId,row);});
         });
       });
-    });
+    }
+
+    if(hasOut){
+      const outTotal=Object.values(sec.outArts).reduce((s,a)=>s+a.out,0);
+      const outGroupId=secNodeId+'-out';
+      rows+=groupRow(outGroupId,secNodeId,'ВЫПЛАТЫ',0,outTotal);
+      Object.keys(sec.outArts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
+        const artData=sec.outArts[art];
+        const artNodeId=outGroupId+'-a'+ai;
+        rows+=artRow(artNodeId,outGroupId,art,artData.inc,artData.out);
+        Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
+          const subData=artData.subs[sub];
+          const subNodeId=artNodeId+'-s'+subi;
+          rows+=subRow(subNodeId,artNodeId,sub,subData.inc,subData.out);
+          subData.rows.forEach(row=>{rows+=txnRow(subNodeId,row);});
+        });
+      });
+    }
+
+    rows+=totalRow(sectionRoman[sk],sec.inc,sec.out);
   });
-  const dirOpts=allDirs.map(d=>`<option value="${d}"${f.activityDir===d?' selected':''}>${d}</option>`).join('');
-  const extraFilters=`<div class="dds-extra-filters"><label>Направление:</label><select onchange="_tabFilters['dds'].activityDir=this.value;renderActiveTab()"><option value="">Все направления</option>${dirOpts}</select></div>`;
-  el.innerHTML=renderFilterBar('dds')+extraFilters+kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Движение денежных средств</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="dds-tree"><thead><tr>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Раздел / Статья / Подстатья</th>
-  <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">ДДС</th>
-  <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">ОПиУ</th>
-  <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Тип операции</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">ID Offer</th>
-  <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--income);white-space:nowrap">Поступление</th>
-  <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--outcome);white-space:nowrap">Списание</th>
-  <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">ФНС</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Реквизиты счёта</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Статья</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Подстатья</th>
-  <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Аналитика</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Контрагент</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Назначение</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Направление</th>
-  <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">Фин. операция</th>
-</tr></thead><tbody>${rows}</tbody></table></div></div>`;
+
+  const thead=`<thead><tr>
+    <th colspan="4" style="text-align:left;padding:4px 8px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Раздел / Статья / Подстатья</th>
+    <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--income)">Поступление</th>
+    <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--outcome)">Списание</th>
+    <th style="text-align:right;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Итого</th>
+    <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">ФНС</th>
+    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Реквизиты счёта</th>
+    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Статья</th>
+    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Подстатья</th>
+    <th style="text-align:center;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Аналитика</th>
+    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Контрагент</th>
+    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Назначение</th>
+    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Направление</th>
+    <th style="text-align:left;padding:4px 6px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Фин. операция</th>
+  </tr></thead>`;
+
+  el.innerHTML=renderFilterBar('dds')+extraFilters+kpiHtml+
+    `<div class="table-wrap">
+      <div class="table-header">
+        <span class="table-title">Движение денежных средств</span>
+        <span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span>
+      </div>
+      <div class="table-scroll">
+        <table class="dds-tree">
+          ${thead}
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
 function renderOPIU(f){
