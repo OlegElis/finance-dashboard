@@ -1205,13 +1205,23 @@ function renderDDS(f){
   const sectionNames={'001_':'I. ОПЕРАЦИОННАЯ ДЕЯТЕЛЬНОСТЬ','002_':'II. ФИНАНСОВАЯ ДЕЯТЕЛЬНОСТЬ','003_':'III. ИНВЕСТИЦИОННАЯ ДЕЯТЕЛЬНОСТЬ','other':'IV. ПРОЧЕЕ'};
   const sectionRoman={'001_':'I','002_':'II','003_':'III','other':'IV'};
 
+  // DDS использует DATE_DDS первым (не DATE_OPIU)
+  const getDDSPeriodKey=row=>{
+    const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
+    if(!d)return null;
+    const y=d.getFullYear(),m=d.getMonth()+1;
+    if(mode==='year')return String(y);
+    if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;
+    return`${MONTHS_FULL[m-1]} ${y}`;
+  };
+
   // Build tree with period amounts
   const tree={};
   secOrder.forEach(sk=>{tree[sk]={perInc:{},perOut:{},incArts:{},outArts:{}};});
   const periodsSet=new Set();
 
   data.forEach(row=>{
-    const pk=getPeriodKey(row,mode);
+    const pk=getDDSPeriodKey(row);
     if(!pk)return;
     periodsSet.add(pk);
     const cfRaw=String(row[COL.FIN_OP]||'').trim();
@@ -1239,11 +1249,14 @@ function renderDDS(f){
   const nPeriods=periods.length;
   const totalCols=2+nPeriods; // name col + period cols + итого col
 
-  // Table header
-  const thead=`<thead><tr style="position:sticky;top:0;z-index:2">
-    <th style="text-align:left;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:220px;position:sticky;left:0;z-index:3">Раздел / Статья / Подстатья</th>
-    ${periods.map(p=>`<th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:90px">${p}</th>`).join('')}
-    <th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:90px">ИТОГО</th>
+  // Ширина: имя фиксировано 240px, остальные колонки равные
+  const periodColW=Math.max(70, Math.floor((100)/(nPeriods+1)))+'%';
+  const colgroup=`<colgroup><col style="width:240px;min-width:240px">${periods.map(()=>`<col style="width:${periodColW}">`).join('')}<col style="width:${periodColW}"></colgroup>`;
+  const thStyle='text-align:right;padding:4px 6px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+  const thead=`${colgroup}<thead><tr style="position:sticky;top:0;z-index:2">
+    <th style="text-align:left;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis">Раздел / Статья / Подстатья</th>
+    ${periods.map(p=>`<th style="${thStyle}">${p}</th>`).join('')}
+    <th style="${thStyle};border-left:1px solid var(--border)">ИТОГО</th>
   </tr></thead>`;
 
   // Helper: build period+total cells from perInc and perOut maps
@@ -1423,7 +1436,7 @@ function renderDDS(f){
         <span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span>
       </div>
       <div class="table-scroll" style="overflow-x:auto">
-        <table class="dds-tree" style="min-width:600px">
+        <table class="dds-tree" style="width:100%;table-layout:fixed">
           ${thead}
           <tbody>${rows}</tbody>
         </table>
