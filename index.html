@@ -849,20 +849,23 @@ function renderBank(f){
   // Средний расход = только операционная деятельность (001_)
   const currentBalance=saldo; // реальный остаток ДС
   const rawAll=data.filter(r=>!String(r[COL.TYPE]||'').trim().toLowerCase().includes('перемещение')&&String(r[COL.FIN_OP]||'').trim().startsWith('001_'));
-  // Средний расход за последние 6 месяцев
-  const now6=new Date();
-  const cutoff6=new Date(now6.getFullYear(),now6.getMonth()-5,1); // 6 месяцев назад (включительно)
+  // Средний расход за последние 90 дней (текущий месяц не включается)
+  const nowR=new Date();
+  const periodEnd=new Date(nowR.getFullYear(),nowR.getMonth(),0); // последний день предыдущего месяца
+  const periodStart=new Date(periodEnd.getTime()-89*86400000); // 90 дней назад
   const monthlyOut={};
+  let totalOut90=0;
   rawAll.forEach(r=>{
     const out=parseNum(r[COL.OUTCOME]);
     if(out>=0)return;
     const d=parseDate(r[COL.DATE_DDS]);
-    if(!d||d<cutoff6)return;
+    if(!d||d<periodStart||d>periodEnd)return;
+    totalOut90+=Math.abs(out);
     const mk=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     monthlyOut[mk]=(monthlyOut[mk]||0)+Math.abs(out);
   });
   const monthKeys=Object.keys(monthlyOut);
-  const avgMonthlyOut=monthKeys.length?Object.values(monthlyOut).reduce((a,b)=>a+b,0)/Math.min(monthKeys.length,6):0;
+  const avgMonthlyOut=totalOut90/90*30; // среднедневной × 30
   const cashRunwayDays=avgMonthlyOut>0?Math.round(currentBalance/(avgMonthlyOut/30)):null;
   const runwayColor=cashRunwayDays===null?'var(--text3)':cashRunwayDays>90?'var(--income)':cashRunwayDays>30?'#e87c25':'var(--outcome)';
   const runwayLabel=cashRunwayDays===null?'—':cashRunwayDays>365?`${Math.round(cashRunwayDays/30)} мес.`:`${cashRunwayDays} дн.`;
@@ -871,7 +874,7 @@ function renderBank(f){
   // Данные для попапа
   const runwayMonthRows=Object.entries(monthlyOut).sort((a,b)=>a[0].localeCompare(b[0]))
     .map(([mk,v])=>{const[yr,mo]=mk.split('-');return`<tr><td style="padding:3px 10px;font-size:11px;color:var(--text2)">${MONTHS_FULL[+mo-1]} ${yr}</td><td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--outcome)">${fmt(-v)}</td></tr>`;}).join('');
-  window._cashRunwayData={currentBalance,avgMonthlyOut,cashRunwayDays,runwayMonthRows,monthCount:monthKeys.length};
+  window._cashRunwayData={currentBalance,avgMonthlyOut,cashRunwayDays,runwayMonthRows,monthCount:monthKeys.length,totalOut90,periodStart,periodEnd};
 
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div></div>
@@ -1209,7 +1212,11 @@ window.showCashRunwayPopup=function(){
         <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:baseline">
           <span style="color:var(--text3)">Текущий баланс (Сальдо):</span>
           <span style="font-weight:700;color:${d.currentBalance>=0?'var(--income)':'var(--outcome)'};text-align:right">${fmt2(d.currentBalance)}</span>
-          <span style="color:var(--text3)">Среднемесячный расход (посл. 6 мес.):</span>
+          <span style="color:var(--text3)">Период расчёта:</span>
+          <span style="font-weight:600;text-align:right;color:var(--text2)">${d.periodStart?toIso(d.periodStart).split('-').reverse().join('.'):'—'} — ${d.periodEnd?toIso(d.periodEnd).split('-').reverse().join('.'):'—'} (90 дн.)</span>
+          <span style="color:var(--text3)">Расход за 90 дней:</span>
+          <span style="font-weight:700;color:var(--outcome);text-align:right">${fmt2(-d.totalOut90)}</span>
+          <span style="color:var(--text3)">Среднемесячный расход:</span>
           <span style="font-weight:700;color:var(--outcome);text-align:right">${fmt2(-d.avgMonthlyOut)}</span>
           <span style="color:var(--text3)">Формула:</span>
           <span style="font-weight:600;text-align:right;color:var(--text2)">${fmt2(d.currentBalance)} ÷ ${fmt2(d.avgMonthlyOut)} × 30</span>
@@ -1219,7 +1226,7 @@ window.showCashRunwayPopup=function(){
           <span style="font-size:11px;color:var(--text3)">${d.cashRunwayDays!==null?`= ${d.cashRunwayDays} дней`:''}</span>
         </div>
       </div>
-      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Операционные расходы по месяцам (последние ${d.monthCount} мес.):</div>
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Операционные расходы по месяцам за период:</div>
       <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
