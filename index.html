@@ -560,7 +560,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
-  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDir:'',year:'',month:''},
+  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],year:'',month:''},
   opiu:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
   fot:{dateFrom:'',dateTo:'',periodType:'direction',fotDetail:'direction',preset:'all'}
 };
@@ -1139,6 +1139,37 @@ window.ddsTgl=function(nodeId){
 };
 
 // Карточка записи ДДС (как bankShowCard)
+// Multi-select направления
+window.ddsDirToggle=function(btn){
+  const dd=document.getElementById('dds-dir-dd');
+  if(!dd)return;
+  const open=dd.style.display==='block';
+  dd.style.display=open?'none':'block';
+  if(!open)btn.focus();
+};
+window.ddsDirChange=function(){
+  const dd=document.getElementById('dds-dir-dd');
+  if(!dd)return;
+  const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
+  _tabFilters.dds.activityDirs=checked;
+  // Обновляем лейбл кнопки
+  const btn=document.getElementById('dds-dir-btn');
+  if(btn)btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';
+  renderDDS(getFilters());
+};
+window.ddsDirSelectAll=function(cb){
+  const dd=document.getElementById('dds-dir-dd');
+  if(!dd)return;
+  dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])').forEach(c=>c.checked=cb.checked);
+  window.ddsDirChange();
+};
+// Закрытие при клике вне
+document.addEventListener('click',function(e){
+  const dd=document.getElementById('dds-dir-dd');
+  const btn=document.getElementById('dds-dir-btn');
+  if(dd&&btn&&!dd.contains(e.target)&&e.target!==btn)dd.style.display='none';
+});
+
 window.ddsShowRecordCard=function(row){
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
   const c=v=>String(v||'').trim()||'—';
@@ -1295,22 +1326,28 @@ function renderDDS(f){
 
   // Apply extra filters
   let data=baseData;
-  if(f.activityDir)data=data.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===f.activityDir);
+  if(f.activityDirs&&f.activityDirs.length)data=data.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
   if(f.year)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&d.getFullYear()===+f.year;});
   if(f.month)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&d.getMonth()+1===+f.month;});
 
   // Build year/month/direction/period filter bar
   const yearOpts=allYears.map(y=>`<option value="${y}"${f.year==y?'selected':''}>${y}</option>`).join('');
   const monthOpts=allMonths.map(m=>`<option value="${m}"${f.month==m?'selected':''}>${MONTHS_SHORT[m-1]}</option>`).join('');
-  const dirOpts=allDirs.map(d=>`<option value="${d}"${f.activityDir===d?'selected':''}>${d}</option>`).join('');
+  const selDirs=f.activityDirs||[];
+  const dirCheckboxes=`<label style="display:flex;align-items:center;gap:5px;padding:4px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid var(--border)"><input type="checkbox" value="__all__" ${selDirs.length===0?'checked':''} onchange="ddsDirSelectAll(this)"> <span>Все</span></label>`+
+    allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="ddsDirChange()"> <span>${d}</span></label>`).join('');
+  const dirBtnLabel=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
   const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
-  const extraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;">
+  const extraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
     <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].year=this.value;_tabFilters['dds'].month='';renderDDS(getFilters())"><option value="">Все</option>${yearOpts}</select>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
     <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].month=this.value;renderDDS(getFilters())"><option value="">Все</option>${monthOpts}</select>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
-    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].activityDir=this.value;renderDDS(getFilters())"><option value="">Все</option>${dirOpts}</select>
+    <div style="position:relative;display:inline-block">
+      <button id="dds-dir-btn" onclick="ddsDirToggle(this)" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:120px;text-align:left">${dirBtnLabel}</button>
+      <div id="dds-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:240px;overflow-y:auto;min-width:180px;margin-top:2px">${dirCheckboxes}</div>
+    </div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>
     <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].periodType=this.value;renderDDS(getFilters())">${ptOptsHtml}</select>
   </div>`;
