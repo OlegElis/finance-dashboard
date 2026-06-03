@@ -563,7 +563,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[]},
   dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],year:'',month:''},
-  opiu:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all'},
+  opiu:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],year:'',month:''},
   fot:{dateFrom:'',dateTo:'',periodType:'direction',fotDetail:'direction',preset:'all'}
 };
 
@@ -1305,7 +1305,116 @@ document.addEventListener('click',function(e){
   if(ddsDD&&ddsDD.style.display==='block'&&!ddsDD.contains(e.target)&&e.target!==ddsBtn){ddsDD.style.display='none';window.ddsDirApply&&window.ddsDirApply();}
   const bankDD=document.getElementById('bank-dir-dd');const bankBtn=document.getElementById('bank-dir-btn');
   if(bankDD&&bankDD.style.display==='block'&&!bankDD.contains(e.target)&&e.target!==bankBtn){bankDD.style.display='none';window.bankDirApply&&window.bankDirApply();}
+  const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
+  if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
+
+// ОПиУ direction multi-select
+window.opiuDirToggle=function(){
+  const dd=document.getElementById('opiu-dir-dd');if(!dd)return;
+  const opening=dd.style.display!=='block';
+  dd.style.display=opening?'block':'none';
+  if(!opening){window.opiuDirApply();}
+};
+window.opiuDirUpdateBtn=function(){
+  const dd=document.getElementById('opiu-dir-dd');const btn=document.getElementById('opiu-dir-btn');if(!dd||!btn)return;
+  const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
+  btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';
+  const allCb=dd.querySelector('input[value="__all__"]');const allItems=dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])');
+  if(allCb)allCb.checked=checked.length===0||checked.length===allItems.length;
+};
+window.opiuDirChange=function(){window.opiuDirUpdateBtn();};
+window.opiuDirSelectAll=function(select){
+  const dd=document.getElementById('opiu-dir-dd');if(!dd)return;
+  dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])').forEach(c=>c.checked=select);
+  window.opiuDirUpdateBtn();
+};
+window.opiuDirApply=function(){
+  const dd=document.getElementById('opiu-dir-dd');if(!dd)return;
+  const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
+  _tabFilters.opiu.activityDirs=checked;
+  renderOPIU(getFilters());
+};
+
+// ОПиУ toggle (same pattern as ddsTgl, using dds-child-* class)
+window.opiuTgl=function(nodeId){
+  const childClass='dds-child-'+nodeId;
+  const children=document.querySelectorAll('.'+childClass);
+  const hdrRow=document.querySelector('[data-node="'+nodeId+'"]');
+  const arrow=hdrRow?hdrRow.querySelector('.dds-arrow'):null;
+  const isOpen=arrow&&arrow.textContent==='▼';
+  if(isOpen){
+    document.querySelectorAll('[class*="dds-child-'+nodeId+'"]').forEach(r=>r.style.display='none');
+    if(arrow)arrow.textContent='▶';
+  }else{
+    children.forEach(r=>r.style.display='');
+    if(arrow)arrow.textContent='▼';
+  }
+};
+
+// ОПиУ transaction modal
+window.opiuShowTxnModal=function(subNodeId){
+  const data=window._opiuTxnMap&&window._opiuTxnMap[subNodeId];
+  if(!data||!data.rows.length)return;
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const c=v=>String(v||'').trim();
+  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const totalInc=data.rows.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
+  const totalOut=data.rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
+  const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
+  const thead=`<tr style="position:sticky;top:0;z-index:1">
+    ${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}
+    ${TH('Поступление','6%','right','var(--income)')}${TH('Списание','6%','right','var(--outcome)')}
+    ${TH('ФНС','3%','center')}${TH('Реквизиты счёта','9%')}${TH('Статья','7%')}${TH('Подстатья','7%')}
+    ${TH('Аналитика','5%','center')}${TH('Контрагент','9%')}${TH('Назначение','12%')}${TH('Направление','8%')}${TH('Фин. операция','8%')}
+  </tr>`;
+  const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
+  const makeRows=rows=>rows.map((row,i)=>{
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="ddsShowRecordCard(window._opiuTxnMap['${subNodeId}'].rows[${i}])">
+      ${TD(ds(row[COL.DATE_DDS]),'text-align:center')}
+      ${TD(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
+      ${TD(c(row[COL.TYPE]),'text-align:center')}
+      ${TD(c(row[COL.OFFER_ID]))}
+      ${TD(inc?f2(inc):'','text-align:right;'+(inc>0?'color:var(--income)':''))}
+      ${TD(out?f2(out):'','text-align:right;'+(out<0?'color:var(--outcome)':''))}
+      ${TD(c(row[COL.FNS]),'text-align:center')}
+      ${TD(c(row[COL.ACCOUNT]))}
+      ${TD(c(row[COL.ARTICLE_CODE]))}
+      ${TD(c(row[COL.ARTICLE_NAME]))}
+      ${TD(c(row[COL.ANALYTICS]),'text-align:center')}
+      ${TD(c(row[COL.SECOND_SIDE]))}
+      ${TD(c(row[COL.PURPOSE]))}
+      ${TD(c(row[COL.ACTIVITY_DIR]))}
+      ${TD(c(row[COL.FIN_OP]))}
+    </tr>`;
+  }).join('');
+  const overlay=document.createElement('div');
+  overlay.className='txn-card-overlay';
+  const modalId='opiu-modal-'+subNodeId;
+  overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35);animation:slideUp .18s ease">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📋 ${data.label}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${data.secLabel} → ${data.artLabel}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:11px;color:var(--income);font-weight:700">${totalInc?'+'+f2(totalInc):''}</span>
+        <span style="font-size:11px;color:var(--outcome);font-weight:700">${totalOut?f2(totalOut):''}</span>
+        <span id="${modalId}-count" style="font-size:10px;color:var(--text3)">${data.rows.length} строк</span>
+        <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
+      </div>
+    </div>
+    <div style="overflow:auto;flex:1">
+      <table style="border-collapse:collapse;width:100%;table-layout:fixed">
+        <thead>${thead}</thead>
+        <tbody>${makeRows(data.rows)}</tbody>
+      </table>
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+};
 
 window.ddsShowRecordCard=function(row){
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
@@ -1759,82 +1868,276 @@ function renderDDS(f){
 function renderOPIU(f){
   const el=document.getElementById('tabOpiu');
   const mode=f.periodType;
-  const data=applyBaseFilters(RAW,f).filter(r=>String(r[COL.TYPE]||'').trim().toLowerCase()!=='перемещение');
-  if(!data.length){el.innerHTML=emptyState();return;}
-  const periodsSet=new Set(),psk={};
-  const rev={byP:{},total:0,bySub:{}};
+
+  // --- filter data using DATE_OPIU ---
+  let data=applyBaseFilters(RAW,f).filter(r=>{
+    const type=String(r[COL.TYPE]||'').trim().toLowerCase();
+    if(type==='перемещение')return false;
+    const d=parseDate(r[COL.DATE_OPIU]);
+    return !!d;
+  });
+  if(f.year) data=data.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&d.getFullYear()===+f.year;});
+  if(f.month) data=data.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&d.getMonth()+1===+f.month;});
+  if(f.activityDirs&&f.activityDirs.length) data=data.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
+
+  if(!data.length){el.innerHTML=renderFilterBar('opiu')+emptyState();return;}
+
+  // --- period key using DATE_OPIU ---
+  const getOPIUPeriodKey=row=>{
+    const d=parseDate(row[COL.DATE_OPIU]);
+    if(!d)return null;
+    const y=d.getFullYear(),m=d.getMonth()+1;
+    if(mode==='year')return String(y);
+    if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;
+    if(mode==='week'){
+      const tmp=new Date(Date.UTC(y,m-1,d.getDate()));
+      const dayNum=tmp.getUTCDay()||7;
+      tmp.setUTCDate(tmp.getUTCDate()+4-dayNum);
+      const yearStart=new Date(Date.UTC(tmp.getUTCFullYear(),0,1));
+      const wk=Math.ceil(((tmp-yearStart)/86400000+1)/7);
+      return`Нед ${String(wk).padStart(2,'0')} ${tmp.getUTCFullYear()}`;
+    }
+    if(mode==='day')return`${String(d.getDate()).padStart(2,'0')}.${String(m).padStart(2,'0')}.${y}`;
+    return`${MONTHS_FULL[m-1]} ${y}`;
+  };
+  const opiuSortKey=k=>{
+    if(mode==='day')return k.split('.').reverse().join('');
+    if(mode==='week'){const[,wk,y]=k.match(/Нед (\d+) (\d+)/)||[];return`${y}${wk}`;}
+    return periodSortKey(k,mode);
+  };
+
+  // --- data aggregation ---
   const CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','Вывод чистой прибыли'];
-  const exp={};CATS.forEach(c=>exp[c]={byP:{},total:0,byArt:{}});
+  const rev={perInc:{},arts:{}};
+  const exp={};CATS.forEach(c=>exp[c]={perOut:{},arts:{}});
+  const periodsSet=new Set();
+
   data.forEach(row=>{
-    const pk=getPeriodKey(row,mode);if(!pk)return;
-    periodsSet.add(pk);psk[pk]=periodSortKey(pk,mode);
+    const pk=getOPIUPeriodKey(row);if(!pk)return;
+    periodsSet.add(pk);
     const type=String(row[COL.TYPE]||'').trim().toLowerCase();
     const ac=String(row[COL.ARTICLE_CODE]||'').trim();
     const an=String(row[COL.ARTICLE_NAME]||'').trim();
     const analytics=String(row[COL.ANALYTICS]||'').trim();
     const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
     if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0){
-      rev.byP[pk]=(rev.byP[pk]||0)+inc;rev.total+=inc;
+      rev.perInc[pk]=(rev.perInc[pk]||0)+inc;
       const sub=an||ac||'Без подстатьи';
-      if(!rev.bySub[sub])rev.bySub[sub]={byP:{},total:0};
-      rev.bySub[sub].byP[pk]=(rev.bySub[sub].byP[pk]||0)+inc;rev.bySub[sub].total+=inc;
+      if(!rev.arts[sub])rev.arts[sub]={perInc:{},rows:[]};
+      rev.arts[sub].perInc[pk]=(rev.arts[sub].perInc[pk]||0)+inc;
+      rev.arts[sub].rows.push(row);
     }
-    if(type==='списание'&&out<0){
-      if(analytics&&exp[analytics]){
-        exp[analytics].byP[pk]=(exp[analytics].byP[pk]||0)+out;exp[analytics].total+=out;
-        const art=ac||'Без статьи';
-        if(!exp[analytics].byArt[art])exp[analytics].byArt[art]={byP:{},total:0};
-        exp[analytics].byArt[art].byP[pk]=(exp[analytics].byArt[art].byP[pk]||0)+out;exp[analytics].byArt[art].total+=out;
-      }
+    if(type==='списание'&&out<0&&analytics&&exp[analytics]){
+      exp[analytics].perOut[pk]=(exp[analytics].perOut[pk]||0)+out;
+      const art=ac||'Без статьи';
+      if(!exp[analytics].arts[art])exp[analytics].arts[art]={perOut:{},subs:{}};
+      exp[analytics].arts[art].perOut[pk]=(exp[analytics].arts[art].perOut[pk]||0)+out;
+      const sub=an||'Без подстатьи';
+      if(!exp[analytics].arts[art].subs[sub])exp[analytics].arts[art].subs[sub]={perOut:{},rows:[]};
+      exp[analytics].arts[art].subs[sub].perOut[pk]=(exp[analytics].arts[art].subs[sub].perOut[pk]||0)+out;
+      exp[analytics].arts[art].subs[sub].rows.push(row);
     }
   });
-  const periods=[...periodsSet].sort((a,b)=>psk[a].localeCompare(psk[b]));
-  const np=periods.length;
-  const V=cat=>periods.map(p=>exp[cat].byP[p]||0);
-  const revV=periods.map(p=>rev.byP[p]||0);
-  const dirVar=V('Прямые / Переменные'),dirFix=V('Прямые / Постоянные');
-  const indVar=V('Косвенные / Переменные'),indFix=V('Косвенные / Постоянные');
-  const taxes=V('Налоги / проценты / амортизация'),withdrawal=V('Вывод чистой прибыли');
-  const marginal=periods.map((_,i)=>revV[i]+dirVar[i]);
-  const gross=periods.map((_,i)=>marginal[i]+dirFix[i]);
-  const ebitda=periods.map((_,i)=>gross[i]+indVar[i]+indFix[i]);
-  const net=periods.map((_,i)=>ebitda[i]+taxes[i]);
-  const totRev=revV.reduce((a,b)=>a+b,0),totNet=net.reduce((a,b)=>a+b,0),totEbitda=ebitda.reduce((a,b)=>a+b,0);
+
+  const periods=[...periodsSet].sort((a,b)=>opiuSortKey(a).localeCompare(opiuSortKey(b)));
+  const nPeriods=periods.length;
+  const totalCols=2+nPeriods;
+
+  // --- computed maps ---
+  const addMaps=(...maps)=>{const r={};maps.forEach(m=>Object.entries(m).forEach(([p,v])=>{r[p]=(r[p]||0)+v;}));return r;};
+  const dirVarMap=exp['Прямые / Переменные'].perOut;
+  const dirFixMap=exp['Прямые / Постоянные'].perOut;
+  const indVarMap=exp['Косвенные / Переменные'].perOut;
+  const indFixMap=exp['Косвенные / Постоянные'].perOut;
+  const taxesMap=exp['Налоги / проценты / амортизация'].perOut;
+  const marginalMap=addMaps(rev.perInc,dirVarMap);
+  const grossMap=addMaps(marginalMap,dirFixMap);
+  const ebitdaMap=addMaps(grossMap,indVarMap,indFixMap);
+  const netMap=addMaps(ebitdaMap,taxesMap);
+  const totalExpMap=addMaps(dirVarMap,dirFixMap,indVarMap,indFixMap,taxesMap);
+
+  // --- KPI ---
+  const totRev=Object.values(rev.perInc).reduce((a,b)=>a+b,0);
+  const totEbitda=Object.values(ebitdaMap).reduce((a,b)=>a+b,0);
+  const totNet=Object.values(netMap).reduce((a,b)=>a+b,0);
   const base=Math.abs(totRev)||1;
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Выручка</div><div class="kpi-value positive">${fmt(totRev)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">EBITDA</div><div class="kpi-value ${totEbitda>=0?'positive':'negative'}">${fmt(totEbitda)}</div><div class="kpi-sub">${fmtPct(totEbitda/base)}</div></div>
     <div class="kpi-card ${totNet>=0?'green':'red'}"><div class="kpi-label">Чистая прибыль</div><div class="kpi-value ${totNet>=0?'positive':'negative'}">${fmt(totNet)}</div><div class="kpi-sub">${fmtPct(totNet/base)}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Периодов</div><div class="kpi-value">${np}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Периодов</div><div class="kpi-value">${nPeriods}</div></div>
   </div>`;
-  const ths=periods.map(p=>`<th>${p}</th>`).join('');
-  const makeRow=(label,vals,cls='',indent=0)=>{const tot=vals.reduce((a,b)=>a+(typeof b==='number'?b:0),0);return`<tr class="${cls}"><td></td><td style="padding-left:${indent}px">${label}</td>${vals.map(v=>td(v)).join('')}<td class="${numClass(tot)}">${fmt(tot)}</td></tr>`;};
-  const makePct=(label,vals)=>`<tr class="percent-row"><td></td><td style="padding-left:16px">${label}</td>${vals.map(v=>`<td>${fmtPct(v)}</td>`).join('')}<td>${fmtPct(vals.reduce((a,b)=>a+b,0)/np)}</td></tr>`;
-  const sectHead=label=>`<tr class="section-header"><td></td><td>${label}</td>${periods.map(()=>'<td></td>').join('')}<td></td></tr>`;
-  const blank=`<tr><td colspan="${np+3}" style="height:4px"></td></tr>`;
-  const artRows=(cat,indent=36)=>Object.entries(exp[cat].byArt).filter(([_,d])=>d.total!==0).sort((a,b)=>a[0].localeCompare(b[0])).map(([art,d])=>makeRow(art,periods.map(p=>d.byP[p]||0),'',indent)).join('');
-  el.innerHTML=renderFilterBar('opiu')+kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Отчёт о прибылях и убытках</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>
-    ${makeRow('ВЫРУЧКА',revV,'subtotal')}
-    ${Object.entries(rev.bySub).filter(([_,d])=>d.total!==0).sort((a,b)=>a[0].localeCompare(b[0])).map(([s,d])=>makeRow(s,periods.map(p=>d.byP[p]||0),'',16)).join('')}
-    ${blank}${sectHead('ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ')}
-    ${makeRow('Прямые / Переменные',dirVar,'',16)}${artRows('Прямые / Переменные')}
-    ${blank}${makeRow('МАРЖИНАЛЬНЫЙ ДОХОД',marginal,'subtotal')}
-    ${makePct('Маржинальность, %',marginal.map((v,i)=>revV[i]!==0?v/Math.abs(revV[i]):0))}
-    ${blank}${makeRow('Прямые / Постоянные',dirFix,'',16)}${artRows('Прямые / Постоянные')}
-    ${makeRow('ВАЛОВАЯ ПРИБЫЛЬ',gross,'subtotal')}
-    ${makePct('Рентабельность по валовой прибыли, %',gross.map((v,i)=>revV[i]!==0?v/Math.abs(revV[i]):0))}
-    ${blank}${sectHead('КОСВЕННЫЕ РАСХОДЫ')}
-    ${makeRow('Косвенные / Переменные',indVar,'',16)}${artRows('Косвенные / Переменные')}
-    ${blank}${makeRow('Косвенные / Постоянные',indFix,'',16)}${artRows('Косвенные / Постоянные')}
-    ${blank}${makeRow('ОПЕРАЦИОННАЯ ПРИБЫЛЬ (EBITDA)',ebitda,'subtotal')}
-    ${makePct('Рентабельность по EBITDA, %',ebitda.map((v,i)=>revV[i]!==0?v/Math.abs(revV[i]):0))}
-    ${blank}${sectHead('РАСХОДЫ НИЖЕ EBITDA')}
-    ${makeRow('Налоги / проценты / амортизация',taxes,'',16)}${artRows('Налоги / проценты / амортизация')}
-    ${blank}${makeRow('ЧИСТАЯ ПРИБЫЛЬ (УБЫТОК)',net,'subtotal')}
-    ${makePct('Рентабельность по чистой прибыли, %',net.map((v,i)=>revV[i]!==0?v/Math.abs(revV[i]):0))}
-    ${blank}${sectHead('РАСПРЕДЕЛЕНИЕ')}
-    ${makeRow('Вывод чистой прибыли',withdrawal,'',16)}${artRows('Вывод чистой прибыли')}
-  </tbody></table></div></div>`;
+
+  // --- direction filter extra HTML ---
+  const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const selDirs=f.activityDirs||[];
+  const dirItems=allDirs.map(d=>`<label style="display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d}" ${selDirs.includes(d)?'checked':''} onchange="opiuDirChange()"> ${d}</label>`).join('');
+  const dirBtnLabel=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
+  const dirDropdown=`<div style="position:relative;display:inline-block">
+    <button id="opiu-dir-btn" class="filter-extra-sel" onclick="opiuDirToggle()" style="cursor:pointer">${dirBtnLabel}</button>
+    <div id="opiu-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);min-width:200px;max-height:280px;overflow-y:auto;padding:4px 0">
+      <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;font-size:11px;white-space:nowrap;border-bottom:1px solid var(--border)"><input type="checkbox" value="__all__" ${selDirs.length===0?'checked':''} onchange="opiuDirSelectAll(this.checked)"> Все направления</label>
+      ${dirItems}
+    </div>
+  </div>`;
+  const extraFiltersOPIU=`<div style="padding:6px 12px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <select class="filter-extra-sel" onchange="_tabFilters.opiu.periodType=this.value;renderActiveTab()">
+      <option value="month"${mode==='month'?' selected':''}>По месяцам</option>
+      <option value="quarter"${mode==='quarter'?' selected':''}>По кварталам</option>
+      <option value="year"${mode==='year'?' selected':''}>По годам</option>
+      <option value="week"${mode==='week'?' selected':''}>По неделям</option>
+      <option value="day"${mode==='day'?' selected':''}>По дням</option>
+    </select>
+    ${dirDropdown}
+  </div>`;
+
+  // --- thead ---
+  const thead=`<thead><tr style="position:sticky;top:0;z-index:2">
+    <th style="text-align:left;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:240px">Раздел / Статья</th>
+    ${periods.map(p=>`<th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">${p}</th>`).join('')}
+    <th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;border-left:1px solid var(--border)">ИТОГО</th>
+  </tr></thead>`;
+
+  // --- helpers ---
+  const periodCellsOPIU=(perMap,bg='',bold=false)=>{
+    const style=`text-align:right;padding:3px 8px;white-space:nowrap;font-size:10px;${bg?'background:'+bg+';':''}${bold?'font-weight:700;':''}`;
+    return periods.map(p=>{
+      const v=perMap[p]||0;
+      if(v===0)return`<td style="${style}"></td>`;
+      const color=v>0?'color:var(--income)':'color:var(--outcome)';
+      return`<td style="${style}${color}">${fmt(v)}</td>`;
+    }).join('')+(()=>{
+      const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
+      const color=tot>0?'color:var(--income)':tot<0?'color:var(--outcome)':'';
+      return`<td style="${style}${color};border-left:1px solid var(--border)">${tot!==0?fmt(tot):''}</td>`;
+    })();
+  };
+
+  const computedRow=(label,perMap,bg,bold=true)=>`<tr><td style="padding:5px 10px;font-weight:${bold?700:600};font-size:11px;background:${bg};position:sticky;left:0;z-index:1;border-top:2px solid var(--border)">${label}</td>${periodCellsOPIU(perMap,bg,bold)}</tr>`;
+
+  const pctRow=(label,perNumerator,perDenominator)=>{
+    const style=`text-align:right;padding:2px 8px;white-space:nowrap;font-size:10px;color:var(--text3);background:#fafafa`;
+    const cells=periods.map(p=>{
+      const num=perNumerator[p]||0,den=perDenominator[p]||0;
+      return`<td style="${style}">${den!==0?fmtPct(num/Math.abs(den)):''}</td>`;
+    }).join('');
+    const totNum=Object.values(perNumerator).reduce((a,b)=>a+b,0);
+    const totDen=Object.values(perDenominator).reduce((a,b)=>a+b,0);
+    return`<tr><td style="padding:2px 10px;font-size:10px;color:var(--text3);background:#fafafa;position:sticky;left:0">${label}</td>${cells}<td style="${style};border-left:1px solid var(--border)">${totDen!==0?fmtPct(totNum/Math.abs(totDen)):''}</td></tr>`;
+  };
+
+  const sectionHead=label=>`<tr><td colspan="${totalCols}" style="padding:6px 10px;font-weight:700;font-size:11px;background:#f5f5f5;color:var(--text2);border-top:2px solid var(--border)">${label}</td></tr>`;
+
+  // expense category rows: cat header (always shown) → article rows → sub rows → modal
+  window._opiuTxnMap={};
+  const expCatRows=(catName,nodeId)=>{
+    const catData=exp[catName];
+    const catTotal=Object.values(catData.perOut).reduce((a,b)=>a+b,0);
+    if(catTotal===0&&Object.keys(catData.arts).length===0)return'';
+    let html=`<tr class="dds-group" data-node="${nodeId}" onclick="opiuTgl('${nodeId}')" style="cursor:pointer">
+      <td style="padding:3px 8px 3px 10px;font-weight:600;font-size:10px;background:#f8f9fa;cursor:pointer;position:sticky;left:0;z-index:1;white-space:nowrap"><span class="dds-arrow">▶</span>${catName}</td>
+      ${periodCellsOPIU(catData.perOut,'#f8f9fa',true)}
+    </tr>`;
+    Object.keys(catData.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
+      const artData=catData.arts[art];
+      const artNodeId=nodeId+'-a'+ai;
+      html+=`<tr class="dds-art dds-child-${nodeId}" data-node="${artNodeId}" style="display:none;cursor:pointer" onclick="opiuTgl('${artNodeId}')">
+        <td style="padding:3px 8px 3px 28px;font-weight:600;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap"><span class="dds-arrow">▶</span>${art}</td>
+        ${periodCellsOPIU(artData.perOut,'',false)}
+      </tr>`;
+      Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
+        const subData=artData.subs[sub];
+        const subNodeId=artNodeId+'-s'+subi;
+        window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:catName,rows:subData.rows};
+        html+=`<tr class="dds-sub dds-child-${artNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите для просмотра">
+          <td style="padding:3px 8px 3px 46px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
+          ${periodCellsOPIU(subData.perOut,'',false)}
+        </tr>`;
+      });
+    });
+    return html;
+  };
+
+  // revenue sub rows
+  const revSubRows=parentNodeId=>{
+    let html='';
+    Object.keys(rev.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,i)=>{
+      const subData=rev.arts[sub];
+      const subNodeId=parentNodeId+'-rs'+i;
+      window._opiuTxnMap[subNodeId]={label:sub,artLabel:'Выручка',secLabel:'ВЫРУЧКА',rows:subData.rows};
+      html+=`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите для просмотра">
+        <td style="padding:3px 8px 3px 24px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
+        ${periodCellsOPIU(subData.perInc,'',false)}
+      </tr>`;
+    });
+    return html;
+  };
+
+  // --- summary block ---
+  const BG_REV='#e8f5ee',BG_EXP='#fdecea',BG_EBITDA='#eef2ff',BG_NET='#1e3a5f';
+  const sumNameTd=(label,bg,color='var(--text)')=>`<td style="padding:6px 10px;font-weight:700;font-size:11px;white-space:nowrap;background:${bg};color:${color};position:sticky;left:0;z-index:1">${label}</td>`;
+  const sumValCell=(v,bg,extra='')=>{const color=v>0?'var(--income)':v<0?'var(--outcome)':'var(--text3)';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${bg};color:${color};font-variant-numeric:tabular-nums;${extra}">${v!==0?fmt(v):''}</td>`;};
+  const summaryRow=(label,perMap,bg,textColor='var(--text)')=>{
+    const cells=periods.map(p=>sumValCell(perMap[p]||0,bg)).join('');
+    const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
+    return`<tr>${sumNameTd(label,bg,textColor)}${cells}${sumValCell(tot,bg,'border-left:2px solid rgba(0,0,0,0.1)')}</tr>`;
+  };
+  let cumNet=0;
+  const cumulNetCells=periods.map(p=>{cumNet+=(netMap[p]||0);const color=cumNet>0?'#a8d5b5':cumNet<0?'#f5a0a0':'#aaa';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_NET};color:${color};font-variant-numeric:tabular-nums">${cumNet!==0?fmt(cumNet):''}</td>`;}).join('');
+  const cumulNetRow=`<tr>${sumNameTd('НАРАСТАЮЩАЯ ЧИСТАЯ ПРИБЫЛЬ',BG_NET,'#e0e8f8')}${cumulNetCells}<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_NET};color:${cumNet>0?'#a8d5b5':cumNet<0?'#f5a0a0':'#aaa'};border-left:2px solid #2a4a7f;font-variant-numeric:tabular-nums">${cumNet!==0?fmt(cumNet):''}</td></tr>`;
+  const summaryBlock=summaryRow('ВЫРУЧКА',rev.perInc,BG_REV)+
+    summaryRow('РАСХОДЫ',totalExpMap,BG_EXP)+
+    summaryRow('EBITDA',ebitdaMap,BG_EBITDA,'var(--accent)')+
+    summaryRow('ЧИСТАЯ ПРИБЫЛЬ',netMap,BG_EBITDA)+
+    cumulNetRow+
+    `<tr><td colspan="${totalCols}" style="height:4px;background:var(--border)"></td></tr>`;
+
+  // --- build rows ---
+  const revNodeId='op-rev';
+  let rows=summaryBlock;
+
+  // ВЫРУЧКА
+  rows+=`<tr class="dds-sec" data-node="${revNodeId}" onclick="opiuTgl('${revNodeId}')" style="cursor:pointer">
+    <td style="padding:6px 10px;font-weight:800;font-size:12px;color:var(--income);background:#ddf5e8;position:sticky;left:0;z-index:1;border-top:3px solid var(--income);cursor:pointer;white-space:nowrap"><span class="dds-arrow">▶</span>ВЫРУЧКА</td>
+    ${periodCellsOPIU(rev.perInc,'#ddf5e8',true)}
+  </tr>`;
+  rows+=revSubRows(revNodeId);
+
+  // ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ
+  rows+=sectionHead('ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ');
+  rows+=expCatRows('Прямые / Переменные','op-dv');
+  rows+=computedRow('─── МАРЖИНАЛЬНЫЙ ДОХОД ───',marginalMap,'#e8f0e8');
+  rows+=expCatRows('Прямые / Постоянные','op-df');
+  rows+=computedRow('─── ВАЛОВАЯ ПРИБЫЛЬ ───',grossMap,'#e8f0e8');
+  rows+=pctRow('─── Рентабельность вал. пр. ───',grossMap,rev.perInc);
+
+  // КОСВЕННЫЕ РАСХОДЫ
+  rows+=sectionHead('КОСВЕННЫЕ РАСХОДЫ');
+  rows+=expCatRows('Косвенные / Переменные','op-iv');
+  rows+=expCatRows('Косвенные / Постоянные','op-if');
+  rows+=computedRow('─── ОПЕРАЦИОННАЯ ПРИБЫЛЬ (EBITDA) ───',ebitdaMap,'#eef2ff');
+  rows+=pctRow('─── Рентабельность EBITDA ───',ebitdaMap,rev.perInc);
+
+  // РАСХОДЫ НИЖЕ EBITDA
+  rows+=sectionHead('РАСХОДЫ НИЖЕ EBITDA');
+  rows+=expCatRows('Налоги / проценты / амортизация','op-tx');
+  rows+=computedRow('─── ЧИСТАЯ ПРИБЫЛЬ (УБЫТОК) ───',netMap,'#fff8e1');
+  rows+=pctRow('─── Рентабельность ЧП ───',netMap,rev.perInc);
+
+  // РАСПРЕДЕЛЕНИЕ
+  rows+=sectionHead('РАСПРЕДЕЛЕНИЕ');
+  rows+=expCatRows('Вывод чистой прибыли','op-wd');
+
+  el.innerHTML=renderFilterBar('opiu')+extraFiltersOPIU+kpiHtml+`<div class="table-wrap">
+    <div class="table-header"><span class="table-title">Отчёт о прибылях и убытках</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div>
+    <div class="table-scroll" style="overflow-x:auto">
+      <table class="dds-tree">
+        <colgroup><col style="min-width:240px"></colgroup>
+        ${thead}
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 function renderFOT(f){
