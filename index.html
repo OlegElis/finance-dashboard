@@ -1057,14 +1057,14 @@ function renderBank(f){
   </div>`;
 
   const bankSelDirs=f.activityDirs||[];
-  const bankDirCheckboxes=`<label style="display:flex;align-items:center;gap:5px;padding:4px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid var(--border)"><input type="checkbox" value="__all__" ${bankSelDirs.length===0?'checked':''} onchange="bankDirSelectAll(this)"> <span>Все</span></label>`+
+  const bankDirCheckboxes=``<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="bankDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="bankDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
     allBankDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${bankSelDirs.includes(d)?'checked':''} onchange="bankDirChange()"> <span>${d}</span></label>`).join('');
   const bankDirBtnLabel=(bankSelDirs.length?bankSelDirs.length+' выбрано':'Все направления')+' ▾';
   const bankExtraFilters=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border)">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <div style="position:relative;display:inline-block">
       <button id="bank-dir-btn" onclick="bankDirToggle(this)" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:130px;text-align:left">${bankDirBtnLabel}</button>
-      <div id="bank-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:240px;overflow-y:auto;min-width:180px;margin-top:2px">${bankDirCheckboxes}</div>
+      <div id="bank-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:260px;margin-top:2px">${bankDirCheckboxes}</div>
     </div>
   </div>`;
   el.innerHTML=renderFilterBar('bank')+bankExtraFilters+kpiHtml+`<div class="bank-layout">${tableHtml}${chartsHtml}</div>`+txnHtml;
@@ -1174,39 +1174,68 @@ window.ddsTgl=function(nodeId){
 
 // Карточка записи ДДС (как bankShowCard)
 // Bank direction multi-select
-window.bankDirToggle=function(btn){const dd=document.getElementById('bank-dir-dd');if(!dd)return;dd.style.display=dd.style.display==='block'?'none':'block';};
-window.bankDirChange=function(){const dd=document.getElementById('bank-dir-dd');if(!dd)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');_tabFilters.bank.activityDirs=checked;const btn=document.getElementById('bank-dir-btn');if(btn)btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';renderBank(getFilters());};
-window.bankDirSelectAll=function(cb){const dd=document.getElementById('bank-dir-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])').forEach(c=>c.checked=cb.checked);window.bankDirChange();};
-
-// Multi-select направления
-window.ddsDirToggle=function(btn){
-  const dd=document.getElementById('dds-dir-dd');
-  if(!dd)return;
-  const open=dd.style.display==='block';
-  dd.style.display=open?'none':'block';
-  if(!open)btn.focus();
+window.bankDirToggle=function(btn){
+  const dd=document.getElementById('bank-dir-dd');if(!dd)return;
+  const opening=dd.style.display!=='block';
+  dd.style.display=opening?'block':'none';
+  if(!opening){window.bankDirApply();}
 };
-window.ddsDirChange=function(){
-  const dd=document.getElementById('dds-dir-dd');
-  if(!dd)return;
+window.bankDirUpdateBtn=function(){
+  const dd=document.getElementById('bank-dir-dd');
+  const btn=document.getElementById('bank-dir-btn');
+  if(!dd||!btn)return;
+  const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
+  btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';
+  // Синхронизируем чекбокс "Все"
+  const allCb=dd.querySelector('input[value="__all__"]');
+  const allItems=dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])');
+  if(allCb)allCb.checked=checked.length===0||checked.length===allItems.length;
+};
+window.bankDirChange=function(){window.bankDirUpdateBtn();};
+window.bankDirSelectAll=function(select){
+  const dd=document.getElementById('bank-dir-dd');if(!dd)return;
+  dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])').forEach(c=>c.checked=select);
+  window.bankDirUpdateBtn();
+};
+window.bankDirApply=function(){
+  const dd=document.getElementById('bank-dir-dd');if(!dd)return;
+  const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
+  _tabFilters.bank.activityDirs=checked;
+  renderBank(getFilters());
+};
+
+// Multi-select направления DDS
+window.ddsDirToggle=function(btn){
+  const dd=document.getElementById('dds-dir-dd');if(!dd)return;
+  const opening=dd.style.display!=='block';
+  dd.style.display=opening?'block':'none';
+  if(!opening){window.ddsDirApply();}
+};
+window.ddsDirUpdateBtn=function(){
+  const dd=document.getElementById('dds-dir-dd');const btn=document.getElementById('dds-dir-btn');if(!dd||!btn)return;
+  const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
+  btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';
+  const allCb=dd.querySelector('input[value="__all__"]');const allItems=dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])');
+  if(allCb)allCb.checked=checked.length===0||checked.length===allItems.length;
+};
+window.ddsDirChange=function(){window.ddsDirUpdateBtn();};
+window.ddsDirSelectAll=function(select){
+  const dd=document.getElementById('dds-dir-dd');if(!dd)return;
+  dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])').forEach(c=>c.checked=select);
+  window.ddsDirUpdateBtn();
+};
+window.ddsDirApply=function(){
+  const dd=document.getElementById('dds-dir-dd');if(!dd)return;
   const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
   _tabFilters.dds.activityDirs=checked;
-  // Обновляем лейбл кнопки
-  const btn=document.getElementById('dds-dir-btn');
-  if(btn)btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';
   renderDDS(getFilters());
 };
-window.ddsDirSelectAll=function(cb){
-  const dd=document.getElementById('dds-dir-dd');
-  if(!dd)return;
-  dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])').forEach(c=>c.checked=cb.checked);
-  window.ddsDirChange();
-};
-// Закрытие при клике вне
+// Закрытие при клике вне — с применением фильтра
 document.addEventListener('click',function(e){
-  const dd=document.getElementById('dds-dir-dd');
-  const btn=document.getElementById('dds-dir-btn');
-  if(dd&&btn&&!dd.contains(e.target)&&e.target!==btn)dd.style.display='none';
+  const ddsDD=document.getElementById('dds-dir-dd');const ddsBtn=document.getElementById('dds-dir-btn');
+  if(ddsDD&&ddsDD.style.display==='block'&&!ddsDD.contains(e.target)&&e.target!==ddsBtn){ddsDD.style.display='none';window.ddsDirApply&&window.ddsDirApply();}
+  const bankDD=document.getElementById('bank-dir-dd');const bankBtn=document.getElementById('bank-dir-btn');
+  if(bankDD&&bankDD.style.display==='block'&&!bankDD.contains(e.target)&&e.target!==bankBtn){bankDD.style.display='none';window.bankDirApply&&window.bankDirApply();}
 });
 
 window.ddsShowRecordCard=function(row){
@@ -1373,7 +1402,7 @@ function renderDDS(f){
   const yearOpts=allYears.map(y=>`<option value="${y}"${f.year==y?'selected':''}>${y}</option>`).join('');
   const monthOpts=allMonths.map(m=>`<option value="${m}"${f.month==m?'selected':''}>${MONTHS_SHORT[m-1]}</option>`).join('');
   const selDirs=f.activityDirs||[];
-  const dirCheckboxes=`<label style="display:flex;align-items:center;gap:5px;padding:4px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid var(--border)"><input type="checkbox" value="__all__" ${selDirs.length===0?'checked':''} onchange="ddsDirSelectAll(this)"> <span>Все</span></label>`+
+  const dirCheckboxes=``<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="ddsDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="ddsDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
     allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="ddsDirChange()"> <span>${d}</span></label>`).join('');
   const dirBtnLabel=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
   const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
@@ -1385,7 +1414,7 @@ function renderDDS(f){
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <div style="position:relative;display:inline-block">
       <button id="dds-dir-btn" onclick="ddsDirToggle(this)" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:120px;text-align:left">${dirBtnLabel}</button>
-      <div id="dds-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:240px;overflow-y:auto;min-width:180px;margin-top:2px">${dirCheckboxes}</div>
+      <div id="dds-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:260px;margin-top:2px">${dirCheckboxes}</div>
     </div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>
     <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].periodType=this.value;renderDDS(getFilters())">${ptOptsHtml}</select>
