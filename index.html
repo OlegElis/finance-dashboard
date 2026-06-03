@@ -1138,79 +1138,135 @@ window.ddsTgl=function(nodeId){
   }
 };
 
-window.ddsShowTxnModal = function(subNodeId) {
-  const data = window._ddsTxnMap && window._ddsTxnMap[subNodeId];
-  if (!data || !data.rows.length) return;
+// Карточка записи ДДС (как bankShowCard)
+window.ddsShowRecordCard=function(row){
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
+  const c=v=>String(v||'').trim()||'—';
+  const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+  const field=(lbl,val,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label><span>${val}</span></div>`;
+  const fieldHtml=(lbl,html,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label>${html}</div>`;
+  const overlay=document.createElement('div');
+  overlay.className='txn-card-overlay';
+  overlay.innerHTML=`<div class="txn-card">
+    <div class="txn-card-head"><h3>📋 Карточка операции</h3><button class="txn-card-close" onclick="this.closest('.txn-card-overlay').remove()">✕</button></div>
+    <div class="txn-card-body">
+      ${field('Дата ДДС',ds(row[COL.DATE_DDS]))}
+      ${field('Дата ОПиУ',dsOpiu(row[COL.DATE_OPIU]))}
+      ${field('Тип операции',c(row[COL.TYPE]))}
+      ${field('ID Offer',c(row[COL.OFFER_ID]))}
+      <hr class="txn-card-divider">
+      ${fieldHtml('Поступление',`<span class="pos">${inc?fmt(inc):'—'}</span>`)}
+      ${fieldHtml('Списание',`<span class="neg">${out?fmt(out):'—'}</span>`)}
+      ${field('ФНС',c(row[COL.FNS]))}
+      ${field('Реквизиты счёта',c(row[COL.ACCOUNT]))}
+      <hr class="txn-card-divider">
+      ${field('Статья',c(row[COL.ARTICLE_CODE]))}
+      ${field('Подстатья',c(row[COL.ARTICLE_NAME]))}
+      ${field('Аналитика',c(row[COL.ANALYTICS]))}
+      ${field('Контрагент',c(row[COL.SECOND_SIDE]))}
+      <hr class="txn-card-divider">
+      ${field('Назначение платежа',c(row[COL.PURPOSE]),true)}
+      ${field('Направление деятельности',c(row[COL.ACTIVITY_DIR]))}
+      ${field('Финансовая операция',c(row[COL.FIN_OP]))}
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+};
 
-  const ds = v => { const d = parseDate(v); return d ? `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}` : ''; };
-  const c = v => String(v||'').trim();
-  const fmt2 = v => typeof v === 'number' && v !== 0 ? v.toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2}) : '';
+window.ddsShowTxnModal=function(subNodeId){
+  const data=window._ddsTxnMap&&window._ddsTxnMap[subNodeId];
+  if(!data||!data.rows.length)return;
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const c=v=>String(v||'').trim();
+  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const totalInc=data.rows.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
+  const totalOut=data.rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
 
-  const totalInc = data.rows.reduce((s,r) => s + parseNum(r[COL.INCOME]), 0);
-  const totalOut = data.rows.reduce((s,r) => s + parseNum(r[COL.OUTCOME]), 0);
-
-  const thead = `<tr style="position:sticky;top:0;z-index:1">
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:center;width:62px">ДДС</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:center;width:58px">ОПиУ</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:center;width:90px">Тип операции</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:80px">ID Offer</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:right;color:var(--income);width:90px">Поступление</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:right;color:var(--outcome);width:90px">Списание</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:center;width:40px">ФНС</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:130px">Реквизиты счёта</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:90px">Статья</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:90px">Подстатья</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:center;width:80px">Аналитика</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:120px">Контрагент</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:150px">Назначение</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:100px">Направление</th>
-    <th style="padding:4px 6px;font-size:10px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:100px">Фин. операция</th>
+  // thead с % ширинами (сумма = 100%)
+  const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
+  const thead=`<tr style="position:sticky;top:0;z-index:1">
+    ${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}
+    ${TH('Поступление','6%','right','var(--income)')}${TH('Списание','6%','right','var(--outcome)')}
+    ${TH('ФНС','3%','center')}${TH('Реквизиты счёта','9%')}${TH('Статья','7%')}${TH('Подстатья','7%')}
+    ${TH('Аналитика','5%','center')}${TH('Контрагент','9%')}${TH('Назначение','12%')}${TH('Направление','8%')}${TH('Фин. операция','8%')}
   </tr>`;
 
-  const tbodyRows = data.rows.map(row => {
-    const inc = parseNum(row[COL.INCOME]), out = parseNum(row[COL.OUTCOME]);
-    return `<tr style="border-top:1px solid var(--border)">
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;text-align:center">${ds(row[COL.DATE_DDS])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;text-align:center">${dsOpiu(row[COL.DATE_OPIU])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;text-align:center">${c(row[COL.TYPE])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap">${c(row[COL.OFFER_ID])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;text-align:right;${inc>0?'color:var(--income)':''}">${inc?fmt2(inc):''}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;text-align:right;${out<0?'color:var(--outcome)':''}">${out?fmt2(out):''}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;text-align:center">${c(row[COL.FNS])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">${c(row[COL.ACCOUNT])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c(row[COL.ARTICLE_CODE])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c(row[COL.ARTICLE_NAME])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;text-align:center">${c(row[COL.ANALYTICS])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c(row[COL.SECOND_SIDE])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c(row[COL.PURPOSE])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c(row[COL.ACTIVITY_DIR])}</td>
-      <td style="padding:3px 6px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c(row[COL.FIN_OP])}</td>
+  const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
+  const makeRows=rows=>rows.map((row,i)=>{
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="ddsShowRecordCard(window._ddsTxnMap['${subNodeId}'].rows[${i}])">
+      ${TD(ds(row[COL.DATE_DDS]),'text-align:center')}
+      ${TD(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
+      ${TD(c(row[COL.TYPE]),'text-align:center')}
+      ${TD(c(row[COL.OFFER_ID]))}
+      ${TD(inc?f2(inc):'','text-align:right;'+(inc>0?'color:var(--income)':''))}
+      ${TD(out?f2(out):'','text-align:right;'+(out<0?'color:var(--outcome)':''))}
+      ${TD(c(row[COL.FNS]),'text-align:center')}
+      ${TD(c(row[COL.ACCOUNT]))}
+      ${TD(c(row[COL.ARTICLE_CODE]))}
+      ${TD(c(row[COL.ARTICLE_NAME]))}
+      ${TD(c(row[COL.ANALYTICS]),'text-align:center')}
+      ${TD(c(row[COL.SECOND_SIDE]))}
+      ${TD(c(row[COL.PURPOSE]))}
+      ${TD(c(row[COL.ACTIVITY_DIR]))}
+      ${TD(c(row[COL.FIN_OP]))}
     </tr>`;
   }).join('');
 
-  const overlay = document.createElement('div');
-  overlay.className = 'txn-card-overlay';
-  overlay.innerHTML = `<div style="background:var(--surface);border-radius:14px;width:92vw;max-width:1400px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35);animation:slideUp .18s ease">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 10px;border-bottom:1px solid var(--border);flex-shrink:0">
-      <div>
-        <div style="font-size:13px;font-weight:700;color:var(--text)">📋 Расшифровка: ${data.label}</div>
-        <div style="font-size:11px;color:var(--text3);margin-top:2px">${data.secLabel} → ${data.artLabel} → ${data.label} · ${data.rows.length.toLocaleString('ru-RU')} операций</div>
+  const overlay=document.createElement('div');
+  overlay.className='txn-card-overlay';
+  const modalId='dds-modal-'+subNodeId;
+  overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35);animation:slideUp .18s ease">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📋 ${data.label}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${data.secLabel} → ${data.artLabel}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:16px">
-        <span style="font-size:11px;color:var(--income);font-weight:600">+${totalInc?totalInc.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''}</span>
-        <span style="font-size:11px;color:var(--outcome);font-weight:600">${totalOut?totalOut.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''}</span>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:11px;color:var(--income);font-weight:700">${totalInc?'+'+f2(totalInc):''}</span>
+        <span style="font-size:11px;color:var(--outcome);font-weight:700">${totalOut?f2(totalOut):''}</span>
+        <input id="${modalId}-search" type="text" placeholder="🔍 Поиск..." style="padding:4px 10px;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:var(--sans);outline:none;width:180px;background:var(--surface)" oninput="ddsTxnSearch('${subNodeId}','${modalId}',this.value)">
+        <span id="${modalId}-count" style="font-size:10px;color:var(--text3)">${data.rows.length} строк</span>
         <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
       </div>
     </div>
-    <div style="overflow:auto;flex:1;padding:0">
-      <table style="border-collapse:collapse;width:max-content;min-width:100%">
+    <div style="overflow:auto;flex:1">
+      <table id="${modalId}-table" style="border-collapse:collapse;width:100%;table-layout:fixed">
         <thead>${thead}</thead>
-        <tbody>${tbodyRows}</tbody>
+        <tbody id="${modalId}-body">${makeRows(data.rows)}</tbody>
       </table>
     </div>
   </div>`;
-  overlay.addEventListener('click', e => { if(e.target === overlay) overlay.remove(); });
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
   document.body.appendChild(overlay);
+};
+
+window.ddsTxnSearch=function(subNodeId,modalId,query){
+  const data=window._ddsTxnMap[subNodeId];if(!data)return;
+  const q=query.toLowerCase().trim();
+  const filtered=q?data.rows.filter(r=>r.some(v=>String(v||'').toLowerCase().includes(q))):data.rows;
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const c=v=>String(v||'').trim();
+  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
+  const body=document.getElementById(modalId+'-body');
+  const cnt=document.getElementById(modalId+'-count');
+  if(body)body.innerHTML=filtered.map((row,i)=>{
+    const ri=data.rows.indexOf(row);
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="ddsShowRecordCard(window._ddsTxnMap['${subNodeId}'].rows[${ri}])">
+      ${TD(ds(row[COL.DATE_DDS]),'text-align:center')}${TD(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
+      ${TD(c(row[COL.TYPE]),'text-align:center')}${TD(c(row[COL.OFFER_ID]))}
+      ${TD(inc?f2(inc):'','text-align:right;'+(inc>0?'color:var(--income)':''))}
+      ${TD(out?f2(out):'','text-align:right;'+(out<0?'color:var(--outcome)':''))}
+      ${TD(c(row[COL.FNS]),'text-align:center')}${TD(c(row[COL.ACCOUNT]))}
+      ${TD(c(row[COL.ARTICLE_CODE]))}${TD(c(row[COL.ARTICLE_NAME]))}
+      ${TD(c(row[COL.ANALYTICS]),'text-align:center')}${TD(c(row[COL.SECOND_SIDE]))}
+      ${TD(c(row[COL.PURPOSE]))}${TD(c(row[COL.ACTIVITY_DIR]))}${TD(c(row[COL.FIN_OP]))}
+    </tr>`;
+  }).join('');
+  if(cnt)cnt.textContent=filtered.length+' строк';
 };
 
 function renderDDS(f){
@@ -1383,7 +1439,7 @@ function renderDDS(f){
   // Article row
   const artRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
     return`<tr class="dds-art dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
-      <td style="padding:3px 8px 3px 36px;font-weight:600;font-size:11px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface)"><span class="dds-arrow">▶</span>${label}</td>
+      <td style="padding:3px 8px 3px 36px;font-weight:600;font-size:11px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap"><span class="dds-arrow">▶</span>${label}</td>
       ${periodCells(perInc,perOut,'',false)}
     </tr>`;
   };
@@ -1391,7 +1447,7 @@ function renderDDS(f){
   // SubArticle row — opens modal on click
   const subRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
     return`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="ddsShowTxnModal('${nodeId}')" title="Нажмите для просмотра операций">
-      <td style="padding:3px 8px 3px 52px;font-size:10px;position:sticky;left:0;z-index:1;background:var(--surface)">▸ ${label} <span style="font-size:9px;color:var(--accent);margin-left:4px">↗</span></td>
+      <td style="padding:3px 8px 3px 52px;font-size:10px;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${label} <span style="font-size:9px;color:var(--accent);margin-left:4px">↗</span></td>
       ${periodCells(perInc,perOut,'',false)}
     </tr>`;
   };
