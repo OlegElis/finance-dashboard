@@ -562,8 +562,8 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[]},
-  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],year:'',month:''},
-  opiu:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],year:'',month:''},
+  dds:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
+  opiu:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   fot:{dateFrom:'',dateTo:'',periodType:'direction',fotDetail:'direction',preset:'all'}
 };
 
@@ -1242,6 +1242,39 @@ window.showCashRunwayPopup=function(){
   document.body.appendChild(overlay);
 };
 
+// Generic multi-select for year/month dropdowns (DDS & OPIU)
+window.multiSelToggle=function(ddId){const dd=document.getElementById(ddId);if(!dd)return;const open=dd.style.display==='block';dd.style.display=open?'none':'block';};
+window.multiSelChange=function(tab,field,ddId,btnId){
+  const dd=document.getElementById(ddId);if(!dd)return;
+  const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value).filter(v=>v!=='__all__');
+  _tabFilters[tab][field]=checked.map(Number);
+  const btn=document.getElementById(btnId);
+  if(btn)btn.textContent=(checked.length?checked.length+' выбрано':'Все')+' ▾';
+  const allCb=dd.querySelector('input[value="__all__"]');
+  if(allCb)allCb.checked=!checked.length;
+};
+window.multiSelAll=function(tab,field,ddId,btnId,select){
+  const dd=document.getElementById(ddId);if(!dd)return;
+  dd.querySelectorAll('input[type=checkbox]:not([value="__all__"])').forEach(c=>c.checked=select);
+  window.multiSelChange(tab,field,ddId,btnId);
+};
+window.multiSelApply=function(tab,rerender){
+  if(tab==='dds')renderDDS(getFilters());
+  else if(tab==='opiu')renderOPIU(getFilters());
+};
+// Close on outside click
+document.addEventListener('click',function(e){
+  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd'].forEach(ddId=>{
+    const dd=document.getElementById(ddId);
+    const btn=document.getElementById(ddId.replace('-dd','-btn'));
+    if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){
+      dd.style.display='none';
+      const tab=ddId.startsWith('dds')?'dds':'opiu';
+      multiSelApply(tab);
+    }
+  });
+});
+
 // Bank direction multi-select
 window.bankDirToggle=function(btn){
   const dd=document.getElementById('bank-dir-dd');if(!dd)return;
@@ -1582,12 +1615,12 @@ function renderDDS(f){
 
   // Build year options from baseData
   const allYears=[...new Set(baseData.map(r=>{const d=parseDate(r[COL.DATE_DDS]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>a-b);
-
-  // Build month options for selected year (or all) — только по DATE_DDS
-  const yearForMonths=f.year?+f.year:null;
-  const monthsSource=yearForMonths?baseData.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&d.getFullYear()===yearForMonths;}):baseData;
-  const allMonths=[...new Set(monthsSource.map(r=>{const d=parseDate(r[COL.DATE_DDS]);return d?d.getMonth()+1:null;}).filter(Boolean))].sort((a,b)=>a-b);
   const MONTHS_SHORT=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+
+  // Build month options from baseData (filtered by selected years if any)
+  const selYears=f.years&&f.years.length?f.years:[];
+  const monthsSource=selYears.length?baseData.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&selYears.includes(d.getFullYear());}):baseData;
+  const allMonths=[...new Set(monthsSource.map(r=>{const d=parseDate(r[COL.DATE_DDS]);return d?d.getMonth()+1:null;}).filter(Boolean))].sort((a,b)=>a-b);
 
   // Build direction options from all RAW data
   const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
@@ -1601,12 +1634,18 @@ function renderDDS(f){
   // Apply extra filters
   let data=baseData;
   if(f.activityDirs&&f.activityDirs.length)data=data.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
-  if(f.year)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&d.getFullYear()===+f.year;});
-  if(f.month)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&d.getMonth()+1===+f.month;});
+  if(selYears.length)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&selYears.includes(d.getFullYear());});
+  const selMonths=f.months&&f.months.length?f.months:[];
+  if(selMonths.length)data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS]);return d&&selMonths.includes(d.getMonth()+1);});
 
   // Build year/month/direction/period filter bar
-  const yearOpts=allYears.map(y=>`<option value="${y}"${f.year==y?'selected':''}>${y}</option>`).join('');
-  const monthOpts=allMonths.map(m=>`<option value="${m}"${f.month==m?'selected':''}>${MONTHS_SHORT[m-1]}</option>`).join('');
+  // Multi-select year/month for DDS
+  const selYearsArr=selYears;
+  const selMonthsArr=selMonths;
+  const yearCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('dds','years','dds-year-dd','dds-year-btn',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="multiSelAll('dds','years','dds-year-dd','dds-year-btn',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allYears.map(y=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${y}" ${selYearsArr.includes(y)?'checked':''} onchange="multiSelChange('dds','years','dds-year-dd','dds-year-btn');multiSelApply('dds')"> <span>${y}</span></label>`).join('');
+  const yearBtnLabel=(selYearsArr.length?selYearsArr.length+' выбрано':'Все')+' ▾';
+  const monthCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('dds','months','dds-month-dd','dds-month-btn',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="multiSelAll('dds','months','dds-month-dd','dds-month-btn',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${selMonthsArr.includes(m)?'checked':''} onchange="multiSelChange('dds','months','dds-month-dd','dds-month-btn');multiSelApply('dds')"> <span>${MONTHS_SHORT[m-1]}</span></label>`).join('');
+  const monthBtnLabel=(selMonthsArr.length?selMonthsArr.length+' выбрано':'Все')+' ▾';
   const selDirs=f.activityDirs||[];
   const dirCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="ddsDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="ddsDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
     allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="ddsDirChange()"> <span>${d}</span></label>`).join('');
@@ -1614,9 +1653,15 @@ function renderDDS(f){
   const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
   const extraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
-    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].year=this.value;_tabFilters['dds'].month='';renderDDS(getFilters())"><option value="">Все</option>${yearOpts}</select>
+    <div style="position:relative;display:inline-block">
+      <button id="dds-year-btn" onclick="multiSelToggle('dds-year-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${yearBtnLabel}</button>
+      <div id="dds-year-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${yearCheckboxes}</div>
+    </div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
-    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['dds'].month=this.value;renderDDS(getFilters())"><option value="">Все</option>${monthOpts}</select>
+    <div style="position:relative;display:inline-block">
+      <button id="dds-month-btn" onclick="multiSelToggle('dds-month-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${monthBtnLabel}</button>
+      <div id="dds-month-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${monthCheckboxes}</div>
+    </div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <div style="position:relative;display:inline-block">
       <button id="dds-dir-btn" onclick="ddsDirToggle(this)" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:120px;text-align:left">${dirBtnLabel}</button>
@@ -1904,9 +1949,11 @@ function renderOPIU(f){
     const d=parseDate(r[COL.DATE_OPIU]);
     return !!d;
   });
+  const opiuSelYears=f.years&&f.years.length?f.years:[];
+  const opiuSelMonths=f.months&&f.months.length?f.months:[];
   let data=baseData;
-  if(f.year) data=data.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&d.getFullYear()===+f.year;});
-  if(f.month) data=data.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&d.getMonth()+1===+f.month;});
+  if(opiuSelYears.length) data=data.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&opiuSelYears.includes(d.getFullYear());});
+  if(opiuSelMonths.length) data=data.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&opiuSelMonths.includes(d.getMonth()+1);});
   if(f.activityDirs&&f.activityDirs.length) data=data.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
 
   if(!data.length){el.innerHTML=renderFilterBar('opiu')+emptyState();return;}
@@ -2002,14 +2049,15 @@ function renderOPIU(f){
   const selOpiuDirs=f.activityDirs||[];
 
   // Годы и месяцы из данных по DATE_OPIU
-  const allOpiuYears=[...new Set(baseData.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>a-b);
-  const opiuYearForMonths=f.year?+f.year:null;
-  const opiuMonthsSrc=opiuYearForMonths?baseData.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&d.getFullYear()===opiuYearForMonths;}):baseData;
-  const allOpiuMonths=[...new Set(opiuMonthsSrc.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getMonth()+1:null;}).filter(Boolean))].sort((a,b)=>a-b);
   const MONTHS_SHORT_O=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const allOpiuYears=[...new Set(baseData.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>a-b);
+  const opiuMonthsSrc=opiuSelYears.length?baseData.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&opiuSelYears.includes(d.getFullYear());}):baseData;
+  const allOpiuMonths=[...new Set(opiuMonthsSrc.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getMonth()+1:null;}).filter(Boolean))].sort((a,b)=>a-b);
 
-  const yearOptsO=allOpiuYears.map(y=>`<option value="${y}"${f.year==y?'selected':''}>${y}</option>`).join('');
-  const monthOptsO=allOpiuMonths.map(m=>`<option value="${m}"${f.month==m?'selected':''}>${MONTHS_SHORT_O[m-1]}</option>`).join('');
+  const opiuYearCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('opiu','years','opiu-year-dd','opiu-year-btn',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="multiSelAll('opiu','years','opiu-year-dd','opiu-year-btn',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allOpiuYears.map(y=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${y}" ${opiuSelYears.includes(y)?'checked':''} onchange="multiSelChange('opiu','years','opiu-year-dd','opiu-year-btn');multiSelApply('opiu')"> <span>${y}</span></label>`).join('');
+  const opiuYearBtnLabel=(opiuSelYears.length?opiuSelYears.length+' выбрано':'Все')+' ▾';
+  const opiuMonthCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('opiu','months','opiu-month-dd','opiu-month-btn',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="multiSelAll('opiu','months','opiu-month-dd','opiu-month-btn',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allOpiuMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${opiuSelMonths.includes(m)?'checked':''} onchange="multiSelChange('opiu','months','opiu-month-dd','opiu-month-btn');multiSelApply('opiu')"> <span>${MONTHS_SHORT_O[m-1]}</span></label>`).join('');
+  const opiuMonthBtnLabel=(opiuSelMonths.length?opiuSelMonths.length+' выбрано':'Все')+' ▾';
   const ptOptsO=[{v:'day',l:'По дням'},{v:'week',l:'По неделям'},{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
   const ptOptsHtmlO=ptOptsO.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
 
@@ -2019,9 +2067,15 @@ function renderOPIU(f){
 
   const extraFiltersOPIU=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
-    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['opiu'].year=this.value;_tabFilters['opiu'].month='';renderOPIU(getFilters())"><option value="">Все</option>${yearOptsO}</select>
+    <div style="position:relative;display:inline-block">
+      <button id="opiu-year-btn" onclick="multiSelToggle('opiu-year-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${opiuYearBtnLabel}</button>
+      <div id="opiu-year-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${opiuYearCheckboxes}</div>
+    </div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
-    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['opiu'].month=this.value;renderOPIU(getFilters())"><option value="">Все</option>${monthOptsO}</select>
+    <div style="position:relative;display:inline-block">
+      <button id="opiu-month-btn" onclick="multiSelToggle('opiu-month-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${opiuMonthBtnLabel}</button>
+      <div id="opiu-month-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${opiuMonthCheckboxes}</div>
+    </div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <div style="position:relative;display:inline-block">
       <button id="opiu-dir-btn" onclick="opiuDirToggle(this)" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:260px;text-align:left">${opiuDirBtnLabel}</button>
