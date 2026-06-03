@@ -1401,6 +1401,7 @@ window.opiuShowTxnModal=function(subNodeId){
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         <span style="font-size:11px;color:var(--income);font-weight:700">${totalInc?'+'+f2(totalInc):''}</span>
         <span style="font-size:11px;color:var(--outcome);font-weight:700">${totalOut?f2(totalOut):''}</span>
+        <input id="${modalId}-search" type="text" placeholder="🔍 Поиск..." style="padding:4px 10px;border:1px solid var(--border);border-radius:6px;font-size:11px;font-family:var(--sans);outline:none;width:180px;background:var(--surface)" oninput="opiuTxnSearch('${subNodeId}','${modalId}',this.value)">
         <span id="${modalId}-count" style="font-size:10px;color:var(--text3)">${data.rows.length} строк</span>
         <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
       </div>
@@ -1408,12 +1409,39 @@ window.opiuShowTxnModal=function(subNodeId){
     <div style="overflow:auto;flex:1">
       <table style="border-collapse:collapse;width:100%;table-layout:fixed">
         <thead>${thead}</thead>
-        <tbody>${makeRows(data.rows)}</tbody>
+        <tbody id="${modalId}-body">${makeRows(data.rows)}</tbody>
       </table>
     </div>
   </div>`;
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
   document.body.appendChild(overlay);
+};
+
+window.opiuTxnSearch=function(subNodeId,modalId,query){
+  const data=window._opiuTxnMap[subNodeId];if(!data)return;
+  const q=query.toLowerCase().trim();
+  const filtered=q?data.rows.filter(r=>r.some(v=>String(v||'').toLowerCase().includes(q))):data.rows;
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const c=v=>String(v||'').trim();
+  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
+  const body=document.getElementById(modalId+'-body');
+  const cnt=document.getElementById(modalId+'-count');
+  if(body)body.innerHTML=filtered.map((row)=>{
+    const ri=data.rows.indexOf(row);
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="ddsShowRecordCard(window._opiuTxnMap['${subNodeId}'].rows[${ri}])">
+      ${TD(ds(row[COL.DATE_DDS]),'text-align:center')}${TD(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
+      ${TD(c(row[COL.TYPE]),'text-align:center')}${TD(c(row[COL.OFFER_ID]))}
+      ${TD(inc?f2(inc):'','text-align:right;'+(inc>0?'color:var(--income)':''))}
+      ${TD(out?f2(out):'','text-align:right;'+(out<0?'color:var(--outcome)':''))}
+      ${TD(c(row[COL.FNS]),'text-align:center')}${TD(c(row[COL.ACCOUNT]))}
+      ${TD(c(row[COL.ARTICLE_CODE]))}${TD(c(row[COL.ARTICLE_NAME]))}
+      ${TD(c(row[COL.ANALYTICS]),'text-align:center')}${TD(c(row[COL.SECOND_SIDE]))}
+      ${TD(c(row[COL.PURPOSE]))}${TD(c(row[COL.ACTIVITY_DIR]))}${TD(c(row[COL.FIN_OP]))}
+    </tr>`;
+  }).join('');
+  if(cnt)cnt.textContent=filtered.length+' строк';
 };
 
 window.ddsShowRecordCard=function(row){
