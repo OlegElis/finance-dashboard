@@ -839,11 +839,32 @@ function renderBank(f){
   let totInc=0,totOut=0,totAll=0;
   [...ds,...pretaxMain,...pretaxKassy,...pretaxCards,...noReq].forEach(a=>{totInc+=a.inc;totOut+=a.out;totAll+=a.total;});
   const saldo=totInc+totOut;
+
+  // Cash Runway: текущий баланс ÷ среднемесячный расход × 30
+  const rawAll=RAW.filter(r=>!String(r[COL.TYPE]||'').trim().toLowerCase().includes('перемещение'));
+  const currentBalance=rawAll.reduce((s,r)=>s+parseNum(r[COL.INCOME])+parseNum(r[COL.OUTCOME]),0);
+  const monthlyOut={};
+  rawAll.forEach(r=>{
+    const out=parseNum(r[COL.OUTCOME]);
+    if(out>=0)return; // только расходы
+    const d=parseDate(r[COL.DATE_DDS]);
+    if(!d)return;
+    const mk=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    monthlyOut[mk]=(monthlyOut[mk]||0)+Math.abs(out);
+  });
+  const monthKeys=Object.keys(monthlyOut);
+  const avgMonthlyOut=monthKeys.length?Object.values(monthlyOut).reduce((a,b)=>a+b,0)/monthKeys.length:0;
+  const cashRunwayDays=avgMonthlyOut>0?Math.round(currentBalance/(avgMonthlyOut/30)):null;
+  const runwayColor=cashRunwayDays===null?'var(--text3)':cashRunwayDays>90?'var(--income)':cashRunwayDays>30?'#e87c25':'var(--outcome)';
+  const runwayLabel=cashRunwayDays===null?'—':cashRunwayDays>365?`${Math.round(cashRunwayDays/30)} мес.`:`${cashRunwayDays} дн.`;
+  const runwayHint=cashRunwayDays===null?'Нет данных':cashRunwayDays>90?'Устойчиво':cashRunwayDays>30?'Внимание':'Критично';
+
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div></div>
     <div class="kpi-card red"><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${map.size}</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${runwayColor}"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor};font-size:9px">${runwayHint}</div></div>
   </div>`;
 
   // Общая функция для кликабельной строки счёта
