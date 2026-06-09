@@ -2484,16 +2484,69 @@ function renderFOT(f){
   const periods=[...periodsSet].sort((a,b)=>psk[a].localeCompare(psk[b]));
   const np=periods.length;
   const grandTotal=Object.values(totalByP).reduce((a,b)=>a+b,0);
+  const detailLbl=detail==='direction'?'по направлению':detail==='subarticle'?'по подстатье':'по контрагенту';
+
+  // Группы по убыванию суммы (в модуле)
+  const groupTotals=Object.entries(byPrimary)
+    .map(([k,bp])=>[k,Math.abs(Object.values(bp).reduce((a,b)=>a+b,0))])
+    .filter(([_,t])=>t>0).sort((a,b)=>b[1]-a[1]);
+  const grandAbs=Math.abs(grandTotal)||1;
+
+  // KPI + динамика к прошлому периоду
+  let growthTxt='—',growthColor='var(--text3)',growthHint='';
+  if(np>=2){
+    const last=Math.abs(totalByP[periods[np-1]]||0),prev=Math.abs(totalByP[periods[np-2]]||0);
+    if(prev>0){const g=(last-prev)/prev;growthTxt=(g>=0?'+':'')+fmtPct(g);growthColor=g>0?'var(--outcome)':'var(--income)';growthHint=g>0?'рост к пред. периоду':'снижение к пред. периоду';}
+  }
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card red"><div class="kpi-label">ФОТ итого</div><div class="kpi-value negative">${fmt(grandTotal)}</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Среднее / период</div><div class="kpi-value negative">${fmt(grandTotal/Math.max(1,np))}</div></div>
-    <div class="kpi-card blue"><div class="kpi-label">Строк</div><div class="kpi-value">${data.length.toLocaleString('ru-RU')}</div></div>
-    <div class="kpi-card green"><div class="kpi-label">Групп</div><div class="kpi-value">${Object.keys(byPrimary).length}</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${growthColor}"><div class="kpi-label">Динамика (посл. период)</div><div class="kpi-value" style="color:${growthColor}">${growthTxt}</div><div class="kpi-sub" style="color:${growthColor};font-size:9px">${growthHint}</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Групп ${detailLbl}</div><div class="kpi-value">${groupTotals.length}</div></div>
   </div>`;
+
+  // Карточки графиков
+  const chartsHtml=`<div style="display:grid;grid-template-columns:1.45fr 1fr;gap:14px;margin:0 0 14px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Динамика ФОТ по периодам — ${detailLbl}</div>
+      <div style="height:300px"><canvas id="fotChartDyn"></canvas></div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Структура ФОТ — топ групп</div>
+      <div style="height:300px"><canvas id="fotChartRank"></canvas></div>
+    </div>
+  </div>`;
+
   const ths=periods.map(p=>`<th>${p}</th>`).join('');
-  const rows=Object.entries(byPrimary).filter(([_,bp])=>Object.values(bp).some(v=>v!==0)).sort((a,b)=>a[0].localeCompare(b[0])).map(([key,bp])=>{const vals=periods.map(p=>bp[p]||0);const tot=vals.reduce((a,b)=>a+b,0);return`<tr><td></td><td>${key}</td>${vals.map(v=>td(v)).join('')}<td class="${numClass(tot)}">${fmt(tot)}</td></tr>`;}).join('');
+  const rows=Object.entries(byPrimary).filter(([_,bp])=>Object.values(bp).some(v=>v!==0)).sort((a,b)=>Math.abs(Object.values(b[1]).reduce((x,y)=>x+y,0))-Math.abs(Object.values(a[1]).reduce((x,y)=>x+y,0))).map(([key,bp])=>{const vals=periods.map(p=>bp[p]||0);const tot=vals.reduce((a,b)=>a+b,0);const share=fmtPct(Math.abs(tot)/grandAbs);return`<tr><td></td><td>${key} <span style="color:var(--text3);font-size:9px">${share}</span></td>${vals.map(v=>td(v)).join('')}<td class="${numClass(tot)}">${fmt(tot)}</td></tr>`;}).join('');
   const totVals=periods.map(p=>totalByP[p]||0),grand=totVals.reduce((a,b)=>a+b,0);
-  el.innerHTML=renderFilterBar('fot')+kpiHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Фонд оплаты труда и аутсорсинг</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>${rows}<tr class="total"><td></td><td>ИТОГО</td>${totVals.map(v=>td(v)).join('')}<td class="${numClass(grand)}">${fmt(grand)}</td></tr></tbody></table></div></div>`;
+  el.innerHTML=renderFilterBar('fot')+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Фонд оплаты труда и аутсорсинг</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>${rows}<tr class="total"><td></td><td>ИТОГО</td>${totVals.map(v=>td(v)).join('')}<td class="${numClass(grand)}">${fmt(grand)}</td></tr></tbody></table></div></div>`;
+
+  // --- Графики ---
+  ['_fotChartDyn','_fotChartRank'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
+  const PAL=['#2563eb','#16a34a','#d97706','#9333ea','#dc2626','#0891b2','#65a30d','#db2777','#475569','#ca8a04'];
+  const TOPN=6;
+  const topGroups=groupTotals.slice(0,TOPN).map(g=>g[0]);
+  const restGroups=groupTotals.slice(TOPN).map(g=>g[0]);
+  const dynDatasets=topGroups.map((g,i)=>({label:g.length>22?g.slice(0,21)+'…':g,data:periods.map(p=>Math.abs(byPrimary[g][p]||0)),backgroundColor:PAL[i%PAL.length],borderRadius:2,stack:'fot'}));
+  if(restGroups.length)dynDatasets.push({label:'Прочее',data:periods.map(p=>{let s=0;restGroups.forEach(k=>{s+=Math.abs(byPrimary[k][p]||0);});return s;}),backgroundColor:'#cbd5e1',borderRadius:2,stack:'fot'});
+  const moneyTick=v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;};
+  const dynCanvas=document.getElementById('fotChartDyn');
+  if(dynCanvas&&window.Chart)window._fotChartDyn=new Chart(dynCanvas,{type:'bar',
+    data:{labels:periods,datasets:dynDatasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:10,padding:8}},
+        tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt(-c.raw)}}},
+      scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:10}}},
+        y:{stacked:true,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:moneyTick}}}}});
+  // Рейтинг (горизонтальный бар) топ-10
+  const rankG=groupTotals.slice(0,10);
+  const rankCanvas=document.getElementById('fotChartRank');
+  if(rankCanvas&&window.Chart)window._fotChartRank=new Chart(rankCanvas,{type:'bar',
+    data:{labels:rankG.map(g=>g[0].length>26?g[0].slice(0,25)+'…':g[0]),datasets:[{data:rankG.map(g=>g[1]),backgroundColor:rankG.map((_,i)=>PAL[i%PAL.length]),borderRadius:3}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(-c.raw)+' ('+fmtPct(c.raw/grandAbs)+')'}}},
+      scales:{x:{grid:{color:'#ebebeb'},ticks:{font:{size:9},callback:moneyTick}},y:{grid:{display:false},ticks:{font:{size:9}}}}}});
 }
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
