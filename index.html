@@ -826,6 +826,14 @@ function renderBank(f){
     const todayEnd=new Date();todayEnd.setHours(23,59,59,999);
     data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return !d||d<=todayEnd;});
   }
+  // dataBase — до extra-фильтров (для построения полных списков значений в дропдаунах)
+  const dataBase=data;
+  // Extra-фильтры применяются ко ВСЕМ блокам листа (свод, KPI, графики, таблица)
+  if(f.offerIds&&f.offerIds.length)data=data.filter(r=>f.offerIds.includes(String(r[COL.OFFER_ID]||'').trim()));
+  if(f.articles&&f.articles.length)data=data.filter(r=>f.articles.includes(String(r[COL.ARTICLE_CODE]||'').trim()));
+  if(f.subarticles&&f.subarticles.length)data=data.filter(r=>f.subarticles.includes(String(r[COL.ARTICLE_NAME]||'').trim()));
+  if(f.finOps&&f.finOps.length)data=data.filter(r=>f.finOps.includes(String(r[COL.FIN_OP]||'').trim()));
+  if(f.secondSides&&f.secondSides.length)data=data.filter(r=>f.secondSides.includes(String(r[COL.SECOND_SIDE]||'').trim()));
   const map=new Map();
   const isCardAcc=name=>/карт|card|ФЛ\b|физ\.?\s*лиц/i.test(name);
   const isKassaAcc=name=>/касс|кассир|наличн|kassa|kasca/i.test(name);
@@ -1107,11 +1115,11 @@ function renderBank(f){
       items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(String(v))?'checked':''} onchange="${onchangeFn}Change()"> <span>${v}</span></label>`).join('')+`</div>`;
     return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;margin-top:2px">${search}${head}${list}</div>`;
   };
-  const allOfferIds=[...new Set(data.map(r=>String(r[COL.OFFER_ID]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  const allArticles=[...new Set(data.map(r=>String(r[COL.ARTICLE_CODE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  const allSubarticles=[...new Set(data.map(r=>String(r[COL.ARTICLE_NAME]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  const allFinOps=[...new Set(data.map(r=>String(r[COL.FIN_OP]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  const allSecondSides=[...new Set(data.map(r=>String(r[COL.SECOND_SIDE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const allOfferIds=[...new Set(dataBase.map(r=>String(r[COL.OFFER_ID]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const allArticles=[...new Set(dataBase.map(r=>String(r[COL.ARTICLE_CODE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const allSubarticles=[...new Set(dataBase.map(r=>String(r[COL.ARTICLE_NAME]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const allFinOps=[...new Set(dataBase.map(r=>String(r[COL.FIN_OP]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const allSecondSides=[...new Set(dataBase.map(r=>String(r[COL.SECOND_SIDE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const selOfferIds=(f.offerIds||[]).map(String);
   const selArticles=(f.articles||[]).map(String);
   const selSubarticles=(f.subarticles||[]).map(String);
@@ -1377,32 +1385,31 @@ window.bankDirApply=function(){
   renderBank(getFilters());
 };
 
-// Generic bank extra filter helpers
-function _bankExtraToggle(ddId){const dd=document.getElementById(ddId);if(!dd)return;dd.style.display=dd.style.display==='block'?'none':'block';}
+// Generic bank extra filter helpers — применяются ко всем блокам листа через renderBank на закрытии
+function _bankExtraToggle(ddId){const dd=document.getElementById(ddId);if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderBank(getFilters());}
 function _bankExtraGetChecked(ddId){const dd=document.getElementById(ddId);if(!dd)return[];return[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);}
 function _bankExtraUpdateBtn(btnId,ddId){const btn=document.getElementById(btnId);if(!btn)return;const v=_bankExtraGetChecked(ddId);btn.textContent=(v.length?v.length+' выбрано':'Все')+' ▾';}
 function _bankExtraSelectAll(ddId,btnId,select){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=select);_bankExtraUpdateBtn(btnId,ddId);}
-function _bankExtraApply(){bankApplyTxnFilter();const cnt=document.getElementById('txnCount');const f=_tabFilters.bank;const hasExtra=f.offerIds.length||f.articles.length||f.subarticles.length||f.finOps.length||f.secondSides.length;if(cnt){const base=window._bankTxnDataFiltered?.length??0;cnt.textContent=base.toLocaleString('ru-RU')+' транзакций'+(_bankTxnFilter.accs||_bankTxnFilter.date||hasExtra?' (фильтр)':'');}}
 
 window.bankOfferToggle=function(){_bankExtraToggle('bank-offer-dd');};
-window.bankOfferChange=function(){_bankExtraUpdateBtn('bank-offer-btn','bank-offer-dd');_tabFilters.bank.offerIds=_bankExtraGetChecked('bank-offer-dd');_bankExtraApply();};
-window.bankOfferSelectAll=function(s){_bankExtraSelectAll('bank-offer-dd','bank-offer-btn',s);_tabFilters.bank.offerIds=_bankExtraGetChecked('bank-offer-dd');_bankExtraApply();};
+window.bankOfferChange=function(){_bankExtraUpdateBtn('bank-offer-btn','bank-offer-dd');_tabFilters.bank.offerIds=_bankExtraGetChecked('bank-offer-dd');};
+window.bankOfferSelectAll=function(s){_bankExtraSelectAll('bank-offer-dd','bank-offer-btn',s);_tabFilters.bank.offerIds=_bankExtraGetChecked('bank-offer-dd');};
 
 window.bankArtToggle=function(){_bankExtraToggle('bank-art-dd');};
-window.bankArtChange=function(){_bankExtraUpdateBtn('bank-art-btn','bank-art-dd');_tabFilters.bank.articles=_bankExtraGetChecked('bank-art-dd');_bankExtraApply();};
-window.bankArtSelectAll=function(s){_bankExtraSelectAll('bank-art-dd','bank-art-btn',s);_tabFilters.bank.articles=_bankExtraGetChecked('bank-art-dd');_bankExtraApply();};
+window.bankArtChange=function(){_bankExtraUpdateBtn('bank-art-btn','bank-art-dd');_tabFilters.bank.articles=_bankExtraGetChecked('bank-art-dd');};
+window.bankArtSelectAll=function(s){_bankExtraSelectAll('bank-art-dd','bank-art-btn',s);_tabFilters.bank.articles=_bankExtraGetChecked('bank-art-dd');};
 
 window.bankSubToggle=function(){_bankExtraToggle('bank-sub-dd');};
-window.bankSubChange=function(){_bankExtraUpdateBtn('bank-sub-btn','bank-sub-dd');_tabFilters.bank.subarticles=_bankExtraGetChecked('bank-sub-dd');_bankExtraApply();};
-window.bankSubSelectAll=function(s){_bankExtraSelectAll('bank-sub-dd','bank-sub-btn',s);_tabFilters.bank.subarticles=_bankExtraGetChecked('bank-sub-dd');_bankExtraApply();};
+window.bankSubChange=function(){_bankExtraUpdateBtn('bank-sub-btn','bank-sub-dd');_tabFilters.bank.subarticles=_bankExtraGetChecked('bank-sub-dd');};
+window.bankSubSelectAll=function(s){_bankExtraSelectAll('bank-sub-dd','bank-sub-btn',s);_tabFilters.bank.subarticles=_bankExtraGetChecked('bank-sub-dd');};
 
 window.bankFinOpToggle=function(){_bankExtraToggle('bank-finop-dd');};
-window.bankFinOpChange=function(){_bankExtraUpdateBtn('bank-finop-btn','bank-finop-dd');_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');_bankExtraApply();};
-window.bankFinOpSelectAll=function(s){_bankExtraSelectAll('bank-finop-dd','bank-finop-btn',s);_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');_bankExtraApply();};
+window.bankFinOpChange=function(){_bankExtraUpdateBtn('bank-finop-btn','bank-finop-dd');_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');};
+window.bankFinOpSelectAll=function(s){_bankExtraSelectAll('bank-finop-dd','bank-finop-btn',s);_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');};
 
 window.bankSecondToggle=function(){_bankExtraToggle('bank-second-dd');};
-window.bankSecondChange=function(){_bankExtraUpdateBtn('bank-second-btn','bank-second-dd');_tabFilters.bank.secondSides=_bankExtraGetChecked('bank-second-dd');_bankExtraApply();};
-window.bankSecondSelectAll=function(s){_bankExtraSelectAll('bank-second-dd','bank-second-btn',s);_tabFilters.bank.secondSides=_bankExtraGetChecked('bank-second-dd');_bankExtraApply();};
+window.bankSecondChange=function(){_bankExtraUpdateBtn('bank-second-btn','bank-second-dd');_tabFilters.bank.secondSides=_bankExtraGetChecked('bank-second-dd');};
+window.bankSecondSelectAll=function(s){_bankExtraSelectAll('bank-second-dd','bank-second-btn',s);_tabFilters.bank.secondSides=_bankExtraGetChecked('bank-second-dd');};
 
 // Поиск внутри дропдаунов (без ре-рендера)
 window.bankDDFilter=function(input,ddId){
@@ -1445,7 +1452,9 @@ document.addEventListener('click',function(e){
   if(ddsDD&&ddsDD.style.display==='block'&&!ddsDD.contains(e.target)&&e.target!==ddsBtn){ddsDD.style.display='none';window.ddsDirApply&&window.ddsDirApply();}
   const bankDD=document.getElementById('bank-dir-dd');const bankBtn=document.getElementById('bank-dir-btn');
   if(bankDD&&bankDD.style.display==='block'&&!bankDD.contains(e.target)&&e.target!==bankBtn){bankDD.style.display='none';window.bankDirApply&&window.bankDirApply();}
-  [['bank-offer-dd','bank-offer-btn'],['bank-art-dd','bank-art-btn'],['bank-sub-dd','bank-sub-btn'],['bank-finop-dd','bank-finop-btn'],['bank-second-dd','bank-second-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn)dd.style.display='none';});
+  let _bankExtraClosed=false;
+  [['bank-offer-dd','bank-offer-btn'],['bank-art-dd','bank-art-btn'],['bank-sub-dd','bank-sub-btn'],['bank-finop-dd','bank-finop-btn'],['bank-second-dd','bank-second-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';_bankExtraClosed=true;}});
+  if(_bankExtraClosed)renderBank(getFilters());
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
