@@ -470,6 +470,7 @@ function bankApplyTxnFilter(){
     if(bf.articles&&bf.articles.length&&!bf.articles.includes(String(r[COL.ARTICLE_CODE]||'').trim()))return false;
     if(bf.subarticles&&bf.subarticles.length&&!bf.subarticles.includes(String(r[COL.ARTICLE_NAME]||'').trim()))return false;
     if(bf.finOps&&bf.finOps.length&&!bf.finOps.includes(String(r[COL.FIN_OP]||'').trim()))return false;
+    if(bf.secondSides&&bf.secondSides.length&&!bf.secondSides.includes(String(r[COL.SECOND_SIDE]||'').trim()))return false;
     return true;
   });
   // Сохраняем оригинал и подменяем на отфильтрованный
@@ -499,6 +500,7 @@ window.bankTxnResetFilter=function(){
   _tabFilters.bank.articles=[];
   _tabFilters.bank.subarticles=[];
   _tabFilters.bank.finOps=[];
+  _tabFilters.bank.secondSides=[];
   renderBank(getFilters());
 };
 
@@ -574,7 +576,7 @@ function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const 
 function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${day}`;}
 // ── Per-tab filter state ──
 const _tabFilters={
-  bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[]},
+  bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:false},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
@@ -819,6 +821,11 @@ function renderBank(f){
   const allBankDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   let data=applyBaseFilters(RAW,f);
   if(f.activityDirs&&f.activityDirs.length)data=data.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
+  // Будущие оплаты: если выключено — оставляем только операции по текущий день включительно
+  if(!f.includeFuture){
+    const todayEnd=new Date();todayEnd.setHours(23,59,59,999);
+    data=data.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return !d||d<=todayEnd;});
+  }
   const map=new Map();
   const isCardAcc=name=>/карт|card|ФЛ\b|физ\.?\s*лиц/i.test(name);
   const isKassaAcc=name=>/касс|кассир|наличн|kassa|kasca/i.test(name);
@@ -1092,20 +1099,24 @@ function renderBank(f){
     allBankDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${bankSelDirs.includes(d)?'checked':''} onchange="bankDirChange()"> <span>${d}</span></label>`).join('');
   const bankDirBtnLabel=(bankSelDirs.length?bankSelDirs.length+' выбрано':'Все направления')+' ▾';
 
-  // Options for new bank filters
+  // Options for new bank filters (с поиском)
   const mkBankDD=(id,items,selArr,onchangeFn)=>{
-    const rows=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${onchangeFn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="${onchangeFn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
-      items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(String(v))?'checked':''} onchange="${onchangeFn}Change()"> <span>${v}</span></label>`).join('');
-    return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:260px;overflow-y:auto;min-width:200px;margin-top:2px">${rows}</div>`;
+    const search=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`;
+    const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${onchangeFn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="${onchangeFn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`;
+    const list=`<div class="bank-dd-list" style="max-height:220px;overflow-y:auto">`+
+      items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(String(v))?'checked':''} onchange="${onchangeFn}Change()"> <span>${v}</span></label>`).join('')+`</div>`;
+    return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;margin-top:2px">${search}${head}${list}</div>`;
   };
   const allOfferIds=[...new Set(data.map(r=>String(r[COL.OFFER_ID]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const allArticles=[...new Set(data.map(r=>String(r[COL.ARTICLE_CODE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const allSubarticles=[...new Set(data.map(r=>String(r[COL.ARTICLE_NAME]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const allFinOps=[...new Set(data.map(r=>String(r[COL.FIN_OP]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const allSecondSides=[...new Set(data.map(r=>String(r[COL.SECOND_SIDE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const selOfferIds=(f.offerIds||[]).map(String);
   const selArticles=(f.articles||[]).map(String);
   const selSubarticles=(f.subarticles||[]).map(String);
   const selFinOps=(f.finOps||[]).map(String);
+  const selSecondSides=(f.secondSides||[]).map(String);
   const mkBtnLabel=(sel,def)=>(sel.length?sel.length+' выбрано':def)+' ▾';
 
   const bankExtraFilters=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
@@ -1134,6 +1145,15 @@ function renderBank(f){
       <button id="bank-finop-btn" onclick="bankFinOpToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${mkBtnLabel(selFinOps,'Все')}</button>
       ${mkBankDD('bank-finop-dd',allFinOps,selFinOps,'bankFinOp')}
     </div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Контрагент:</label>
+    <div style="position:relative;display:inline-block">
+      <button id="bank-second-btn" onclick="bankSecondToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${mkBtnLabel(selSecondSides,'Все')}</button>
+      ${mkBankDD('bank-second-dd',allSecondSides,selSecondSides,'bankSecond')}
+    </div>
+    <label title="Учитывать оплаты с датой позже сегодняшнего дня (плановые/будущие платежи)" style="display:flex;align-items:center;gap:6px;margin-left:auto;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${f.includeFuture?'var(--accent)':'var(--surface)'};color:${f.includeFuture?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${f.includeFuture?'checked':''} onchange="_tabFilters['bank'].includeFuture=this.checked;renderBank(getFilters())" style="cursor:pointer;margin:0">
+      Будущие оплаты
+    </label>
   </div>`;
   el.innerHTML=renderFilterBar('bank')+bankExtraFilters+kpiHtml+`<div class="bank-layout">${tableHtml}${chartsHtml}</div>`+txnHtml;
   bankFillTxn(true);
@@ -1362,7 +1382,7 @@ function _bankExtraToggle(ddId){const dd=document.getElementById(ddId);if(!dd)re
 function _bankExtraGetChecked(ddId){const dd=document.getElementById(ddId);if(!dd)return[];return[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);}
 function _bankExtraUpdateBtn(btnId,ddId){const btn=document.getElementById(btnId);if(!btn)return;const v=_bankExtraGetChecked(ddId);btn.textContent=(v.length?v.length+' выбрано':'Все')+' ▾';}
 function _bankExtraSelectAll(ddId,btnId,select){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=select);_bankExtraUpdateBtn(btnId,ddId);}
-function _bankExtraApply(){bankApplyTxnFilter();const cnt=document.getElementById('txnCount');const f=_tabFilters.bank;const hasExtra=f.offerIds.length||f.articles.length||f.subarticles.length||f.finOps.length;if(cnt){const base=window._bankTxnDataFiltered?.length??0;cnt.textContent=base.toLocaleString('ru-RU')+' транзакций'+(_bankTxnFilter.accs||_bankTxnFilter.date||hasExtra?' (фильтр)':'');}}
+function _bankExtraApply(){bankApplyTxnFilter();const cnt=document.getElementById('txnCount');const f=_tabFilters.bank;const hasExtra=f.offerIds.length||f.articles.length||f.subarticles.length||f.finOps.length||f.secondSides.length;if(cnt){const base=window._bankTxnDataFiltered?.length??0;cnt.textContent=base.toLocaleString('ru-RU')+' транзакций'+(_bankTxnFilter.accs||_bankTxnFilter.date||hasExtra?' (фильтр)':'');}}
 
 window.bankOfferToggle=function(){_bankExtraToggle('bank-offer-dd');};
 window.bankOfferChange=function(){_bankExtraUpdateBtn('bank-offer-btn','bank-offer-dd');_tabFilters.bank.offerIds=_bankExtraGetChecked('bank-offer-dd');_bankExtraApply();};
@@ -1379,6 +1399,19 @@ window.bankSubSelectAll=function(s){_bankExtraSelectAll('bank-sub-dd','bank-sub-
 window.bankFinOpToggle=function(){_bankExtraToggle('bank-finop-dd');};
 window.bankFinOpChange=function(){_bankExtraUpdateBtn('bank-finop-btn','bank-finop-dd');_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');_bankExtraApply();};
 window.bankFinOpSelectAll=function(s){_bankExtraSelectAll('bank-finop-dd','bank-finop-btn',s);_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');_bankExtraApply();};
+
+window.bankSecondToggle=function(){_bankExtraToggle('bank-second-dd');};
+window.bankSecondChange=function(){_bankExtraUpdateBtn('bank-second-btn','bank-second-dd');_tabFilters.bank.secondSides=_bankExtraGetChecked('bank-second-dd');_bankExtraApply();};
+window.bankSecondSelectAll=function(s){_bankExtraSelectAll('bank-second-dd','bank-second-btn',s);_tabFilters.bank.secondSides=_bankExtraGetChecked('bank-second-dd');_bankExtraApply();};
+
+// Поиск внутри дропдаунов (без ре-рендера)
+window.bankDDFilter=function(input,ddId){
+  const q=input.value.trim().toLowerCase();
+  const dd=document.getElementById(ddId);if(!dd)return;
+  dd.querySelectorAll('.bank-dd-list label').forEach(lab=>{
+    lab.style.display=(lab.textContent||'').toLowerCase().includes(q)?'flex':'none';
+  });
+};
 
 // Multi-select направления DDS
 window.ddsDirToggle=function(btn){
@@ -1412,7 +1445,7 @@ document.addEventListener('click',function(e){
   if(ddsDD&&ddsDD.style.display==='block'&&!ddsDD.contains(e.target)&&e.target!==ddsBtn){ddsDD.style.display='none';window.ddsDirApply&&window.ddsDirApply();}
   const bankDD=document.getElementById('bank-dir-dd');const bankBtn=document.getElementById('bank-dir-btn');
   if(bankDD&&bankDD.style.display==='block'&&!bankDD.contains(e.target)&&e.target!==bankBtn){bankDD.style.display='none';window.bankDirApply&&window.bankDirApply();}
-  [['bank-offer-dd','bank-offer-btn'],['bank-art-dd','bank-art-btn'],['bank-sub-dd','bank-sub-btn'],['bank-finop-dd','bank-finop-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn)dd.style.display='none';});
+  [['bank-offer-dd','bank-offer-btn'],['bank-art-dd','bank-art-btn'],['bank-sub-dd','bank-sub-btn'],['bank-finop-dd','bank-finop-btn'],['bank-second-dd','bank-second-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn)dd.style.display='none';});
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
