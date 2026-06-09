@@ -586,7 +586,7 @@ const _tabFilters={
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
-  fot:{dateFrom:'',dateTo:'',periodType:'direction',fotDetail:'direction',preset:'all'}
+  fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
 };
 
 function getFilters(){return _tabFilters[activeTab]||_tabFilters.bank;}
@@ -1516,6 +1516,19 @@ window.bankDDFilter=function(input,ddId){
   });
 };
 
+// ФОТ extra-фильтры (Статья / Подстатья / Контрагент) — применяются на закрытии через renderFOT
+function _fotExtraToggle(ddId){const dd=document.getElementById(ddId);if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderFOT(getFilters());}
+window.fotArtToggle=function(){_fotExtraToggle('fot-art-dd');};
+window.fotArtChange=function(){_bankExtraUpdateBtn('fot-art-btn','fot-art-dd');_tabFilters.fot.articles=_bankExtraGetChecked('fot-art-dd');};
+window.fotArtSelectAll=function(s){_bankExtraSelectAll('fot-art-dd','fot-art-btn',s);_tabFilters.fot.articles=_bankExtraGetChecked('fot-art-dd');};
+window.fotSubToggle=function(){_fotExtraToggle('fot-sub-dd');};
+window.fotSubChange=function(){_bankExtraUpdateBtn('fot-sub-btn','fot-sub-dd');_tabFilters.fot.subarticles=_bankExtraGetChecked('fot-sub-dd');};
+window.fotSubSelectAll=function(s){_bankExtraSelectAll('fot-sub-dd','fot-sub-btn',s);_tabFilters.fot.subarticles=_bankExtraGetChecked('fot-sub-dd');};
+window.fotCpToggle=function(){_fotExtraToggle('fot-cp-dd');};
+window.fotCpChange=function(){_bankExtraUpdateBtn('fot-cp-btn','fot-cp-dd');_tabFilters.fot.counterparties=_bankExtraGetChecked('fot-cp-dd');};
+window.fotCpSelectAll=function(s){_bankExtraSelectAll('fot-cp-dd','fot-cp-btn',s);_tabFilters.fot.counterparties=_bankExtraGetChecked('fot-cp-dd');};
+window.fotResetExtra=function(){_tabFilters.fot.articles=[];_tabFilters.fot.subarticles=[];_tabFilters.fot.counterparties=[];renderFOT(getFilters());};
+
 // Multi-select направления DDS
 window.ddsDirToggle=function(btn){
   const dd=document.getElementById('dds-dir-dd');if(!dd)return;
@@ -1551,6 +1564,9 @@ document.addEventListener('click',function(e){
   let _bankExtraClosed=false;
   [['bank-offer-dd','bank-offer-btn'],['bank-art-dd','bank-art-btn'],['bank-sub-dd','bank-sub-btn'],['bank-finop-dd','bank-finop-btn'],['bank-second-dd','bank-second-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';_bankExtraClosed=true;}});
   if(_bankExtraClosed)renderBank(getFilters());
+  let _fotExtraClosed=false;
+  [['fot-art-dd','fot-art-btn'],['fot-sub-dd','fot-sub-btn'],['fot-cp-dd','fot-cp-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';_fotExtraClosed=true;}});
+  if(_fotExtraClosed)renderFOT(getFilters());
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
@@ -2460,7 +2476,7 @@ function renderFOT(f){
   const el=document.getElementById('tabFot');
   const mode=f.periodType,detail=f.fotDetail||'direction';
   // ФОТ считается по дате ОПиУ (начисление). Строки без DATE_OPIU исключаются
-  const data=RAW.filter(row=>{
+  const dataBase=RAW.filter(row=>{
     const type=String(row[COL.TYPE]||'').trim().toLowerCase();
     if(type!=='списание')return false;
     if(parseNum(row[COL.OUTCOME])>=0)return false;
@@ -2469,7 +2485,36 @@ function renderFOT(f){
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
     return FOT_PREFIXES.some(p=>ac.startsWith(p)||an.startsWith(p));
   });
-  if(!data.length){el.innerHTML=emptyState('Нет данных ФОТ','Статьи должны начинаться с 111_, 226_, или 127_');return;}
+  // Списки значений для фильтров (из dataBase, до extra-фильтров)
+  const fotAllArts=[...new Set(dataBase.map(r=>String(r[COL.ARTICLE_CODE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const fotAllSubs=[...new Set(dataBase.map(r=>String(r[COL.ARTICLE_NAME]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const fotAllCps=[...new Set(dataBase.map(r=>String(r[COL.SECOND_SIDE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const selArts=(f.articles||[]).map(String),selSubs=(f.subarticles||[]).map(String),selCps=(f.counterparties||[]).map(String);
+  // Применяем extra-фильтры
+  const data=dataBase.filter(r=>{
+    if(selArts.length&&!selArts.includes(String(r[COL.ARTICLE_CODE]||'').trim()))return false;
+    if(selSubs.length&&!selSubs.includes(String(r[COL.ARTICLE_NAME]||'').trim()))return false;
+    if(selCps.length&&!selCps.includes(String(r[COL.SECOND_SIDE]||'').trim()))return false;
+    return true;
+  });
+  // Фильтр-бар ФОТ (Статья / Подстатья / Контрагент с поиском)
+  const mkFotDD=(id,items,selArr,fn)=>{
+    const search=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`;
+    const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`;
+    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(String(v))?'checked':''} onchange="${fn}Change()"> <span>${v}</span></label>`).join('')+`</div>`;
+    return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:520px;margin-top:2px">${search}${head}${list}</div>`;
+  };
+  const fotBtnLabel=(sel,def)=>(sel.length?sel.length+' выбрано':def)+' ▾';
+  const fotExtraFilters=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Статья:</label>
+    <div style="position:relative;display:inline-block"><button id="fot-art-btn" onclick="fotArtToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:90px;text-align:left">${fotBtnLabel(selArts,'Все')}</button>${mkFotDD('fot-art-dd',fotAllArts,selArts,'fotArt')}</div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Подстатья:</label>
+    <div style="position:relative;display:inline-block"><button id="fot-sub-btn" onclick="fotSubToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:90px;text-align:left">${fotBtnLabel(selSubs,'Все')}</button>${mkFotDD('fot-sub-dd',fotAllSubs,selSubs,'fotSub')}</div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Сотрудник / контрагент:</label>
+    <div style="position:relative;display:inline-block"><button id="fot-cp-btn" onclick="fotCpToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:90px;text-align:left">${fotBtnLabel(selCps,'Все')}</button>${mkFotDD('fot-cp-dd',fotAllCps,selCps,'fotCp')}</div>
+    ${(selArts.length||selSubs.length||selCps.length)?`<button onclick="fotResetExtra()" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сброс</button>`:''}
+  </div>`;
+  if(!data.length){el.innerHTML=renderFilterBar('fot')+fotExtraFilters+emptyState('Нет данных ФОТ','Измените фильтры');return;}
   // Период по DATE_OPIU
   const getFotPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(mode==='year')return String(y);if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
   const periodsSet=new Set(),psk={};
@@ -2525,7 +2570,7 @@ function renderFOT(f){
   const ths=periods.map(p=>`<th>${p}</th>`).join('');
   const rows=Object.entries(byPrimary).filter(([_,bp])=>Object.values(bp).some(v=>v!==0)).sort((a,b)=>Math.abs(Object.values(b[1]).reduce((x,y)=>x+y,0))-Math.abs(Object.values(a[1]).reduce((x,y)=>x+y,0))).map(([key,bp])=>{const vals=periods.map(p=>bp[p]||0);const tot=vals.reduce((a,b)=>a+b,0);const share=fmtPct(Math.abs(tot)/grandAbs);return`<tr><td></td><td>${key} <span style="color:var(--text3);font-size:9px">${share}</span></td>${vals.map(v=>td(v)).join('')}<td class="${numClass(tot)}">${fmt(tot)}</td></tr>`;}).join('');
   const totVals=periods.map(p=>totalByP[p]||0),grand=totVals.reduce((a,b)=>a+b,0);
-  el.innerHTML=renderFilterBar('fot')+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Фонд оплаты труда и аутсорсинг</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>${rows}<tr class="total"><td></td><td>ИТОГО</td>${totVals.map(v=>td(v)).join('')}<td class="${numClass(grand)}">${fmt(grand)}</td></tr></tbody></table></div></div>`;
+  el.innerHTML=renderFilterBar('fot')+fotExtraFilters+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Фонд оплаты труда и аутсорсинг</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>${rows}<tr class="total"><td></td><td>ИТОГО</td>${totVals.map(v=>td(v)).join('')}<td class="${numClass(grand)}">${fmt(grand)}</td></tr></tbody></table></div></div>`;
 
   // --- Графики ---
   ['_fotChartDyn','_fotChartRank'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
