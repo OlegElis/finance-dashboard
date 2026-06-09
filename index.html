@@ -2459,18 +2459,23 @@ function renderOPIU(f){
 function renderFOT(f){
   const el=document.getElementById('tabFot');
   const mode=f.periodType,detail=f.fotDetail||'direction';
-  const data=applyBaseFilters(RAW,f).filter(row=>{
+  // ФОТ считается по дате ОПиУ (начисление). Строки без DATE_OPIU исключаются
+  const data=RAW.filter(row=>{
     const type=String(row[COL.TYPE]||'').trim().toLowerCase();
     if(type!=='списание')return false;
     if(parseNum(row[COL.OUTCOME])>=0)return false;
+    const d=parseDate(row[COL.DATE_OPIU]);if(!d)return false;
+    if(f.dateFrom||f.dateTo){const iso=toIso(d);if(f.dateFrom&&iso<f.dateFrom)return false;if(f.dateTo&&iso>f.dateTo)return false;}
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
     return FOT_PREFIXES.some(p=>ac.startsWith(p)||an.startsWith(p));
   });
   if(!data.length){el.innerHTML=emptyState('Нет данных ФОТ','Статьи должны начинаться с 111_, 226_, или 127_');return;}
+  // Период по DATE_OPIU
+  const getFotPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(mode==='year')return String(y);if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
   const periodsSet=new Set(),psk={};
   const byPrimary={},totalByP={};
   data.forEach(row=>{
-    const pk=getPeriodKey(row,mode);if(!pk)return;
+    const pk=getFotPK(row);if(!pk)return;
     periodsSet.add(pk);psk[pk]=periodSortKey(pk,mode);
     const out=parseNum(row[COL.OUTCOME]);
     const dir=String(row[COL.ACTIVITY_DIR]||'Не указано').trim();
