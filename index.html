@@ -911,12 +911,22 @@ function renderBank(f){
     .map(([mk,v])=>{const[yr,mo]=mk.split('-');return`<tr><td style="padding:3px 10px;font-size:11px;color:var(--text2)">${MONTHS_FULL[+mo-1]} ${yr}</td><td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--outcome)">${fmt(-v)}</td></tr>`;}).join('');
   window._cashRunwayData={currentBalance,avgMonthlyOut,cashRunwayDays,runwayMonthRows,monthCount:monthKeys.length,totalOut90,periodStart,periodEnd};
 
+  // Лимиты касс
+  const kassaList=pretaxKassy.slice(); // {name, inc, out, total}
+  let kassaOver=0, kassaWithLimit=0;
+  kassaList.forEach(a=>{const lim=_kassaLimits[a.name];if(lim!=null&&lim!==''&&!isNaN(+lim)){kassaWithLimit++;if(a.total>+lim)kassaOver++;}});
+  const kassaColor=kassaList.length===0?'var(--text3)':kassaOver>0?'var(--outcome)':kassaWithLimit===0?'var(--text3)':'var(--income)';
+  const kassaLabel=kassaList.length===0?'Нет касс':kassaOver>0?('Превышение: '+kassaOver):kassaWithLimit===0?'Не настроено':'В норме';
+  const kassaHint=kassaList.length===0?'—':kassaOver>0?'есть превышение':kassaWithLimit===0?'задайте лимиты':'в пределах лимита';
+  window._kassaData=kassaList.map(a=>({name:a.name,balance:a.total,limit:(_kassaLimits[a.name]??'')}));
+
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div></div>
     <div class="kpi-card red"><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${map.size}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor};font-size:9px">${runwayHint} ↗</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты касс — нажмите для настройки"><div class="kpi-label">Лимит касс</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor};font-size:9px">${kassaHint} ⚙</div></div>
   </div>`;
 
   // Общая функция для кликабельной строки счёта
@@ -1339,6 +1349,67 @@ window.showCashRunwayPopup=function(){
     </div>
   </div>`;
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+};
+
+// Лимиты касс — попап с расшифровкой и настройкой
+window.kassaSetLimit=function(input,name){
+  const v=String(input.value).trim().replace(/\s/g,'').replace(',','.');
+  if(v===''){delete _kassaLimits[name];}else{_kassaLimits[name]=parseFloat(v)||0;}
+  _kassaSaveLimits();
+  const row=input.closest('tr');
+  const bal=parseFloat(input.dataset.balance);
+  const st=row.querySelector('.kassa-status');
+  const lim=_kassaLimits[name];
+  if(lim==null||lim===''){st.textContent='— лимит не задан';st.style.color='var(--text3)';}
+  else if(bal>+lim){st.textContent='⚠ Превышение +'+fmt(bal-+lim);st.style.color='var(--outcome)';}
+  else{st.textContent='✓ Запас '+fmt(+lim-bal);st.style.color='var(--income)';}
+};
+window.showKassaLimitsPopup=function(){
+  const d=window._kassaData||[];
+  const fmt2=v=>(v!==null&&v!==undefined&&v!=='')?(+v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+  const rows=d.length?d.map(k=>{
+    const lim=k.limit;
+    const hasLim=lim!=null&&lim!=='';
+    const over=hasLim&&k.balance>+lim;
+    const stTxt=!hasLim?'— лимит не задан':over?('⚠ Превышение +'+fmt(k.balance-+lim)):('✓ Запас '+fmt(+lim-k.balance));
+    const stColor=!hasLim?'var(--text3)':over?'var(--outcome)':'var(--income)';
+    const safeName=k.name.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    return`<tr>
+      <td style="padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border)">${k.name}</td>
+      <td style="padding:6px 10px;font-size:11px;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">${fmt2(k.balance)}</td>
+      <td style="padding:4px 10px;text-align:right;border-bottom:1px solid var(--border)"><input type="text" value="${hasLim?k.limit:''}" data-balance="${k.balance}" placeholder="не задан" onchange="kassaSetLimit(this,'${safeName}')" style="width:120px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;padding:3px 6px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>
+      <td class="kassa-status" style="padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border);white-space:nowrap;color:${stColor}">${stTxt}</td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="4" style="padding:12px;font-size:11px;color:var(--text3);text-align:center">Кассы не найдены в данных</td></tr>';
+  const overlay=document.createElement('div');
+  overlay.className='txn-card-overlay';
+  const close=()=>{overlay.remove();renderBank(getFilters());};
+  overlay.innerHTML=`<div class="txn-card" style="max-width:640px">
+    <div class="txn-card-head">
+      <h3>🏦 Лимиты касс — настройка и контроль</h3>
+      <button class="txn-card-close">✕</button>
+    </div>
+    <div style="padding:16px 20px 20px">
+      <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.6">
+        Лимит остатка наличных задаётся для каждой кассы. Если текущий остаток превышает лимит — касса подсвечивается как <b style="color:var(--outcome)">превышение</b>. Лимиты сохраняются в браузере.
+      </p>
+      <div style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="padding:6px 10px;font-size:10px;background:var(--surface2);text-align:left;border-bottom:1px solid var(--border)">Касса</th>
+            <th style="padding:6px 10px;font-size:10px;background:var(--surface2);text-align:right;border-bottom:1px solid var(--border)">Остаток</th>
+            <th style="padding:6px 10px;font-size:10px;background:var(--surface2);text-align:right;border-bottom:1px solid var(--border)">Лимит</th>
+            <th style="padding:6px 10px;font-size:10px;background:var(--surface2);text-align:left;border-bottom:1px solid var(--border)">Статус</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p style="font-size:10px;color:var(--text3);margin:12px 0 0;font-style:italic">Изменения применяются сразу. Закройте окно, чтобы обновить карточку в шапке.</p>
+    </div>
+  </div>`;
+  overlay.querySelector('.txn-card-close').addEventListener('click',close);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
   document.body.appendChild(overlay);
 };
 
@@ -2438,6 +2509,10 @@ const MKT_SUBART={
 // Хранилище ручных вводов: {periodKey: {leads, orders, fulfilled}}
 let _mktCounts=(()=>{try{return JSON.parse(localStorage.getItem('mktCounts')||'{}')}catch(e){return{}}})();
 function _mktSaveCounts(){try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){}}
+
+// Лимиты касс {accName: limitNumber} — персистится в localStorage
+let _kassaLimits=(()=>{try{return JSON.parse(localStorage.getItem('kassaLimits')||'{}')}catch(e){return{}}})();
+function _kassaSaveLimits(){try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}}
 
 window.mktCountChange=function(pk,field,val){
   if(!_mktCounts[pk])_mktCounts[pk]={leads:0,orders:0,fulfilled:0};
