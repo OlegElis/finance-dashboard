@@ -288,6 +288,9 @@
     <div class="nav-item" id="nav-dupes" onclick="switchTab('dupes')">
       <span class="nav-icon">🔍</span> Дубли
     </div>
+    <div class="nav-item" id="nav-incomplete" onclick="switchTab('incomplete')">
+      <span class="nav-icon">⚠️</span> Недозаполненные
+    </div>
     <div class="nav-section" style="margin-top:12px">Данные</div>
     <div class="nav-item" onclick="showSetup()">
       <span class="nav-icon">⚙️</span> Подключение
@@ -344,6 +347,7 @@
       <div id="tabMarketing" class="hidden"></div>
       <div id="tabExpenses" class="hidden"></div>
       <div id="tabDupes" class="hidden"></div>
+      <div id="tabIncomplete" class="hidden"></div>
     </div>
   </div>
 
@@ -357,7 +361,7 @@ const REVENUE_PREFIX='120_';
 let RAW=[];
 let activeTab='bank';
 
-const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг',expenses:'Структура расходов',dupes:'Контроль — Дубли записей'};
+const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг',expenses:'Структура расходов',dupes:'Контроль — Дубли записей',incomplete:'Контроль — Недозаполненные данные'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'—';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -595,6 +599,7 @@ const _tabFilters={
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
+  incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -745,10 +750,10 @@ function switchTab(name){
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
   document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
-  ['bank','dds','opiu','fot','marketing','expenses','dupes'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
+  ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   renderActiveTab();
 }
-function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);}
+function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);}
 
 
 function bankUpdateDays(yr,mo){
@@ -3110,6 +3115,143 @@ window.dupesSharePdf=async function(btn){
     }
   }catch(e){if(e.name!=='AbortError')alert('Не удалось поделиться: '+e.message);}
   finally{if(btn){btn.textContent=old;btn.disabled=false;}}
+};
+
+// ─── КОНТРОЛЬ: НЕДОЗАПОЛНЕННЫЕ ДАННЫЕ ────────────────────────────────────────
+function renderIncomplete(f){
+  const el=document.getElementById('tabIncomplete');
+  const S=v=>String(v==null?'':v).trim();
+  const isNum=v=>{if(v===''||v==null)return false;const n=typeof v==='number'?v:parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isFinite(n);};
+  // Дата-фильтр вручную: строки совсем без дат включаются всегда (это и есть нарушение)
+  const inRange=r=>{
+    if(!f.dateFrom&&!f.dateTo)return true;
+    const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
+    if(!d)return true;
+    const iso=toIso(d);
+    if(f.dateFrom&&iso<f.dateFrom)return false;
+    if(f.dateTo&&iso>f.dateTo)return false;
+    return true;
+  };
+  const data=RAW.filter(inRange);
+
+  // Проверки по регламенту заполнения
+  const checkRow=r=>{
+    const errs=[],warns=[];
+    const type=S(r[COL.TYPE]).toLowerCase();
+    if(!parseDate(r[COL.DATE_DDS]))errs.push('ДДС');
+    if(!parseDate(r[COL.DATE_OPIU]))errs.push('ОПиУ');
+    if(!S(r[COL.TYPE]))errs.push('Тип операции');
+    if(!isNum(r[COL.INCOME]))errs.push('Поступление');
+    if(!isNum(r[COL.OUTCOME]))errs.push('Списание');
+    const ac=S(r[COL.ARTICLE_CODE]),an=S(r[COL.ARTICLE_NAME]);
+    if(!ac)errs.push('Статья');
+    if(!an)errs.push('Подстатья');
+    if(ac&&an){const a=ac.match(/^(\d{3})/),b=an.match(/^(\d{3})/);if(a&&b&&a[1]!==b[1])errs.push('Подстатья≠Статья');}
+    if(!S(r[COL.ACTIVITY_DIR]))errs.push('Направление');
+    if(!S(r[COL.FIN_OP]))errs.push('Фин. операция');
+    // Предупреждения — поля, которые допускают временную пустоту (заполняет фин.менеджер) или имеют исключения
+    if(!S(r[COL.OFFER_ID]))warns.push('ID Offer');
+    if(!S(r[COL.FNS]))warns.push('ФНС');
+    if(!S(r[COL.ACCOUNT]))warns.push('Реквизиты счёта');
+    if(type==='списание'&&!S(r[COL.ANALYTICS]))warns.push('Аналитика');
+    return {errs,warns};
+  };
+
+  const bad=[];const fieldCount={};
+  data.forEach(r=>{
+    const c=checkRow(r);
+    if(c.errs.length||c.warns.length){
+      bad.push({r,errs:c.errs,warns:c.warns});
+      c.errs.forEach(x=>fieldCount[x]=(fieldCount[x]||0)+1);
+      c.warns.forEach(x=>fieldCount[x]=(fieldCount[x]||0)+1);
+    }
+  });
+  const errRows=bad.filter(b=>b.errs.length).length;
+  const warnOnlyRows=bad.length-errRows;
+
+  const filterBar=`<div class="tab-filters">
+    <div class="date-range">
+      <input type="date" value="${f.dateFrom}" onchange="_tabFilters['incomplete'].dateFrom=this.value;renderIncomplete(getFilters())">
+      <span class="date-range-sep">—</span>
+      <input type="date" value="${f.dateTo}" onchange="_tabFilters['incomplete'].dateTo=this.value;renderIncomplete(getFilters())">
+    </div>
+  </div>`;
+
+  const kpiHtml=`<div class="kpi-grid">
+    <div class="kpi-card ${errRows?'red':'green'}"><div class="kpi-label">Строк с ошибками</div><div class="kpi-value ${errRows?'negative':'positive'}">${errRows}</div></div>
+    <div class="kpi-card ${warnOnlyRows?'orange':'green'}"><div class="kpi-label">Только предупреждения</div><div class="kpi-value">${warnOnlyRows}</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Заполнено корректно</div><div class="kpi-value positive">${(data.length-bad.length).toLocaleString('ru-RU')}</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Проверено строк</div><div class="kpi-value">${data.length.toLocaleString('ru-RU')}</div></div>
+  </div>`;
+
+  if(!bad.length){
+    el.innerHTML=filterBar+kpiHtml+emptyState('Незаполненных полей не найдено','Все обязательные поля заполнены ✓');
+    return;
+  }
+
+  // Разбивка по полям
+  const ERR_FIELDS=['ДДС','ОПиУ','Тип операции','Поступление','Списание','Статья','Подстатья','Подстатья≠Статья','Направление','Фин. операция'];
+  const chips=Object.entries(fieldCount).sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
+    const isErr=ERR_FIELDS.includes(k);
+    return`<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:600;background:${isErr?'#fdecea':'#fff8e1'};color:${isErr?'var(--outcome)':'#9a6700'};border:1px solid ${isErr?'#f5c6cb':'#f0e0a0'}">${k}: ${v}</span>`;
+  }).join(' ');
+  const chipsBar=`<div style="display:flex;align-items:center;gap:6px;padding:7px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
+    <span style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Нарушения по полям:</span>${chips}
+    <span style="margin-left:auto;font-size:10px;color:var(--text3)"><span style="color:var(--outcome)">■</span> обязательное &nbsp;<span style="color:#9a6700">■</span> допустимо до утверждения</span>
+  </div>`;
+
+  // Таблица: проблемы + 15 колонок в стиле Банка, подсветка проблемных ячеек
+  const dsF=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const esc=s=>String(s==null?'':s).replace(/</g,'&lt;');
+  window._incRows=[];
+  const LIMIT=500;
+  const mark=(b,field)=>b.errs.includes(field)?'background:#fdecea;':b.warns.includes(field)?'background:#fff8e1;':'';
+  const body=bad.slice(0,LIMIT).map((b,i)=>{
+    window._incRows.push(b.r);
+    const r=b.r;const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    const issues=[...b.errs.map(x=>`<span style="color:var(--outcome);font-weight:700">${x}</span>`),...b.warns.map(x=>`<span style="color:#9a6700">${x}</span>`)].join(', ');
+    return`<tr style="cursor:pointer" onclick="incShowCard(${i})" title="Нажмите для карточки">`+
+      `<td style="font-size:9px;max-width:170px;white-space:normal">${issues}</td>`+
+      `<td class="center" style="${mark(b,'ДДС')}">${dsF(r[COL.DATE_DDS])}</td>`+
+      `<td class="center" style="${mark(b,'ОПиУ')}">${dsOpiu(r[COL.DATE_OPIU])}</td>`+
+      `<td class="center" style="${mark(b,'Тип операции')}">${esc(r[COL.TYPE])}</td>`+
+      `<td style="${mark(b,'ID Offer')}">${esc(r[COL.OFFER_ID])}</td>`+
+      `<td class="num" style="${mark(b,'Поступление')}">${isNum(r[COL.INCOME])?(inc?fmt(inc):'0'):''}</td>`+
+      `<td class="num" style="${mark(b,'Списание')}">${isNum(r[COL.OUTCOME])?(out?fmt(out):'0'):''}</td>`+
+      `<td class="center" style="${mark(b,'ФНС')}">${esc(r[COL.FNS])}</td>`+
+      `<td style="${mark(b,'Реквизиты счёта')}">${esc(r[COL.ACCOUNT])}</td>`+
+      `<td style="${mark(b,'Статья')||mark(b,'Подстатья≠Статья')}">${esc(r[COL.ARTICLE_CODE])}</td>`+
+      `<td style="${mark(b,'Подстатья')||mark(b,'Подстатья≠Статья')}">${esc(r[COL.ARTICLE_NAME])}</td>`+
+      `<td class="center" style="${mark(b,'Аналитика')}">${esc(r[COL.ANALYTICS])}</td>`+
+      `<td>${esc(r[COL.SECOND_SIDE])}</td>`+
+      `<td>${esc(r[COL.PURPOSE])}</td>`+
+      `<td style="${mark(b,'Направление')}">${esc(r[COL.ACTIVITY_DIR])}</td>`+
+      `<td style="${mark(b,'Фин. операция')}">${esc(r[COL.FIN_OP])}</td>`+
+      `</tr>`;
+  }).join('');
+  const trunc=bad.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} строк из ${bad.length}</div>`:'';
+
+  el.innerHTML=filterBar+kpiHtml+chipsBar+`
+  <div class="txn-wrap">
+    <div class="txn-header"><span class="table-title">Строки с незаполненными полями</span><span class="table-count">${bad.length.toLocaleString('ru-RU')} строк</span></div>
+    <div class="txn-scroll"><table class="txn-table">
+      <thead><tr>
+        <th style="min-width:150px">Проблемы</th>
+        <th>ДДС</th><th>ОПиУ</th><th>Тип операции</th><th>ID Offer</th>
+        <th>Поступление</th><th>Списание</th><th>ФНС</th><th>Реквизиты счёта</th>
+        <th>Статья</th><th>Подстатья</th><th>Аналитика</th><th>Контрагент</th>
+        <th>Назначение</th><th>Направление</th><th>Фин. операция</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>${trunc}
+  </div>`;
+}
+window.incShowCard=function(idx){
+  const r=(window._incRows||[])[idx];if(!r)return;
+  window._dupesRows=window._dupesRows||[];
+  const keep=window._dupesRows;
+  window._dupesRows=[r];
+  try{window.dupesShowCard(0);}finally{window._dupesRows=keep;}
 };
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
