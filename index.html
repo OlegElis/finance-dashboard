@@ -594,7 +594,7 @@ const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
-  dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',strictMode:true},
+  dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -2788,17 +2788,15 @@ window.expDirSelectAll=function(s){const dd=document.getElementById('exp-dir-dd'
 // ─── КОНТРОЛЬ: ДУБЛИ ЗАПИСЕЙ ─────────────────────────────────────────────────
 function renderDupes(f){
   const el=document.getElementById('tabDupes');
-  const strict=f.strictMode!==false;
   // Фильтр по датам (любая из дат строки попадает в диапазон)
   const data=applyBaseFilters(RAW,f);
-  // Ключ дубля: ВСЕ ячейки записи (вся строка целиком, сколько бы колонок ни было).
-  // В режиме «без назначения» исключается только PURPOSE.
+  // Ключ дубля: ВСЕ ячейки записи (вся строка целиком, сколько бы колонок ни было)
   const maxLen=data.reduce((m,r)=>Math.max(m,r.length),0);
   const norm=v=>typeof v==='string'?v.trim():(v==null?'':v);
   const groups=new Map();
   data.forEach(r=>{
     const cells=[];
-    for(let i=0;i<maxLen;i++){if(!strict&&i===COL.PURPOSE)continue;cells.push(norm(r[i]));}
+    for(let i=0;i<maxLen;i++)cells.push(norm(r[i]));
     const key=JSON.stringify(cells);
     if(!groups.has(key))groups.set(key,[]);
     groups.get(key).push(r);
@@ -2808,6 +2806,8 @@ function renderDupes(f){
   // Метрики искажения: лишние строки (все сверх первой в группе)
   let extraRows=0,extraInc=0,extraOut=0;
   dupeGroups.forEach(g=>{const n=g.length-1;extraRows+=n;extraInc+=n*parseNum(g[0][COL.INCOME]);extraOut+=n*parseNum(g[0][COL.OUTCOME]);});
+  window._dupesGroups=dupeGroups;
+  window._dupesMeta={dateFrom:f.dateFrom,dateTo:f.dateTo,checked:data.length,extraRows,extraInc,extraOut};
 
   // Фильтр-бар: даты + тумблер строгости
   const filterBar=`<div class="tab-filters">
@@ -2817,10 +2817,7 @@ function renderDupes(f){
       <input type="date" value="${f.dateTo}" onchange="_tabFilters['dupes'].dateTo=this.value;renderDupes(getFilters())">
     </div>
     <div class="filter-sep"></div>
-    <label title="Строгий: совпадение всех 15 колонок. Без назначения: совпадение всех колонок, кроме «Назначение платежа»" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${strict?'var(--surface)':'var(--accent)'};color:${strict?'var(--text2)':'#fff'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
-      <input type="checkbox" ${strict?'':'checked'} onchange="_tabFilters['dupes'].strictMode=!this.checked;renderDupes(getFilters())" style="cursor:pointer;margin:0">
-      Без учёта назначения
-    </label>
+    <button onclick="dupesPrintReport()" style="padding:4px 14px;font-size:11px;font-weight:600;border:1px solid var(--accent);border-radius:5px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">🖨 Сформировать отчёт</button>
   </div>`;
 
   if(!dupeGroups.length){
@@ -2828,7 +2825,7 @@ function renderDupes(f){
       <div class="kpi-card green"><div class="kpi-label">Групп дублей</div><div class="kpi-value positive">0</div></div>
       <div class="kpi-card green"><div class="kpi-label">Лишних строк</div><div class="kpi-value positive">0</div></div>
       <div class="kpi-card blue"><div class="kpi-label">Проверено строк</div><div class="kpi-value">${data.length.toLocaleString('ru-RU')}</div></div>
-      <div class="kpi-card blue"><div class="kpi-label">Режим</div><div class="kpi-value" style="font-size:14px">${strict?'Строгий':'Без назначения'}</div></div>
+      <div class="kpi-card blue"><div class="kpi-label">Режим</div><div class="kpi-value" style="font-size:14px">Все ячейки</div></div>
     </div>`+emptyState('Дублей не найдено','Все записи уникальны ✓');
     return;
   }
@@ -2884,11 +2881,13 @@ function renderDupes(f){
     ⚠ Дашборд работает в режиме чтения — удалить дубли можно только в исходной Google-таблице. Найдите строку по дате, сумме и назначению. <b>Лишние строки в группах выделены красным.</b> Клик на строку — карточка операции.
   </div>
   <div class="txn-wrap">
-    <div class="txn-header"><span class="table-title">Группы полных дублей</span><span class="table-count">${dupeGroups.length} групп · режим: ${strict?'строгий (все ячейки)':'без назначения'}</span></div>
+    <div class="txn-header"><span class="table-title">Группы полных дублей</span><span class="table-count">${dupeGroups.length} групп · сравнение всех ячеек</span></div>
     <div class="txn-scroll"><table class="txn-table">
       <colgroup>
         <col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer">
-        <col><col><col><col><col><col><col><col><col class="c-purp"><col class="c-dir"><col class="c-finop">
+        <col class="c-inc"><col class="c-out"><col class="c-fns"><col class="c-acc">
+        <col class="c-art"><col class="c-sub"><col class="c-anl"><col class="c-side">
+        <col class="c-purp"><col class="c-dir"><col class="c-finop">
       </colgroup>
       <thead><tr>
         <th>ДДС</th><th>ОПиУ</th><th>Тип операции</th><th>ID Offer</th>
@@ -2940,6 +2939,60 @@ window.dupesShowCard=function(idx){
   </div>`;
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
   document.body.appendChild(overlay);
+};
+// Печать/PDF отчёта по дублям (для отправки бухгалтеру)
+window.dupesPrintReport=function(){
+  const gs=window._dupesGroups||[];
+  const m=window._dupesMeta||{};
+  const dsFmt=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
+  const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const money=v=>v?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const today=new Date().toLocaleDateString('ru-RU');
+  const period=(m.dateFrom||m.dateTo)?`${m.dateFrom?m.dateFrom.split('-').reverse().join('.'):'…'} — ${m.dateTo?m.dateTo.split('-').reverse().join('.'):'…'}`:'весь период учёта';
+  let rows='';
+  gs.forEach((g,gi)=>{
+    const r=g[0];
+    rows+=`<tr class="grp"><td colspan="9">Группа ${gi+1} — ${g.length} одинаковые строки (лишних: ${g.length-1})</td></tr>`;
+    g.forEach((row,ri)=>{
+      rows+=`<tr${ri>0?' class="dup"':''}>
+        <td>${dsFmt(row[COL.DATE_DDS])}</td><td>${dsFmt(row[COL.DATE_OPIU])}</td><td>${esc(row[COL.TYPE])}</td>
+        <td class="num">${money(parseNum(row[COL.INCOME]))}</td><td class="num">${money(parseNum(row[COL.OUTCOME]))}</td>
+        <td>${esc(row[COL.ACCOUNT])}</td><td>${esc(row[COL.ARTICLE_NAME]||row[COL.ARTICLE_CODE])}</td>
+        <td>${esc(row[COL.SECOND_SIDE])}</td><td>${esc(row[COL.PURPOSE])}</td>
+      </tr>`;
+    });
+  });
+  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отчёт о дублях записей</title>
+  <style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:24px}
+    h1{font-size:18px;margin:0 0 4px} .sub{color:#666;font-size:11px;margin-bottom:14px}
+    .kpis{display:flex;gap:24px;margin:12px 0 18px;padding:10px 14px;background:#f5f6fa;border:1px solid #ddd;border-radius:6px}
+    .kpis b{display:block;font-size:15px} .kpis span{font-size:10px;color:#666}
+    table{width:100%;border-collapse:collapse} th,td{border:1px solid #ccc;padding:3px 6px;font-size:10px;text-align:left;vertical-align:top}
+    th{background:#eef1f6} td.num{text-align:right;white-space:nowrap}
+    tr.grp td{background:#fde8e8;font-weight:700;border-top:2px solid #c33}
+    tr.dup td{color:#b22}
+    .note{margin-top:14px;font-size:10px;color:#666;font-style:italic}
+    @media print{body{margin:8mm}}
+  </style></head><body>
+  <h1>Отчёт о полных дублях записей</h1>
+  <div class="sub">Управленческий учёт · сформирован ${today} · период: ${period} · сравнение по всем ячейкам записи</div>
+  <div class="kpis">
+    <div><b>${gs.length}</b><span>групп дублей</span></div>
+    <div><b>${m.extraRows||0}</b><span>лишних строк</span></div>
+    <div><b>${money(m.extraInc||0)||'—'}</b><span>задвоено поступлений</span></div>
+    <div><b>${money(m.extraOut||0)||'—'}</b><span>задвоено списаний</span></div>
+    <div><b>${(m.checked||0).toLocaleString('ru-RU')}</b><span>проверено строк</span></div>
+  </div>
+  <table><thead><tr>
+    <th>ДДС</th><th>ОПиУ</th><th>Тип</th><th>Поступление</th><th>Списание</th><th>Счёт</th><th>Подстатья</th><th>Контрагент</th><th>Назначение</th>
+  </tr></thead><tbody>${rows||'<tr><td colspan="9">Дублей не найдено — все записи уникальны.</td></tr>'}</tbody></table>
+  <div class="note">Лишние строки (выделены красным) подлежат удалению из исходной таблицы. В каждой группе следует оставить одну строку.</div>
+  <script>window.onload=()=>window.print();<\/script>
+  </body></html>`;
+  const w=window.open('','_blank');
+  if(!w){alert('Разрешите всплывающие окна для формирования отчёта');return;}
+  w.document.write(html);w.document.close();
 };
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
