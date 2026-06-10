@@ -281,6 +281,9 @@
     <div class="nav-item" id="nav-marketing" onclick="switchTab('marketing')">
       <span class="nav-icon">📣</span> Маркетинг
     </div>
+    <div class="nav-item" id="nav-expenses" onclick="switchTab('expenses')">
+      <span class="nav-icon">🧾</span> Структура расходов
+    </div>
     <div class="nav-section" style="margin-top:12px">Данные</div>
     <div class="nav-item" onclick="showSetup()">
       <span class="nav-icon">⚙️</span> Подключение
@@ -335,6 +338,7 @@
       <div id="tabOpiu" class="hidden"></div>
       <div id="tabFot" class="hidden"></div>
       <div id="tabMarketing" class="hidden"></div>
+      <div id="tabExpenses" class="hidden"></div>
     </div>
   </div>
 
@@ -348,7 +352,7 @@ const REVENUE_PREFIX='120_';
 let RAW=[];
 let activeTab='bank';
 
-const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг'};
+const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг',expenses:'Структура расходов'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'—';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -584,6 +588,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
+  expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[]},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -734,10 +739,10 @@ function switchTab(name){
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
   document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
-  ['bank','dds','opiu','fot','marketing'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
+  ['bank','dds','opiu','fot','marketing','expenses'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   renderActiveTab();
 }
-function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);}
+function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);}
 
 
 function bankUpdateDays(yr,mo){
@@ -1581,6 +1586,8 @@ document.addEventListener('click',function(e){
   let _fotExtraClosed=false;
   [['fot-art-dd','fot-art-btn'],['fot-sub-dd','fot-sub-btn'],['fot-cp-dd','fot-cp-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';_fotExtraClosed=true;}});
   if(_fotExtraClosed)renderFOT(getFilters());
+  const expDD=document.getElementById('exp-dir-dd');const expBtn=document.getElementById('exp-dir-btn');
+  if(expDD&&expDD.style.display==='block'&&!expDD.contains(e.target)&&e.target!==expBtn){expDD.style.display='none';renderExpenses(getFilters());}
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
@@ -2612,6 +2619,118 @@ function renderFOT(f){
       plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(-c.raw)+' ('+fmtPct(c.raw/grandAbs)+')'}}},
       scales:{x:{grid:{color:'#ebebeb'},ticks:{font:{size:9},callback:moneyTick}},y:{grid:{display:false},ticks:{font:{size:9}}}}}});
 }
+
+// ─── СТРУКТУРА РАСХОДОВ ──────────────────────────────────────────────────────
+function renderExpenses(f){
+  const el=document.getElementById('tabExpenses');
+  // По дате ОПиУ (начисление), исключая перемещения
+  const baseData=applyBaseFilters(RAW,f).filter(r=>{
+    const t=String(r[COL.TYPE]||'').trim().toLowerCase();
+    return t!=='перемещение' && !!parseDate(r[COL.DATE_OPIU]);
+  });
+  // Направление-фильтр
+  const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const selDirs=f.activityDirs||[];
+  const data=selDirs.length?baseData.filter(r=>selDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):baseData;
+
+  // Выручка (база для % от выручки)
+  let totalRev=0;
+  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();const inc=parseNum(r[COL.INCOME]);if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)totalRev+=inc;});
+
+  // Расходы: группировка аналитика → подстатья
+  const cats={};let totalExp=0;
+  data.forEach(r=>{
+    const type=String(r[COL.TYPE]||'').trim().toLowerCase();
+    const out=parseNum(r[COL.OUTCOME]);
+    if(type!=='списание'||out>=0)return;
+    const cat=String(r[COL.ANALYTICS]||'').trim()||'Без аналитики';
+    const sub=String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'Без подстатьи').trim();
+    if(!cats[cat])cats[cat]={total:0,subs:{}};
+    cats[cat].total+=out;cats[cat].subs[sub]=(cats[cat].subs[sub]||0)+out;
+    totalExp+=out;
+  });
+  const catArr=Object.entries(cats).map(([k,v])=>({name:k,total:Math.abs(v.total),subs:v.subs})).filter(c=>c.total>0).sort((a,b)=>b.total-a.total);
+  const totalExpAbs=Math.abs(totalExp)||1;
+  const revAbs=Math.abs(totalRev)||1;
+
+  // Фильтр-бар + направление
+  const dirCb=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="expDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="expDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="expDirChange()"> <span>${d}</span></label>`).join('');
+  const dirBtn=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
+  const extra=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border)">
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
+    <div style="position:relative;display:inline-block"><button id="exp-dir-btn" onclick="expDirToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:160px;text-align:left">${dirBtn}</button>
+    <div id="exp-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow-y:auto;min-width:300px;margin-top:2px">${dirCb}</div></div>
+  </div>`;
+
+  if(!catArr.length){el.innerHTML=renderFilterBar('expenses')+extra+emptyState('Нет расходов','Измените фильтры');return;}
+
+  const expShareRev=totalExpAbs/revAbs;
+  const kpiHtml=`<div class="kpi-grid">
+    <div class="kpi-card green"><div class="kpi-label">Выручка</div><div class="kpi-value positive">${fmt(totalRev)}</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Расходы всего</div><div class="kpi-value negative">${fmt(totalExp)}</div></div>
+    <div class="kpi-card ${expShareRev>1?'red':'orange'}"><div class="kpi-label">Доля расходов в выручке</div><div class="kpi-value">${totalRev?fmtPct(expShareRev):'—'}</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Категорий расходов</div><div class="kpi-value">${catArr.length}</div></div>
+  </div>`;
+
+  // Графики
+  const chartsHtml=`<div style="display:grid;grid-template-columns:1fr 1.3fr;gap:14px;margin:0 0 14px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Доли категорий в расходах</div>
+      <div style="height:300px"><canvas id="expChartDonut"></canvas></div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Топ подстатей расходов (% от выручки)</div>
+      <div style="height:300px"><canvas id="expChartBar"></canvas></div>
+    </div>
+  </div>`;
+
+  // Таблица: категория → подстатьи, колонки Сумма / Доля в расходах / % от выручки
+  const colHdr=`<thead><tr>
+    <th style="text-align:left;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Статья / Подстатья</th>
+    <th style="text-align:right;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Сумма</th>
+    <th style="text-align:right;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Доля в расходах</th>
+    <th style="text-align:right;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">% от выручки</th>
+  </tr></thead>`;
+  let body='';
+  catArr.forEach(c=>{
+    body+=`<tr style="background:#f5f5f5"><td style="padding:5px 10px;font-size:11px;font-weight:700;color:var(--text2)">${c.name}</td>
+      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:700;color:var(--outcome);font-variant-numeric:tabular-nums">${fmt(-c.total)}</td>
+      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:700">${fmtPct(c.total/totalExpAbs)}</td>
+      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:700;color:var(--text3)">${totalRev?fmtPct(c.total/revAbs):'—'}</td></tr>`;
+    Object.entries(c.subs).map(([s,v])=>[s,Math.abs(v)]).sort((a,b)=>b[1]-a[1]).forEach(([s,v])=>{
+      body+=`<tr><td style="padding:3px 10px 3px 26px;font-size:11px;color:var(--text2)">${s}</td>
+        <td style="padding:3px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums">${fmt(-v)}</td>
+        <td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--text3)">${fmtPct(v/totalExpAbs)}</td>
+        <td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--text3)">${totalRev?fmtPct(v/revAbs):'—'}</td></tr>`;
+    });
+  });
+  body+=`<tr class="total"><td style="padding:6px 10px;font-weight:700">ИТОГО РАСХОДЫ</td>
+    <td style="padding:6px 10px;text-align:right;font-weight:700;color:var(--outcome);font-variant-numeric:tabular-nums">${fmt(totalExp)}</td>
+    <td style="padding:6px 10px;text-align:right;font-weight:700">100%</td>
+    <td style="padding:6px 10px;text-align:right;font-weight:700">${totalRev?fmtPct(totalExpAbs/revAbs):'—'}</td></tr>`;
+
+  el.innerHTML=renderFilterBar('expenses')+extra+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Структура расходов</span><span class="table-count">${catArr.length} категорий</span></div><div class="table-scroll" style="overflow-x:auto"><table class="report-table">${colHdr}<tbody>${body}</tbody></table></div></div>`;
+
+  // Графики
+  ['_expChartDonut','_expChartBar'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
+  const PAL=['#2563eb','#16a34a','#d97706','#9333ea','#dc2626','#0891b2','#65a30d','#db2777','#475569','#ca8a04'];
+  const donut=document.getElementById('expChartDonut');
+  if(donut&&window.Chart)window._expChartDonut=new Chart(donut,{type:'doughnut',
+    data:{labels:catArr.map(c=>c.name),datasets:[{data:catArr.map(c=>c.total),backgroundColor:catArr.map((_,i)=>PAL[i%PAL.length])}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:10,padding:6}},tooltip:{callbacks:{label:c=>c.label+': '+fmt(-c.raw)+' ('+fmtPct(c.raw/totalExpAbs)+')'}}}}});
+  // топ подстатей
+  const allSubs=[];catArr.forEach(c=>Object.entries(c.subs).forEach(([s,v])=>allSubs.push([s,Math.abs(v)])));
+  const topSubs=allSubs.sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const moneyTick=v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;};
+  const bar=document.getElementById('expChartBar');
+  if(bar&&window.Chart)window._expChartBar=new Chart(bar,{type:'bar',
+    data:{labels:topSubs.map(s=>s[0].length>28?s[0].slice(0,27)+'…':s[0]),datasets:[{data:topSubs.map(s=>s[1]),backgroundColor:topSubs.map((_,i)=>PAL[i%PAL.length]),borderRadius:3}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(-c.raw)+(totalRev?' · '+fmtPct(c.raw/revAbs)+' от выручки':'')}}},
+      scales:{x:{grid:{color:'#ebebeb'},ticks:{font:{size:9},callback:moneyTick}},y:{grid:{display:false},ticks:{font:{size:9}}}}}});
+}
+window.expDirToggle=function(){const dd=document.getElementById('exp-dir-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderExpenses(getFilters());};
+window.expDirChange=function(){const dd=document.getElementById('exp-dir-dd');const btn=document.getElementById('exp-dir-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';_tabFilters.expenses.activityDirs=checked;};
+window.expDirSelectAll=function(s){const dd=document.getElementById('exp-dir-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.expDirChange();};
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
 
