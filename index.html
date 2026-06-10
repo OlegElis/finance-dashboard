@@ -2817,7 +2817,10 @@ function renderDupes(f){
       <input type="date" value="${f.dateTo}" onchange="_tabFilters['dupes'].dateTo=this.value;renderDupes(getFilters())">
     </div>
     <div class="filter-sep"></div>
-    <button onclick="dupesPrintReport()" style="padding:4px 14px;font-size:11px;font-weight:600;border:1px solid var(--accent);border-radius:5px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">🖨 Сформировать отчёт</button>
+    <span style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Отчёт:</span>
+    <button onclick="dupesPrintReport()" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--accent);border-radius:5px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">🖨 Печать</button>
+    <button onclick="dupesDownloadPdf(this)" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--accent);border-radius:5px;background:var(--surface);color:var(--accent);cursor:pointer;font-family:var(--sans)">⬇ Скачать PDF</button>
+    <button onclick="dupesSharePdf(this)" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--accent);border-radius:5px;background:var(--surface);color:var(--accent);cursor:pointer;font-family:var(--sans)">📤 Поделиться</button>
   </div>`;
 
   if(!dupeGroups.length){
@@ -2940,8 +2943,8 @@ window.dupesShowCard=function(idx){
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
   document.body.appendChild(overlay);
 };
-// Печать/PDF отчёта по дублям (для отправки бухгалтеру)
-window.dupesPrintReport=function(){
+// Построитель HTML отчёта по дублям (общий для печати, PDF и Share)
+function _dupesReportBuild(){
   const gs=window._dupesGroups||[];
   const m=window._dupesMeta||{};
   const dsFmt=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
@@ -2969,10 +2972,7 @@ window.dupesPrintReport=function(){
     });
   });
   const docNum=`КД-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
-  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>${fileName}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <style>
+  const styleCss=`
     *{box-sizing:border-box}
     body{font-family:'Inter',Arial,sans-serif;font-size:11px;color:#1a2033;margin:24px}
     .hdr{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #1E2761;padding-bottom:12px;margin-bottom:14px}
@@ -2993,8 +2993,8 @@ window.dupesPrintReport=function(){
     .note ol{margin:0;padding-left:18px} .note li{margin-bottom:6px;line-height:1.5}
     .foot{margin-top:18px;padding-top:8px;border-top:1px solid #dfe3ec;font-size:9px;color:#99a;display:flex;justify-content:space-between}
     @page{size:A4 landscape;margin:8mm}
-    @media print{body{margin:0}}
-  </style></head><body>
+    @media print{body{margin:0}}`;
+  const bodyHtml=`
   <div class="hdr">
     <div class="brand">
       <div><div class="brand-name">УПР.Финансы</div><div class="brand-sub">Управленческий учёт</div></div>
@@ -3029,12 +3029,80 @@ window.dupesPrintReport=function(){
   <div class="foot">
     <span>УПР.Финансы · Управленческий учёт · Документ ${docNum}</span>
     <span>Сформировано автоматически из дашборда. Отчёт носит контрольный характер.</span>
-  </div>
-  <script>window.onload=()=>window.print();<\/script>
-  </body></html>`;
+  </div>`;
+  return {fileName,styleCss,bodyHtml};
+}
+// 1) Печать — окно с автопечатью
+window.dupesPrintReport=function(){
+  const {fileName,styleCss,bodyHtml}=_dupesReportBuild();
+  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>${fileName}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>${styleCss}</style></head><body>${bodyHtml}
+  <script>window.onload=()=>window.print();<\/script></body></html>`;
   const w=window.open('','_blank');
   if(!w){alert('Разрешите всплывающие окна для формирования отчёта');return;}
   w.document.write(html);w.document.close();
+};
+// Ленивая загрузка html2pdf (для PDF/Share)
+function _loadHtml2Pdf(){
+  return new Promise((res,rej)=>{
+    if(window.html2pdf)return res();
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+    s.onload=()=>res();s.onerror=()=>rej(new Error('html2pdf load failed'));
+    document.head.appendChild(s);
+  });
+}
+async function _dupesMakePdfBlob(){
+  await _loadHtml2Pdf();
+  const {fileName,styleCss,bodyHtml}=_dupesReportBuild();
+  // host в обычном потоке внутри обёртки height:0 — невидим для пользователя, но корректно рендерится html2canvas
+  const wrap=document.createElement('div');
+  wrap.style.cssText='height:0;overflow:hidden';
+  const host=document.createElement('div');
+  host.style.cssText='width:1080px;background:#fff';
+  host.innerHTML=`<style>${styleCss}</style><div style="font-family:'Inter',Arial,sans-serif;font-size:11px;color:#1a2033;padding:18px">${bodyHtml}</div>`;
+  wrap.appendChild(host);
+  document.body.appendChild(wrap);
+  try{
+    const blob=await html2pdf().set({
+      margin:6,
+      image:{type:'jpeg',quality:0.95},
+      html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff'},
+      jsPDF:{unit:'mm',format:'a4',orientation:'landscape'},
+      pagebreak:{mode:['avoid-all','css','legacy']}
+    }).from(host).output('blob');
+    return {blob,fileName};
+  }finally{wrap.remove();}
+}
+// 2) Скачать PDF
+window.dupesDownloadPdf=async function(btn){
+  const old=btn?btn.textContent:'';if(btn){btn.textContent='⏳ Формирую…';btn.disabled=true;}
+  try{
+    const {blob,fileName}=await _dupesMakePdfBlob();
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=fileName+'.pdf';a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  }catch(e){alert('Не удалось сформировать PDF: '+e.message);}
+  finally{if(btn){btn.textContent=old;btn.disabled=false;}}
+};
+// 3) Поделиться (Web Share API, фолбэк — скачивание)
+window.dupesSharePdf=async function(btn){
+  const old=btn?btn.textContent:'';if(btn){btn.textContent='⏳ Формирую…';btn.disabled=true;}
+  try{
+    const {blob,fileName}=await _dupesMakePdfBlob();
+    const file=new File([blob],fileName+'.pdf',{type:'application/pdf'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:'Отчёт о дублях записей',text:'Отчёт о полных дублях записей — УПР.Финансы'});
+    }else{
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);a.download=fileName+'.pdf';a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+      alert('«Поделиться» не поддерживается этим браузером — PDF скачан, прикрепите его к письму вручную.');
+    }
+  }catch(e){if(e.name!=='AbortError')alert('Не удалось поделиться: '+e.message);}
+  finally{if(btn){btn.textContent=old;btn.disabled=false;}}
 };
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
