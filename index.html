@@ -913,11 +913,11 @@ function renderBank(f){
 
   // Лимиты по всем реквизитам (счета ООО/ИП, карты ФЛ, кассы и т.д.)
   const kassaList=[...ds,...pretaxMain,...pretaxKassy,...pretaxCards].filter(a=>a.raw!==''); // {name, inc, out, total}
-  let kassaOver=0, kassaWithLimit=0;
-  kassaList.forEach(a=>{const lim=_kassaLimits[a.name];if(lim!=null&&lim!==''&&!isNaN(+lim)){kassaWithLimit++;if(a.total>+lim)kassaOver++;}});
+  let kassaOver=0, kassaWithLimit=0, kassaTotalOver=0;
+  kassaList.forEach(a=>{const lim=_kassaLimits[a.name];if(lim!=null&&lim!==''&&!isNaN(+lim)){kassaWithLimit++;if(a.total>+lim){kassaOver++;kassaTotalOver+=(a.total-+lim);}}});
   const kassaColor=kassaList.length===0?'var(--text3)':kassaOver>0?'var(--outcome)':kassaWithLimit===0?'var(--text3)':'var(--income)';
-  const kassaLabel=kassaList.length===0?'Нет счетов':kassaOver>0?('Превышение: '+kassaOver):kassaWithLimit===0?'Не настроено':'В норме';
-  const kassaHint=kassaList.length===0?'—':kassaOver>0?'есть превышение':kassaWithLimit===0?'задайте лимиты':'в пределах лимита';
+  const kassaLabel=kassaList.length===0?'Нет счетов':kassaOver>0?('+'+fmt(kassaTotalOver)):kassaWithLimit===0?'Не настроено':'В норме';
+  const kassaHint=kassaList.length===0?'—':kassaOver>0?('превышение · '+kassaOver+' шт'):kassaWithLimit===0?'задайте лимиты':'в пределах лимита';
   // группа для попапа: помечаем тип реквизита
   const grpOf=a=>isCardAcc(a.name)?'Карты ФЛ':isKassaAcc(a.name)?'Кассы':'Счета';
   window._kassaData=kassaList.map(a=>({name:a.name,balance:a.total,limit:(_kassaLimits[a.name]??''),group:grpOf(a)}));
@@ -1385,6 +1385,19 @@ window.showKassaLimitsPopup=function(){
       <td class="kassa-status" style="padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border);white-space:nowrap;color:${stColor}">${stTxt}</td>
     </tr>`;
   }).join(''):'<tr><td colspan="5" style="padding:12px;font-size:11px;color:var(--text3);text-align:center">Реквизиты не найдены в данных</td></tr>';
+  // Свод превышений
+  const overList=d.filter(k=>{const l=k.limit;return l!=null&&l!==''&&!isNaN(+l)&&k.balance>+l;})
+    .map(k=>({name:k.name,group:k.group,over:k.balance-+k.limit})).sort((a,b)=>b.over-a.over);
+  const totalOver=overList.reduce((s,k)=>s+k.over,0);
+  const summaryBlock=overList.length?`<div style="background:#fdecea;border:1px solid #f5c6cb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:700;color:var(--outcome)">⚠ Превышение лимитов: ${overList.length} ${overList.length===1?'реквизит':'реквизитов'}</span>
+        <span style="font-size:14px;font-weight:700;color:var(--outcome);font-variant-numeric:tabular-nums">ИТОГО +${fmt2(totalOver)}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:3px 14px">
+        ${overList.map(k=>`<span style="font-size:11px;color:var(--text2)">${k.group?'<span style=\"color:var(--text3)\">['+k.group+']</span> ':''}${k.name}</span><span style="font-size:11px;text-align:right;color:var(--outcome);font-weight:600;font-variant-numeric:tabular-nums">+${fmt2(k.over)}</span>`).join('')}
+      </div>
+    </div>`:`<div style="background:#e8f5ee;border:1px solid #b8e0c8;border-radius:8px;padding:10px 16px;margin-bottom:14px;font-size:12px;font-weight:600;color:var(--income)">✓ Превышений нет — все реквизиты в пределах лимитов</div>`;
   const overlay=document.createElement('div');
   overlay.className='txn-card-overlay';
   const close=()=>{overlay.remove();renderBank(getFilters());};
@@ -1394,6 +1407,7 @@ window.showKassaLimitsPopup=function(){
       <button class="txn-card-close">✕</button>
     </div>
     <div style="padding:16px 20px 20px">
+      ${summaryBlock}
       <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.6">
         Лимит остатка задаётся для каждого реквизита (счёт ООО/ИП, карта ФЛ, касса). Если текущий остаток превышает лимит — реквизит подсвечивается как <b style="color:var(--outcome)">превышение</b>. Лимиты сохраняются в браузере.
       </p>
