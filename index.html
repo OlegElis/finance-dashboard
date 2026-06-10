@@ -588,7 +588,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
-  expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[]},
+  expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -2637,16 +2637,22 @@ function renderExpenses(f){
   let totalRev=0;
   data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();const inc=parseNum(r[COL.INCOME]);if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)totalRev+=inc;});
 
-  // Расходы: группировка аналитика → подстатья
+  // Группировка: аналитика / статья / подстатья
+  const groupMode=f.expGroup||'analytics';
+  const hasL2=groupMode!=='subarticle';
+  const l1key=r=>groupMode==='analytics'?(String(r[COL.ANALYTICS]||'').trim()||'Без аналитики')
+    :groupMode==='article'?(String(r[COL.ARTICLE_CODE]||'').trim()||'Без статьи')
+    :(String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'Без подстатьи').trim());
+  const l2key=r=>String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'Без подстатьи').trim();
   const cats={};let totalExp=0;
   data.forEach(r=>{
     const type=String(r[COL.TYPE]||'').trim().toLowerCase();
     const out=parseNum(r[COL.OUTCOME]);
     if(type!=='списание'||out>=0)return;
-    const cat=String(r[COL.ANALYTICS]||'').trim()||'Без аналитики';
-    const sub=String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'Без подстатьи').trim();
+    const cat=l1key(r);
     if(!cats[cat])cats[cat]={total:0,subs:{}};
-    cats[cat].total+=out;cats[cat].subs[sub]=(cats[cat].subs[sub]||0)+out;
+    cats[cat].total+=out;
+    if(hasL2){const sub=l2key(r);cats[cat].subs[sub]=(cats[cat].subs[sub]||0)+out;}
     totalExp+=out;
   });
   const catArr=Object.entries(cats).map(([k,v])=>({name:k,total:Math.abs(v.total),subs:v.subs})).filter(c=>c.total>0).sort((a,b)=>b.total-a.total);
@@ -2656,8 +2662,12 @@ function renderExpenses(f){
   // Фильтр-бар + направление
   const dirCb=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="expDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="expDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="expDirChange()"> <span>${d}</span></label>`).join('');
   const dirBtn=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
+  const grpOpts=[{v:'analytics',l:'По аналитике'},{v:'article',l:'По статье'},{v:'subarticle',l:'По подстатье'}];
+  const grpSel=`<select onchange="_tabFilters['expenses'].expGroup=this.value;renderExpenses(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${grpOpts.map(o=>`<option value="${o.v}"${groupMode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>`;
   const extra=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border)">
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Группировка:</label>
+    ${grpSel}
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Направление:</label>
     <div style="position:relative;display:inline-block"><button id="exp-dir-btn" onclick="expDirToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:160px;text-align:left">${dirBtn}</button>
     <div id="exp-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow-y:auto;min-width:300px;margin-top:2px">${dirCb}</div></div>
   </div>`;
@@ -2685,19 +2695,21 @@ function renderExpenses(f){
   </div>`;
 
   // Таблица: категория → подстатьи, колонки Сумма / Доля в расходах / % от выручки
+  const l1hdr=groupMode==='analytics'?'Аналитика / Подстатья':groupMode==='article'?'Статья / Подстатья':'Подстатья';
   const colHdr=`<thead><tr>
-    <th style="text-align:left;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Статья / Подстатья</th>
+    <th style="text-align:left;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">${l1hdr}</th>
     <th style="text-align:right;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Сумма</th>
     <th style="text-align:right;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Доля в расходах</th>
     <th style="text-align:right;padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">% от выручки</th>
   </tr></thead>`;
   let body='';
   catArr.forEach(c=>{
-    body+=`<tr style="background:#f5f5f5"><td style="padding:5px 10px;font-size:11px;font-weight:700;color:var(--text2)">${c.name}</td>
-      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:700;color:var(--outcome);font-variant-numeric:tabular-nums">${fmt(-c.total)}</td>
-      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:700">${fmtPct(c.total/totalExpAbs)}</td>
-      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:700;color:var(--text3)">${totalRev?fmtPct(c.total/revAbs):'—'}</td></tr>`;
-    Object.entries(c.subs).map(([s,v])=>[s,Math.abs(v)]).sort((a,b)=>b[1]-a[1]).forEach(([s,v])=>{
+    const hdrBg=hasL2?'background:#f5f5f5':'';
+    body+=`<tr style="${hdrBg}"><td style="padding:5px 10px;font-size:11px;font-weight:${hasL2?700:500};color:var(--text2)">${c.name}</td>
+      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500};color:var(--outcome);font-variant-numeric:tabular-nums">${fmt(-c.total)}</td>
+      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500}">${fmtPct(c.total/totalExpAbs)}</td>
+      <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500};color:var(--text3)">${totalRev?fmtPct(c.total/revAbs):'—'}</td></tr>`;
+    if(hasL2)Object.entries(c.subs).map(([s,v])=>[s,Math.abs(v)]).sort((a,b)=>b[1]-a[1]).forEach(([s,v])=>{
       body+=`<tr><td style="padding:3px 10px 3px 26px;font-size:11px;color:var(--text2)">${s}</td>
         <td style="padding:3px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums">${fmt(-v)}</td>
         <td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--text3)">${fmtPct(v/totalExpAbs)}</td>
@@ -2709,7 +2721,7 @@ function renderExpenses(f){
     <td style="padding:6px 10px;text-align:right;font-weight:700">100%</td>
     <td style="padding:6px 10px;text-align:right;font-weight:700">${totalRev?fmtPct(totalExpAbs/revAbs):'—'}</td></tr>`;
 
-  el.innerHTML=renderFilterBar('expenses')+extra+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Структура расходов</span><span class="table-count">${catArr.length} категорий</span></div><div class="table-scroll" style="overflow-x:auto"><table class="report-table">${colHdr}<tbody>${body}</tbody></table></div></div>`;
+  el.innerHTML=renderFilterBar('expenses')+extra+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Структура расходов</span><span class="table-count">${catArr.length} ${groupMode==='analytics'?'категорий':groupMode==='article'?'статей':'подстатей'}</span></div><div class="table-scroll" style="overflow-x:auto"><table class="report-table">${colHdr}<tbody>${body}</tbody></table></div></div>`;
 
   // Графики
   ['_expChartDonut','_expChartBar'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
@@ -2718,8 +2730,10 @@ function renderExpenses(f){
   if(donut&&window.Chart)window._expChartDonut=new Chart(donut,{type:'doughnut',
     data:{labels:catArr.map(c=>c.name),datasets:[{data:catArr.map(c=>c.total),backgroundColor:catArr.map((_,i)=>PAL[i%PAL.length])}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:10,padding:6}},tooltip:{callbacks:{label:c=>c.label+': '+fmt(-c.raw)+' ('+fmtPct(c.raw/totalExpAbs)+')'}}}}});
-  // топ подстатей
-  const allSubs=[];catArr.forEach(c=>Object.entries(c.subs).forEach(([s,v])=>allSubs.push([s,Math.abs(v)])));
+  // топ детализации (подстатьи при наличии L2, иначе сами группы)
+  let allSubs=[];
+  if(hasL2)catArr.forEach(c=>Object.entries(c.subs).forEach(([s,v])=>allSubs.push([s,Math.abs(v)])));
+  else allSubs=catArr.map(c=>[c.name,c.total]);
   const topSubs=allSubs.sort((a,b)=>b[1]-a[1]).slice(0,10);
   const moneyTick=v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;};
   const bar=document.getElementById('expChartBar');
