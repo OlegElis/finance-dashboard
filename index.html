@@ -284,6 +284,10 @@
     <div class="nav-item" id="nav-expenses" onclick="switchTab('expenses')">
       <span class="nav-icon">🧾</span> Структура расходов
     </div>
+    <div class="nav-section" style="margin-top:12px">Контроль</div>
+    <div class="nav-item" id="nav-dupes" onclick="switchTab('dupes')">
+      <span class="nav-icon">🔍</span> Дубли
+    </div>
     <div class="nav-section" style="margin-top:12px">Данные</div>
     <div class="nav-item" onclick="showSetup()">
       <span class="nav-icon">⚙️</span> Подключение
@@ -339,6 +343,7 @@
       <div id="tabFot" class="hidden"></div>
       <div id="tabMarketing" class="hidden"></div>
       <div id="tabExpenses" class="hidden"></div>
+      <div id="tabDupes" class="hidden"></div>
     </div>
   </div>
 
@@ -352,7 +357,7 @@ const REVENUE_PREFIX='120_';
 let RAW=[];
 let activeTab='bank';
 
-const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг',expenses:'Структура расходов'};
+const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг',expenses:'Структура расходов',dupes:'Контроль — Дубли записей'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'—';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -589,6 +594,7 @@ const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
+  dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',strictMode:true},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -739,10 +745,10 @@ function switchTab(name){
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
   document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
-  ['bank','dds','opiu','fot','marketing','expenses'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
+  ['bank','dds','opiu','fot','marketing','expenses','dupes'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   renderActiveTab();
 }
-function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);}
+function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);}
 
 
 function bankUpdateDays(yr,mo){
@@ -2778,6 +2784,102 @@ function renderExpenses(f){
 window.expDirToggle=function(){const dd=document.getElementById('exp-dir-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderExpenses(getFilters());};
 window.expDirChange=function(){const dd=document.getElementById('exp-dir-dd');const btn=document.getElementById('exp-dir-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';_tabFilters.expenses.activityDirs=checked;};
 window.expDirSelectAll=function(s){const dd=document.getElementById('exp-dir-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.expDirChange();};
+
+// ─── КОНТРОЛЬ: ДУБЛИ ЗАПИСЕЙ ─────────────────────────────────────────────────
+function renderDupes(f){
+  const el=document.getElementById('tabDupes');
+  const strict=f.strictMode!==false;
+  // Фильтр по датам (любая из дат строки попадает в диапазон)
+  const data=applyBaseFilters(RAW,f);
+  // Ключ дубля: все колонки (strict) или все кроме PURPOSE
+  const COLS_ALL=[COL.DATE_DDS,COL.DATE_OPIU,COL.TYPE,COL.OFFER_ID,COL.INCOME,COL.OUTCOME,COL.FNS,COL.ACCOUNT,COL.ARTICLE_CODE,COL.ARTICLE_NAME,COL.ANALYTICS,COL.SECOND_SIDE,COL.PURPOSE,COL.ACTIVITY_DIR,COL.FIN_OP];
+  const keyCols=strict?COLS_ALL:COLS_ALL.filter(c=>c!==COL.PURPOSE);
+  const norm=v=>typeof v==='string'?v.trim():(v==null?'':v);
+  const groups=new Map();
+  data.forEach(r=>{
+    const key=JSON.stringify(keyCols.map(c=>norm(r[c])));
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(r);
+  });
+  const dupeGroups=[...groups.values()].filter(g=>g.length>=2)
+    .sort((a,b)=>b.length-a.length || (Math.abs(parseNum(b[0][COL.INCOME]))+Math.abs(parseNum(b[0][COL.OUTCOME]))) - (Math.abs(parseNum(a[0][COL.INCOME]))+Math.abs(parseNum(a[0][COL.OUTCOME]))));
+  // Метрики искажения: лишние строки (все сверх первой в группе)
+  let extraRows=0,extraInc=0,extraOut=0;
+  dupeGroups.forEach(g=>{const n=g.length-1;extraRows+=n;extraInc+=n*parseNum(g[0][COL.INCOME]);extraOut+=n*parseNum(g[0][COL.OUTCOME]);});
+
+  // Фильтр-бар: даты + тумблер строгости
+  const filterBar=`<div class="tab-filters">
+    <div class="date-range">
+      <input type="date" value="${f.dateFrom}" onchange="_tabFilters['dupes'].dateFrom=this.value;renderDupes(getFilters())">
+      <span class="date-range-sep">—</span>
+      <input type="date" value="${f.dateTo}" onchange="_tabFilters['dupes'].dateTo=this.value;renderDupes(getFilters())">
+    </div>
+    <div class="filter-sep"></div>
+    <label title="Строгий: совпадение всех 15 колонок. Без назначения: совпадение всех колонок, кроме «Назначение платежа»" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${strict?'var(--surface)':'var(--accent)'};color:${strict?'var(--text2)':'#fff'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${strict?'':'checked'} onchange="_tabFilters['dupes'].strictMode=!this.checked;renderDupes(getFilters())" style="cursor:pointer;margin:0">
+      Без учёта назначения
+    </label>
+  </div>`;
+
+  if(!dupeGroups.length){
+    el.innerHTML=filterBar+`<div class="kpi-grid">
+      <div class="kpi-card green"><div class="kpi-label">Групп дублей</div><div class="kpi-value positive">0</div></div>
+      <div class="kpi-card green"><div class="kpi-label">Лишних строк</div><div class="kpi-value positive">0</div></div>
+      <div class="kpi-card blue"><div class="kpi-label">Проверено строк</div><div class="kpi-value">${data.length.toLocaleString('ru-RU')}</div></div>
+      <div class="kpi-card blue"><div class="kpi-label">Режим</div><div class="kpi-value" style="font-size:14px">${strict?'Строгий':'Без назначения'}</div></div>
+    </div>`+emptyState('Дублей не найдено','Все записи уникальны ✓');
+    return;
+  }
+
+  const kpiHtml=`<div class="kpi-grid">
+    <div class="kpi-card red"><div class="kpi-label">Групп дублей</div><div class="kpi-value negative">${dupeGroups.length}</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Лишних строк</div><div class="kpi-value negative">${extraRows}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Задвоено поступлений</div><div class="kpi-value">${extraInc?fmt(extraInc):'—'}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Задвоено списаний</div><div class="kpi-value">${extraOut?fmt(extraOut):'—'}</div></div>
+  </div>`;
+
+  const dsFmt=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
+  const esc=s=>String(s||'').replace(/</g,'&lt;');
+  let body='';
+  dupeGroups.slice(0,200).forEach((g,gi)=>{
+    const r=g[0];
+    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    const amount=inc!==0?fmt(inc):fmt(out);
+    const amtColor=inc!==0?'var(--income)':'var(--outcome)';
+    body+=`<tr style="background:#fdecea">
+      <td colspan="9" style="padding:6px 10px;font-size:11px;font-weight:700;border-top:2px solid var(--outcome)">
+        Группа ${gi+1} · <span style="color:var(--outcome)">${g.length} одинаковые строки</span> · ${dsFmt(r[COL.DATE_DDS])} · <span style="color:${amtColor}">${amount}</span> · ${esc(r[COL.SECOND_SIDE])||'без контрагента'}
+      </td></tr>`;
+    g.forEach((row,ri)=>{
+      body+=`<tr${ri>0?' style="color:var(--outcome)"':''}>
+        <td style="padding:3px 8px;font-size:10px;text-align:center">${dsFmt(row[COL.DATE_DDS])}</td>
+        <td style="padding:3px 8px;font-size:10px;text-align:center">${dsFmt(row[COL.DATE_OPIU])}</td>
+        <td style="padding:3px 8px;font-size:10px;text-align:center">${esc(row[COL.TYPE])}</td>
+        <td style="padding:3px 8px;font-size:10px;text-align:right;font-variant-numeric:tabular-nums">${parseNum(row[COL.INCOME])!==0?fmt(parseNum(row[COL.INCOME])):''}</td>
+        <td style="padding:3px 8px;font-size:10px;text-align:right;font-variant-numeric:tabular-nums">${parseNum(row[COL.OUTCOME])!==0?fmt(parseNum(row[COL.OUTCOME])):''}</td>
+        <td style="padding:3px 8px;font-size:10px">${esc(row[COL.ACCOUNT])}</td>
+        <td style="padding:3px 8px;font-size:10px">${esc(row[COL.ARTICLE_NAME]||row[COL.ARTICLE_CODE])}</td>
+        <td style="padding:3px 8px;font-size:10px">${esc(row[COL.SECOND_SIDE])}</td>
+        <td style="padding:3px 8px;font-size:10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(row[COL.PURPOSE])}">${esc(row[COL.PURPOSE])}</td>
+      </tr>`;
+    });
+  });
+  const truncNote=dupeGroups.length>200?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые 200 групп из ${dupeGroups.length}</div>`:'';
+
+  el.innerHTML=filterBar+kpiHtml+`
+  <div style="padding:8px 28px;font-size:11px;color:var(--text2);background:#fff8e1;border-bottom:1px solid var(--border)">
+    ⚠ Дашборд работает в режиме чтения — удалить дубли можно только в исходной Google-таблице. Найдите строку по дате, сумме и назначению. <b>Лишние строки в группах выделены красным.</b>
+  </div>
+  <div class="table-wrap"><div class="table-header"><span class="table-title">Группы полных дублей</span><span class="table-count">${dupeGroups.length} групп · режим: ${strict?'строгий':'без назначения'}</span></div>
+  <div class="table-scroll" style="overflow-x:auto"><table class="report-table">
+    <thead><tr>
+      <th style="font-size:10px">ДДС</th><th style="font-size:10px">ОПиУ</th><th style="font-size:10px">Тип</th>
+      <th style="font-size:10px">Поступление</th><th style="font-size:10px">Списание</th><th style="font-size:10px">Счёт</th>
+      <th style="font-size:10px">Подстатья</th><th style="font-size:10px">Контрагент</th><th style="font-size:10px">Назначение</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>${truncNote}</div>`;
+}
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
 
