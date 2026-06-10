@@ -2659,11 +2659,29 @@ function renderExpenses(f){
   const totalExpAbs=Math.abs(totalExp)||1;
   const revAbs=Math.abs(totalRev)||1;
 
+  // Разбивка расходов по периодам (для диаграммы сравнения)
+  const cmpMode=f.periodType||'year';
+  const cmpPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(cmpMode==='year')return String(y);if(cmpMode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
+  const perCat={};const cmpPset=new Set();
+  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const out=parseNum(r[COL.OUTCOME]);if(type!=='списание'||out>=0)return;const pk=cmpPK(r);if(!pk)return;cmpPset.add(pk);const cat=l1key(r);(perCat[cat]=perCat[cat]||{});perCat[cat][pk]=(perCat[cat][pk]||0)+Math.abs(out);});
+  const cmpPeriods=[...cmpPset].sort((a,b)=>periodSortKey(a,cmpMode).localeCompare(periodSortKey(b,cmpMode)));
+
   // Фильтр-бар + направление
   const dirCb=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="expDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="expDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="expDirChange()"> <span>${d}</span></label>`).join('');
   const dirBtn=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
   const grpOpts=[{v:'analytics',l:'По аналитике'},{v:'article',l:'По статье'},{v:'subarticle',l:'По подстатье'}];
   const grpSel=`<select onchange="_tabFilters['expenses'].expGroup=this.value;renderExpenses(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${grpOpts.map(o=>`<option value="${o.v}"${groupMode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>`;
+  const cmpOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
+  const filterBar=`<div class="tab-filters">
+    <div class="date-range">
+      <input type="date" value="${f.dateFrom}" onchange="_tabFilters['expenses'].dateFrom=this.value;renderExpenses(getFilters())">
+      <span class="date-range-sep">—</span>
+      <input type="date" value="${f.dateTo}" onchange="_tabFilters['expenses'].dateTo=this.value;renderExpenses(getFilters())">
+    </div>
+    <div class="filter-sep"></div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Сравнение:</label>
+    <select class="filter-extra-sel" onchange="_tabFilters['expenses'].periodType=this.value;renderExpenses(getFilters())">${cmpOpts.map(o=>`<option value="${o.v}"${cmpMode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
+  </div>`;
   const extra=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border)">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Группировка:</label>
     ${grpSel}
@@ -2672,7 +2690,7 @@ function renderExpenses(f){
     <div id="exp-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow-y:auto;min-width:300px;margin-top:2px">${dirCb}</div></div>
   </div>`;
 
-  if(!catArr.length){el.innerHTML=renderFilterBar('expenses')+extra+emptyState('Нет расходов','Измените фильтры');return;}
+  if(!catArr.length){el.innerHTML=filterBar+extra+emptyState('Нет расходов','Измените фильтры');return;}
 
   const expShareRev=totalExpAbs/revAbs;
   const kpiHtml=`<div class="kpi-grid">
@@ -2692,6 +2710,10 @@ function renderExpenses(f){
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Топ подстатей расходов (% от выручки)</div>
       <div style="height:300px"><canvas id="expChartBar"></canvas></div>
     </div>
+  </div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:0 0 14px">
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Сравнение расходов по периодам (${cmpMode==='month'?'месяцы':cmpMode==='quarter'?'кварталы':'годы'})</div>
+    <div style="height:300px"><canvas id="expChartCmp"></canvas></div>
   </div>`;
 
   // Таблица: категория → подстатьи, колонки Сумма / Доля в расходах / % от выручки
@@ -2721,10 +2743,10 @@ function renderExpenses(f){
     <td style="padding:6px 10px;text-align:right;font-weight:700">100%</td>
     <td style="padding:6px 10px;text-align:right;font-weight:700">${totalRev?fmtPct(totalExpAbs/revAbs):'—'}</td></tr>`;
 
-  el.innerHTML=renderFilterBar('expenses')+extra+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Структура расходов</span><span class="table-count">${catArr.length} ${groupMode==='analytics'?'категорий':groupMode==='article'?'статей':'подстатей'}</span></div><div class="table-scroll" style="overflow-x:auto"><table class="report-table">${colHdr}<tbody>${body}</tbody></table></div></div>`;
+  el.innerHTML=filterBar+extra+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Структура расходов</span><span class="table-count">${catArr.length} ${groupMode==='analytics'?'категорий':groupMode==='article'?'статей':'подстатей'}</span></div><div class="table-scroll" style="overflow-x:auto"><table class="report-table">${colHdr}<tbody>${body}</tbody></table></div></div>`;
 
   // Графики
-  ['_expChartDonut','_expChartBar'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
+  ['_expChartDonut','_expChartBar','_expChartCmp'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
   const PAL=['#2563eb','#16a34a','#d97706','#9333ea','#dc2626','#0891b2','#65a30d','#db2777','#475569','#ca8a04'];
   const donut=document.getElementById('expChartDonut');
   if(donut&&window.Chart)window._expChartDonut=new Chart(donut,{type:'doughnut',
@@ -2741,6 +2763,17 @@ function renderExpenses(f){
     data:{labels:topSubs.map(s=>s[0].length>28?s[0].slice(0,27)+'…':s[0]),datasets:[{data:topSubs.map(s=>s[1]),backgroundColor:topSubs.map((_,i)=>PAL[i%PAL.length]),borderRadius:3}]},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(-c.raw)+(totalRev?' · '+fmtPct(c.raw/revAbs)+' от выручки':'')}}},
       scales:{x:{grid:{color:'#ebebeb'},ticks:{font:{size:9},callback:moneyTick}},y:{grid:{display:false},ticks:{font:{size:9}}}}}});
+  // Сравнение по периодам (накопительный бар по категориям)
+  const cmpTop=catArr.slice(0,6).map(c=>c.name);
+  const cmpRest=catArr.slice(6).map(c=>c.name);
+  const cmpDatasets=cmpTop.map((cat,i)=>({label:cat.length>20?cat.slice(0,19)+'…':cat,data:cmpPeriods.map(p=>(perCat[cat]&&perCat[cat][p])||0),backgroundColor:PAL[i%PAL.length],stack:'e',borderRadius:2}));
+  if(cmpRest.length)cmpDatasets.push({label:'Прочее',data:cmpPeriods.map(p=>{let s=0;cmpRest.forEach(c=>{s+=(perCat[c]&&perCat[c][p])||0;});return s;}),backgroundColor:'#cbd5e1',stack:'e',borderRadius:2});
+  const cmp=document.getElementById('expChartCmp');
+  if(cmp&&window.Chart)window._expChartCmp=new Chart(cmp,{type:'bar',
+    data:{labels:cmpPeriods,datasets:cmpDatasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:10,padding:8}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt(-c.raw)}}},
+      scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:10}}},y:{stacked:true,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:moneyTick}}}}});
 }
 window.expDirToggle=function(){const dd=document.getElementById('exp-dir-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderExpenses(getFilters());};
 window.expDirChange=function(){const dd=document.getElementById('exp-dir-dd');const btn=document.getElementById('exp-dir-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';_tabFilters.expenses.activityDirs=checked;};
