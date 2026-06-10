@@ -2791,13 +2791,15 @@ function renderDupes(f){
   const strict=f.strictMode!==false;
   // Фильтр по датам (любая из дат строки попадает в диапазон)
   const data=applyBaseFilters(RAW,f);
-  // Ключ дубля: все колонки (strict) или все кроме PURPOSE
-  const COLS_ALL=[COL.DATE_DDS,COL.DATE_OPIU,COL.TYPE,COL.OFFER_ID,COL.INCOME,COL.OUTCOME,COL.FNS,COL.ACCOUNT,COL.ARTICLE_CODE,COL.ARTICLE_NAME,COL.ANALYTICS,COL.SECOND_SIDE,COL.PURPOSE,COL.ACTIVITY_DIR,COL.FIN_OP];
-  const keyCols=strict?COLS_ALL:COLS_ALL.filter(c=>c!==COL.PURPOSE);
+  // Ключ дубля: ВСЕ ячейки записи (вся строка целиком, сколько бы колонок ни было).
+  // В режиме «без назначения» исключается только PURPOSE.
+  const maxLen=data.reduce((m,r)=>Math.max(m,r.length),0);
   const norm=v=>typeof v==='string'?v.trim():(v==null?'':v);
   const groups=new Map();
   data.forEach(r=>{
-    const key=JSON.stringify(keyCols.map(c=>norm(r[c])));
+    const cells=[];
+    for(let i=0;i<maxLen;i++){if(!strict&&i===COL.PURPOSE)continue;cells.push(norm(r[i]));}
+    const key=JSON.stringify(cells);
     if(!groups.has(key))groups.set(key,[]);
     groups.get(key).push(r);
   });
@@ -2838,48 +2840,107 @@ function renderDupes(f){
     <div class="kpi-card orange"><div class="kpi-label">Задвоено списаний</div><div class="kpi-value">${extraOut?fmt(extraOut):'—'}</div></div>
   </div>`;
 
-  const dsFmt=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
+  const dsFmt=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const esc=s=>String(s||'').replace(/</g,'&lt;');
-  let body='';
+  // Плоский список строк для карточки (как в Банке)
+  window._dupesRows=[];
+  let body='';let flatIdx=0;
   dupeGroups.slice(0,200).forEach((g,gi)=>{
     const r=g[0];
-    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
-    const amount=inc!==0?fmt(inc):fmt(out);
-    const amtColor=inc!==0?'var(--income)':'var(--outcome)';
+    const inc0=parseNum(r[COL.INCOME]),out0=parseNum(r[COL.OUTCOME]);
+    const amount=inc0!==0?fmt(inc0):fmt(out0);
+    const amtColor=inc0!==0?'var(--income)':'var(--outcome)';
     body+=`<tr style="background:#fdecea">
-      <td colspan="9" style="padding:6px 10px;font-size:11px;font-weight:700;border-top:2px solid var(--outcome)">
-        Группа ${gi+1} · <span style="color:var(--outcome)">${g.length} одинаковые строки</span> · ${dsFmt(r[COL.DATE_DDS])} · <span style="color:${amtColor}">${amount}</span> · ${esc(r[COL.SECOND_SIDE])||'без контрагента'}
+      <td colspan="15" style="padding:6px 10px;font-size:11px;font-weight:700;border-top:2px solid var(--outcome)">
+        Группа ${gi+1} · <span style="color:var(--outcome)">${g.length} одинаковые строки</span> · ${dsFmt(r[COL.DATE_DDS])||'—'} · <span style="color:${amtColor}">${amount}</span> · ${esc(r[COL.SECOND_SIDE])||'без контрагента'}
       </td></tr>`;
     g.forEach((row,ri)=>{
-      body+=`<tr${ri>0?' style="color:var(--outcome)"':''}>
-        <td style="padding:3px 8px;font-size:10px;text-align:center">${dsFmt(row[COL.DATE_DDS])}</td>
-        <td style="padding:3px 8px;font-size:10px;text-align:center">${dsFmt(row[COL.DATE_OPIU])}</td>
-        <td style="padding:3px 8px;font-size:10px;text-align:center">${esc(row[COL.TYPE])}</td>
-        <td style="padding:3px 8px;font-size:10px;text-align:right;font-variant-numeric:tabular-nums">${parseNum(row[COL.INCOME])!==0?fmt(parseNum(row[COL.INCOME])):''}</td>
-        <td style="padding:3px 8px;font-size:10px;text-align:right;font-variant-numeric:tabular-nums">${parseNum(row[COL.OUTCOME])!==0?fmt(parseNum(row[COL.OUTCOME])):''}</td>
-        <td style="padding:3px 8px;font-size:10px">${esc(row[COL.ACCOUNT])}</td>
-        <td style="padding:3px 8px;font-size:10px">${esc(row[COL.ARTICLE_NAME]||row[COL.ARTICLE_CODE])}</td>
-        <td style="padding:3px 8px;font-size:10px">${esc(row[COL.SECOND_SIDE])}</td>
-        <td style="padding:3px 8px;font-size:10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(row[COL.PURPOSE])}">${esc(row[COL.PURPOSE])}</td>
-      </tr>`;
+      const idx=flatIdx++;window._dupesRows.push(row);
+      const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+      const c=v=>esc(v)||'';
+      body+=`<tr style="cursor:pointer${ri>0?';color:var(--outcome)':''}" onclick="dupesShowCard(${idx})" title="Нажмите для карточки операции">`+
+        `<td class="center">${dsFmt(row[COL.DATE_DDS])}</td>`+
+        `<td class="center">${dsOpiu(row[COL.DATE_OPIU])}</td>`+
+        `<td class="center">${c(row[COL.TYPE])}</td>`+
+        `<td>${c(row[COL.OFFER_ID])}</td>`+
+        `<td class="${inc>0?'num-positive':''} num">${inc?fmt(inc):''}</td>`+
+        `<td class="${out<0?'num-negative':''} num">${out?fmt(out):''}</td>`+
+        `<td class="center">${c(row[COL.FNS])}</td>`+
+        `<td>${c(row[COL.ACCOUNT])}</td>`+
+        `<td>${c(row[COL.ARTICLE_CODE])}</td>`+
+        `<td>${c(row[COL.ARTICLE_NAME])}</td>`+
+        `<td class="center">${c(row[COL.ANALYTICS])}</td>`+
+        `<td>${c(row[COL.SECOND_SIDE])}</td>`+
+        `<td>${c(row[COL.PURPOSE])}</td>`+
+        `<td>${c(row[COL.ACTIVITY_DIR])}</td>`+
+        `<td>${c(row[COL.FIN_OP])}</td>`+
+        `</tr>`;
     });
   });
   const truncNote=dupeGroups.length>200?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые 200 групп из ${dupeGroups.length}</div>`:'';
 
   el.innerHTML=filterBar+kpiHtml+`
   <div style="padding:8px 28px;font-size:11px;color:var(--text2);background:#fff8e1;border-bottom:1px solid var(--border)">
-    ⚠ Дашборд работает в режиме чтения — удалить дубли можно только в исходной Google-таблице. Найдите строку по дате, сумме и назначению. <b>Лишние строки в группах выделены красным.</b>
+    ⚠ Дашборд работает в режиме чтения — удалить дубли можно только в исходной Google-таблице. Найдите строку по дате, сумме и назначению. <b>Лишние строки в группах выделены красным.</b> Клик на строку — карточка операции.
   </div>
-  <div class="table-wrap"><div class="table-header"><span class="table-title">Группы полных дублей</span><span class="table-count">${dupeGroups.length} групп · режим: ${strict?'строгий':'без назначения'}</span></div>
-  <div class="table-scroll" style="overflow-x:auto"><table class="report-table">
-    <thead><tr>
-      <th style="font-size:10px">ДДС</th><th style="font-size:10px">ОПиУ</th><th style="font-size:10px">Тип</th>
-      <th style="font-size:10px">Поступление</th><th style="font-size:10px">Списание</th><th style="font-size:10px">Счёт</th>
-      <th style="font-size:10px">Подстатья</th><th style="font-size:10px">Контрагент</th><th style="font-size:10px">Назначение</th>
-    </tr></thead>
-    <tbody>${body}</tbody>
-  </table></div>${truncNote}</div>`;
+  <div class="txn-wrap">
+    <div class="txn-header"><span class="table-title">Группы полных дублей</span><span class="table-count">${dupeGroups.length} групп · режим: ${strict?'строгий (все ячейки)':'без назначения'}</span></div>
+    <div class="txn-scroll"><table class="txn-table">
+      <colgroup>
+        <col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer">
+        <col><col><col><col><col><col><col><col><col class="c-purp"><col class="c-dir"><col class="c-finop">
+      </colgroup>
+      <thead><tr>
+        <th>ДДС</th><th>ОПиУ</th><th>Тип операции</th><th>ID Offer</th>
+        <th>Поступление</th><th>Списание</th><th>ФНС</th><th>Реквизиты счёта</th>
+        <th>Статья</th><th>Подстатья</th><th>Аналитика</th><th>Контрагент</th>
+        <th>Назначение</th><th>Направление</th><th>Фин. операция</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>${truncNote}
+  </div>`;
 }
+// Карточка операции из отчёта Дубли (тот же вид, что в Банке)
+window.dupesShowCard=function(idx){
+  const r=(window._dupesRows||[])[idx];if(!r)return;
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
+  const c=v=>String(v||'').trim()||'—';
+  const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+  const incHtml=inc?`<span class="pos">${fmt(inc)}</span>`:`<span>—</span>`;
+  const outHtml=out?`<span class="neg">${fmt(out)}</span>`:`<span>—</span>`;
+  const field=(lbl,val,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label><span>${val}</span></div>`;
+  const fieldRaw=(lbl,html,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label>${html}</div>`;
+  const overlay=document.createElement('div');
+  overlay.className='txn-card-overlay';
+  overlay.innerHTML=`<div class="txn-card">
+    <div class="txn-card-head">
+      <h3>📋 Карточка операции (дубль)</h3>
+      <button class="txn-card-close" onclick="this.closest('.txn-card-overlay').remove()">✕</button>
+    </div>
+    <div class="txn-card-body">
+      ${field('Дата ДДС',ds(r[COL.DATE_DDS]))}
+      ${field('Дата ОПиУ',dsOpiu(r[COL.DATE_OPIU]))}
+      ${field('Тип операции',c(r[COL.TYPE]))}
+      ${field('ID Offer',c(r[COL.OFFER_ID]))}
+      <hr class="txn-card-divider">
+      ${fieldRaw('Поступление',incHtml)}
+      ${fieldRaw('Списание',outHtml)}
+      ${field('ФНС',c(r[COL.FNS]))}
+      ${field('Реквизиты счёта',c(r[COL.ACCOUNT]))}
+      <hr class="txn-card-divider">
+      ${field('Статья',c(r[COL.ARTICLE_CODE]))}
+      ${field('Подстатья',c(r[COL.ARTICLE_NAME]))}
+      ${field('Аналитика',c(r[COL.ANALYTICS]))}
+      ${field('Контрагент (SecondSide)',c(r[COL.SECOND_SIDE]))}
+      <hr class="txn-card-divider">
+      ${field('Назначение платежа',c(r[COL.PURPOSE]),true)}
+      ${field('Направление деятельности',c(r[COL.ACTIVITY_DIR]))}
+      ${field('Фин. операция',c(r[COL.FIN_OP]))}
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+};
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
 
