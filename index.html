@@ -3196,6 +3196,10 @@ function renderIncomplete(f){
       <span class="date-range-sep">—</span>
       <input type="date" value="${f.dateTo}" onchange="_tabFilters['incomplete'].dateTo=this.value;renderIncomplete(getFilters())">
     </div>
+    <div class="filter-sep"></div>
+    <span style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Отчёт:</span>
+    <button onclick="incPrintReport()" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--accent);border-radius:5px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">🖨 Печать</button>
+    <button onclick="incDownloadPdf(this)" style="padding:4px 12px;font-size:11px;font-weight:600;border:1px solid var(--accent);border-radius:5px;background:var(--surface);color:var(--accent);cursor:pointer;font-family:var(--sans)">⬇ Скачать PDF</button>
   </div>`;
 
   const kpiHtml=`<div class="kpi-grid">
@@ -3257,10 +3261,15 @@ function renderIncomplete(f){
   }).join('');
   const trunc=badShown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} строк из ${badShown.length}</div>`:'';
 
+  // Сохраняем набор для печати/PDF (то, что сейчас на экране)
+  window._incReport={rows:badShown,activeField,dateFrom:f.dateFrom,dateTo:f.dateTo,errRows,warnOnlyRows,correct:data.length-bad.length,checked:data.length};
+
+  // Сохраняем набор для печати/PDF (то, что сейчас на экране)
+  window._incReport={rows:badShown,activeField,dateFrom:f.dateFrom,dateTo:f.dateTo,errRows,warnOnlyRows,correct:data.length-bad.length,checked:data.length};
   el.innerHTML=filterBar+kpiHtml+chipsBar+`
   <div class="txn-wrap">
     <div class="txn-header"><span class="table-title">Строки с незаполненными полями</span><span class="table-count">${badShown.length.toLocaleString('ru-RU')} строк${activeField?' · фильтр: '+activeField:''}</span></div>
-    <div class="txn-scroll"><table class="txn-table">
+    <div class="txn-scroll" style="max-height:calc(100vh - 250px)"><table class="txn-table">
       <thead><tr>
         <th style="min-width:150px">Проблемы</th>
         <th>ДДС</th><th>ОПиУ</th><th>Тип операции</th><th>ID Offer</th>
@@ -3276,6 +3285,99 @@ window.incFilterField=function(field){
   const cur=_tabFilters.incomplete.incField||'';
   _tabFilters.incomplete.incField=(cur===field)?'':field;
   renderIncomplete(getFilters());
+};
+// Построитель отчёта «Недозаполненные данные» (печать/PDF)
+function _incReportBuild(){
+  const rep=window._incReport||{rows:[]};
+  const ERR_FIELDS=['ДДС','ОПиУ','Тип операции','Поступление','Списание','Статья','Подстатья','Подстатья≠Статья','Направление','Фин. операция','Перемещение без пары'];
+  const dsFmt=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const now=new Date();const pad=n=>String(n).padStart(2,'0');
+  const today=now.toLocaleDateString('ru-RU');
+  const fileName=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}_недозаполненные_данные`;
+  const docNum=`НД-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+  const period=(rep.dateFrom||rep.dateTo)?`${rep.dateFrom?rep.dateFrom.split('-').reverse().join('.'):'…'} — ${rep.dateTo?rep.dateTo.split('-').reverse().join('.'):'…'}`:'весь период учёта';
+  let rows='';
+  (rep.rows||[]).forEach(b=>{
+    const r=b.r;
+    const issues=[...b.errs.map(x=>`<b style="color:#b22">${esc(x)}</b>`),...b.warns.map(x=>`<span style="color:#9a6700">${esc(x)}</span>`)].join(', ');
+    rows+=`<tr>
+      <td>${issues}</td>
+      <td>${dsFmt(r[COL.DATE_DDS])}</td><td>${dsOpiu(r[COL.DATE_OPIU])}</td><td>${esc(r[COL.TYPE])}</td><td>${esc(r[COL.OFFER_ID])}</td>
+      <td class="num">${esc(r[COL.INCOME])}</td><td class="num">${esc(r[COL.OUTCOME])}</td><td>${esc(r[COL.FNS])}</td><td>${esc(r[COL.ACCOUNT])}</td>
+      <td>${esc(r[COL.ARTICLE_CODE])}</td><td>${esc(r[COL.ARTICLE_NAME])}</td><td>${esc(r[COL.ANALYTICS])}</td><td>${esc(r[COL.SECOND_SIDE])}</td>
+      <td>${esc(r[COL.PURPOSE])}</td><td>${esc(r[COL.ACTIVITY_DIR])}</td><td>${esc(r[COL.FIN_OP])}</td>
+    </tr>`;
+  });
+  const styleCss=`
+    *{box-sizing:border-box}
+    body{font-family:'Inter',Arial,sans-serif;font-size:11px;color:#1a2033;margin:24px}
+    .hdr{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #1E2761;padding-bottom:12px;margin-bottom:14px}
+    .brand-name{font-size:15px;font-weight:800;color:#1E2761}
+    .brand-sub{font-size:10px;color:#667;letter-spacing:1.5px;text-transform:uppercase}
+    .doc-meta{text-align:right;font-size:10px;color:#667;line-height:1.7} .doc-meta b{color:#1a2033}
+    h1{font-size:19px;margin:0 0 4px;font-weight:700;color:#1E2761} .sub{color:#667;font-size:11px;margin-bottom:14px}
+    .kpis{display:flex;gap:24px;margin:12px 0 18px;padding:12px 16px;background:#f5f6fa;border:1px solid #dfe3ec;border-radius:8px}
+    .kpis b{display:block;font-size:16px;font-weight:700} .kpis span{font-size:10px;color:#667}
+    table{width:100%;border-collapse:collapse;table-layout:fixed} th,td{border:1px solid #ccd2de;padding:3px 6px;font-size:9.5px;text-align:left;vertical-align:top;word-wrap:break-word;overflow-wrap:anywhere}
+    th{background:#1E2761;color:#fff;font-weight:600} td.num{text-align:right;white-space:nowrap}
+    col.w-iss{width:13%}col.w-dt{width:5%}col.w-sum{width:6%}col.w-fns{width:3.5%}col.w-mid{width:6.5%}
+    .note{margin-top:16px;font-size:10px;color:#444;border:1px solid #dfe3ec;border-radius:8px;padding:10px 14px;background:#fafbfc;page-break-inside:avoid;line-height:1.5}
+    .foot{margin-top:18px;padding-top:8px;border-top:1px solid #dfe3ec;font-size:9px;color:#99a;display:flex;justify-content:space-between}
+    @page{size:A4 landscape;margin:8mm} @media print{body{margin:0}}`;
+  const bodyHtml=`
+  <div class="hdr">
+    <div><div class="brand-name">УПР.Финансы</div><div class="brand-sub">Управленческий учёт</div></div>
+    <div class="doc-meta">Документ № <b>${docNum}</b><br>Дата формирования: <b>${today} ${pad(now.getHours())}:${pad(now.getMinutes())}</b><br>Источник данных: сводный лист RawData</div>
+  </div>
+  <h1>Отчёт о незаполненных данных</h1>
+  <div class="sub">Контроль качества заполнения · период: ${period}${rep.activeField?` · фильтр по нарушению: ${esc(rep.activeField)}`:''}</div>
+  <div class="kpis">
+    <div><b style="color:#b22">${rep.errRows||0}</b><span>строк с ошибками</span></div>
+    <div><b style="color:#9a6700">${rep.warnOnlyRows||0}</b><span>только предупреждения</span></div>
+    <div><b>${(rep.correct||0).toLocaleString('ru-RU')}</b><span>заполнено корректно</span></div>
+    <div><b>${(rep.checked||0).toLocaleString('ru-RU')}</b><span>проверено строк</span></div>
+  </div>
+  <table><colgroup>
+    <col class="w-iss"><col class="w-dt"><col class="w-dt"><col class="w-mid"><col class="w-mid">
+    <col class="w-sum"><col class="w-sum"><col class="w-fns"><col class="w-mid">
+    <col class="w-mid"><col class="w-mid"><col class="w-mid"><col class="w-mid">
+    <col class="w-mid"><col class="w-mid"><col class="w-mid">
+  </colgroup><thead><tr>
+    <th>Нарушения</th><th>ДДС</th><th>ОПиУ</th><th>Тип операции</th><th>ID Offer</th><th>Поступление</th><th>Списание</th><th>ФНС</th><th>Реквизиты счёта</th><th>Статья</th><th>Подстатья</th><th>Аналитика</th><th>Контрагент</th><th>Назначение</th><th>Направление</th><th>Фин. операция</th>
+  </tr></thead><tbody>${rows||'<tr><td colspan="16">Незаполненных полей не найдено.</td></tr>'}</tbody></table>
+  <div class="note"><b>Обязательные поля:</b> ДДС, ОПиУ, Тип операции, Статья, Подстатья, Направление, Фин. операция, числовые Поступление/Списание (0 — допустимо). Код подстатьи должен начинаться с тех же 3 цифр, что и статья. Перемещение требует пары записей (−X / +X) с суммой 0. <b>Допустимо до утверждения фин. менеджером:</b> ФНС, Реквизиты счёта, Аналитика (для списаний).</div>
+  <div class="foot"><span>УПР.Финансы · Управленческий учёт · Документ ${docNum}</span><span>Сформировано автоматически из дашборда. Отчёт носит контрольный характер.</span></div>`;
+  return {fileName,styleCss,bodyHtml};
+}
+window.incPrintReport=function(){
+  const {fileName,styleCss,bodyHtml}=_incReportBuild();
+  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>${fileName}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>${styleCss}</style></head><body>${bodyHtml}
+  <script>window.onload=()=>window.print();<\/script></body></html>`;
+  const w=window.open('','_blank');
+  if(!w){alert('Разрешите всплывающие окна для формирования отчёта');return;}
+  w.document.write(html);w.document.close();
+};
+window.incDownloadPdf=async function(btn){
+  const old=btn?btn.textContent:'';if(btn){btn.textContent='⏳ Формирую…';btn.disabled=true;}
+  try{
+    await _loadHtml2Pdf();
+    const {fileName,styleCss,bodyHtml}=_incReportBuild();
+    const wrap=document.createElement('div');wrap.style.cssText='height:0;overflow:hidden';
+    const host=document.createElement('div');host.style.cssText='width:1480px;background:#fff';
+    const pdfFix=`table{table-layout:fixed;width:100%}th,td{word-wrap:break-word;overflow-wrap:anywhere;white-space:normal!important}td.num{white-space:nowrap!important}`;
+    host.innerHTML=`<style>${styleCss}${pdfFix}</style><div style="font-family:'Inter',Arial,sans-serif;font-size:11px;color:#1a2033;padding:18px">${bodyHtml}</div>`;
+    wrap.appendChild(host);document.body.appendChild(wrap);
+    try{
+      const blob=await html2pdf().set({margin:6,image:{type:'jpeg',quality:0.95},html2canvas:{scale:2,useCORS:true,backgroundColor:'#ffffff'},jsPDF:{unit:'mm',format:'a4',orientation:'landscape'},pagebreak:{mode:['avoid-all','css','legacy']}}).from(host).output('blob');
+      const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fileName+'.pdf';a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    }finally{wrap.remove();}
+  }catch(e){alert('Не удалось сформировать PDF: '+e.message);}
+  finally{if(btn){btn.textContent=old;btn.disabled=false;}}
 };
 window.incShowCard=function(idx){
   const r=(window._incRows||[])[idx];if(!r)return;
