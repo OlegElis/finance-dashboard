@@ -604,7 +604,7 @@ const _tabFilters={
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
-  osv:{dateFrom:'',dateTo:'',periodType:'all',preset:'all',activityDirs:[],accounts:[]},
+  osv:{dateFrom:'',dateTo:'',periodType:'all',preset:'all',activityDirs:[],accounts:[],years:[],months:[]},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -1608,6 +1608,7 @@ document.addEventListener('click',function(e){
   if(osvDD&&osvDD.style.display==='block'&&!osvDD.contains(e.target)&&e.target!==osvBtn){osvDD.style.display='none';renderOSV(getFilters());}
   const osvAccDD=document.getElementById('osv-acc-dd');const osvAccBtn=document.getElementById('osv-acc-btn');
   if(osvAccDD&&osvAccDD.style.display==='block'&&!osvAccDD.contains(e.target)&&e.target!==osvAccBtn){osvAccDD.style.display='none';renderOSV(getFilters());}
+  [['osv-year-dd','osv-year-btn'],['osv-month-dd','osv-month-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderOSV(getFilters());}});
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
@@ -3410,31 +3411,68 @@ function renderOSV(f){
   const selAccs=(f.accounts||[]);
   if(selAccs.length)rows=rows.filter(r=>selAccs.includes(S(r[COL.ACCOUNT])||'— без счёта —'));
 
-  // Границы периода
-  const allDates=rows.map(r=>parseDate(r[COL.DATE_DDS]));
-  if(!allDates.length){el.innerHTML=emptyState('Нет данных','Нет строк с датой ДДС');return;}
-  const minD=new Date(Math.min(...allDates)),maxD=new Date(Math.max(...allDates));
-  let pStart=f.dateFrom?new Date(f.dateFrom):minD;
-  let pEnd=f.dateTo?new Date(f.dateTo+'T23:59:59'):maxD;
-  let dayNote='';
-  if(mode==='day'){
-    const span=Math.ceil((pEnd-pStart)/86400000)+1;
-    if(span>62){pStart=new Date(pEnd.getTime()-61*86400000);dayNote='Режим «По дням» ограничен 62 днями — показан хвост диапазона. Задайте даты уже.';}
-  }
+  // Год/Месяц как в ДДС/ОПиУ
+  const selYears=(f.years||[]).map(Number);
+  const selMonths=(f.months||[]).map(Number);
+  const allYears=[...new Set(rows.map(r=>parseDate(r[COL.DATE_DDS]).getFullYear()))].sort((a,b)=>a-b);
+  const monthsSrc=selYears.length?rows.filter(r=>selYears.includes(parseDate(r[COL.DATE_DDS]).getFullYear())):rows;
+  const allMonthsOpts=[...new Set(monthsSrc.map(r=>parseDate(r[COL.DATE_DDS]).getMonth()+1))].sort((a,b)=>a-b);
+  const MONTHS_SHORT_OSV=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const ymOk=d=>(!selYears.length||selYears.includes(d.getFullYear()))&&(!selMonths.length||selMonths.includes(d.getMonth()+1));
 
-  // Сальдо на начало = все операции ДО pStart; обороты — внутри [pStart..pEnd]
-  const accs=new Map(); // name -> {opening, periods:{pk:{dt,kt}}}
-  const isCardAcc=n=>/карт|card|ФЛ\b|физ\.?\s*лиц/i.test(n);
-  const isKassaAcc=n=>/касс|кассир|наличн|kassa|kasca/i.test(n);
+  // ── Фильтр-бар (стиль ДДС/ОПиУ): Год / Месяц / Счёт / Направление / Разрез ──
+  const mkDD=(id,fn,items,selArr,labelFn,withSearch)=>{
+    const search=withSearch?`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`:'';
+    const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
+    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(typeof v==='number'?v:String(v))?'checked':''} onchange="${fn}Change()"> <span>${labelFn?labelFn(v):v}</span></label>`).join('')+`</div>`;
+    return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:${withSearch?'340px;max-width:520px':'130px'};margin-top:2px">${search}${head}${list}</div>`;
+  };
+  const btnStyle='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);text-align:left';
+  const allDirs=[...new Set(RAW.map(r=>S(r[COL.ACTIVITY_DIR])).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const selDirs=f.activityDirs||[];
+  const modeOpts=[{v:'all',l:'Весь период'},{v:'month',l:'По месяцам'},{v:'day',l:'По дням'}];
+  const lbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
+  const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
+    ${lbl('Год:')}
+    <div style="position:relative;display:inline-block"><button id="osv-year-btn" onclick="osvYearToggle()" style="${btnStyle};min-width:80px">${(selYears.length?selYears.length+' выбрано':'Все')+' ▾'}</button>${mkDD('osv-year-dd','osvYear',allYears,selYears)}</div>
+    ${lbl('Месяц:')}
+    <div style="position:relative;display:inline-block"><button id="osv-month-btn" onclick="osvMonthToggle()" style="${btnStyle};min-width:80px">${(selMonths.length?selMonths.length+' выбрано':'Все')+' ▾'}</button>${mkDD('osv-month-dd','osvMonth',allMonthsOpts,selMonths,m=>MONTHS_SHORT_OSV[m-1])}</div>
+    ${lbl('Счёт:')}
+    <div style="position:relative;display:inline-block"><button id="osv-acc-btn" onclick="osvAccToggle()" style="${btnStyle};min-width:130px">${(selAccs.length?selAccs.length+' выбрано':'Все счета')+' ▾'}</button>${mkDD('osv-acc-dd','osvAcc',allAccNames,selAccs,null,true)}</div>
+    ${lbl('Направление:')}
+    <div style="position:relative;display:inline-block"><button id="osv-dir-btn" onclick="osvDirToggle()" style="${btnStyle};min-width:140px">${(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾'}</button>${mkDD('osv-dir-dd','osvDir',allDirs,selDirs)}</div>
+    ${lbl('Разрез:')}
+    <select class="filter-extra-sel" onchange="_tabFilters['osv'].periodType=this.value;renderOSV(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${modeOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
+  </div>`;
+
+  if(!rows.length){el.innerHTML=filterBar+emptyState('Нет данных','Нет строк с датой ДДС под выбранные фильтры');return;}
+  const candDates=rows.map(r=>parseDate(r[COL.DATE_DDS])).filter(ymOk);
+  if(!candDates.length){el.innerHTML=filterBar+emptyState('Нет данных','Под выбранные Год/Месяц нет операций');return;}
+  const minC=new Date(Math.min(...candDates)),maxC=new Date(Math.max(...candDates));
+  // Границы: month → месяц целиком; day/all → день
+  const pStart=mode==='month'?new Date(minC.getFullYear(),minC.getMonth(),1):new Date(minC.getFullYear(),minC.getMonth(),minC.getDate());
+  const pEnd=mode==='month'?new Date(maxC.getFullYear(),maxC.getMonth()+1,0,23,59,59):new Date(maxC.getFullYear(),maxC.getMonth(),maxC.getDate(),23,59,59);
+
+  // Подстатья «120_Ввод начального остатка» (точное название) — всегда в сальдо начальное
+  const OPENING_SUB='120_ввод начального остатка';
+  const isOpeningEntry=r=>S(r[COL.ARTICLE_NAME]).toLowerCase()===OPENING_SUB;
+
   const pkOf=d=>{
     if(mode==='all')return'__all__';
     if(mode==='month')return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   };
-  const periodsSet=new Set();
-  // Подстатья «120_Ввод начального остатка» (точное название) — всегда в сальдо начальное, не в обороты
-  const OPENING_SUB='120_ввод начального остатка';
-  const isOpeningEntry=r=>S(r[COL.ARTICLE_NAME]).toLowerCase()===OPENING_SUB;
+  const pLabel=pk=>{
+    if(pk==='__all__')return'Период';
+    const parts=pk.split('-');
+    if(parts.length===2)return MONTHS_SHORT_OSV[+parts[1]-1]+' '+parts[0];
+    return parts[2]+'.'+parts[1];
+  };
+
+  const accs=new Map(); // name -> {opening, periods:{pk:{dt,kt}}}
+  const isCardAcc=n=>/карт|card|ФЛ\b|физ\.?\s*лиц/i.test(n);
+  const isKassaAcc=n=>/касс|кассир|наличн|kassa|kasca/i.test(n);
+  const pkVisible={};const periodsSet=new Set();
   rows.forEach(r=>{
     const d=parseDate(r[COL.DATE_DDS]);
     const name=S(r[COL.ACCOUNT])||'— без счёта —';
@@ -3444,22 +3482,31 @@ function renderOSV(f){
     if(isOpeningEntry(r)){if(d<=pEnd)a.opening+=inc+out;return;}
     if(d<pStart){a.opening+=inc+out;return;}
     if(d>pEnd)return;
+    if(mode==='all'){
+      if(ymOk(d)){const pk='__all__';periodsSet.add(pk);pkVisible[pk]=true;if(!a.periods[pk])a.periods[pk]={dt:0,kt:0};a.periods[pk].dt+=inc;a.periods[pk].kt+=out;}
+      else a.opening+=inc+out; // невыбранные месяцы внутри диапазона — в переходящее сальдо
+      return;
+    }
     const pk=pkOf(d);periodsSet.add(pk);
+    if(ymOk(d))pkVisible[pk]=true;
     if(!a.periods[pk])a.periods[pk]={dt:0,kt:0};
     a.periods[pk].dt+=inc;a.periods[pk].kt+=out;
   });
-  const periods=[...periodsSet].sort();
-  const pLabel=pk=>{
-    if(pk==='__all__')return'Период';
-    const parts=pk.split('-');
-    if(parts.length===2)return MONTHS_FULL[+parts[1]-1].slice(0,3)+' '+parts[0];
-    return parts[2]+'.'+parts[1];
-  };
+  const pksAll=[...periodsSet].sort();
+  let visPks=pksAll.filter(pk=>pkVisible[pk]);
+  let dayNote='';
+  if(mode==='day'&&visPks.length>62){
+    const cut=new Set(visPks.slice(-62));
+    visPks=visPks.slice(-62);
+    pksAll.forEach(pk=>{if(pkVisible[pk]&&!cut.has(pk))pkVisible[pk]=false;});
+    dayNote='Режим «По дням» ограничен 62 днями — показан хвост выбранного диапазона. Сузьте Год/Месяц.';
+  }
+  if(!visPks.length){el.innerHTML=filterBar+emptyState('Нет данных','Под выбранные фильтры нет операций');return;}
 
-  // Группы счетов (логика как в Банке: используем последний известный ФНС из строк)
+  // Группы счетов
   const fnsMap={};
   rows.forEach(r=>{const n=S(r[COL.ACCOUNT])||'— без счёта —';const v=S(r[COL.FNS]).toLowerCase();if(['да','true','1','+'].includes(v))fnsMap[n]=1;else if(['нет','false','0','-'].includes(v)&&fnsMap[n]===undefined)fnsMap[n]=0;});
-  const groups={ds:{label:'Денежные средства',list:[]},cards:{label:'Карты ФЛ',list:[]},kassy:{label:'Кассы',list:[]},pretax:{label:'До налогового оформления',list:[]},noreq:{label:'Без реквизитов',list:[]}};
+  const groups={ds:{label:'Денежные средства',list:[]},pretax:{label:'До налогового оформления',list:[]},kassy:{label:'Кассы',list:[]},cards:{label:'Карты ФЛ',list:[]},noreq:{label:'Без реквизитов',list:[]}};
   [...accs.values()].forEach(a=>{
     if(a.name==='— без счёта —'){groups.noreq.list.push(a);return;}
     if(fnsMap[a.name]===0){
@@ -3472,50 +3519,55 @@ function renderOSV(f){
   });
   Object.values(groups).forEach(g=>g.list.sort((x,y)=>x.name.localeCompare(y.name,'ru')));
 
-  // Helpers рендера
   const num=(v,cls='')=>{const c=v>0?'var(--income)':v<0?'var(--outcome)':'var(--text3)';return`<td class="num" style="color:${c};${cls}">${v!==0?fmt(v):''}</td>`;};
-  const numSaldo=(v,neg)=>{const c=v<0?'var(--outcome)':v>0?'var(--text)':'var(--text3)';return`<td class="num" style="color:${c};font-weight:600;${v<0?'background:#fdecea;':''}">${v!==0?fmt(v):'0'}</td>`;};
+  const numSaldo=v=>{const c=v<0?'var(--outcome)':v>0?'var(--text)':'var(--text3)';return`<td class="num" style="color:${c};font-weight:600;${v<0?'background:#fdecea;':''}">${v!==0?fmt(v):'0'}</td>`;};
 
-  // Заголовки: для all — 4 колонки; для периодов — Нач + (Дт/Кт/Кон)×N
-  let thead,buildRow,totCols;
+  // Сальдо нач. строки = opening + скрытые потоки до первого видимого периода
+  const rowCalc=a=>{
+    let run=a.opening;const firstVis=visPks[0];
+    pksAll.forEach(pk=>{if(pk<firstVis){const p=a.periods[pk];if(p&&!pkVisible[pk])run+=p.dt+p.kt;}});
+    return run;
+  };
+
+  let thead,buildRow;
   if(mode==='all'){
     thead=`<tr><th style="text-align:left;min-width:220px">Счёт / Реквизит</th><th>Сальдо нач.</th><th>Поступления (Дт)</th><th>Списания (Кт)</th><th>Сальдо кон.</th></tr>`;
-    totCols=5;
     buildRow=(a,bold,label)=>{
       const p=a.periods['__all__']||{dt:0,kt:0};
-      const end=a.opening+p.dt+p.kt;
-      const safe=a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':`style="cursor:pointer" onclick="osvToggleAcc('${safe}')" title="Показать только этот счёт"`}>
+      const open=a.opening;
+      const end=open+p.dt+p.kt;
+      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':''}>
         <td style="${bold?'':'padding-left:22px'}">${label||a.name}</td>
-        ${numSaldo(a.opening)}${num(p.dt)}${num(p.kt)}${numSaldo(end)}</tr>`;
+        ${numSaldo(open)}${num(p.dt)}${num(p.kt)}${numSaldo(end)}</tr>`;
     };
   }else{
-    const pHead=periods.map(pk=>`<th colspan="3" style="text-align:center;border-left:2px solid var(--border)">${pLabel(pk)}</th>`).join('');
-    const pSub=periods.map(()=>`<th style="border-left:2px solid var(--border)">Дт</th><th>Кт</th><th>Сальдо</th>`).join('');
+    const pHead=visPks.map(pk=>`<th colspan="3" style="text-align:center;border-left:2px solid var(--border)">${pLabel(pk)}</th>`).join('');
+    const pSub=visPks.map(()=>`<th style="border-left:2px solid var(--border)">Дт</th><th>Кт</th><th>Сальдо</th>`).join('');
     thead=`<tr><th rowspan="2" style="text-align:left;min-width:220px;vertical-align:bottom">Счёт / Реквизит</th><th rowspan="2" style="vertical-align:bottom">Сальдо нач.</th>${pHead}</tr><tr>${pSub}</tr>`;
-    totCols=2+periods.length*3;
     buildRow=(a,bold,label)=>{
-      let run=a.opening;
-      const safe=a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-      const cells=periods.map(pk=>{
+      const openAdj=rowCalc(a);
+      let run=openAdj;let lastVisIdx=-1;
+      const cells=visPks.map(pk=>{
+        // докатываем скрытые периоды между предыдущим видимым и текущим
+        const curIdx=pksAll.indexOf(pk);
+        for(let i=lastVisIdx+1;i<curIdx;i++){const hp=a.periods[pksAll[i]];if(hp&&!pkVisible[pksAll[i]])run+=hp.dt+hp.kt;}
+        lastVisIdx=curIdx;
         const p=a.periods[pk]||{dt:0,kt:0};
         run+=p.dt+p.kt;
         return num(p.dt,'border-left:2px solid var(--border);')+num(p.kt)+numSaldo(run);
       }).join('');
-      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':`style="cursor:pointer" onclick="osvToggleAcc('${safe}')" title="Показать только этот счёт"`}>
-        <td style="${bold?'':'padding-left:22px'}">${label||a.name}</td>${numSaldo(a.opening)}${cells}</tr>`;
+      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':''}>
+        <td style="${bold?'':'padding-left:22px'}">${label||a.name}</td>${numSaldo(openAdj)}${cells}</tr>`;
     };
   }
 
-  // Итог по группе = виртуальный счёт-агрегат
   const aggOf=list=>{
     const agg={name:'',opening:0,periods:{}};
     list.forEach(a=>{agg.opening+=a.opening;Object.entries(a.periods).forEach(([pk,p])=>{if(!agg.periods[pk])agg.periods[pk]={dt:0,kt:0};agg.periods[pk].dt+=p.dt;agg.periods[pk].kt+=p.kt;});});
     return agg;
   };
   let body='';
-  const order=['ds','pretax','kassy','cards','noreq'];
-  order.forEach(k=>{
+  ['ds','pretax','kassy','cards','noreq'].forEach(k=>{
     const g=groups[k];if(!g.list.length)return;
     body+=buildRow(aggOf(g.list),true,g.label+` (${g.list.length})`);
     g.list.forEach(a=>{body+=buildRow(a,false);});
@@ -3523,41 +3575,15 @@ function renderOSV(f){
   const totalAgg=aggOf([...accs.values()]);
   body+=buildRow(totalAgg,true,'ИТОГО');
 
-  // KPI
-  const totP=mode==='all'?(totalAgg.periods['__all__']||{dt:0,kt:0}):periods.reduce((s,pk)=>{const p=totalAgg.periods[pk]||{dt:0,kt:0};s.dt+=p.dt;s.kt+=p.kt;return s;},{dt:0,kt:0});
-  const endSaldo=totalAgg.opening+totP.dt+totP.kt;
+  // KPI (по видимым периодам)
+  const openKPI=mode==='all'?totalAgg.opening:rowCalc(totalAgg);
+  const totP=visPks.reduce((s,pk)=>{const p=totalAgg.periods[pk]||{dt:0,kt:0};s.dt+=p.dt;s.kt+=p.kt;return s;},{dt:0,kt:0});
+  let endKPI=totalAgg.opening;pksAll.forEach(pk=>{const p=totalAgg.periods[pk];if(p&&(pkVisible[pk]||pk<=visPks[visPks.length-1]))endKPI+=p.dt+p.kt;});
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card blue"><div class="kpi-label">Сальдо на начало</div><div class="kpi-value ${totalAgg.opening>=0?'positive':'negative'}">${fmt(totalAgg.opening)}</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Сальдо на начало</div><div class="kpi-value ${openKPI>=0?'positive':'negative'}">${fmt(openKPI)}</div></div>
     <div class="kpi-card green"><div class="kpi-label">Обороты Дт (поступления)</div><div class="kpi-value positive">${fmt(totP.dt)}</div></div>
     <div class="kpi-card red"><div class="kpi-label">Обороты Кт (списания)</div><div class="kpi-value negative">${fmt(totP.kt)}</div></div>
-    <div class="kpi-card ${endSaldo>=0?'blue':'red'}"><div class="kpi-label">Сальдо на конец</div><div class="kpi-value ${endSaldo>=0?'positive':'negative'}">${fmt(endSaldo)}</div></div>
-  </div>`;
-
-  // Фильтр-бар
-  const allDirs=[...new Set(RAW.map(r=>S(r[COL.ACTIVITY_DIR])).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  const selDirs=f.activityDirs||[];
-  const dirCb=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="osvDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="osvDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="osvDirChange()"> <span>${d}</span></label>`).join('');
-  const modeOpts=[{v:'all',l:'Весь период'},{v:'month',l:'По месяцам'},{v:'day',l:'По дням'}];
-  const filterBar=`<div class="tab-filters">
-    <div class="date-range">
-      <input type="date" value="${f.dateFrom}" onchange="_tabFilters['osv'].dateFrom=this.value;renderOSV(getFilters())">
-      <span class="date-range-sep">—</span>
-      <input type="date" value="${f.dateTo}" onchange="_tabFilters['osv'].dateTo=this.value;renderOSV(getFilters())">
-    </div>
-    <div class="filter-sep"></div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Разрез:</label>
-    <select class="filter-extra-sel" onchange="_tabFilters['osv'].periodType=this.value;renderOSV(getFilters())">${modeOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Счёт:</label>
-    <div style="position:relative;display:inline-block"><button id="osv-acc-btn" onclick="osvAccToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:150px;text-align:left">${(selAccs.length?selAccs.length+' выбрано':'Все счета')+' ▾'}</button>
-    <div id="osv-acc-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:520px;margin-top:2px">
-      <div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'osv-acc-dd')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>
-      <div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="osvAccSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="osvAccSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>
-      <div class="bank-dd-list" style="max-height:240px;overflow-y:auto">${allAccNames.map(n=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${n.replace(/"/g,'&quot;')}" ${selAccs.includes(n)?'checked':''} onchange="osvAccChange()"> <span>${n}</span></label>`).join('')}</div>
-    </div></div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Направление:</label>
-    <div style="position:relative;display:inline-block"><button id="osv-dir-btn" onclick="osvDirToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:150px;text-align:left">${(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾'}</button>
-    <div id="osv-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow-y:auto;min-width:300px;margin-top:2px">${dirCb}</div></div>
-    ${selAccs.length?`<button onclick="_tabFilters.osv.accounts=[];renderOSV(getFilters())" style="padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сброс счёта</button>`:''}
+    <div class="kpi-card ${endKPI>=0?'blue':'red'}"><div class="kpi-label">Сальдо на конец</div><div class="kpi-value ${endKPI>=0?'positive':'negative'}">${fmt(endKPI)}</div></div>
   </div>`;
 
   const noteHtml=dayNote?`<div style="padding:6px 28px;font-size:11px;color:#9a6700;background:#fff8e1;border-bottom:1px solid var(--border)">⚠ ${dayNote}</div>`:'';
@@ -3574,18 +3600,15 @@ function renderOSV(f){
     </div>
   </div>`;
 }
-window.osvToggleAcc=function(name){
-  const cur=_tabFilters.osv.accounts||[];
-  _tabFilters.osv.accounts=(cur.length===1&&cur[0]===name)?[]:[name];
-  renderOSV(getFilters());
-};
-window.osvAccToggle=function(){const dd=document.getElementById('osv-acc-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderOSV(getFilters());};
-window.osvAccChange=function(){const dd=document.getElementById('osv-acc-dd');const btn=document.getElementById('osv-acc-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все счета')+' ▾';_tabFilters.osv.accounts=checked;};
-window.osvAccSelectAll=function(s){const dd=document.getElementById('osv-acc-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.osvAccChange();};
-window.osvDirToggle=function(){const dd=document.getElementById('osv-dir-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderOSV(getFilters());};
-window.osvDirChange=function(){const dd=document.getElementById('osv-dir-dd');const btn=document.getElementById('osv-dir-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';_tabFilters.osv.activityDirs=checked;};
-window.osvDirSelectAll=function(s){const dd=document.getElementById('osv-dir-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.osvDirChange();};
-
+function _osvDD(fn,ddId,btnId,defLbl,toNum){
+  window[fn+'Toggle']=function(){const dd=document.getElementById(ddId);if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderOSV(getFilters());};
+  window[fn+'Change']=function(){const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>toNum?+cb.value:cb.value);btn.textContent=(checked.length?checked.length+' выбрано':defLbl)+' ▾';_tabFilters.osv[{osvYear:'years',osvMonth:'months',osvAcc:'accounts',osvDir:'activityDirs'}[fn]]=checked;};
+  window[fn+'SelectAll']=function(s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window[fn+'Change']();};
+}
+_osvDD('osvYear','osv-year-dd','osv-year-btn','Все',true);
+_osvDD('osvMonth','osv-month-dd','osv-month-btn','Все',true);
+_osvDD('osvAcc','osv-acc-dd','osv-acc-btn','Все счета',false);
+_osvDD('osvDir','osv-dir-dd','osv-dir-btn','Все направления',false);
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
 
 // ─── МАРКЕТИНГ ────────────────────────────────────────────────────────────────
