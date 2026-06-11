@@ -3134,6 +3134,27 @@ function renderIncomplete(f){
   };
   const data=RAW.filter(inRange);
 
+  // Перемещения: обязательно 2 записи (−X и +X в Поступлении), сумма пары = 0.
+  // Группируем по дате ДДС и |сумме|; непарные строки помечаем
+  const moveBad=new Set();
+  (()=>{
+    const buckets=new Map();
+    data.forEach(r=>{
+      if(S(r[COL.TYPE]).toLowerCase()!=='перемещение')return;
+      const v=parseNum(r[COL.INCOME]);
+      if(v===0){moveBad.add(r);return;} // перемещение с нулевым поступлением — некорректно
+      const d=parseDate(r[COL.DATE_DDS]);
+      const key=(d?toIso(d):'?')+'|'+Math.abs(v);
+      if(!buckets.has(key))buckets.set(key,{pos:[],neg:[]});
+      buckets.get(key)[v>0?'pos':'neg'].push(r);
+    });
+    buckets.forEach(b=>{
+      const n=Math.min(b.pos.length,b.neg.length);
+      b.pos.slice(n).forEach(r=>moveBad.add(r));
+      b.neg.slice(n).forEach(r=>moveBad.add(r));
+    });
+  })();
+
   // Проверки по регламенту заполнения
   const checkRow=r=>{
     const errs=[],warns=[];
@@ -3149,8 +3170,8 @@ function renderIncomplete(f){
     if(ac&&an){const a=ac.match(/^(\d{3})/),b=an.match(/^(\d{3})/);if(a&&b&&a[1]!==b[1])errs.push('Подстатья≠Статья');}
     if(!S(r[COL.ACTIVITY_DIR]))errs.push('Направление');
     if(!S(r[COL.FIN_OP]))errs.push('Фин. операция');
-    // Предупреждения — поля, которые допускают временную пустоту (заполняет фин.менеджер) или имеют исключения
-    if(!S(r[COL.OFFER_ID]))warns.push('ID Offer');
+    if(moveBad.has(r))errs.push('Перемещение без пары');
+    // Предупреждения — поля, которые допускают временную пустоту (заполняет фин.менеджер)
     if(!S(r[COL.FNS]))warns.push('ФНС');
     if(!S(r[COL.ACCOUNT]))warns.push('Реквизиты счёта');
     if(type==='списание'&&!S(r[COL.ANALYTICS]))warns.push('Аналитика');
@@ -3190,7 +3211,7 @@ function renderIncomplete(f){
   }
 
   // Разбивка по полям
-  const ERR_FIELDS=['ДДС','ОПиУ','Тип операции','Поступление','Списание','Статья','Подстатья','Подстатья≠Статья','Направление','Фин. операция'];
+  const ERR_FIELDS=['ДДС','ОПиУ','Тип операции','Поступление','Списание','Статья','Подстатья','Подстатья≠Статья','Направление','Фин. операция','Перемещение без пары'];
   const chips=Object.entries(fieldCount).sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
     const isErr=ERR_FIELDS.includes(k);
     return`<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:600;background:${isErr?'#fdecea':'#fff8e1'};color:${isErr?'var(--outcome)':'#9a6700'};border:1px solid ${isErr?'#f5c6cb':'#f0e0a0'}">${k}: ${v}</span>`;
@@ -3215,8 +3236,8 @@ function renderIncomplete(f){
       `<td class="center" style="${mark(b,'ДДС')}">${dsF(r[COL.DATE_DDS])}</td>`+
       `<td class="center" style="${mark(b,'ОПиУ')}">${dsOpiu(r[COL.DATE_OPIU])}</td>`+
       `<td class="center" style="${mark(b,'Тип операции')}">${esc(r[COL.TYPE])}</td>`+
-      `<td style="${mark(b,'ID Offer')}">${esc(r[COL.OFFER_ID])}</td>`+
-      `<td class="num" style="${mark(b,'Поступление')}">${isNum(r[COL.INCOME])?(inc?fmt(inc):'0'):''}</td>`+
+      `<td>${esc(r[COL.OFFER_ID])}</td>`+
+      `<td class="num" style="${mark(b,'Поступление')||mark(b,'Перемещение без пары')}">${isNum(r[COL.INCOME])?(inc?fmt(inc):'0'):''}</td>`+
       `<td class="num" style="${mark(b,'Списание')}">${isNum(r[COL.OUTCOME])?(out?fmt(out):'0'):''}</td>`+
       `<td class="center" style="${mark(b,'ФНС')}">${esc(r[COL.FNS])}</td>`+
       `<td style="${mark(b,'Реквизиты счёта')}">${esc(r[COL.ACCOUNT])}</td>`+
