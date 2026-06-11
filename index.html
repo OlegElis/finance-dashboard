@@ -599,7 +599,7 @@ const _tabFilters={
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
-  incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
+  incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -3210,14 +3210,19 @@ function renderIncomplete(f){
     return;
   }
 
-  // Разбивка по полям
+  // Разбивка по полям + фильтр по выбранному полю (клик на чип)
   const ERR_FIELDS=['ДДС','ОПиУ','Тип операции','Поступление','Списание','Статья','Подстатья','Подстатья≠Статья','Направление','Фин. операция','Перемещение без пары'];
+  const activeField=f.incField||'';
+  const badShown=activeField?bad.filter(b=>b.errs.includes(activeField)||b.warns.includes(activeField)):bad;
   const chips=Object.entries(fieldCount).sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
     const isErr=ERR_FIELDS.includes(k);
-    return`<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:600;background:${isErr?'#fdecea':'#fff8e1'};color:${isErr?'var(--outcome)':'#9a6700'};border:1px solid ${isErr?'#f5c6cb':'#f0e0a0'}">${k}: ${v}</span>`;
+    const on=k===activeField;
+    const base=isErr?{bg:'#fdecea',fg:'var(--outcome)',bd:'#f5c6cb'}:{bg:'#fff8e1',fg:'#9a6700',bd:'#f0e0a0'};
+    return`<span onclick="incFilterField('${k.replace(/'/g,"\\'")}')" title="Показать только строки с нарушением «${k}»" style="display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:10px;font-size:10px;font-weight:600;cursor:pointer;background:${on?base.fg:base.bg};color:${on?'#fff':base.fg};border:1px solid ${on?base.fg:base.bd}">${k}: ${v}</span>`;
   }).join(' ');
   const chipsBar=`<div style="display:flex;align-items:center;gap:6px;padding:7px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <span style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Нарушения по полям:</span>${chips}
+    ${activeField?`<button onclick="incFilterField('${activeField.replace(/'/g,"\\'")}')" style="padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сбросить «${activeField}»</button>`:''}
     <span style="margin-left:auto;font-size:10px;color:var(--text3)"><span style="color:var(--outcome)">■</span> обязательное &nbsp;<span style="color:#9a6700">■</span> допустимо до утверждения</span>
   </div>`;
 
@@ -3227,7 +3232,7 @@ function renderIncomplete(f){
   window._incRows=[];
   const LIMIT=500;
   const mark=(b,field)=>b.errs.includes(field)?'background:#fdecea;':b.warns.includes(field)?'background:#fff8e1;':'';
-  const body=bad.slice(0,LIMIT).map((b,i)=>{
+  const body=badShown.slice(0,LIMIT).map((b,i)=>{
     window._incRows.push(b.r);
     const r=b.r;const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
     const issues=[...b.errs.map(x=>`<span style="color:var(--outcome);font-weight:700">${x}</span>`),...b.warns.map(x=>`<span style="color:#9a6700">${x}</span>`)].join(', ');
@@ -3250,11 +3255,11 @@ function renderIncomplete(f){
       `<td style="${mark(b,'Фин. операция')}">${esc(r[COL.FIN_OP])}</td>`+
       `</tr>`;
   }).join('');
-  const trunc=bad.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} строк из ${bad.length}</div>`:'';
+  const trunc=badShown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} строк из ${badShown.length}</div>`:'';
 
   el.innerHTML=filterBar+kpiHtml+chipsBar+`
   <div class="txn-wrap">
-    <div class="txn-header"><span class="table-title">Строки с незаполненными полями</span><span class="table-count">${bad.length.toLocaleString('ru-RU')} строк</span></div>
+    <div class="txn-header"><span class="table-title">Строки с незаполненными полями</span><span class="table-count">${badShown.length.toLocaleString('ru-RU')} строк${activeField?' · фильтр: '+activeField:''}</span></div>
     <div class="txn-scroll"><table class="txn-table">
       <thead><tr>
         <th style="min-width:150px">Проблемы</th>
@@ -3267,6 +3272,11 @@ function renderIncomplete(f){
     </table></div>${trunc}
   </div>`;
 }
+window.incFilterField=function(field){
+  const cur=_tabFilters.incomplete.incField||'';
+  _tabFilters.incomplete.incField=(cur===field)?'':field;
+  renderIncomplete(getFilters());
+};
 window.incShowCard=function(idx){
   const r=(window._incRows||[])[idx];if(!r)return;
   window._dupesRows=window._dupesRows||[];
