@@ -604,7 +604,7 @@ const _tabFilters={
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
-  osv:{dateFrom:'',dateTo:'',periodType:'all',preset:'all',activityDirs:[]},
+  osv:{dateFrom:'',dateTo:'',periodType:'all',preset:'all',activityDirs:[],accounts:[]},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -1606,6 +1606,8 @@ document.addEventListener('click',function(e){
   if(expDD&&expDD.style.display==='block'&&!expDD.contains(e.target)&&e.target!==expBtn){expDD.style.display='none';renderExpenses(getFilters());}
   const osvDD=document.getElementById('osv-dir-dd');const osvBtn=document.getElementById('osv-dir-btn');
   if(osvDD&&osvDD.style.display==='block'&&!osvDD.contains(e.target)&&e.target!==osvBtn){osvDD.style.display='none';renderOSV(getFilters());}
+  const osvAccDD=document.getElementById('osv-acc-dd');const osvAccBtn=document.getElementById('osv-acc-btn');
+  if(osvAccDD&&osvAccDD.style.display==='block'&&!osvAccDD.contains(e.target)&&e.target!==osvAccBtn){osvAccDD.style.display='none';renderOSV(getFilters());}
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
@@ -3403,6 +3405,10 @@ function renderOSV(f){
   // Только строки с датой ДДС (ОСВ — фактическое движение денег)
   let rows=RAW.filter(r=>parseDate(r[COL.DATE_DDS]));
   if(f.activityDirs&&f.activityDirs.length)rows=rows.filter(r=>f.activityDirs.includes(S(r[COL.ACTIVITY_DIR])));
+  // Список всех счетов (до фильтра по счёту — чтобы выбор не схлопывал список)
+  const allAccNames=[...new Set(rows.map(r=>S(r[COL.ACCOUNT])||'— без счёта —'))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const selAccs=(f.accounts||[]);
+  if(selAccs.length)rows=rows.filter(r=>selAccs.includes(S(r[COL.ACCOUNT])||'— без счёта —'));
 
   // Границы периода
   const allDates=rows.map(r=>parseDate(r[COL.DATE_DDS]));
@@ -3475,7 +3481,7 @@ function renderOSV(f){
       const p=a.periods['__all__']||{dt:0,kt:0};
       const end=a.opening+p.dt+p.kt;
       const safe=a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':`style="cursor:pointer" onclick="osvOpenAcc('${safe}')" title="Операции по счёту"`}>
+      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':`style="cursor:pointer" onclick="osvToggleAcc('${safe}')" title="Показать только этот счёт"`}>
         <td style="${bold?'':'padding-left:22px'}">${label||a.name}</td>
         ${numSaldo(a.opening)}${num(p.dt)}${num(p.kt)}${numSaldo(end)}</tr>`;
     };
@@ -3492,7 +3498,7 @@ function renderOSV(f){
         run+=p.dt+p.kt;
         return num(p.dt,'border-left:2px solid var(--border);')+num(p.kt)+numSaldo(run);
       }).join('');
-      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':`style="cursor:pointer" onclick="osvOpenAcc('${safe}')" title="Операции по счёту"`}>
+      return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':`style="cursor:pointer" onclick="osvToggleAcc('${safe}')" title="Показать только этот счёт"`}>
         <td style="${bold?'':'padding-left:22px'}">${label||a.name}</td>${numSaldo(a.opening)}${cells}</tr>`;
     };
   }
@@ -3537,9 +3543,17 @@ function renderOSV(f){
     <div class="filter-sep"></div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Разрез:</label>
     <select class="filter-extra-sel" onchange="_tabFilters['osv'].periodType=this.value;renderOSV(getFilters())">${modeOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Счёт:</label>
+    <div style="position:relative;display:inline-block"><button id="osv-acc-btn" onclick="osvAccToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:150px;text-align:left">${(selAccs.length?selAccs.length+' выбрано':'Все счета')+' ▾'}</button>
+    <div id="osv-acc-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:520px;margin-top:2px">
+      <div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'osv-acc-dd')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>
+      <div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="osvAccSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="osvAccSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>
+      <div class="bank-dd-list" style="max-height:240px;overflow-y:auto">${allAccNames.map(n=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${n.replace(/"/g,'&quot;')}" ${selAccs.includes(n)?'checked':''} onchange="osvAccChange()"> <span>${n}</span></label>`).join('')}</div>
+    </div></div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Направление:</label>
     <div style="position:relative;display:inline-block"><button id="osv-dir-btn" onclick="osvDirToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:150px;text-align:left">${(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾'}</button>
     <div id="osv-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow-y:auto;min-width:300px;margin-top:2px">${dirCb}</div></div>
+    ${selAccs.length?`<button onclick="_tabFilters.osv.accounts=[];renderOSV(getFilters())" style="padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сброс счёта</button>`:''}
   </div>`;
 
   const noteHtml=dayNote?`<div style="padding:6px 28px;font-size:11px;color:#9a6700;background:#fff8e1;border-bottom:1px solid var(--border)">⚠ ${dayNote}</div>`:'';
@@ -3556,10 +3570,14 @@ function renderOSV(f){
     </div>
   </div>`;
 }
-window.osvOpenAcc=function(name){
-  switchTab('bank');
-  setTimeout(()=>{window.bankTxnFilterByAcc&&bankTxnFilterByAcc([name]);},50);
+window.osvToggleAcc=function(name){
+  const cur=_tabFilters.osv.accounts||[];
+  _tabFilters.osv.accounts=(cur.length===1&&cur[0]===name)?[]:[name];
+  renderOSV(getFilters());
 };
+window.osvAccToggle=function(){const dd=document.getElementById('osv-acc-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderOSV(getFilters());};
+window.osvAccChange=function(){const dd=document.getElementById('osv-acc-dd');const btn=document.getElementById('osv-acc-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все счета')+' ▾';_tabFilters.osv.accounts=checked;};
+window.osvAccSelectAll=function(s){const dd=document.getElementById('osv-acc-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.osvAccChange();};
 window.osvDirToggle=function(){const dd=document.getElementById('osv-dir-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderOSV(getFilters());};
 window.osvDirChange=function(){const dd=document.getElementById('osv-dir-dd');const btn=document.getElementById('osv-dir-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';_tabFilters.osv.activityDirs=checked;};
 window.osvDirSelectAll=function(s){const dd=document.getElementById('osv-dir-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.osvDirChange();};
