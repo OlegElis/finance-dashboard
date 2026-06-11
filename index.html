@@ -604,7 +604,7 @@ const _tabFilters={
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
-  osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[]},
+  osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -3402,6 +3402,10 @@ function renderOSV(f){
   const el=document.getElementById('tabOsv');
   const mode=f.periodType||'all'; // 'all' | 'month' | 'day'
   const S=v=>String(v==null?'':v).trim();
+  // Измерение строк: по счетам или по направлениям
+  const rowDim=f.rowDim||'account';
+  const rowKeyOf=r=>rowDim==='direction'?(S(r[COL.ACTIVITY_DIR])||'— без направления —'):(S(r[COL.ACCOUNT])||'— без счёта —');
+  const rowDimLabel=rowDim==='direction'?'Направление':'Счёт / Реквизит';
 
   // Только строки с датой ДДС (ОСВ — фактическое движение денег)
   let rows=RAW.filter(r=>parseDate(r[COL.DATE_DDS]));
@@ -3443,6 +3447,8 @@ function renderOSV(f){
     <div style="position:relative;display:inline-block"><button id="osv-dir-btn" onclick="osvDirToggle()" style="${btnStyle};min-width:140px">${(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾'}</button>${mkDD('osv-dir-dd','osvDir',allDirs,selDirs)}</div>
     ${lbl('Разрез:')}
     <select class="filter-extra-sel" onchange="_tabFilters['osv'].periodType=this.value;renderOSV(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${modeOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
+    ${lbl('Строки:')}
+    <select class="filter-extra-sel" onchange="_tabFilters['osv'].rowDim=this.value;renderOSV(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"><option value="account"${rowDim==='account'?' selected':''}>По счетам</option><option value="direction"${rowDim==='direction'?' selected':''}>По направлениям</option></select>
   </div>`;
 
   if(!rows.length){el.innerHTML=filterBar+emptyState('Нет данных','Нет строк с датой ДДС под выбранные фильтры');return;}
@@ -3477,7 +3483,7 @@ function renderOSV(f){
   const pkVisible={};const periodsSet=new Set();
   rows.forEach(r=>{
     const d=parseDate(r[COL.DATE_DDS]);
-    const name=S(r[COL.ACCOUNT])||'— без счёта —';
+    const name=rowKeyOf(r);
     if(!accs.has(name))accs.set(name,{name,opening:0,periods:{}});
     const a=accs.get(name);
     const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
@@ -3527,7 +3533,7 @@ function renderOSV(f){
 
   let thead,buildRow;
   if(mode==='all'){
-    thead=`<tr><th style="text-align:left;min-width:220px;${thCorner}">Счёт / Реквизит</th><th style="${th1}">Сальдо нач.</th><th style="${th1}">Поступления (Дт)</th><th style="${th1}">Списания (Кт)</th><th style="${th1}">Сальдо кон.</th></tr>`;
+    thead=`<tr><th style="text-align:left;min-width:220px;${thCorner}">${rowDimLabel}</th><th style="${th1}">Сальдо нач.</th><th style="${th1}">Поступления (Дт)</th><th style="${th1}">Списания (Кт)</th><th style="${th1}">Сальдо кон.</th></tr>`;
     buildRow=(a,bold,label)=>{
       const p=a.periods['__all__']||{dt:0,kt:0};
       const open=a.opening;
@@ -3540,7 +3546,7 @@ function renderOSV(f){
     // Каждый период: Сальдо нач. / Дт / Кт / Сальдо кон. (нач. периода = кон. предыдущего)
     const pHead=visPks.map(pk=>`<th colspan="4" style="text-align:center;border-left:2px solid var(--border);${th1}">${pLabel(pk)}</th>`).join('');
     const pSub=visPks.map(()=>`<th style="border-left:2px solid var(--border);${th2}">Сальдо нач.</th><th style="${th2}">Дт</th><th style="${th2}">Кт</th><th style="${th2}">Сальдо кон.</th>`).join('');
-    thead=`<tr><th rowspan="2" style="text-align:left;min-width:220px;vertical-align:bottom;${thCorner}">Счёт / Реквизит</th>${pHead}</tr><tr>${pSub}</tr>`;
+    thead=`<tr><th rowspan="2" style="text-align:left;min-width:220px;vertical-align:bottom;${thCorner}">${rowDimLabel}</th>${pHead}</tr><tr>${pSub}</tr>`;
     buildRow=(a,bold,label)=>{
       const openAdj=rowCalc(a);
       let run=openAdj;let lastVisIdx=-1;
@@ -3585,7 +3591,7 @@ function renderOSV(f){
 
   el.innerHTML=filterBar+noteHtml+kpiHtml+`
   <div class="table-wrap">
-    <div class="table-header"><span class="table-title">Оборотно-сальдовая ведомость · ${fmtD(pStart)} — ${fmtD(pEnd)}</span><span class="table-count">${accs.size} счетов</span></div>
+    <div class="table-header"><span class="table-title">Оборотно-сальдовая ведомость · ${fmtD(pStart)} — ${fmtD(pEnd)}</span><span class="table-count">${accs.size} ${rowDim==='direction'?'направлений':'счетов'}</span></div>
     <div class="table-scroll" style="overflow-x:auto;max-height:calc(100vh - 250px)">
       <table class="report-table" style="white-space:nowrap">
         <thead>${thead}</thead>

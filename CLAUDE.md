@@ -174,7 +174,8 @@ _mktCounts   // {periodKey: {leads, orders, fulfilled}} — ручной вво�
 - Без группировки: все счета одним списком **по алфавиту** + строка ИТОГО; числовые колонки выровнены справа
 - Закреплены при прокрутке: обе строки шапки (sticky top 0/30px) и левая колонка «Счёт / Реквизит» (sticky left)
 - Отрицательное сальдо подсвечивается красным (индикатор ошибки в данных)
-- Состояние: `years, months, accounts, activityDirs, periodType` в `_tabFilters.osv`; dd-функции генерируются `_osvDD()`
+- Селектор «Строки» (`rowDim`): `account` (по счетам, дефолт) / `direction` (по направлениям) — измерение строк таблицы
+- Состояние: `years, months, accounts, activityDirs, periodType, rowDim` в `_tabFilters.osv`; dd-функции генерируются `_osvDD()`
 
 ---
 
