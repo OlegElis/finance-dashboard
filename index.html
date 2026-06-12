@@ -3704,16 +3704,21 @@ function renderDebtBfl(f){
   const BFL_DIR='БФЛ - Банкротство физических лиц';
   const today=new Date();today.setHours(0,0,0,0);
 
-  // Оплаты из RawData (нетто) + метаданные: кол-во, первая/последняя дата (по ДДС)
+  // Оплаты из RawData (нетто) + метаданные: кол-во, первая/последняя дата (по ДДС).
+  // Из списаний оплату уменьшают ТОЛЬКО «112_Возвраты клиентам» — прочие списания по ID
+  // (госпошлины, публикации и т.п. расходы на ведение дела) возвратом клиенту не являются.
+  const REFUND_SUB='112_возвраты клиентам';
+  const isRefund=r=>S(r[COL.ARTICLE_NAME]).toLowerCase()===REFUND_SUB;
   const payByOffer={};
   RAW.forEach(r=>{
     if(S(r[COL.ACTIVITY_DIR])!==BFL_DIR)return;
     const offer=_arNormId(r[COL.OFFER_ID]);if(!offer)return;
     const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
-    if(inc===0&&out===0)return;
+    const refund=(out<0&&isRefund(r))?out:0;
+    if(inc===0&&refund===0)return;
     if(!payByOffer[offer])payByOffer[offer]={paid:0,income:0,count:0,firstDate:null,lastDate:null};
     const p=payByOffer[offer];
-    p.paid+=inc+out; // нетто: возвраты уменьшают оплаченное
+    p.paid+=inc+refund; // нетто: только возвраты клиентам уменьшают оплаченное
     p.income+=inc;
     if(inc>0){
       p.count++;
@@ -3924,10 +3929,12 @@ window.arShowDetail=function(idx){
   const BFL_DIR='БФЛ - Банкротство физических лиц';
   const esc=s=>String(s||'').replace(/</g,'&lt;');
   const dsF=v=>{const d=v instanceof Date?v:parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';};
-  // Все движения по этому ID (направление БФЛ)
+  // Движения по этому ID (направление БФЛ): поступления + ТОЛЬКО «112_Возвраты клиентам»
+  // (прочие списания по ID — расходы на ведение дела, оплату клиента не уменьшают и здесь не показываются)
+  const REFUND_SUB='112_возвраты клиентам';
   const moves=RAW.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===BFL_DIR&&_arNormId(r[COL.OFFER_ID])===x.offer)
     .map(r=>({d:parseDate(r[COL.DATE_DDS]),inc:parseNum(r[COL.INCOME]),out:parseNum(r[COL.OUTCOME]),acc:String(r[COL.ACCOUNT]||'').trim(),sub:String(r[COL.ARTICLE_NAME]||'').trim(),purp:String(r[COL.PURPOSE]||'').trim()}))
-    .filter(m=>m.inc!==0||m.out!==0)
+    .filter(m=>m.inc>0||(m.out<0&&m.sub.toLowerCase()===REFUND_SUB))
     .sort((a,b)=>(a.d||0)-(b.d||0));
   const totInc=moves.reduce((s,m)=>s+m.inc,0);
   const totOut=moves.reduce((s,m)=>s+m.out,0);
@@ -3961,7 +3968,7 @@ window.arShowDetail=function(idx){
         <div style="display:grid;grid-template-columns:1fr auto;gap:4px;align-items:baseline">
           <span style="color:var(--text3)">Сумма договора (RawData_BFL):</span><span style="font-weight:700;text-align:right">${x.sum?fmt(x.sum):'—'}</span>
           <span style="color:var(--text3)">Поступлений (${moves.filter(m=>m.inc>0).length} шт):</span><span style="font-weight:700;color:var(--income);text-align:right">${fmt(totInc)}</span>
-          <span style="color:var(--text3)">Возвратов/списаний:</span><span style="font-weight:700;color:var(--outcome);text-align:right">${totOut?fmt(totOut):'0'}</span>
+          <span style="color:var(--text3)">Возвраты клиентам (112_):</span><span style="font-weight:700;color:var(--outcome);text-align:right">${totOut?fmt(totOut):'0'}</span>
           <span style="color:var(--text3)">Оплачено нетто:</span><span style="font-weight:700;text-align:right">${fmt(net)}</span>
         </div>
         <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:baseline">
