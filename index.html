@@ -609,7 +609,7 @@ const _tabFilters={
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account'},
-  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,cutoffYM:'2024-04'},
+  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffYM:'2024-04'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -3786,18 +3786,21 @@ function renderDebtBfl(f){
   const q=S(f.search).toLowerCase();
   const onlyDebt=f.onlyDebt!==false;
   const orphansOnly=!!f.orphansOnly;
+  const overOnly=!!f.overOnly;
   const selStages=f.stages||[];
   const selResps=f.resps||[];
   const payCat=f.payCat||'';
+  const overCount=items.filter(x=>x.over).length;
   let shown=orphansOnly?orphans:items;
   if(!orphansOnly){
-    if(onlyDebt)shown=shown.filter(x=>x.debt>0.005);
+    if(overOnly)shown=shown.filter(x=>x.over);
+    else if(onlyDebt)shown=shown.filter(x=>x.debt>0.005);
     if(selStages.length)shown=shown.filter(x=>selStages.includes(x.stage));
     if(selResps.length)shown=shown.filter(x=>selResps.includes(x.responsible||''));
   }
   if(payCat)shown=shown.filter(x=>x.payCat===payCat);
   if(q)shown=shown.filter(x=>((x.fio||'')+' '+(x.contract||'')+' '+x.offer+' '+(x.responsible||'')).toLowerCase().includes(q));
-  shown=[...shown].sort((a,b)=>orphansOnly?(b.paid-a.paid):(b.debt-a.debt));
+  shown=[...shown].sort((a,b)=>orphansOnly?(b.paid-a.paid):overOnly?(a.debt-b.debt):(b.debt-a.debt));
 
   // DD-хелпер (мультивыбор с поиском, как в Банке)
   const mkDD=(id,fn,itemsArr,selArr)=>{
@@ -3830,6 +3833,10 @@ function renderDebtBfl(f){
     <label title="Скрыть закрытые/расторгнутые сделки (${AR_CLOSED_MARKERS.slice(0,4).join(', ')}…). По умолчанию они ВКЛЮЧЕНЫ — по ним мог остаться долг" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${hideClosed?'var(--accent)':'var(--surface)'};color:${hideClosed?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
       <input type="checkbox" ${hideClosed?'checked':''} onchange="_tabFilters.debtbfl.hideClosed=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
       Скрыть закрытые (${closedCount})
+    </label>
+    <label title="Показать только сделки, где оплачено больше суммы договора" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid ${overCount?'#e87c25':'var(--border)'};border-radius:5px;background:${overOnly?'#e87c25':'var(--surface)'};color:${overOnly?'#fff':overCount?'#e87c25':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${overOnly?'checked':''} onchange="_tabFilters.debtbfl.overOnly=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
+      ⚠ Переплата (${overCount})
     </label>
     <div style="display:flex;align-items:center;gap:8px;flex-basis:100%;padding-top:4px">
       <span style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;white-space:nowrap">Сделки созданные с:</span>
@@ -3867,7 +3874,9 @@ function renderDebtBfl(f){
       </td>
       ${tdN(x.sum)}
       ${tdN(x.paid,x.paid<0?'var(--outcome)':'var(--income)')}
-      ${tdN(-Math.max(0,x.debt),x.debt>0.005?'var(--outcome)':'var(--text3)')}
+      ${x.debt<-0.005
+        ?`<td title="Переплата: оплачено больше суммы договора" style="padding:4px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--border);color:var(--income);font-weight:700;background:#e8f5ee">+${fmt(-x.debt)}</td>`
+        :tdN(-Math.max(0,x.debt),x.debt>0.005?'var(--outcome)':'var(--text3)')}
       <td style="padding:4px 10px;font-size:11px;text-align:right;font-weight:600;border-bottom:1px solid var(--border);color:${pctColor}">${x.sum?fmtPct(pct):'—'}${x.over?' <span title="Переплата" style="font-size:9px">⚠</span>':''}</td>
       <td style="padding:4px 10px;font-size:11px;text-align:center;border-bottom:1px solid var(--border)">${x.payCount||'—'}</td>
       <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.lastPay)}</td>
