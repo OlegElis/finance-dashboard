@@ -3937,31 +3937,51 @@ window.arShowDetail=function(idx){
   // Движения по этому ID (направление БФЛ): поступления + ТОЛЬКО «112_Возвраты клиентам»
   // (прочие списания по ID — расходы на ведение дела, оплату клиента не уменьшают и здесь не показываются)
   const REFUND_SUB='112_возвраты клиентам';
-  const moves=RAW.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===BFL_DIR&&_arNormId(r[COL.OFFER_ID])===x.offer)
-    .map(r=>({d:parseDate(r[COL.DATE_DDS]),inc:parseNum(r[COL.INCOME]),out:parseNum(r[COL.OUTCOME]),acc:String(r[COL.ACCOUNT]||'').trim(),sub:String(r[COL.ARTICLE_NAME]||'').trim(),purp:String(r[COL.PURPOSE]||'').trim()}))
-    .filter(m=>m.inc>0||(m.out<0&&m.sub.toLowerCase()===REFUND_SUB))
-    .sort((a,b)=>(a.d||0)-(b.d||0));
-  const totInc=moves.reduce((s,m)=>s+m.inc,0);
-  const totOut=moves.reduce((s,m)=>s+m.out,0);
+  const moveRowsRaw=RAW.filter(r=>{
+    if(String(r[COL.ACTIVITY_DIR]||'').trim()!==BFL_DIR||_arNormId(r[COL.OFFER_ID])!==x.offer)return false;
+    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    return inc>0||(out<0&&String(r[COL.ARTICLE_NAME]||'').trim().toLowerCase()===REFUND_SUB);
+  }).sort((a,b)=>(parseDate(a[COL.DATE_DDS])||0)-(parseDate(b[COL.DATE_DDS])||0));
+  window._arMoves=moveRowsRaw;
+  const totInc=moveRowsRaw.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
+  const totOut=moveRowsRaw.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
   const net=totInc+totOut;
-  let run=0;
-  const moveRows=moves.map(m=>{
-    run+=m.inc+m.out;
-    return`<tr>
-      <td style="padding:3px 8px;font-size:10px;text-align:center;white-space:nowrap">${dsF(m.d)}</td>
-      <td style="padding:3px 8px;font-size:10px;text-align:right;color:var(--income);font-variant-numeric:tabular-nums">${m.inc?fmt(m.inc):''}</td>
-      <td style="padding:3px 8px;font-size:10px;text-align:right;color:var(--outcome);font-variant-numeric:tabular-nums">${m.out?fmt(m.out):''}</td>
-      <td style="padding:3px 8px;font-size:10px;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${fmt(run)}</td>
-      <td style="padding:3px 8px;font-size:10px">${esc(m.acc)}</td>
-      <td style="padding:3px 8px;font-size:10px">${esc(m.sub)}</td>
-      <td style="padding:3px 8px;font-size:10px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.purp)}">${esc(m.purp)}</td>
+  // Таблица в формате всплывающего окна ДДС: те же 15 колонок и стили
+  const c=v=>String(v||'').trim();
+  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
+  const movesThead=`<tr style="position:sticky;top:0;z-index:1">
+    ${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}
+    ${TH('Поступление','6%','right','var(--income)')}${TH('Списание','6%','right','var(--outcome)')}
+    ${TH('ФНС','3%','center')}${TH('Реквизиты счёта','9%')}${TH('Статья','7%')}${TH('Подстатья','7%')}
+    ${TH('Аналитика','5%','center')}${TH('Контрагент','9%')}${TH('Назначение','12%')}${TH('Направление','8%')}${TH('Фин. операция','8%')}
+  </tr>`;
+  const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
+  const moveRows=moveRowsRaw.map((row,i)=>{
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="ddsShowRecordCard(window._arMoves[${i}])">
+      ${TD(dsF(row[COL.DATE_DDS]),'text-align:center')}
+      ${TD(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
+      ${TD(c(row[COL.TYPE]),'text-align:center')}
+      ${TD(c(row[COL.OFFER_ID]))}
+      ${TD(inc?f2(inc):'','text-align:right;'+(inc>0?'color:var(--income)':''))}
+      ${TD(out?f2(out):'','text-align:right;'+(out<0?'color:var(--outcome)':''))}
+      ${TD(c(row[COL.FNS]),'text-align:center')}
+      ${TD(c(row[COL.ACCOUNT]))}
+      ${TD(c(row[COL.ARTICLE_CODE]))}
+      ${TD(c(row[COL.ARTICLE_NAME]))}
+      ${TD(c(row[COL.ANALYTICS]),'text-align:center')}
+      ${TD(c(row[COL.SECOND_SIDE]))}
+      ${TD(c(row[COL.PURPOSE]))}
+      ${TD(c(row[COL.ACTIVITY_DIR]))}
+      ${TD(c(row[COL.FIN_OP]))}
     </tr>`;
   }).join('');
   const isOrphan=!x.sum&&x.fio==='⚠ Нет в Bitrix24';
   const debtColor=x.debt>0.005?'var(--outcome)':'var(--income)';
   const overlay=document.createElement('div');
   overlay.className='txn-card-overlay';
-  overlay.innerHTML=`<div class="txn-card" style="max-width:860px;width:92vw">
+  overlay.innerHTML=`<div class="txn-card" style="max-width:1400px;width:94vw">
     <div class="txn-card-head">
       <h3>💸 Как сформировалась дебиторка</h3>
       <button class="txn-card-close" onclick="this.closest('.txn-card-overlay').remove()">✕</button>
@@ -3972,7 +3992,7 @@ window.arShowDetail=function(idx){
       <div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px">
         <div style="display:grid;grid-template-columns:1fr auto;gap:4px;align-items:baseline">
           <span style="color:var(--text3)">Сумма договора (RawData_BFL):</span><span style="font-weight:700;text-align:right">${x.sum?fmt(x.sum):'—'}</span>
-          <span style="color:var(--text3)">Поступлений (${moves.filter(m=>m.inc>0).length} шт):</span><span style="font-weight:700;color:var(--income);text-align:right">${fmt(totInc)}</span>
+          <span style="color:var(--text3)">Поступлений (${moveRowsRaw.filter(r=>parseNum(r[COL.INCOME])>0).length} шт):</span><span style="font-weight:700;color:var(--income);text-align:right">${fmt(totInc)}</span>
           <span style="color:var(--text3)">Возвраты клиентам (112_):</span><span style="font-weight:700;color:var(--outcome);text-align:right">${totOut?fmt(totOut):'0'}</span>
           <span style="color:var(--text3)">Оплачено нетто:</span><span style="font-weight:700;text-align:right">${fmt(net)}</span>
         </div>
@@ -3982,19 +4002,11 @@ window.arShowDetail=function(idx){
         </div>
         ${x.stage||x.responsible?`<div style="margin-top:6px;font-size:10px;color:var(--text3)">${x.stage?'Стадия: '+esc(x.stage):''}${x.responsible?' · Менеджер: '+esc(x.responsible):''}</div>`:''}
       </div>
-      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Движения по ID в учёте (${moves.length}):</div>
-      <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr>
-            <th style="padding:5px 8px;font-size:10px;background:var(--surface2);position:sticky;top:0">Дата ДДС</th>
-            <th style="padding:5px 8px;font-size:10px;background:var(--surface2);text-align:right;position:sticky;top:0">Поступление</th>
-            <th style="padding:5px 8px;font-size:10px;background:var(--surface2);text-align:right;position:sticky;top:0">Списание</th>
-            <th style="padding:5px 8px;font-size:10px;background:var(--surface2);text-align:right;position:sticky;top:0">Нарастающе</th>
-            <th style="padding:5px 8px;font-size:10px;background:var(--surface2);text-align:left;position:sticky;top:0">Счёт</th>
-            <th style="padding:5px 8px;font-size:10px;background:var(--surface2);text-align:left;position:sticky;top:0">Подстатья</th>
-            <th style="padding:5px 8px;font-size:10px;background:var(--surface2);text-align:left;position:sticky;top:0">Назначение</th>
-          </tr></thead>
-          <tbody>${moveRows||'<tr><td colspan="7" style="padding:10px;font-size:11px;color:var(--text3);text-align:center">Движений по этому ID в учёте нет — долг равен полной сумме договора</td></tr>'}</tbody>
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Движения по ID в учёте (${moveRowsRaw.length}) — клик по строке открывает карточку:</div>
+      <div style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:6px">
+        <table style="border-collapse:collapse;width:100%;table-layout:fixed">
+          <thead>${movesThead}</thead>
+          <tbody>${moveRows||'<tr><td colspan="15" style="padding:10px;font-size:11px;color:var(--text3);text-align:center">Движений по этому ID в учёте нет — долг равен полной сумме договора</td></tr>'}</tbody>
         </table>
       </div>
     </div>
