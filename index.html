@@ -609,7 +609,7 @@ const _tabFilters={
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account'},
-  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true},
+  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -768,6 +768,7 @@ async function loadBflDeals(sheetId,apiKey){
     const iNum=hdr.findIndex(h=>h.startsWith('№ договора'));
     const iDateContract=hdr.findIndex(h=>h==='дата договора');
     const iStage=hdr.findIndex(h=>h==='стадия сделки');
+    const iResp=hdr.findIndex(h=>h==='ответственный (текст)');
     const iUrl=hdr.findIndex(h=>h.startsWith('ссылка'));
     if(iLead<0&&iPaid<0&&iDone<0&&iOffer<0)return;
     // Завершённым (для CPF) считается дело только в этих стадиях
@@ -790,6 +791,7 @@ async function loadBflDeals(sheetId,apiKey){
           contract:iNum>=0?String(r[iNum]||'').trim():'',
           dateContract:iDateContract>=0?parseDate(r[iDateContract]):null,
           stage:iStage>=0?String(r[iStage]||'').trim():'',
+          responsible:iResp>=0?String(r[iResp]||'').trim():'',
           url:iUrl>=0?String(r[iUrl]||'').trim():''
         });
       }
@@ -1669,6 +1671,7 @@ document.addEventListener('click',function(e){
   const osvAccDD=document.getElementById('osv-acc-dd');const osvAccBtn=document.getElementById('osv-acc-btn');
   if(osvAccDD&&osvAccDD.style.display==='block'&&!osvAccDD.contains(e.target)&&e.target!==osvAccBtn){osvAccDD.style.display='none';renderOSV(getFilters());}
   [['osv-year-dd','osv-year-btn'],['osv-month-dd','osv-month-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderOSV(getFilters());}});
+  [['ar-stage-dd','ar-stage-btn'],['ar-resp-dd','ar-resp-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderDebtBfl(getFilters());}});
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
@@ -3670,7 +3673,19 @@ _osvDD('osvMonth','osv-month-dd','osv-month-btn','Все',true);
 _osvDD('osvAcc','osv-acc-dd','osv-acc-btn','Все счета',false);
 _osvDD('osvDir','osv-dir-dd','osv-dir-btn','Все направления',false);
 // ─── ДЕБИТОРКА БФЛ ───────────────────────────────────────────────────────────
-// Сумма договора — из RawData_BFL; поступления — из RawData; связь по ID_Offer
+// Сумма договора — из RawData_BFL; оплаты (нетто: поступления+списания) — из RawData (только направление БФЛ); связь по ID_Offer
+// Нормализация ID как в Apps Script-версии: NBSP→пробел, схлопывание пробелов, пробелы вокруг «|»
+function _arNormId(v){
+  if(v==null)return'';
+  return String(v).replace(/ /g,' ').replace(/\s+/g,' ').replace(/\s*\|\s*/g,' | ').replace(/\s*\/\s*/g,'/').trim();
+}
+function _arPayCategory(days){
+  if(days==null||days==='')return'Нет оплат';
+  if(days<=30)return'до 30 дней';
+  if(days<=60)return'от 31 до 60';
+  if(days<=90)return'от 61 до 90';
+  return'от 91 и более';
+}
 function renderDebtBfl(f){
   const el=document.getElementById('tabDebtbfl');
   const S=v=>String(v==null?'':v).trim();
@@ -3678,70 +3693,136 @@ function renderDebtBfl(f){
     el.innerHTML=emptyState('Лист RawData_BFL не загружен','Переподключитесь к таблице (Подключение → Подключить и загрузить)');
     return;
   }
-  // Поступления из RawData по ID_Offer — только направление БФЛ
   const BFL_DIR='БФЛ - Банкротство физических лиц';
-  const paidByOffer={};
+  const today=new Date();today.setHours(0,0,0,0);
+
+  // Оплаты из RawData (нетто) + метаданные: кол-во, первая/последняя дата (по ДДС)
+  const payByOffer={};
   RAW.forEach(r=>{
     if(S(r[COL.ACTIVITY_DIR])!==BFL_DIR)return;
-    const offer=S(r[COL.OFFER_ID]);if(!offer)return;
-    const inc=parseNum(r[COL.INCOME]);
-    if(inc>0)paidByOffer[offer]=(paidByOffer[offer]||0)+inc;
+    const offer=_arNormId(r[COL.OFFER_ID]);if(!offer)return;
+    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    if(inc===0&&out===0)return;
+    if(!payByOffer[offer])payByOffer[offer]={paid:0,income:0,count:0,firstDate:null,lastDate:null};
+    const p=payByOffer[offer];
+    p.paid+=inc+out; // нетто: возвраты уменьшают оплаченное
+    p.income+=inc;
+    if(inc>0){
+      p.count++;
+      const d=parseDate(r[COL.DATE_DDS]);
+      if(d){if(!p.firstDate||d<p.firstDate)p.firstDate=d;if(!p.lastDate||d>p.lastDate)p.lastDate=d;}
+    }
   });
-  // Собираем дебиторку (сделки с суммой договора > 0); дубли ID_Offer в листе сделок схлопываем (берём максимальную сумму)
+
+  // Сделки (дубли ID схлопываем — максимальная сумма)
   const byOffer=new Map();
   RAW_BFL.deals.forEach(d=>{
-    if(!byOffer.has(d.offer))byOffer.set(d.offer,d);
-    else if(d.sum>byOffer.get(d.offer).sum)byOffer.set(d.offer,d);
+    const key=_arNormId(d.offer);if(!key)return;
+    if(!byOffer.has(key)||d.sum>byOffer.get(key).sum)byOffer.set(key,{...d,offer:key});
   });
+  const daysBetween=(a,b)=>Math.floor((b-a)/86400000);
   let items=[...byOffer.values()].filter(d=>d.sum>0).map(d=>{
-    const paid=paidByOffer[d.offer]||0;
-    return {...d,paid,debt:d.sum-paid};
+    const p=payByOffer[d.offer]||{paid:0,income:0,count:0,firstDate:null,lastDate:null};
+    const daysSince=p.lastDate?daysBetween(p.lastDate,today):null;
+    return {...d,paid:p.paid,debt:d.sum-p.paid,payCount:p.count,lastPay:p.lastDate,
+      daysSince,payCat:p.count>0?_arPayCategory(daysSince):'Нет оплат',over:p.paid>d.sum};
   });
+  // Оплаты без сделки в Bitrix (контроль расхождений)
+  const orphans=Object.entries(payByOffer)
+    .filter(([offer])=>!byOffer.has(offer))
+    .map(([offer,p])=>{
+      const daysSince=p.lastDate?daysBetween(p.lastDate,today):null;
+      return {offer,sum:0,fio:'⚠ Нет в Bitrix24',contract:'',dateContract:null,stage:'',url:'',
+        paid:p.paid,debt:0,payCount:p.count,lastPay:p.lastDate,daysSince,
+        payCat:p.count>0?_arPayCategory(daysSince):'Нет оплат',over:false};
+    });
+
+  // KPI по всем сделкам (без учёта фильтров отображения)
   const totSum=items.reduce((s,x)=>s+x.sum,0);
   const totPaid=items.reduce((s,x)=>s+x.paid,0);
   const totDebt=items.reduce((s,x)=>s+Math.max(0,x.debt),0);
   const debtCount=items.filter(x=>x.debt>0.005).length;
 
-  // Фильтры: поиск + только с долгом
+  // Списки для фильтров
+  const allStages=[...new Set(items.map(x=>x.stage).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const allResps=[...new Set(items.map(x=>x.responsible||'').filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const PAY_CATS=['до 30 дней','от 31 до 60','от 61 до 90','от 91 и более','Нет оплат'];
+
+  // Применяем фильтры
   const q=S(f.search).toLowerCase();
   const onlyDebt=f.onlyDebt!==false;
-  let shown=items;
-  if(onlyDebt)shown=shown.filter(x=>x.debt>0.005);
-  if(q)shown=shown.filter(x=>(x.fio+' '+x.contract+' '+x.offer).toLowerCase().includes(q));
-  shown.sort((a,b)=>b.debt-a.debt);
+  const orphansOnly=!!f.orphansOnly;
+  const selStages=f.stages||[];
+  const selResps=f.resps||[];
+  const payCat=f.payCat||'';
+  let shown=orphansOnly?orphans:items;
+  if(!orphansOnly){
+    if(onlyDebt)shown=shown.filter(x=>x.debt>0.005);
+    if(selStages.length)shown=shown.filter(x=>selStages.includes(x.stage));
+    if(selResps.length)shown=shown.filter(x=>selResps.includes(x.responsible||''));
+  }
+  if(payCat)shown=shown.filter(x=>x.payCat===payCat);
+  if(q)shown=shown.filter(x=>((x.fio||'')+' '+(x.contract||'')+' '+x.offer+' '+(x.responsible||'')).toLowerCase().includes(q));
+  shown=[...shown].sort((a,b)=>orphansOnly?(b.paid-a.paid):(b.debt-a.debt));
 
-  const filterBar=`<div class="tab-filters">
-    <input type="text" value="${S(f.search).replace(/"/g,'&quot;')}" placeholder="Поиск: ФИО / № договора / ID Offer..."
+  // DD-хелпер (мультивыбор с поиском, как в Банке)
+  const mkDD=(id,fn,itemsArr,selArr)=>{
+    const search=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`;
+    const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
+    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+itemsArr.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(v)?'checked':''} onchange="${fn}Change()"> <span>${v}</span></label>`).join('')+`</div>`;
+    return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:560px;margin-top:2px">${search}${head}${list}</div>`;
+  };
+  const btnStyle='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);text-align:left';
+  const lbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
+
+  const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
+    <input type="text" value="${S(f.search).replace(/"/g,'&quot;')}" placeholder="Поиск: ФИО / договор / ID / менеджер..."
       oninput="_tabFilters.debtbfl.search=this.value;clearTimeout(window._dbflT);window._dbflT=setTimeout(()=>renderDebtBfl(getFilters()),300)"
-      style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);width:300px">
-    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${onlyDebt?'var(--accent)':'var(--surface)'};color:${onlyDebt?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
-      <input type="checkbox" ${onlyDebt?'checked':''} onchange="_tabFilters.debtbfl.onlyDebt=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
+      style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);width:260px">
+    ${lbl('Стадия:')}
+    <div style="position:relative;display:inline-block"><button id="ar-stage-btn" onclick="arStageToggle()" style="${btnStyle};min-width:110px">${(selStages.length?selStages.length+' выбрано':'Все')+' ▾'}</button>${mkDD('ar-stage-dd','arStage',allStages,selStages)}</div>
+    ${lbl('Менеджер:')}
+    <div style="position:relative;display:inline-block"><button id="ar-resp-btn" onclick="arRespToggle()" style="${btnStyle};min-width:110px">${(selResps.length?selResps.length+' выбрано':'Все')+' ▾'}</button>${mkDD('ar-resp-dd','arResp',allResps,selResps)}</div>
+    ${lbl('Давность оплаты:')}
+    <select class="filter-extra-sel" onchange="_tabFilters.debtbfl.payCat=this.value;renderDebtBfl(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"><option value="">Все</option>${PAY_CATS.map(c=>`<option value="${c}"${payCat===c?' selected':''}>${c}</option>`).join('')}</select>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${onlyDebt&&!orphansOnly?'var(--accent)':'var(--surface)'};color:${onlyDebt&&!orphansOnly?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${onlyDebt?'checked':''} ${orphansOnly?'disabled':''} onchange="_tabFilters.debtbfl.onlyDebt=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
       Только с долгом
+    </label>
+    <label title="Оплаты по ID_Offer, которых нет в листе сделок RawData_BFL — контроль расхождений" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid ${orphans.length?'var(--outcome)':'var(--border)'};border-radius:5px;background:${orphansOnly?'var(--outcome)':'var(--surface)'};color:${orphansOnly?'#fff':orphans.length?'var(--outcome)':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${orphansOnly?'checked':''} onchange="_tabFilters.debtbfl.orphansOnly=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
+      ⚠ Нет в Bitrix24 (${orphans.length})
     </label>
   </div>`;
 
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card blue"><div class="kpi-label">Сумма договоров</div><div class="kpi-value">${fmt(totSum)}</div><div class="kpi-sub">${items.length.toLocaleString('ru-RU')} договоров</div></div>
-    <div class="kpi-card green"><div class="kpi-label">Оплачено</div><div class="kpi-value positive">${fmt(totPaid)}</div><div class="kpi-sub">${totSum?fmtPct(totPaid/totSum):''} от суммы договоров</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Оплачено (нетто)</div><div class="kpi-value positive">${fmt(totPaid)}</div><div class="kpi-sub">${totSum?fmtPct(totPaid/totSum):''} от суммы договоров</div></div>
     <div class="kpi-card red"><div class="kpi-label">Дебиторка</div><div class="kpi-value negative">${fmt(-totDebt)}</div><div class="kpi-sub">${totSum?fmtPct(totDebt/totSum):''} от суммы договоров</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Договоров с долгом</div><div class="kpi-value">${debtCount.toLocaleString('ru-RU')}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Договоров с долгом</div><div class="kpi-value">${debtCount.toLocaleString('ru-RU')}</div><div class="kpi-sub">${orphans.length?'⚠ без сделки в Bitrix: '+orphans.length:''}</div></div>
   </div>`;
 
   const dsF=d=>d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';
   const esc=s=>String(s||'').replace(/</g,'&lt;');
+  const catColor=c=>c==='до 30 дней'?'var(--income)':c==='от 31 до 60'?'#e87c25':c==='Нет оплат'?'var(--text3)':'var(--outcome)';
   const LIMIT=500;
   const tdN=(v,color)=>`<td style="padding:4px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--border);${color?'color:'+color+';':''}">${fmt(v)}</td>`;
+  const thS='background:var(--surface2);position:sticky;top:0;z-index:2';
   const rows=shown.slice(0,LIMIT).map(x=>{
     const pct=x.sum?x.paid/x.sum:0;
     const pctColor=pct>=1?'var(--income)':pct>=0.5?'#e87c25':'var(--outcome)';
     return`<tr>
       <td style="padding:4px 10px;font-size:11px;border-bottom:1px solid var(--border)">${x.url?`<a href="${esc(x.url)}" target="_blank" style="color:var(--accent);text-decoration:none">${esc(x.fio)||'—'} ↗</a>`:esc(x.fio)||'—'}</td>
       <td style="padding:4px 10px;font-size:11px;border-bottom:1px solid var(--border);white-space:nowrap">${esc(x.contract)||'—'}</td>
-      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.dateContract)}</td>
       ${tdN(x.sum)}
-      ${tdN(x.paid,'var(--income)')}
+      ${tdN(x.paid,x.paid<0?'var(--outcome)':'var(--income)')}
       ${tdN(-Math.max(0,x.debt),x.debt>0.005?'var(--outcome)':'var(--text3)')}
-      <td style="padding:4px 10px;font-size:11px;text-align:right;font-weight:600;border-bottom:1px solid var(--border);color:${pctColor}">${fmtPct(pct)}</td>
+      <td style="padding:4px 10px;font-size:11px;text-align:right;font-weight:600;border-bottom:1px solid var(--border);color:${pctColor}">${x.sum?fmtPct(pct):'—'}${x.over?' <span title="Переплата" style="font-size:9px">⚠</span>':''}</td>
+      <td style="padding:4px 10px;font-size:11px;text-align:center;border-bottom:1px solid var(--border)">${x.payCount||'—'}</td>
+      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.lastPay)}</td>
+      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border)">${x.daysSince!=null?x.daysSince:'—'}</td>
+      <td style="padding:3px 10px;font-size:10px;border-bottom:1px solid var(--border);white-space:nowrap"><span style="padding:1px 8px;border-radius:8px;font-weight:600;color:${catColor(x.payCat)};background:color-mix(in srgb,${catColor(x.payCat)} 12%,transparent)">${x.payCat}</span></td>
+      <td style="padding:4px 10px;font-size:10px;border-bottom:1px solid var(--border)">${esc(x.responsible)||'—'}</td>
       <td style="padding:4px 10px;font-size:10px;border-bottom:1px solid var(--border)">${esc(x.stage)||'—'}</td>
     </tr>`;
   }).join('');
@@ -3749,25 +3830,35 @@ function renderDebtBfl(f){
 
   el.innerHTML=filterBar+kpiHtml+`
   <div class="table-wrap">
-    <div class="table-header"><span class="table-title">Дебиторка по договорам БФЛ</span><span class="table-count">${shown.length.toLocaleString('ru-RU')} ${onlyDebt?'с долгом':'договоров'}</span></div>
-    <div class="table-scroll" style="max-height:calc(100vh - 250px)">
-      <table class="report-table">
-        <thead><tr style="position:sticky;top:0;z-index:2">
-          <th style="text-align:left;background:var(--surface2)">Клиент</th>
-          <th style="text-align:left;background:var(--surface2)">№ договора</th>
-          <th style="background:var(--surface2)">Дата договора</th>
-          <th style="text-align:right;background:var(--surface2)">Сумма договора</th>
-          <th style="text-align:right;background:var(--surface2)">Оплачено</th>
-          <th style="text-align:right;background:var(--surface2)">Долг</th>
-          <th style="text-align:right;background:var(--surface2)">% оплаты</th>
-          <th style="text-align:left;background:var(--surface2)">Стадия</th>
+    <div class="table-header"><span class="table-title">${orphansOnly?'Оплаты без сделки в Bitrix24':'Дебиторка по договорам БФЛ'}</span><span class="table-count">${shown.length.toLocaleString('ru-RU')} ${orphansOnly?'ID':onlyDebt?'с долгом':'договоров'}</span></div>
+    <div class="table-scroll" style="max-height:calc(100vh - 250px);overflow-x:auto">
+      <table class="report-table" style="white-space:nowrap">
+        <thead><tr>
+          <th style="text-align:left;${thS}">Клиент</th>
+          <th style="text-align:left;${thS}">№ договора</th>
+          <th style="text-align:right;${thS}">Сумма</th>
+          <th style="text-align:right;${thS}">Оплачено</th>
+          <th style="text-align:right;${thS}">Долг</th>
+          <th style="text-align:right;${thS}">%</th>
+          <th style="${thS}">Оплат</th>
+          <th style="${thS}">Последняя оплата</th>
+          <th style="${thS}">Дней без оплат</th>
+          <th style="text-align:left;${thS}">Давность</th>
+          <th style="text-align:left;${thS}">Менеджер</th>
+          <th style="text-align:left;${thS}">Стадия</th>
         </tr></thead>
-        <tbody>${rows||'<tr><td colspan="8" style="padding:14px;text-align:center;color:var(--text3)">Ничего не найдено</td></tr>'}</tbody>
+        <tbody>${rows||'<tr><td colspan="12" style="padding:14px;text-align:center;color:var(--text3)">Ничего не найдено</td></tr>'}</tbody>
       </table>
     </div>
   </div>`;
 }
-
+function _arDD(fn,ddId,btnId,field){
+  window[fn+'Toggle']=function(){const dd=document.getElementById(ddId);if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderDebtBfl(getFilters());};
+  window[fn+'Change']=function(){const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все')+' ▾';_tabFilters.debtbfl[field]=checked;};
+  window[fn+'SelectAll']=function(s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window[fn+'Change']();};
+}
+_arDD('arStage','ar-stage-dd','ar-stage-btn','stages');
+_arDD('arResp','ar-resp-dd','ar-resp-btn','resps');
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
 
 // ─── МАРКЕТИНГ ────────────────────────────────────────────────────────────────
