@@ -735,8 +735,34 @@ async function connectAndLoad(){
     RAW=rows.slice(1).map(r=>{while(r.length<15)r.push('');return r.map((v,i)=>{if(i===COL.INCOME||i===COL.OUTCOME)return parseNum(v);return v;});});
     localStorage.setItem('fin_sheetId',sheetId);
     localStorage.setItem('fin_apiKey',apiKey);
+    await loadBflDeals(sheetId,apiKey); // лист сделок БФЛ (не критичен — ошибки не валят загрузку)
     onDataLoaded();
   }catch(e){setStatus('error','Ошибка: '+e.message);alert('Ошибка:\n'+e.message);}
+}
+
+// Сделки БФЛ из листа RawData_BFL: «Дата создания сделки» (лид) и «Дата входа в стадию Полная/частичная оплата» (сделка)
+let RAW_BFL=null; // {created:[Date], paid:[Date]} или null если лист недоступен
+async function loadBflDeals(sheetId,apiKey){
+  RAW_BFL=null;
+  try{
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/RawData_BFL?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`;
+    const resp=await fetch(url);
+    if(!resp.ok)return; // листа нет — работаем без него
+    const json=await resp.json();
+    const rows=json.values||[];
+    if(rows.length<2)return;
+    const hdr=rows[0].map(h=>String(h||'').toLowerCase());
+    const iCreated=hdr.findIndex(h=>h.includes('создан'));
+    const iPaid=hdr.findIndex(h=>h.includes('оплат'));
+    if(iCreated<0&&iPaid<0)return;
+    const created=[],paid=[];
+    rows.slice(1).forEach(r=>{
+      if(iCreated>=0){const d=parseDate(r[iCreated]);if(d)created.push(d);}
+      if(iPaid>=0){const d=parseDate(r[iPaid]);if(d)paid.push(d);}
+    });
+    RAW_BFL={created,paid};
+    console.log(`[RawData_BFL] загружено: создано сделок ${created.length}, оплат ${paid.length}`);
+  }catch(e){console.warn('[RawData_BFL] не загружен:',e.message);}
 }
 
 function onDataLoaded(){
@@ -3704,6 +3730,16 @@ function renderMarketing(f){
 
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
 
+  // Авто-количества из RawData_BFL (для направления БФЛ): лиды = создание сделки, сделки = вход в оплату
+  const isBfl=selDir.startsWith('БФЛ');
+  const pkOfDate=d=>{const y=d.getFullYear(),m=d.getMonth()+1;if(mode==='year')return String(y);if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
+  const auto={leads:null,orders:null};
+  if(isBfl&&RAW_BFL){
+    auto.leads={};auto.orders={};
+    RAW_BFL.created.forEach(d=>{const pk=pkOfDate(d);auto.leads[pk]=(auto.leads[pk]||0)+1;});
+    RAW_BFL.paid.forEach(d=>{const pk=pkOfDate(d);auto.orders[pk]=(auto.orders[pk]||0)+1;});
+  }
+
   // Filter bar
   const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('');
   const dirOptsHtml=`<option value=""${selDir===''?' selected':''}>Все направления</option>`+allDirs.map(d=>`<option value="${d.replace(/"/g,'&quot;')}"${selDir===d?' selected':''}>${d}</option>`).join('');
@@ -3718,7 +3754,11 @@ function renderMarketing(f){
 
   // KPI итоговые
   const totalCost=m=>Object.values(costs[m]).reduce((s,v)=>s+v,0);
-  const totalCounts=(field)=>periods.reduce((s,pk)=>{const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return s+(+c[field]||0);},0);
+  const countOf=(pk,field)=>{
+    if(auto[field])return +(auto[field][pk]||0); // авто из RawData_BFL
+    const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return +(c[field]||0);
+  };
+  const totalCounts=(field)=>periods.reduce((s,pk)=>s+countOf(pk,field),0);
   const kpiVal=(cost,cnt)=>cnt>0?fmt(Math.abs(cost)/cnt):'—';
   const kpiHtml=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
     <div class="kpi-card blue"><div class="kpi-label">CPL — стоимость лида</div><div class="kpi-value">${kpiVal(totalCost('cpl'),totalCounts('leads'))}</div></div>
@@ -3756,13 +3796,16 @@ function renderMarketing(f){
       ${tdS(totalC?fmt(totalC):'—',false,'var(--outcome)')}
     </tr>
     <tr>
-      ${tdL(countLabel,'color:var(--text2)')}
-      ${periods.map(pk=>{const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return inputCell(pk,countField,c[countField]);}).join('')}
+      ${tdL(countLabel+(auto[countField]?' <span style="font-size:9px;color:var(--accent)" title="Считается автоматически из листа RawData_BFL">⚡ авто</span>':''),'color:var(--text2)')}
+      ${periods.map(pk=>{
+        if(auto[countField]){const n=+(auto[countField][pk]||0);return`<td style="padding:4px 10px;font-size:11px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--accent);font-weight:600">${n||'0'}</td>`;}
+        const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return inputCell(pk,countField,c[countField]);
+      }).join('')}
       ${tdS(totalN||'—',false)}
     </tr>
     <tr style="background:var(--surface2)">
       ${tdL(`<b>${metricKey.toUpperCase()}</b>`,`font-weight:700;color:${color}`)}
-      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;const c=(_mktCounts[_mktDirKey]||{})[pk]||{};const n=+(c[countField]||0);return`<td id="mkt-val-${metricKey}-${pk}" style="padding:4px 10px;font-size:12px;font-weight:700;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${n>0?fmt(Math.abs(v)/n):'—'}</td>`;}).join('')}
+      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;const n=countOf(pk,countField);return`<td id="mkt-val-${metricKey}-${pk}" style="padding:4px 10px;font-size:12px;font-weight:700;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${n>0?fmt(Math.abs(v)/n):'—'}</td>`;}).join('')}
       ${tdS(kpiVal(totalC,totalN),true,color)}
     </tr>`;
   };
