@@ -614,7 +614,7 @@ const _tabFilters={
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account'},
-  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffYM:'2024-04'},
+  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffOn:true,dateSort:''},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -3747,27 +3747,13 @@ function renderDebtBfl(f){
       closed:_arClosedStage(d.stage)};
   });
 
-  // Бегунок отсечки по дате создания сделки: сделки СТАРШЕ отсечки скрываются
-  // (учёт оплат ведётся с апреля 2024 — у более старых сделок дебиторка фиктивная)
-  const monthsList=(()=>{
-    const ds=itemsAll.map(x=>x.created).filter(Boolean);
-    const min=ds.length?new Date(Math.min(...ds)):new Date(2024,0,1);
-    const out=[];const cur=new Date(min.getFullYear(),min.getMonth(),1);const end=new Date();
-    while(cur<=end){out.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}`);cur.setMonth(cur.getMonth()+1);}
-    return out;
-  })();
-  const DEFAULT_CUTOFF='2024-04';
-  let cutoffYM=f.cutoffYM||DEFAULT_CUTOFF;
-  if(!monthsList.includes(cutoffYM))cutoffYM=monthsList[0];
-  const cutoffIdx=monthsList.indexOf(cutoffYM);
-  const cutoffDate=new Date(+cutoffYM.slice(0,4),+cutoffYM.slice(5,7)-1,1);
-  const ymLabel=ym=>{const M=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];return M[+ym.slice(5,7)-1]+' '+ym.slice(0,4);};
-
+  // Отсечка старых сделок (до апреля 2024 — старта учёта оплат) — простой переключатель
+  const cutoffDate=new Date(2024,3,1);
+  const cutoffOn=f.cutoffOn!==false; // вкл по умолчанию
   // Закрытые стадии ВКЛЮЧЕНЫ по умолчанию (по ним мог остаться долг — «перестал платить», недоплата при завершённых работах).
-  // Тумблер позволяет скрыть их, чтобы смотреть только активные сделки.
   const hideClosed=!!f.hideClosed;
   const oldHidden=itemsAll.filter(x=>x.created&&x.created<cutoffDate).length;
-  let base=itemsAll.filter(x=>!(x.created&&x.created<cutoffDate));
+  let base=cutoffOn?itemsAll.filter(x=>!(x.created&&x.created<cutoffDate)):itemsAll;
   const closedCount=base.filter(x=>x.closed).length;
   if(hideClosed)base=base.filter(x=>!x.closed);
   const items=base;
@@ -3780,12 +3766,6 @@ function renderDebtBfl(f){
         paid:p.paid,debt:0,payCount:p.count,lastPay:p.lastDate,daysSince,
         payCat:p.count>0?_arPayCategory(daysSince):'Нет оплат',over:false};
     });
-
-  // KPI по всем сделкам (без учёта фильтров отображения)
-  const totSum=items.reduce((s,x)=>s+x.sum,0);
-  const totPaid=items.reduce((s,x)=>s+x.paid,0);
-  const totDebt=items.reduce((s,x)=>s+Math.max(0,x.debt),0);
-  const debtCount=items.filter(x=>x.debt>0.005).length;
 
   // Списки для фильтров
   const allStages=[...new Set(items.map(x=>x.stage).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
@@ -3810,7 +3790,21 @@ function renderDebtBfl(f){
   }
   if(payCat)shown=shown.filter(x=>x.payCat===payCat);
   if(q)shown=shown.filter(x=>((x.fio||'')+' '+(x.contract||'')+' '+x.offer+' '+(x.responsible||'')).toLowerCase().includes(q));
-  shown=[...shown].sort((a,b)=>orphansOnly?(b.paid-a.paid):overOnly?(a.debt-b.debt):(b.debt-a.debt));
+  // Сортировка: по умолчанию по долгу; клик по заголовку «Дата сделки» — по дате ▲/▼
+  const dateSort=f.dateSort||'';
+  shown=[...shown].sort((a,b)=>{
+    if(dateSort){
+      const da=a.created?a.created.getTime():0,db=b.created?b.created.getTime():0;
+      return dateSort==='asc'?da-db:db-da;
+    }
+    return orphansOnly?(b.paid-a.paid):overOnly?(a.debt-b.debt):(b.debt-a.debt);
+  });
+
+  // KPI — по текущей выборке (реагируют на все фильтры)
+  const totSum=shown.reduce((s,x)=>s+x.sum,0);
+  const totPaid=shown.reduce((s,x)=>s+x.paid,0);
+  const totDebt=shown.reduce((s,x)=>s+Math.max(0,x.debt),0);
+  const debtCount=shown.filter(x=>x.debt>0.005).length;
 
   // DD-хелпер (мультивыбор с поиском, как в Банке)
   const mkDD=(id,fn,itemsArr,selArr)=>{
@@ -3848,21 +3842,14 @@ function renderDebtBfl(f){
       <input type="checkbox" ${overOnly?'checked':''} onchange="_tabFilters.debtbfl.overOnly=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
       ⚠ Переплата (${overCount})
     </label>
-    <div style="display:flex;align-items:center;gap:8px;flex-basis:100%;padding-top:4px">
-      <span style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;white-space:nowrap">Сделки созданные с:</span>
-      <input type="range" min="0" max="${monthsList.length-1}" value="${cutoffIdx}" step="1"
-        oninput="document.getElementById('ar-cutoff-lbl').textContent='${''}'+JSON.parse(this.dataset.months)[this.value].label"
-        onchange="_tabFilters.debtbfl.cutoffYM=JSON.parse(this.dataset.months)[this.value].ym;renderDebtBfl(getFilters())"
-        data-months='${JSON.stringify(monthsList.map(ym=>({ym,label:ymLabel(ym)})))}'
-        style="flex:1;max-width:340px;accent-color:var(--accent)">
-      <b id="ar-cutoff-lbl" style="font-size:11px;color:var(--accent);min-width:70px">${ymLabel(cutoffYM)}</b>
-      <span style="font-size:10px;color:var(--text3)">скрыто старых: ${oldHidden}</span>
-      ${cutoffYM!==DEFAULT_CUTOFF&&monthsList.includes(DEFAULT_CUTOFF)?`<button onclick="_tabFilters.debtbfl.cutoffYM='${DEFAULT_CUTOFF}';renderDebtBfl(getFilters())" style="padding:1px 8px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">апр 2024</button>`:''}
-    </div>
+    <label title="Скрывать сделки, созданные до апреля 2024 (старт учёта оплат — у более старых дебиторка фиктивная)" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${cutoffOn?'var(--accent)':'var(--surface)'};color:${cutoffOn?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${cutoffOn?'checked':''} onchange="_tabFilters.debtbfl.cutoffOn=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
+      Сделки с апр 2024 (скрыто старых: ${oldHidden})
+    </label>
   </div>`;
 
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card blue"><div class="kpi-label">Сумма договоров</div><div class="kpi-value">${fmt(totSum)}</div><div class="kpi-sub">${items.length.toLocaleString('ru-RU')} договоров</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Сумма договоров</div><div class="kpi-value">${fmt(totSum)}</div><div class="kpi-sub">${shown.length.toLocaleString('ru-RU')} в выборке</div></div>
     <div class="kpi-card green"><div class="kpi-label">Оплачено (нетто)</div><div class="kpi-value positive">${fmt(totPaid)}</div><div class="kpi-sub">${totSum?fmtPct(totPaid/totSum):''} от суммы договоров</div></div>
     <div class="kpi-card red"><div class="kpi-label">Дебиторка</div><div class="kpi-value negative">${fmt(-totDebt)}</div><div class="kpi-sub">${totSum?fmtPct(totDebt/totSum):''} от суммы договоров</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Договоров с долгом</div><div class="kpi-value">${debtCount.toLocaleString('ru-RU')}</div><div class="kpi-sub">${orphans.length?'⚠ без сделки в Bitrix: '+orphans.length:''}</div></div>
@@ -3882,6 +3869,7 @@ function renderDebtBfl(f){
       <td style="padding:4px 10px;font-size:11px;border-bottom:1px solid var(--border);max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="arShowDetail(${i})" title="Нажмите: как сформировалась дебиторка">
         <span style="color:var(--accent);font-weight:600">${esc(x.offer)}</span> <span style="font-size:9px;color:var(--accent)">↗</span>
       </td>
+      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.created)}</td>
       ${tdN(x.sum)}
       ${tdN(x.paid,x.paid<0?'var(--outcome)':'var(--income)')}
       ${x.debt<-0.005
@@ -3905,6 +3893,7 @@ function renderDebtBfl(f){
       <table class="report-table" style="white-space:nowrap">
         <thead><tr>
           <th style="text-align:left;${thS}">ID_Offer</th>
+          <th style="${thS};cursor:pointer;user-select:none" onclick="arToggleDateSort()" title="Сортировка по дате сделки">Дата сделки ${dateSort==='asc'?'▲':dateSort==='desc'?'▼':'⇅'}</th>
           <th style="text-align:right;${thS}">Сумма</th>
           <th style="text-align:right;${thS}">Оплачено</th>
           <th style="text-align:right;${thS}">Долг</th>
@@ -3916,7 +3905,7 @@ function renderDebtBfl(f){
           <th style="text-align:left;${thS}">Менеджер</th>
           <th style="text-align:left;${thS}">Стадия</th>
         </tr></thead>
-        <tbody>${rows||'<tr><td colspan="11" style="padding:14px;text-align:center;color:var(--text3)">Ничего не найдено</td></tr>'}</tbody>
+        <tbody>${rows||'<tr><td colspan="12" style="padding:14px;text-align:center;color:var(--text3)">Ничего не найдено</td></tr>'}</tbody>
       </table>
     </div>
   </div>`;
@@ -3929,6 +3918,11 @@ function _arDD(fn,ddId,btnId,field){
 _arDD('arStage','ar-stage-dd','ar-stage-btn','stages');
 _arDD('arResp','ar-resp-dd','ar-resp-btn','resps');
 // Расшифровка дебиторки по сделке: договор + все платежи из RawData
+window.arToggleDateSort=function(){
+  const cur=_tabFilters.debtbfl.dateSort||'';
+  _tabFilters.debtbfl.dateSort=cur===''?'asc':cur==='asc'?'desc':'';
+  renderDebtBfl(getFilters());
+};
 window.arShowDetail=function(idx){
   const x=(window._arRows||[])[idx];if(!x)return;
   const BFL_DIR='БФЛ - Банкротство физических лиц';
