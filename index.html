@@ -287,6 +287,9 @@
     <div class="nav-item" id="nav-osv" onclick="switchTab('osv')">
       <span class="nav-icon">📒</span> ОСВ по счетам
     </div>
+    <div class="nav-item" id="nav-debtbfl" onclick="switchTab('debtbfl')">
+      <span class="nav-icon">💸</span> Дебиторка БФЛ
+    </div>
     <div class="nav-section" style="margin-top:12px">Контроль</div>
     <div class="nav-item" id="nav-dupes" onclick="switchTab('dupes')">
       <span class="nav-icon">🔍</span> Дубли
@@ -352,6 +355,7 @@
       <div id="tabDupes" class="hidden"></div>
       <div id="tabIncomplete" class="hidden"></div>
       <div id="tabOsv" class="hidden"></div>
+      <div id="tabDebtbfl" class="hidden"></div>
     </div>
   </div>
 
@@ -365,7 +369,7 @@ const REVENUE_PREFIX='120_';
 let RAW=[];
 let activeTab='bank';
 
-const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг',expenses:'Структура расходов',dupes:'Контроль — Дубли записей',incomplete:'Контроль — Недозаполненные данные',osv:'ОСВ — Оборотно-сальдовая ведомость по счетам'};
+const TAB_TITLES={bank:'Банк',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'ФОТ — Фонд оплаты труда',marketing:'Маркетинг',expenses:'Структура расходов',dupes:'Контроль — Дубли записей',incomplete:'Контроль — Недозаполненные данные',osv:'ОСВ — Оборотно-сальдовая ведомость по счетам',debtbfl:'Дебиторка БФЛ — задолженность по договорам'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'—';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -605,6 +609,7 @@ const _tabFilters={
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account'},
+  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -757,15 +762,34 @@ async function loadBflDeals(sheetId,apiKey){
     const iLead=hdr.findIndex(h=>h.startsWith('дата создания лида'));
     const iPaid=hdr.findIndex(h=>h.startsWith('дата входа в стадию'));
     const iDone=hdr.findIndex(h=>h.startsWith('дата завершения сделки'));
-    if(iLead<0&&iPaid<0&&iDone<0)return;
-    const leads=[],paid=[],done=[];
+    const iOffer=hdr.findIndex(h=>h==='id_offer');
+    const iSum=hdr.findIndex(h=>h==='сумма');
+    const iFio=hdr.findIndex(h=>h.startsWith('фио'));
+    const iNum=hdr.findIndex(h=>h.startsWith('№ договора'));
+    const iDateContract=hdr.findIndex(h=>h==='дата договора');
+    const iStage=hdr.findIndex(h=>h==='стадия сделки');
+    const iUrl=hdr.findIndex(h=>h.startsWith('ссылка'));
+    if(iLead<0&&iPaid<0&&iDone<0&&iOffer<0)return;
+    const leads=[],paid=[],done=[],deals=[];
     rows.slice(1).forEach(r=>{
       if(iLead>=0){const d=parseDate(r[iLead]);if(d)leads.push(d);}
       if(iPaid>=0){const d=parseDate(r[iPaid]);if(d)paid.push(d);}
       if(iDone>=0){const d=parseDate(r[iDone]);if(d)done.push(d);}
+      if(iOffer>=0){
+        const offer=String(r[iOffer]||'').trim();
+        if(offer)deals.push({
+          offer,
+          sum:iSum>=0?parseNum(r[iSum]):0,
+          fio:iFio>=0?String(r[iFio]||'').trim():'',
+          contract:iNum>=0?String(r[iNum]||'').trim():'',
+          dateContract:iDateContract>=0?parseDate(r[iDateContract]):null,
+          stage:iStage>=0?String(r[iStage]||'').trim():'',
+          url:iUrl>=0?String(r[iUrl]||'').trim():''
+        });
+      }
     });
-    RAW_BFL={leads,paid,done};
-    console.log(`[RawData_BFL] загружено: лидов ${leads.length}, оплат ${paid.length}, завершено ${done.length}`);
+    RAW_BFL={leads,paid,done,deals};
+    console.log(`[RawData_BFL] загружено: лидов ${leads.length}, оплат ${paid.length}, завершено ${done.length}, сделок ${deals.length}`);
   }catch(e){console.warn('[RawData_BFL] не загружен:',e.message);}
 }
 
@@ -785,10 +809,10 @@ function switchTab(name){
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
   document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
-  ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
+  ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv','debtbfl'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   renderActiveTab();
 }
-function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);}
+function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);}
 
 
 function bankUpdateDays(yr,mo){
@@ -3639,6 +3663,103 @@ _osvDD('osvYear','osv-year-dd','osv-year-btn','Все',true);
 _osvDD('osvMonth','osv-month-dd','osv-month-btn','Все',true);
 _osvDD('osvAcc','osv-acc-dd','osv-acc-btn','Все счета',false);
 _osvDD('osvDir','osv-dir-dd','osv-dir-btn','Все направления',false);
+// ─── ДЕБИТОРКА БФЛ ───────────────────────────────────────────────────────────
+// Сумма договора — из RawData_BFL; поступления — из RawData; связь по ID_Offer
+function renderDebtBfl(f){
+  const el=document.getElementById('tabDebtbfl');
+  const S=v=>String(v==null?'':v).trim();
+  if(!RAW_BFL||!RAW_BFL.deals||!RAW_BFL.deals.length){
+    el.innerHTML=emptyState('Лист RawData_BFL не загружен','Переподключитесь к таблице (Подключение → Подключить и загрузить)');
+    return;
+  }
+  // Поступления из RawData по ID_Offer
+  const paidByOffer={};
+  RAW.forEach(r=>{
+    const offer=S(r[COL.OFFER_ID]);if(!offer)return;
+    const inc=parseNum(r[COL.INCOME]);
+    if(inc>0)paidByOffer[offer]=(paidByOffer[offer]||0)+inc;
+  });
+  // Собираем дебиторку (сделки с суммой договора > 0); дубли ID_Offer в листе сделок схлопываем (берём максимальную сумму)
+  const byOffer=new Map();
+  RAW_BFL.deals.forEach(d=>{
+    if(!byOffer.has(d.offer))byOffer.set(d.offer,d);
+    else if(d.sum>byOffer.get(d.offer).sum)byOffer.set(d.offer,d);
+  });
+  let items=[...byOffer.values()].filter(d=>d.sum>0).map(d=>{
+    const paid=paidByOffer[d.offer]||0;
+    return {...d,paid,debt:d.sum-paid};
+  });
+  const totSum=items.reduce((s,x)=>s+x.sum,0);
+  const totPaid=items.reduce((s,x)=>s+x.paid,0);
+  const totDebt=items.reduce((s,x)=>s+Math.max(0,x.debt),0);
+  const debtCount=items.filter(x=>x.debt>0.005).length;
+
+  // Фильтры: поиск + только с долгом
+  const q=S(f.search).toLowerCase();
+  const onlyDebt=f.onlyDebt!==false;
+  let shown=items;
+  if(onlyDebt)shown=shown.filter(x=>x.debt>0.005);
+  if(q)shown=shown.filter(x=>(x.fio+' '+x.contract+' '+x.offer).toLowerCase().includes(q));
+  shown.sort((a,b)=>b.debt-a.debt);
+
+  const filterBar=`<div class="tab-filters">
+    <input type="text" value="${S(f.search).replace(/"/g,'&quot;')}" placeholder="Поиск: ФИО / № договора / ID Offer..."
+      oninput="_tabFilters.debtbfl.search=this.value;clearTimeout(window._dbflT);window._dbflT=setTimeout(()=>renderDebtBfl(getFilters()),300)"
+      style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);width:300px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${onlyDebt?'var(--accent)':'var(--surface)'};color:${onlyDebt?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${onlyDebt?'checked':''} onchange="_tabFilters.debtbfl.onlyDebt=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
+      Только с долгом
+    </label>
+  </div>`;
+
+  const kpiHtml=`<div class="kpi-grid">
+    <div class="kpi-card blue"><div class="kpi-label">Сумма договоров</div><div class="kpi-value">${fmt(totSum)}</div><div class="kpi-sub">${items.length.toLocaleString('ru-RU')} договоров</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Оплачено</div><div class="kpi-value positive">${fmt(totPaid)}</div><div class="kpi-sub">${totSum?fmtPct(totPaid/totSum):''} от суммы договоров</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Дебиторка</div><div class="kpi-value negative">${fmt(-totDebt)}</div><div class="kpi-sub">${totSum?fmtPct(totDebt/totSum):''} от суммы договоров</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Договоров с долгом</div><div class="kpi-value">${debtCount.toLocaleString('ru-RU')}</div></div>
+  </div>`;
+
+  const dsF=d=>d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'—';
+  const esc=s=>String(s||'').replace(/</g,'&lt;');
+  const LIMIT=500;
+  const tdN=(v,color)=>`<td style="padding:4px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--border);${color?'color:'+color+';':''}">${fmt(v)}</td>`;
+  const rows=shown.slice(0,LIMIT).map(x=>{
+    const pct=x.sum?x.paid/x.sum:0;
+    const pctColor=pct>=1?'var(--income)':pct>=0.5?'#e87c25':'var(--outcome)';
+    return`<tr>
+      <td style="padding:4px 10px;font-size:11px;border-bottom:1px solid var(--border)">${x.url?`<a href="${esc(x.url)}" target="_blank" style="color:var(--accent);text-decoration:none">${esc(x.fio)||'—'} ↗</a>`:esc(x.fio)||'—'}</td>
+      <td style="padding:4px 10px;font-size:11px;border-bottom:1px solid var(--border);white-space:nowrap">${esc(x.contract)||'—'}</td>
+      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.dateContract)}</td>
+      ${tdN(x.sum)}
+      ${tdN(x.paid,'var(--income)')}
+      ${tdN(-Math.max(0,x.debt),x.debt>0.005?'var(--outcome)':'var(--text3)')}
+      <td style="padding:4px 10px;font-size:11px;text-align:right;font-weight:600;border-bottom:1px solid var(--border);color:${pctColor}">${fmtPct(pct)}</td>
+      <td style="padding:4px 10px;font-size:10px;border-bottom:1px solid var(--border)">${esc(x.stage)||'—'}</td>
+    </tr>`;
+  }).join('');
+  const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
+
+  el.innerHTML=filterBar+kpiHtml+`
+  <div class="table-wrap">
+    <div class="table-header"><span class="table-title">Дебиторка по договорам БФЛ</span><span class="table-count">${shown.length.toLocaleString('ru-RU')} ${onlyDebt?'с долгом':'договоров'}</span></div>
+    <div class="table-scroll" style="max-height:calc(100vh - 250px)">
+      <table class="report-table">
+        <thead><tr style="position:sticky;top:0;z-index:2">
+          <th style="text-align:left;background:var(--surface2)">Клиент</th>
+          <th style="text-align:left;background:var(--surface2)">№ договора</th>
+          <th style="background:var(--surface2)">Дата договора</th>
+          <th style="text-align:right;background:var(--surface2)">Сумма договора</th>
+          <th style="text-align:right;background:var(--surface2)">Оплачено</th>
+          <th style="text-align:right;background:var(--surface2)">Долг</th>
+          <th style="text-align:right;background:var(--surface2)">% оплаты</th>
+          <th style="text-align:left;background:var(--surface2)">Стадия</th>
+        </tr></thead>
+        <tbody>${rows||'<tr><td colspan="8" style="padding:14px;text-align:center;color:var(--text3)">Ничего не найдено</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
 
 // ─── МАРКЕТИНГ ────────────────────────────────────────────────────────────────
