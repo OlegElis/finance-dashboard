@@ -600,7 +600,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
-  marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
+  marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',activityDir:''},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
@@ -3623,23 +3623,31 @@ const MKT_SUBART={
        '111_Заработная плата ОМ','111_Заработная плата ОП','244_Контроль качества','300_Реклама / маркетинг']
 };
 
-// Хранилище ручных вводов: {periodKey: {leads, orders, fulfilled}}
-let _mktCounts=(()=>{try{return JSON.parse(localStorage.getItem('mktCounts')||'{}')}catch(e){return{}}})();
+// Хранилище ручных вводов: {dirKey: {periodKey: {leads, orders, fulfilled}}}; dirKey='__all__' для «Все направления»
+let _mktCounts=(()=>{try{
+  const raw=JSON.parse(localStorage.getItem('mktCounts')||'{}');
+  // миграция старого плоского формата {periodKey:{leads,...}} → {'__all__':{...}}
+  const vals=Object.values(raw);
+  if(vals.length&&vals.every(v=>v&&typeof v==='object'&&('leads'in v||'orders'in v||'fulfilled'in v)))return{'__all__':raw};
+  return raw;
+}catch(e){return{}}})();
 function _mktSaveCounts(){try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){}}
+let _mktDirKey='__all__'; // текущее направление (устанавливается в renderMarketing)
 
 // Лимиты касс {accName: limitNumber} — персистится в localStorage
 let _kassaLimits=(()=>{try{return JSON.parse(localStorage.getItem('kassaLimits')||'{}')}catch(e){return{}}})();
 function _kassaSaveLimits(){try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}}
 
 window.mktCountChange=function(pk,field,val){
-  if(!_mktCounts[pk])_mktCounts[pk]={leads:0,orders:0,fulfilled:0};
-  _mktCounts[pk][field]=parseFloat(val)||0;
+  if(!_mktCounts[_mktDirKey])_mktCounts[_mktDirKey]={};
+  if(!_mktCounts[_mktDirKey][pk])_mktCounts[_mktDirKey][pk]={leads:0,orders:0,fulfilled:0};
+  _mktCounts[_mktDirKey][pk][field]=parseFloat(val)||0;
   _mktSaveCounts();
   // обновляем только расчётные ячейки без полного ре-рендера
   _mktUpdateCalc(pk);
 };
 function _mktUpdateCalc(pk){
-  const c=_mktCounts[pk]||{};
+  const c=(_mktCounts[_mktDirKey]||{})[pk]||{};
   ['cpl','cpo','cpf'].forEach(m=>{
     const costEl=document.getElementById(`mkt-cost-${m}-${pk}`);
     const valEl=document.getElementById(`mkt-val-${m}-${pk}`);
@@ -3655,9 +3663,15 @@ function renderMarketing(f){
   const mode=f.periodType||'month';
   const ptOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
 
+  // Направления смешивать нельзя: одиночный выбор; количества хранятся отдельно по направлению
+  const selDir=f.activityDir||'';
+  _mktDirKey=selDir||'__all__';
+  const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const baseData=applyBaseFilters(RAW,f).filter(r=>{
     const t=String(r[COL.TYPE]||'').trim().toLowerCase();
-    return t!=='перемещение' && !!parseDate(r[COL.DATE_OPIU]);
+    if(t==='перемещение'||!parseDate(r[COL.DATE_OPIU]))return false;
+    if(selDir&&String(r[COL.ACTIVITY_DIR]||'').trim()!==selDir)return false;
+    return true;
   });
 
   const getPK=row=>{
@@ -3692,15 +3706,19 @@ function renderMarketing(f){
 
   // Filter bar
   const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('');
-  const extraHtml=`<select class="filter-extra-sel" onchange="_tabFilters['marketing'].periodType=this.value;renderMarketing(getFilters())">${ptOptsHtml}</select>`;
+  const dirOptsHtml=`<option value=""${selDir===''?' selected':''}>Все направления</option>`+allDirs.map(d=>`<option value="${d.replace(/"/g,'&quot;')}"${selDir===d?' selected':''}>${d}</option>`).join('');
+  const extraHtml=`<select class="filter-extra-sel" onchange="_tabFilters['marketing'].periodType=this.value;renderMarketing(getFilters())">${ptOptsHtml}</select>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Направление:</label>
+    <select class="filter-extra-sel" style="max-width:280px" onchange="_tabFilters['marketing'].activityDir=this.value;renderMarketing(getFilters())" title="Метрики и количества считаются отдельно для каждого направления">${dirOptsHtml}</select>`;
   const filterBar=renderFilterBar('marketing').replace('</div>','')
-    +`<div class="filter-sep"></div><div class="filter-extra">${extraHtml}</div></div>`;
+    +`<div class="filter-sep"></div><div class="filter-extra" style="display:flex;align-items:center;gap:6px">${extraHtml}</div></div>`
+    +`<div style="padding:5px 28px;background:#fff8e1;border-bottom:1px solid var(--border);font-size:11px;color:#9a6700">ℹ Расходы и количества (лиды/сделки/дела) считаются и вводятся <b>отдельно для каждого направления</b> — выбранное сейчас: <b>${selDir||'Все направления'}</b></div>`;
 
   if(!periods.length){el.innerHTML=filterBar+emptyState();return;}
 
   // KPI итоговые
   const totalCost=m=>Object.values(costs[m]).reduce((s,v)=>s+v,0);
-  const totalCounts=(field)=>periods.reduce((s,pk)=>{const c=_mktCounts[pk]||{};return s+(+c[field]||0);},0);
+  const totalCounts=(field)=>periods.reduce((s,pk)=>{const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return s+(+c[field]||0);},0);
   const kpiVal=(cost,cnt)=>cnt>0?fmt(Math.abs(cost)/cnt):'—';
   const kpiHtml=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
     <div class="kpi-card blue"><div class="kpi-label">CPL — стоимость лида</div><div class="kpi-value">${kpiVal(totalCost('cpl'),totalCounts('leads'))}</div></div>
@@ -3739,12 +3757,12 @@ function renderMarketing(f){
     </tr>
     <tr>
       ${tdL(countLabel,'color:var(--text2)')}
-      ${periods.map(pk=>{const c=_mktCounts[pk]||{};return inputCell(pk,countField,c[countField]);}).join('')}
+      ${periods.map(pk=>{const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return inputCell(pk,countField,c[countField]);}).join('')}
       ${tdS(totalN||'—',false)}
     </tr>
     <tr style="background:var(--surface2)">
       ${tdL(`<b>${metricKey.toUpperCase()}</b>`,`font-weight:700;color:${color}`)}
-      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;const c=_mktCounts[pk]||{};const n=+(c[countField]||0);return`<td id="mkt-val-${metricKey}-${pk}" style="padding:4px 10px;font-size:12px;font-weight:700;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${n>0?fmt(Math.abs(v)/n):'—'}</td>`;}).join('')}
+      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;const c=(_mktCounts[_mktDirKey]||{})[pk]||{};const n=+(c[countField]||0);return`<td id="mkt-val-${metricKey}-${pk}" style="padding:4px 10px;font-size:12px;font-weight:700;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${n>0?fmt(Math.abs(v)/n):'—'}</td>`;}).join('')}
       ${tdS(kpiVal(totalC,totalN),true,color)}
     </tr>`;
   };
