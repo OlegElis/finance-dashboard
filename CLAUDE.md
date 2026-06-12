@@ -35,7 +35,9 @@ COL = {
 ### Глобальное состояние
 ```js
 RAW          // массив всех строк из Google Sheets
-activeTab    // 'bank' | 'dds' | 'opiu' | 'fot' | 'marketing' | 'expenses' | 'osv' | 'dupes' | 'incomplete'
+activeTab    // 'bank' | 'dds' | 'opiu' | 'osv' | 'fot' | 'planfact' | 'expenses' | 'marketing' | 'debtbfl' | 'dupes' | 'incomplete'
+// Меню: Отчёты (БАНК, ДДС, ОПиУ, ОСВ, ФОТ, ПЛАН-ФАКТ) → Аналитика (Структура расходов, Маркетинг, Дебиторка БФЛ) → Контроль (Дубли, Недозаполненные) → Данные
+// planfact — заглушка «в разработке» (renderPlanFact); заголовки: bank='БАНК', osv='Оборотно-сальдовая ведомость (ОСВ)' (в меню — «ОСВ»)
 _tabFilters  // фильтры per-tab (dateFrom, dateTo, preset, periodType, activityDirs, ...)
 _bankTxnFilter  // {accs, date} — фильтр таблицы операций (счёт/день)
 _mktCounts   // {periodKey: {leads, orders, fulfilled}} — ручной ввод маркетинга, персистится в localStorage
