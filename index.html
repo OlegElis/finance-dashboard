@@ -609,7 +609,7 @@ const _tabFilters={
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account'},
-  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false},
+  debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,inclClosed:false,cutoffYM:'2024-04'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -769,6 +769,7 @@ async function loadBflDeals(sheetId,apiKey){
     const iDateContract=hdr.findIndex(h=>h==='дата договора');
     const iStage=hdr.findIndex(h=>h==='стадия сделки');
     const iResp=hdr.findIndex(h=>h==='ответственный (текст)');
+    const iCreatedDeal=hdr.findIndex(h=>h==='дата создания сделки');
     const iUrl=hdr.findIndex(h=>h.startsWith('ссылка'));
     if(iLead<0&&iPaid<0&&iDone<0&&iOffer<0)return;
     // Завершённым (для CPF) считается дело только в этих стадиях
@@ -792,6 +793,7 @@ async function loadBflDeals(sheetId,apiKey){
           dateContract:iDateContract>=0?parseDate(r[iDateContract]):null,
           stage:iStage>=0?String(r[iStage]||'').trim():'',
           responsible:iResp>=0?String(r[iResp]||'').trim():'',
+          created:iCreatedDeal>=0?parseDate(r[iCreatedDeal]):null,
           url:iUrl>=0?String(r[iUrl]||'').trim():''
         });
       }
@@ -3679,6 +3681,12 @@ function _arNormId(v){
   if(v==null)return'';
   return String(v).replace(/ /g,' ').replace(/\s+/g,' ').replace(/\s*\|\s*/g,' | ').replace(/\s*\/\s*/g,'/').trim();
 }
+// Закрытые/проигранные стадии (маркеры из Apps Script-версии) — по умолчанию исключаются из дебиторки
+const AR_CLOSED_MARKERS=['работы завершены','перестал платить','расторг','брак','другая причина','не отвечает','не доволен','потерян','выбрал другое','дорого','не интересно','долг меньше'];
+function _arClosedStage(stage){
+  const t=String(stage||'').toLowerCase();
+  return AR_CLOSED_MARKERS.some(m=>t.includes(m));
+}
 function _arPayCategory(days){
   if(days==null||days==='')return'Нет оплат';
   if(days<=30)return'до 30 дней';
@@ -3721,12 +3729,36 @@ function renderDebtBfl(f){
     if(!byOffer.has(key)||d.sum>byOffer.get(key).sum)byOffer.set(key,{...d,offer:key});
   });
   const daysBetween=(a,b)=>Math.floor((b-a)/86400000);
-  let items=[...byOffer.values()].filter(d=>d.sum>0).map(d=>{
+  let itemsAll=[...byOffer.values()].filter(d=>d.sum>0).map(d=>{
     const p=payByOffer[d.offer]||{paid:0,income:0,count:0,firstDate:null,lastDate:null};
     const daysSince=p.lastDate?daysBetween(p.lastDate,today):null;
     return {...d,paid:p.paid,debt:d.sum-p.paid,payCount:p.count,lastPay:p.lastDate,
-      daysSince,payCat:p.count>0?_arPayCategory(daysSince):'Нет оплат',over:p.paid>d.sum};
+      daysSince,payCat:p.count>0?_arPayCategory(daysSince):'Нет оплат',over:p.paid>d.sum,
+      closed:_arClosedStage(d.stage)};
   });
+
+  // Бегунок отсечки по дате создания сделки: сделки СТАРШЕ отсечки скрываются
+  // (учёт оплат ведётся с апреля 2024 — у более старых сделок дебиторка фиктивная)
+  const monthsList=(()=>{
+    const ds=itemsAll.map(x=>x.created).filter(Boolean);
+    const min=ds.length?new Date(Math.min(...ds)):new Date(2024,0,1);
+    const out=[];const cur=new Date(min.getFullYear(),min.getMonth(),1);const end=new Date();
+    while(cur<=end){out.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}`);cur.setMonth(cur.getMonth()+1);}
+    return out;
+  })();
+  const DEFAULT_CUTOFF='2024-04';
+  let cutoffYM=f.cutoffYM||DEFAULT_CUTOFF;
+  if(!monthsList.includes(cutoffYM))cutoffYM=monthsList[0];
+  const cutoffIdx=monthsList.indexOf(cutoffYM);
+  const cutoffDate=new Date(+cutoffYM.slice(0,4),+cutoffYM.slice(5,7)-1,1);
+  const ymLabel=ym=>{const M=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];return M[+ym.slice(5,7)-1]+' '+ym.slice(0,4);};
+
+  const inclClosed=!!f.inclClosed;
+  const oldHidden=itemsAll.filter(x=>x.created&&x.created<cutoffDate).length;
+  let base=itemsAll.filter(x=>!(x.created&&x.created<cutoffDate));
+  const closedHidden=base.filter(x=>x.closed).length;
+  if(!inclClosed)base=base.filter(x=>!x.closed);
+  const items=base;
   // Оплаты без сделки в Bitrix (контроль расхождений)
   const orphans=Object.entries(payByOffer)
     .filter(([offer])=>!byOffer.has(offer))
@@ -3793,6 +3825,21 @@ function renderDebtBfl(f){
       <input type="checkbox" ${orphansOnly?'checked':''} onchange="_tabFilters.debtbfl.orphansOnly=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
       ⚠ Нет в Bitrix24 (${orphans.length})
     </label>
+    <label title="Показать закрытые/расторгнутые сделки (${AR_CLOSED_MARKERS.slice(0,4).join(', ')}…) — по умолчанию исключены из дебиторки" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${inclClosed?'var(--accent)':'var(--surface)'};color:${inclClosed?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${inclClosed?'checked':''} onchange="_tabFilters.debtbfl.inclClosed=this.checked;renderDebtBfl(getFilters())" style="cursor:pointer;margin:0">
+      + закрытые (${closedHidden})
+    </label>
+    <div style="display:flex;align-items:center;gap:8px;flex-basis:100%;padding-top:4px">
+      <span style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;white-space:nowrap">Сделки созданные с:</span>
+      <input type="range" min="0" max="${monthsList.length-1}" value="${cutoffIdx}" step="1"
+        oninput="document.getElementById('ar-cutoff-lbl').textContent='${''}'+JSON.parse(this.dataset.months)[this.value].label"
+        onchange="_tabFilters.debtbfl.cutoffYM=JSON.parse(this.dataset.months)[this.value].ym;renderDebtBfl(getFilters())"
+        data-months='${JSON.stringify(monthsList.map(ym=>({ym,label:ymLabel(ym)})))}'
+        style="flex:1;max-width:340px;accent-color:var(--accent)">
+      <b id="ar-cutoff-lbl" style="font-size:11px;color:var(--accent);min-width:70px">${ymLabel(cutoffYM)}</b>
+      <span style="font-size:10px;color:var(--text3)">скрыто старых: ${oldHidden}</span>
+      ${cutoffYM!==DEFAULT_CUTOFF&&monthsList.includes(DEFAULT_CUTOFF)?`<button onclick="_tabFilters.debtbfl.cutoffYM='${DEFAULT_CUTOFF}';renderDebtBfl(getFilters())" style="padding:1px 8px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">апр 2024</button>`:''}
+    </div>
   </div>`;
 
   const kpiHtml=`<div class="kpi-grid">
