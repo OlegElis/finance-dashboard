@@ -613,7 +613,7 @@ const _tabFilters={
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
-  osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account'},
+  osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'account',noOpening:false},
   debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffOn:true,dateSort:''},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
@@ -3497,6 +3497,8 @@ function renderOSV(f){
   const MONTHS_SHORT_OSV=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   const ymOk=d=>(!selYears.length||selYears.includes(d.getFullYear()))&&(!selMonths.length||selMonths.includes(d.getMonth()+1));
 
+  // Тумблер: учитывать входящее сальдо (по умолчанию да). Выкл — сальдо без начального остатка (чистый оборот периодов)
+  const inclOpen=f.noOpening!==true;
   // ── Фильтр-бар (стиль ДДС/ОПиУ): Год / Месяц / Счёт / Направление / Разрез ──
   const mkDD=(id,fn,items,selArr,labelFn,withSearch)=>{
     const search=withSearch?`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`:'';
@@ -3525,6 +3527,10 @@ function renderOSV(f){
       <button onclick="_tabFilters['osv'].rowDim='account';renderOSV(getFilters())" style="padding:3px 12px;border:none;cursor:pointer;font-family:var(--sans);background:${rowDim==='account'?'var(--accent)':'var(--surface)'};color:${rowDim==='account'?'#fff':'var(--text2)'};font-weight:600">Счета</button>
       <button onclick="_tabFilters['osv'].rowDim='direction';renderOSV(getFilters())" style="padding:3px 12px;border:none;border-left:1px solid var(--border);cursor:pointer;font-family:var(--sans);background:${rowDim==='direction'?'var(--accent)':'var(--surface)'};color:${rowDim==='direction'?'#fff':'var(--text2)'};font-weight:600">Направления</button>
     </div>
+    <label title="Не учитывать входящий остаток: сальдо считается с нуля, показывает только обороты за выбранные периоды" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${!inclOpen?'var(--accent)':'var(--surface)'};color:${!inclOpen?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${!inclOpen?'checked':''} onchange="_tabFilters['osv'].noOpening=this.checked;renderOSV(getFilters())" style="cursor:pointer;margin:0">
+      Без вход. сальдо
+    </label>
   </div>`;
 
   if(!rows.length){el.innerHTML=filterBar+emptyState('Нет данных','Нет строк с датой ДДС под выбранные фильтры');return;}
@@ -3593,8 +3599,9 @@ function renderOSV(f){
   const num=(v,cls='')=>{const c=v>0?'var(--income)':v<0?'var(--outcome)':'var(--text3)';return`<td class="num" style="text-align:right;font-variant-numeric:tabular-nums;color:${c};${cls}">${v!==0?fmt(v):'0'}</td>`;};
   const numSaldo=(v,cls='')=>{const c=v<0?'var(--outcome)':v>0?'var(--text)':'var(--text3)';return`<td class="num" style="text-align:right;font-variant-numeric:tabular-nums;color:${c};font-weight:600;${v<0?'background:#fdecea;':''}${cls}">${v!==0?fmt(v):'0'}</td>`;};
 
-  // Сальдо нач. строки = opening + скрытые потоки до первого видимого периода
+  // Сальдо нач. строки = opening + скрытые потоки до первого видимого периода (или 0 без вход. сальдо)
   const rowCalc=a=>{
+    if(!inclOpen)return 0;
     let run=a.opening;const firstVis=visPks[0];
     pksAll.forEach(pk=>{if(pk<firstVis){const p=a.periods[pk];if(p&&!pkVisible[pk])run+=p.dt+p.kt;}});
     return run;
@@ -3612,7 +3619,7 @@ function renderOSV(f){
     thead=`<tr><th style="text-align:left;min-width:220px;${thCorner}">${rowDimLabel}</th><th style="${th1}">Сальдо нач.</th><th style="${th1}">Поступления (Дт)</th><th style="${th1}">Списания (Кт)</th><th style="${th1}">Сальдо кон.</th></tr>`;
     buildRow=(a,bold,label)=>{
       const p=a.periods['__all__']||{dt:0,kt:0};
-      const open=a.opening;
+      const open=inclOpen?a.opening:0;
       const end=open+p.dt+p.kt;
       return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':''}>
         <td style="${tdSticky(bold)}">${label||a.name}</td>
@@ -3627,9 +3634,9 @@ function renderOSV(f){
       const openAdj=rowCalc(a);
       let run=openAdj;let lastVisIdx=-1;
       const cells=visPks.map(pk=>{
-        // докатываем скрытые периоды между предыдущим видимым и текущим
+        // докатываем скрытые периоды между предыдущим видимым и текущим (только при учёте вход. сальдо)
         const curIdx=pksAll.indexOf(pk);
-        for(let i=lastVisIdx+1;i<curIdx;i++){const hp=a.periods[pksAll[i]];if(hp&&!pkVisible[pksAll[i]])run+=hp.dt+hp.kt;}
+        if(inclOpen)for(let i=lastVisIdx+1;i<curIdx;i++){const hp=a.periods[pksAll[i]];if(hp&&!pkVisible[pksAll[i]])run+=hp.dt+hp.kt;}
         lastVisIdx=curIdx;
         const p=a.periods[pk]||{dt:0,kt:0};
         const openP=run;
@@ -3652,9 +3659,10 @@ function renderOSV(f){
   body+=buildRow(totalAgg,true,'ИТОГО');
 
   // KPI (по видимым периодам)
-  const openKPI=mode==='all'?totalAgg.opening:rowCalc(totalAgg);
+  const openKPI=mode==='all'?(inclOpen?totalAgg.opening:0):rowCalc(totalAgg);
   const totP=visPks.reduce((s,pk)=>{const p=totalAgg.periods[pk]||{dt:0,kt:0};s.dt+=p.dt;s.kt+=p.kt;return s;},{dt:0,kt:0});
-  let endKPI=totalAgg.opening;pksAll.forEach(pk=>{const p=totalAgg.periods[pk];if(p&&(pkVisible[pk]||pk<=visPks[visPks.length-1]))endKPI+=p.dt+p.kt;});
+  let endKPI=openKPI+totP.dt+totP.kt;
+  if(inclOpen&&mode!=='all'){endKPI=totalAgg.opening;pksAll.forEach(pk=>{const p=totalAgg.periods[pk];if(p&&(pkVisible[pk]||pk<=visPks[visPks.length-1]))endKPI+=p.dt+p.kt;});}
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card blue"><div class="kpi-label">Сальдо на начало</div><div class="kpi-value ${openKPI>=0?'positive':'negative'}">${fmt(openKPI)}</div></div>
     <div class="kpi-card green"><div class="kpi-label">Обороты Дт (поступления)</div><div class="kpi-value positive">${fmt(totP.dt)}</div></div>
