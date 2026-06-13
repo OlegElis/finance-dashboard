@@ -4205,13 +4205,19 @@ function renderMarketing(f){
   };
 
   // Агрегируем расходы по подстатьям + сохраняем строки для расшифровки (клик по «Расходы»)
-  const costs={cpf:{},cpl:{},cpo:{},cpoFot:{},meetFot:{}};
+  const costs={cpf:{},cpl:{},cpo:{},cpoFot:{},meetFot:{},mktShare:{}};
   const periodsSet=new Set();
   window._mktTxn={};
+  // Расходы на маркетинг для «Доли в выручке» = все 300_* + ЗП ОМ (отдел маркетинга)
+  const mktSpendMatch=sub=>sub.startsWith('300_')||sub==='111_Заработная плата ОМ';
   baseData.forEach(row=>{
     const pk=getPK(row);if(!pk)return;
     const out=parseNum(row[COL.OUTCOME]);if(out>=0)return;
     const sub=String(row[COL.ARTICLE_NAME]||'').trim();
+    if(mktSpendMatch(sub)){
+      costs.mktShare[pk]=(costs.mktShare[pk]||0)+out;
+      (window._mktTxn['mktShare|'+pk]=window._mktTxn['mktShare|'+pk]||[]).push(row);
+    }
     ['cpf','cpl','cpo'].forEach(m=>{
       if(mktMatch(m,sub)){
         costs[m][pk]=(costs[m][pk]||0)+out;
@@ -4231,6 +4237,16 @@ function renderMarketing(f){
   });
   // СВ (стоимость встречи) использует те же расходы воронки продаж, что и CPO, делённые на число встреч
   costs.meet=costs.cpo;
+
+  // Выручка по периодам (как в ОПиУ): поступления по выбранному направлению (type='поступление' либо статья 120_)
+  const revByP={};
+  baseData.forEach(row=>{
+    const pk=getPK(row);if(!pk)return;
+    const inc=parseNum(row[COL.INCOME]);if(inc<=0)return;
+    const type=String(row[COL.TYPE]||'').trim().toLowerCase();
+    const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
+    if(type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))revByP[pk]=(revByP[pk]||0)+inc;
+  });
 
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
 
@@ -4323,6 +4339,23 @@ function renderMarketing(f){
       <div class="kpi-sub" style="font-size:9px;color:var(--text3)">${tM?`встреч ${tM} · сделок ${tO}`:''}</div>
     </div>`;
   };
+  // Доля маркетинга в выручке = (расходы 300_* + ЗП ОМ) ÷ выручка по ОПиУ. Рост = красный (тратим больше на единицу выручки)
+  const shareAt=pk=>{const rv=revByP[pk]||0;const sp=Math.abs(costs.mktShare[pk]||0);return rv>0?sp/rv:null;};
+  const totRevAll=periods.reduce((s,pk)=>s+(revByP[pk]||0),0);
+  const totMktSpend=periods.reduce((s,pk)=>s+Math.abs(costs.mktShare[pk]||0),0);
+  const shareCard=()=>{
+    const filled=periods.filter(pk=>shareAt(pk)!=null);
+    const last=filled[filled.length-1],prev=filled[filled.length-2];
+    const vLast=last?shareAt(last):null,vPrev=prev?shareAt(prev):null;
+    let delta='';
+    if(vLast!=null&&vPrev!=null&&vPrev>0){const g=(vLast-vPrev)/vPrev;const c=g>0.001?'var(--outcome)':g<-0.001?'var(--income)':'var(--text3)';const arrow=g>0.001?'↑':g<-0.001?'↓':'→';delta=`<span style="color:${c};font-weight:700">${arrow} ${fmtPct(Math.abs(g))}</span> <span style="color:var(--text3)">${last} к ${prev}</span>`;}
+    return`<div class="kpi-card" style="border-left:3px solid #d97706">
+      <div class="kpi-label">Доля маркетинга в выручке</div>
+      <div class="kpi-value" style="color:#d97706">${totRevAll>0?fmtPct(totMktSpend/totRevAll):'—'}</div>
+      <div class="kpi-sub" style="font-size:9px">${delta||'&nbsp;'}</div>
+      <div class="kpi-sub" style="font-size:9px;color:var(--text3)">${totRevAll?`маркетинг ${n0(totMktSpend)} · выручка ${n0(totRevAll)}`:''}</div>
+    </div>`;
+  };
   const kpiHtml=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
     ${kpiCard('meet','meetings','CPMT - стоимость встречи','#0ea5e9')}
     ${kpiCard('meetFot','meetings','CPMT по ФОТ - встреча (ЗП КО+ОМ)','#0e7490')}
@@ -4330,6 +4363,7 @@ function renderMarketing(f){
     ${kpiCard('cpoFot','orders','CPO по ФОТ - сделка (CPO без рекламы 300_)','#6b21a8')}
     ${kpiCard('cpf','fulfilled','CPF - стоимость исполнения','#16a34a')}
     ${convCard()}
+    ${shareCard()}
   </div>`;
 
   // График динамики CPO/CPF
@@ -4399,6 +4433,28 @@ function renderMarketing(f){
       ${tdS(tM>0?fmtPct(tO/tM):'—',true,'#0891b2')}
     </tr>`;
   };
+  const shareRows=()=>{
+    const tint='#fef3e2',color='#d97706';
+    return`
+    <tr style="background:${tint}">
+      <td colspan="${periods.length+2}" style="padding:4px 10px;font-size:10px;font-weight:700;text-transform:uppercase;color:${color};border-bottom:1px solid var(--border);border-top:2px solid ${color}">Доля маркетинга в выручке</td>
+    </tr>
+    <tr>
+      ${tdL('Выручка (ОПиУ)','color:var(--text2)')}
+      ${periods.map(pk=>{const v=revByP[pk]||0;return`<td style="padding:4px 10px;font-size:11px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--income)">${v?n0(v):'—'}</td>`;}).join('')}
+      ${tdS(totRevAll?n0(totRevAll):'—',false,'var(--income)')}
+    </tr>
+    <tr>
+      ${tdL('Расходы маркетинга (300_ + ЗП ОМ)','color:var(--text2)')}
+      ${periods.map(pk=>{const v=costs.mktShare[pk]||0;return`<td id="mkt-cost-mktShare-${pk}" onclick="${v?`mktShowCostModal('mktShare','${pk.replace(/'/g,"\\'")}')`:''}" title="${v?'Из чего сложились расходы маркетинга':''}" style="padding:4px 10px;font-size:11px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--outcome);${v?'cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;':''}">${v?n0(v):'—'}</td>`;}).join('')}
+      ${tdS(totMktSpend?n0(totMktSpend):'—',false,'var(--outcome)')}
+    </tr>
+    <tr style="background:${tint}">
+      ${tdL('<b>Доля в выручке</b>',`font-weight:700;color:${color}`)}
+      ${periods.map(pk=>{const v=shareAt(pk);return`<td style="padding:5px 10px;font-size:13px;font-weight:800;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${v!=null?fmtPct(v):'—'}</td>`;}).join('')}
+      ${tdS(totRevAll>0?fmtPct(totMktSpend/totRevAll):'—',true,color)}
+    </tr>`;
+  };
   const tbody=`<tbody>
     ${mkMetricRows('meet','CPMT - Стоимость встречи (Cost Per Meeting)','meetings','Количество встреч','#0ea5e9','#eef7fc')}
     ${mkMetricRows('meetFot','CPMT по ФОТ - стоимость встречи (ЗП КО колл-центр + ОМ маркетинг)','meetings','Количество встреч','#0e7490','#e6f3f6')}
@@ -4406,6 +4462,7 @@ function renderMarketing(f){
     ${mkMetricRows('cpoFot','CPO по ФОТ - стоимость сделки (всё из CPO, кроме рекламы 300_)','orders','Количество сделок','#6b21a8','#f1ebf9')}
     ${convRows()}
     ${mkMetricRows('cpf','CPF - Cost Per Fulfillment','fulfilled','Завершённых дел','#16a34a','#edf7f0')}
+    ${shareRows()}
   </tbody>`;
 
   const tableWrap=`<div style="overflow-x:auto;padding:0 0 4px">
@@ -4494,7 +4551,7 @@ function renderMarketing(f){
 // Расшифровка расходов метрики за период - в формате окна ДДС + сводка по подстатьям
 window.mktShowCostModal=function(metric,pk){
   if(metric==='meet')metric='cpo'; // СВ использует те же расходы, что и CPO
-  const METRIC_NAME={cpo:'CPO',cpf:'CPF',cpl:'CPL',cpoFot:'CPO·ФОТ',meetFot:'CPMT·ФОТ'}[metric]||metric.toUpperCase();
+  const METRIC_NAME={cpo:'CPO',cpf:'CPF',cpl:'CPL',cpoFot:'CPO·ФОТ',meetFot:'CPMT·ФОТ',mktShare:'Маркетинг (300_ + ЗП ОМ)'}[metric]||metric.toUpperCase();
   const rows=(window._mktTxn||{})[metric+'|'+pk]||[];
   if(!rows.length)return;
   window._mktTxnCur=rows;
