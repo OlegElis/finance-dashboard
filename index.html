@@ -4135,8 +4135,8 @@ window.mktCountChange=function(pk,field,val){
 };
 function _mktUpdateCalc(pk){
   const c=(_mktCounts[_mktDirKey]||{})[pk]||{};
-  const cntOf=m=>m==='cpl'?+(c.leads||0):m==='cpo'||m==='meet'?(m==='meet'?+(c.meetings||0):+(c.orders||0)):+(c.fulfilled||0);
-  ['cpl','meet','cpo','cpf'].forEach(m=>{
+  const cntOf=m=>m==='cpl'?+(c.leads||0):(m==='meet'||m==='meetFot')?+(c.meetings||0):(m==='cpo'||m==='cpoFot')?+(c.orders||0):+(c.fulfilled||0);
+  ['cpl','meet','meetFot','cpo','cpoFot','cpf'].forEach(m=>{
     const costEl=document.getElementById(`mkt-cost-${m}-${pk}`);
     const valEl=document.getElementById(`mkt-val-${m}-${pk}`);
     if(!costEl||!valEl)return;
@@ -4196,7 +4196,7 @@ function renderMarketing(f){
   };
 
   // Агрегируем расходы по подстатьям + сохраняем строки для расшифровки (клик по «Расходы»)
-  const costs={cpf:{},cpl:{},cpo:{}};
+  const costs={cpf:{},cpl:{},cpo:{},cpoFot:{}};
   const periodsSet=new Set();
   window._mktTxn={};
   baseData.forEach(row=>{
@@ -4210,9 +4210,16 @@ function renderMarketing(f){
         periodsSet.add(pk); // период попадает в отчёт только если есть маркетинговый расход (не любое списание)
       }
     });
+    // ФОТ-часть воронки = только зарплаты 111_* (из набора расходов CPO)
+    if(mktMatch('cpo',sub)&&sub.startsWith('111_')){
+      costs.cpoFot[pk]=(costs.cpoFot[pk]||0)+out;
+      (window._mktTxn['cpoFot|'+pk]=window._mktTxn['cpoFot|'+pk]||[]).push(row);
+    }
   });
   // СВ (стоимость встречи) использует те же расходы воронки продаж, что и CPO, делённые на число встреч
   costs.meet=costs.cpo;
+  // Варианты «по ФОТ»: те же знаменатели (встречи/сделки), но в расходах — только зарплаты 111_*
+  costs.meetFot=costs.cpoFot;
 
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
 
@@ -4308,7 +4315,9 @@ function renderMarketing(f){
   };
   const kpiHtml=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
     ${kpiCard('meet','meetings','CPMT — стоимость встречи','#0ea5e9')}
+    ${kpiCard('meetFot','meetings','CPMT по ФОТ — встреча (ЗП 111_)','#0e7490')}
     ${kpiCard('cpo','orders','CPO — стоимость сделки','#9333ea')}
+    ${kpiCard('cpoFot','orders','CPO по ФОТ — сделка (ЗП 111_)','#6b21a8')}
     ${kpiCard('cpf','fulfilled','CPF — стоимость исполнения','#16a34a')}
     ${convCard()}
   </div>`;
@@ -4361,7 +4370,7 @@ function renderMarketing(f){
       ${tdS(totalN||'—',false)}
     </tr>
     <tr style="background:${tint}">
-      ${tdL(`<b>${metricKey==='meet'?'CPMT':metricKey.toUpperCase()}</b>`,`font-weight:700;color:${color}`)}
+      ${tdL(`<b>${({meet:'CPMT',meetFot:'CPMT·ФОТ',cpoFot:'CPO·ФОТ'})[metricKey]||metricKey.toUpperCase()}</b>`,`font-weight:700;color:${color}`)}
       ${periods.map(pk=>{const v=costs[metricKey][pk]||0;const n=countOf(pk,countField);return`<td id="mkt-val-${metricKey}-${pk}" style="padding:5px 10px;font-size:13px;font-weight:800;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${n>0?n0(Math.abs(v)/n):'—'}</td>`;}).join('')}
       ${tdS(kpiVal(totalC,totalN),true,color)}
     </tr>`;
@@ -4381,7 +4390,9 @@ function renderMarketing(f){
   };
   const tbody=`<tbody>
     ${mkMetricRows('meet','CPMT — Стоимость встречи (Cost Per Meeting)','meetings','Количество встреч','#0ea5e9','#eef7fc')}
+    ${mkMetricRows('meetFot','CPMT по ФОТ — стоимость встречи (только ЗП 111_)','meetings','Количество встреч','#0e7490','#e6f3f6')}
     ${mkMetricRows('cpo','CPO — Cost Per Order','orders','Количество сделок','#9333ea','#f7f0fd')}
+    ${mkMetricRows('cpoFot','CPO по ФОТ — стоимость сделки (только ЗП 111_)','orders','Количество сделок','#6b21a8','#f1ebf9')}
     ${convRows()}
     ${mkMetricRows('cpf','CPF — Cost Per Fulfillment','fulfilled','Завершённых дел','#16a34a','#edf7f0')}
   </tbody>`;
@@ -4397,6 +4408,7 @@ function renderMarketing(f){
   const formulaHtml=`<div style="margin:0 24px 16px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:10.5px;color:var(--text2);line-height:1.7">
     <b style="color:#0ea5e9">CPMT</b> (Cost Per Meeting, стоимость встречи) = (те же расходы воронки, что у CPO) ÷ кол-во встреч («Дата создания сделки»)<br>
     <b style="color:#9333ea">CPO</b> = (${fmlList('cpo')}) ÷ кол-во сделок («Дата входа в стадию "Полная/частичная оплата"»)<br>
+    <b style="color:#0e7490">CPMT по ФОТ</b> / <b style="color:#6b21a8">CPO по ФОТ</b> = (только зарплаты воронки 111_*, без рекламы 300_* и 226_) ÷ кол-во встреч / сделок<br>
     <b style="color:#0891b2">Конверсия встреча→сделка</b> = кол-во сделок ÷ кол-во встреч &nbsp;(CPO = CPMT ÷ конверсия)<br>
     <b style="color:#16a34a">CPF</b> = (${fmlList('cpf')}) ÷ завершённые дела («Дата завершения сделки», только стадии «Акты подписаны»)<br>
     <span style="color:var(--text3)">Расходы — списания по дате ОПиУ выбранного направления. Клик по сумме расходов — детальная расшифровка строк.</span>
@@ -4455,6 +4467,8 @@ function renderMarketing(f){
 // Расшифровка расходов метрики за период — в формате окна ДДС + сводка по подстатьям
 window.mktShowCostModal=function(metric,pk){
   if(metric==='meet')metric='cpo'; // СВ использует те же расходы, что и CPO
+  if(metric==='meetFot')metric='cpoFot'; // CPMT по ФОТ использует ту же ФОТ-часть расходов, что и CPO по ФОТ
+  const METRIC_NAME={cpo:'CPO',cpf:'CPF',cpl:'CPL',cpoFot:'CPO·ФОТ'}[metric]||metric.toUpperCase();
   const rows=(window._mktTxn||{})[metric+'|'+pk]||[];
   if(!rows.length)return;
   window._mktTxnCur=rows;
@@ -4501,7 +4515,7 @@ window.mktShowCostModal=function(metric,pk){
   overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35)">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
       <div style="min-width:0;flex:1">
-        <div style="font-size:13px;font-weight:700;color:var(--text)">🧮 Расходы ${metric.toUpperCase()} · ${pk}</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text)">🧮 Расходы ${METRIC_NAME} · ${pk}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:1px">Что бралось в расчёт метрики за период</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
