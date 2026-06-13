@@ -4672,16 +4672,19 @@ function renderLoans(f){
     const d=parseDate(r[COL.DATE_DDS]);
     if(!inRange(d))return;
     const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
-    if(inc===0&&out===0)return;
+    // Знаковое движение на кассе займов = вклад в сальдо (долг). «+» = выдача (долг растёт), «−» = возврат (долг падает).
+    // Все операции — перемещения в колонке ПОСТУПЛЕНИЕ (+/-); списания, если есть, тоже учитываются по знаку.
+    const amount=inc+out;
+    if(amount===0)return;
     // разбор для сверки: по реквизитам счёта (кассы)
     const ck=S(r[COL.ACCOUNT])||'(без реквизитов)';
     const cc=combo[ck]||(combo[ck]={issued:0,repaid:0,n:0});cc.n++;
-    if(out<0)cc.issued+=Math.abs(out); if(inc!==0)cc.repaid+=Math.abs(inc); // возврат = перемещение, поступление со знаком (+/-)
+    if(amount>0)cc.issued+=amount; else cc.repaid+=-amount;
     const emp=S(r[COL.SECOND_SIDE])||'- без контрагента -';
     const e=byEmp[emp]||(byEmp[emp]={emp,issued:0,repaid:0,ops:0,firstIssue:null,lastIssue:null,lastRepay:null,rows:[]});
     e.rows.push(r);e.ops++;
-    if(out<0){e.issued+=Math.abs(out);if(d){if(!e.firstIssue||d<e.firstIssue)e.firstIssue=d;if(!e.lastIssue||d>e.lastIssue)e.lastIssue=d;}}
-    if(inc!==0){e.repaid+=Math.abs(inc);if(d){if(!e.lastRepay||d>e.lastRepay)e.lastRepay=d;}} // возврат = поступление (перемещение) со знаком +/-
+    if(amount>0){e.issued+=amount;if(d){if(!e.firstIssue||d<e.firstIssue)e.firstIssue=d;if(!e.lastIssue||d>e.lastIssue)e.lastIssue=d;}}
+    else{e.repaid+=-amount;if(d){if(!e.lastRepay||d>e.lastRepay)e.lastRepay=d;}}
   });
   let items=Object.values(byEmp).map(e=>({...e,balance:e.issued-e.repaid,pct:e.issued>0?Math.min(1,e.repaid/e.issued):0}));
   const q=S(f.search).toLowerCase(),onlyDebt=!!f.onlyDebt;
@@ -4841,8 +4844,8 @@ window.loanShowDetail=function(idx){
     </div>
     <div style="padding:12px 18px;overflow:auto">
       <div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;display:grid;grid-template-columns:1fr auto;gap:4px;align-items:baseline">
-        <span style="color:var(--text3)">Выдано (списаний ${moveRowsRaw.filter(r=>parseNum(r[COL.OUTCOME])<0).length}):</span><span style="font-weight:700;text-align:right">${fmt(x.issued)}</span>
-        <span style="color:var(--text3)">Возвращено (поступлений ${moveRowsRaw.filter(r=>parseNum(r[COL.INCOME])!==0).length}):</span><span style="font-weight:700;color:var(--income);text-align:right">${fmt(x.repaid)}</span>
+        <span style="color:var(--text3)">Выдано (операций ${moveRowsRaw.filter(r=>(parseNum(r[COL.INCOME])+parseNum(r[COL.OUTCOME]))>0).length}):</span><span style="font-weight:700;text-align:right">${fmt(x.issued)}</span>
+        <span style="color:var(--text3)">Возвращено (операций ${moveRowsRaw.filter(r=>(parseNum(r[COL.INCOME])+parseNum(r[COL.OUTCOME]))<0).length}):</span><span style="font-weight:700;color:var(--income);text-align:right">${fmt(x.repaid)}</span>
         <span style="color:var(--text3)">Остаток долга:</span><span style="font-weight:800;color:${balColor};text-align:right">${fmt(x.balance)}</span>
       </div>
       <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Движения по сотруднику (${moveRowsRaw.length}) — клик по строке открывает карточку:</div>
