@@ -4098,9 +4098,10 @@ function renderMarketing(f){
     return periodSortKey(k,mode);
   };
 
-  // Агрегируем расходы по подстатьям
+  // Агрегируем расходы по подстатьям + сохраняем строки для расшифровки (клик по «Расходы»)
   const costs={cpf:{},cpl:{},cpo:{}};
   const periodsSet=new Set();
+  window._mktTxn={};
   baseData.forEach(row=>{
     const pk=getPK(row);if(!pk)return;
     const out=parseNum(row[COL.OUTCOME]);if(out>=0)return;
@@ -4109,6 +4110,7 @@ function renderMarketing(f){
     ['cpf','cpl','cpo'].forEach(m=>{
       if(mktMatch(m,sub)){
         costs[m][pk]=(costs[m][pk]||0)+out;
+        (window._mktTxn[m+'|'+pk]=window._mktTxn[m+'|'+pk]||[]).push(row);
       }
     });
   });
@@ -4144,10 +4146,39 @@ function renderMarketing(f){
     const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return +(c[field]||0);
   };
   const totalCounts=(field)=>periods.reduce((s,pk)=>s+countOf(pk,field),0);
-  const kpiVal=(cost,cnt)=>cnt>0?fmt(Math.abs(cost)/cnt):'—';
+  const n0=v=>Math.round(Math.abs(v)).toLocaleString('ru-RU');
+  const kpiVal=(cost,cnt)=>cnt>0?n0(Math.abs(cost)/cnt):'—';
+  const metricAt=(m,field,pk)=>{const n=countOf(pk,field);const c=Math.abs(costs[m][pk]||0);return n>0?c/n:null;};
+  // KPI с динамикой: последний период vs предыдущий (рост стоимости = красный)
+  const kpiCard=(m,field,label,color)=>{
+    const last=periods[periods.length-1],prev=periods[periods.length-2];
+    const vLast=last?metricAt(m,field,last):null;
+    const vPrev=prev?metricAt(m,field,prev):null;
+    let delta='';
+    if(vLast!=null&&vPrev!=null&&vPrev>0){
+      const g=(vLast-vPrev)/vPrev;
+      const c=g>0.001?'var(--outcome)':g<-0.001?'var(--income)':'var(--text3)';
+      const arrow=g>0.001?'↑':g<-0.001?'↓':'→';
+      delta=`<span style="color:${c};font-weight:700">${arrow} ${fmtPct(Math.abs(g))}</span> <span style="color:var(--text3)">к пред. периоду (${n0(vPrev)})</span>`;
+    }
+    const lastCost=last?Math.abs(costs[m][last]||0):0;
+    const cnt=last?countOf(last,field):0;
+    return`<div class="kpi-card" style="border-left:3px solid ${color}">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-value" style="color:${color}">${kpiVal(totalCost(m),totalCounts(field))}</div>
+      <div class="kpi-sub" style="font-size:9px">${delta||'&nbsp;'}</div>
+      <div class="kpi-sub" style="font-size:9px;color:var(--text3)">${last?`${last}: расходы ${n0(lastCost)} · кол-во ${cnt}`:''}</div>
+    </div>`;
+  };
   const kpiHtml=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
-    <div class="kpi-card blue"><div class="kpi-label">CPO — стоимость сделки</div><div class="kpi-value">${kpiVal(totalCost('cpo'),totalCounts('orders'))}</div></div>
-    <div class="kpi-card blue"><div class="kpi-label">CPF — стоимость исполнения</div><div class="kpi-value">${kpiVal(totalCost('cpf'),totalCounts('fulfilled'))}</div></div>
+    ${kpiCard('cpo','orders','CPO — стоимость сделки','#9333ea')}
+    ${kpiCard('cpf','fulfilled','CPF — стоимость исполнения','#16a34a')}
+  </div>`;
+
+  // График динамики CPO/CPF
+  const chartHtml=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:12px 24px">
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Динамика стоимости по периодам</div>
+    <div style="height:260px"><canvas id="mktChartDyn"></canvas></div>
   </div>`;
 
   // Таблица по периодам
@@ -4167,17 +4198,17 @@ function renderMarketing(f){
       style="width:70px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:3px;padding:1px 4px;background:var(--surface);color:var(--text);font-family:var(--sans)">
   </td>`;
 
-  const mkMetricRows=(metricKey,label,countField,countLabel,color)=>{
+  const mkMetricRows=(metricKey,label,countField,countLabel,color,tint)=>{
     const totalC=totalCost(metricKey);
     const totalN=totalCounts(countField);
     return`
-    <tr style="background:var(--surface2)">
-      <td colspan="${periods.length+2}" style="padding:3px 10px;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">${label}</td>
+    <tr style="background:${tint}">
+      <td colspan="${periods.length+2}" style="padding:4px 10px;font-size:10px;font-weight:700;text-transform:uppercase;color:${color};border-bottom:1px solid var(--border);border-top:2px solid ${color}">${label}</td>
     </tr>
     <tr>
-      ${tdL('Расходы','color:var(--text2)')}
-      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;return`<td id="mkt-cost-${metricKey}-${pk}" data-cost="${v}" style="padding:4px 10px;font-size:11px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--outcome)">${v?fmt(v):'—'}</td>`;}).join('')}
-      ${tdS(totalC?fmt(totalC):'—',false,'var(--outcome)')}
+      ${tdL('Расходы <span style="font-size:9px;color:var(--accent)">(клик — расшифровка)</span>','color:var(--text2)')}
+      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;return`<td id="mkt-cost-${metricKey}-${pk}" data-cost="${v}" onclick="${v?`mktShowCostModal('${metricKey}','${pk.replace(/'/g,"\\'")}')`:''}" title="${v?'Из чего сложились расходы за период':''}" style="padding:4px 10px;font-size:11px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--outcome);${v?'cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;':''}">${v?n0(v):'—'}</td>`;}).join('')}
+      ${tdS(totalC?n0(totalC):'—',false,'var(--outcome)')}
     </tr>
     <tr>
       ${tdL(countLabel+(auto[countField]?' <span style="font-size:9px;color:var(--accent)" title="Считается автоматически из листа RawData_BFL">⚡ авто</span>':''),'color:var(--text2)')}
@@ -4187,26 +4218,120 @@ function renderMarketing(f){
       }).join('')}
       ${tdS(totalN||'—',false)}
     </tr>
-    <tr style="background:var(--surface2)">
+    <tr style="background:${tint}">
       ${tdL(`<b>${metricKey.toUpperCase()}</b>`,`font-weight:700;color:${color}`)}
-      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;const n=countOf(pk,countField);return`<td id="mkt-val-${metricKey}-${pk}" style="padding:4px 10px;font-size:12px;font-weight:700;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${n>0?fmt(Math.abs(v)/n):'—'}</td>`;}).join('')}
+      ${periods.map(pk=>{const v=costs[metricKey][pk]||0;const n=countOf(pk,countField);return`<td id="mkt-val-${metricKey}-${pk}" style="padding:5px 10px;font-size:13px;font-weight:800;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:${color}">${n>0?n0(Math.abs(v)/n):'—'}</td>`;}).join('')}
       ${tdS(kpiVal(totalC,totalN),true,color)}
     </tr>`;
   };
 
   const tbody=`<tbody>
-    ${mkMetricRows('cpo','CPO — Cost Per Order','orders','Количество сделок','#9333ea')}
-    ${mkMetricRows('cpf','CPF — Cost Per Fulfillment','fulfilled','Завершённых дел','var(--income)')}
+    ${mkMetricRows('cpo','CPO — Cost Per Order','orders','Количество сделок','#9333ea','#f7f0fd')}
+    ${mkMetricRows('cpf','CPF — Cost Per Fulfillment','fulfilled','Завершённых дел','#16a34a','#edf7f0')}
   </tbody>`;
 
-  const tableWrap=`<div style="overflow-x:auto;padding:0 0 16px">
+  const tableWrap=`<div style="overflow-x:auto;padding:0 0 4px">
     <table style="border-collapse:collapse;width:100%;min-width:600px">
       ${thead}${tbody}
     </table>
   </div>`;
 
-  el.innerHTML=filterBar+kpiHtml+tableWrap;
+  // Справка: что берётся в расчёт
+  const fmlList=m=>{const subs=MKT_SUBART[m].map(s=>s.replace('111_Заработная плата','ЗП'));const pre=MKT_PREFIX[m].map(p=>'все «'+p+'*»');return subs.concat(pre).join(', ');};
+  const formulaHtml=`<div style="margin:0 24px 16px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:10.5px;color:var(--text2);line-height:1.7">
+    <b style="color:#9333ea">CPO</b> = (${fmlList('cpo')}) ÷ кол-во сделок («Дата входа в стадию "Полная/частичная оплата"»)<br>
+    <b style="color:#16a34a">CPF</b> = (${fmlList('cpf')}) ÷ завершённые дела («Дата завершения сделки», только стадии «Акты подписаны»)<br>
+    <span style="color:var(--text3)">Расходы — списания по дате ОПиУ выбранного направления. Клик по сумме расходов — детальная расшифровка строк.</span>
+  </div>`;
+
+  el.innerHTML=filterBar+kpiHtml+chartHtml+tableWrap+formulaHtml;
+
+  // График динамики
+  if(window._mktChartDyn){try{window._mktChartDyn.destroy();}catch(e){}window._mktChartDyn=null;}
+  const cvs=document.getElementById('mktChartDyn');
+  if(cvs&&window.Chart){
+    const cpoData=periods.map(pk=>metricAt('cpo','orders',pk));
+    const cpfData=periods.map(pk=>metricAt('cpf','fulfilled',pk));
+    window._mktChartDyn=new Chart(cvs,{type:'line',
+      data:{labels:periods,datasets:[
+        {label:'CPO — стоимость сделки',data:cpoData,borderColor:'#9333ea',backgroundColor:'#9333ea',tension:.3,spanGaps:true,pointRadius:4},
+        {label:'CPF — стоимость исполнения',data:cpfData,borderColor:'#16a34a',backgroundColor:'#16a34a',tension:.3,spanGaps:true,pointRadius:4}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:10,padding:8}},
+          tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')}}},
+        scales:{x:{grid:{display:false},ticks:{font:{size:10}}},
+          y:{grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}}}}});
+  }
 }
+// Расшифровка расходов метрики за период — в формате окна ДДС + сводка по подстатьям
+window.mktShowCostModal=function(metric,pk){
+  const rows=(window._mktTxn||{})[metric+'|'+pk]||[];
+  if(!rows.length)return;
+  window._mktTxnCur=rows;
+  const c=v=>String(v||'').trim();
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const n0=v=>Math.round(Math.abs(v)).toLocaleString('ru-RU');
+  const total=rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
+  // Сводка по подстатьям
+  const bySub={};
+  rows.forEach(r=>{const s=c(r[COL.ARTICLE_NAME])||'Без подстатьи';bySub[s]=(bySub[s]||0)+parseNum(r[COL.OUTCOME]);});
+  const subChips=Object.entries(bySub).sort((a,b)=>a[1]-b[1]).map(([s,v])=>
+    `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:10px;font-size:10px;background:var(--surface2);border:1px solid var(--border)"><b>${s}</b><span style="color:var(--outcome);font-weight:700">${n0(v)}</span><span style="color:var(--text3)">${fmtPct(Math.abs(v)/Math.abs(total))}</span></span>`).join(' ');
+  const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
+  const thead=`<tr style="position:sticky;top:0;z-index:1">
+    ${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}
+    ${TH('Поступление','6%','right','var(--income)')}${TH('Списание','6%','right','var(--outcome)')}
+    ${TH('ФНС','3%','center')}${TH('Реквизиты счёта','9%')}${TH('Статья','7%')}${TH('Подстатья','7%')}
+    ${TH('Аналитика','5%','center')}${TH('Контрагент','9%')}${TH('Назначение','12%')}${TH('Направление','8%')}${TH('Фин. операция','8%')}
+  </tr>`;
+  const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
+  const body=rows.map((row,i)=>{
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="ddsShowRecordCard(window._mktTxnCur[${i}])">
+      ${TD(ds(row[COL.DATE_DDS]),'text-align:center')}
+      ${TD(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}
+      ${TD(c(row[COL.TYPE]),'text-align:center')}
+      ${TD(c(row[COL.OFFER_ID]))}
+      ${TD(inc?f2(inc):'','text-align:right;'+(inc>0?'color:var(--income)':''))}
+      ${TD(out?f2(out):'','text-align:right;'+(out<0?'color:var(--outcome)':''))}
+      ${TD(c(row[COL.FNS]),'text-align:center')}
+      ${TD(c(row[COL.ACCOUNT]))}
+      ${TD(c(row[COL.ARTICLE_CODE]))}
+      ${TD(c(row[COL.ARTICLE_NAME]))}
+      ${TD(c(row[COL.ANALYTICS]),'text-align:center')}
+      ${TD(c(row[COL.SECOND_SIDE]))}
+      ${TD(c(row[COL.PURPOSE]))}
+      ${TD(c(row[COL.ACTIVITY_DIR]))}
+      ${TD(c(row[COL.FIN_OP]))}
+    </tr>`;
+  }).join('');
+  const overlay=document.createElement('div');
+  overlay.className='txn-card-overlay';
+  overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:13px;font-weight:700;color:var(--text)">🧮 Расходы ${metric.toUpperCase()} · ${pk}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px">Что бралось в расчёт метрики за период</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:12px;color:var(--outcome);font-weight:800">ИТОГО ${n0(total)}</span>
+        <span style="font-size:10px;color:var(--text3)">${rows.length} строк</span>
+        <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
+      </div>
+    </div>
+    <div style="padding:8px 18px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px;flex-shrink:0">${subChips}</div>
+    <div style="overflow:auto;flex:1">
+      <table style="border-collapse:collapse;width:100%;table-layout:fixed">
+        <thead>${thead}</thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+};
 
 (function init(){
   const{sheetId,apiKey}=loadSavedCredentials();
