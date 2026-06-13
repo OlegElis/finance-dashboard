@@ -4337,7 +4337,7 @@ function renderMarketing(f){
     <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Динамика стоимости по периодам</div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
       <div><div style="font-size:11px;font-weight:600;margin-bottom:4px;text-align:center"><span style="color:#0ea5e9">CPMT - встреча</span> · <span style="color:#0e7490">CPMT по ФОТ</span></div><div style="height:240px"><canvas id="mktChartMeet"></canvas></div></div>
-      <div><div style="font-size:11px;font-weight:600;margin-bottom:4px;text-align:center"><span style="color:#9333ea">CPO - сделка</span> · <span style="color:#6b21a8">CPO по ФОТ</span></div><div style="height:240px"><canvas id="mktChartCpo"></canvas></div></div>
+      <div><div style="font-size:11px;font-weight:600;margin-bottom:4px;text-align:center"><span style="color:#9333ea">CPO</span> · <span style="color:#6b21a8">CPO по ФОТ</span> · <span style="color:#0891b2">Конверсия %</span></div><div style="height:240px"><canvas id="mktChartCpo"></canvas></div></div>
       <div><div style="font-size:11px;font-weight:600;color:#16a34a;margin-bottom:4px;text-align:center">CPF - стоимость исполнения</div><div style="height:240px"><canvas id="mktChartCpf"></canvas></div></div>
     </div>
     <div id="mkt-chart-note" style="font-size:10px;color:#9a6700;margin-top:4px"></div>
@@ -4439,11 +4439,12 @@ function renderMarketing(f){
     const parts=pk.split(' ');const mi=MONTHS_FULL.indexOf(parts[0]);return`${mi>=0?SHORT_M[mi]:parts[0]} '${String(parts[1]||'').slice(2)}`;
   };
   const chartLabels=periods.map(shortPK);
-  // series: [{metric,field,color,label}] - на один холст можно вынести несколько метрик (CPMT + CPO)
+  // series: [{metric,field,color,label}] или {valueFn,pct:true} - можно вынести несколько метрик + линию % (конверсия) на правой оси
   const buildDyn=(canvasId,series)=>{
     const cvs=document.getElementById(canvasId);if(!cvs||!window.Chart)return null;
-    const datasets=series.map(s=>({label:s.label,data:periods.map(pk=>metricAt(s.metric,s.field,pk)),borderColor:s.color,backgroundColor:s.color,tension:.3,spanGaps:true,pointRadius:3}));
-    const valid=datasets.flatMap(d=>d.data).filter(v=>v!=null&&v>0).sort((a,b)=>a-b);
+    const datasets=series.map(s=>({label:s.label,data:periods.map(pk=>s.valueFn?s.valueFn(pk):metricAt(s.metric,s.field,pk)),borderColor:s.color,backgroundColor:s.color,tension:.3,spanGaps:true,pointRadius:3,_pct:!!s.pct,yAxisID:s.pct?'y1':'y',borderDash:s.pct?[5,4]:undefined}));
+    const hasPct=datasets.some(d=>d._pct);
+    const valid=datasets.filter(d=>!d._pct).flatMap(d=>d.data).filter(v=>v!=null&&v>0).sort((a,b)=>a-b);
     let yMax;
     if(valid.length>=3){const med=valid[Math.floor(valid.length/2)];const max=valid[valid.length-1];if(max>med*3)yMax=Math.ceil(med*2.5/1000)*1000;}
     if(yMax!=null&&valid.some(v=>v>yMax))anyClip=true;
@@ -4458,7 +4459,10 @@ function renderMarketing(f){
         ds.data.forEach((v,i)=>{
           if(v==null||!meta.data[i])return;
           ctx.fillStyle=ds.borderColor;
-          if(yMax!=null&&v>yMax){ // пик выше шкалы - над графиком
+          if(ds._pct){ // конверсия - подпись в %
+            ctx.textBaseline='bottom';
+            ctx.fillText(Math.round(v*100)+'%',meta.data[i].x,meta.data[i].y-7);
+          }else if(yMax!=null&&v>yMax){ // пик выше шкалы - над графиком
             ctx.textBaseline='top';
             ctx.fillText('▲ '+abbr(v),meta.data[i].x,top+2);
           }else{ // обычная точка: 1-я линия - подпись сверху, 2-я - снизу (чтобы не накладывались)
@@ -4476,12 +4480,13 @@ function renderMarketing(f){
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         layout:{padding:{top:16,bottom:multi?12:2}},
         plugins:{legend:{display:false},
-          tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>`${c.dataset.label}: `+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
+          tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>c.dataset._pct?`${c.dataset.label}: ${c.raw!=null?Math.round(c.raw*100)+'%':'—'}`:`${c.dataset.label}: `+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
         scales:{x:{grid:{display:false},ticks:{font:{size:9},autoSkip:true,maxRotation:45,minRotation:0}},
-          y:{beginAtZero:true,max:yMax,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}}}}});
+          y:{beginAtZero:true,max:yMax,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}},
+          ...(hasPct?{y1:{position:'right',beginAtZero:true,max:1,grid:{drawOnChartArea:false},ticks:{font:{size:9},color:'#0891b2',callback:v=>Math.round(v*100)+'%'}}}:{})}}});
   };
   window._mktChartMeet=buildDyn('mktChartMeet',[{metric:'meet',field:'meetings',color:'#0ea5e9',label:'CPMT'},{metric:'meetFot',field:'meetings',color:'#0e7490',label:'CPMT по ФОТ'}]);
-  window._mktChartCpo=buildDyn('mktChartCpo',[{metric:'cpo',field:'orders',color:'#9333ea',label:'CPO'},{metric:'cpoFot',field:'orders',color:'#6b21a8',label:'CPO по ФОТ'}]);
+  window._mktChartCpo=buildDyn('mktChartCpo',[{metric:'cpo',field:'orders',color:'#9333ea',label:'CPO'},{metric:'cpoFot',field:'orders',color:'#6b21a8',label:'CPO по ФОТ'},{valueFn:pk=>convAt(pk),color:'#0891b2',label:'Конверсия встреча→сделка',pct:true}]);
   window._mktChartCpf=buildDyn('mktChartCpf',[{metric:'cpf',field:'fulfilled',color:'#16a34a',label:'CPF'}]);
   const note=document.getElementById('mkt-chart-note');
   if(note)note.textContent=anyClip?'⚠ Шкала ограничена для читаемости при выбросах - пиковое значение подписано числом над графиком (▲)':'';
