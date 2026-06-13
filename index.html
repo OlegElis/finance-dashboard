@@ -779,12 +779,23 @@ async function loadBflDeals(sheetId,apiKey){
     if(iLead<0&&iPaid<0&&iDone<0&&iOffer<0)return;
     // Завершённым (для CPF) считается дело только в этих стадиях
     const DONE_STAGES=['производство. акты подписаны, работы завершены','отдел сопровождения. акты подписаны'];
+    // Тех. специалисты — исключаются из статистики (кол-во лидов/встреч/сделок/завершений) по «Ответственный (текст)»
+    const EXCL_RESP_EXACT=['павличенко елизавета сергеевна','шелков александр сергеевич'];
+    const EXCL_RESP_PREFIX=['гагарина варвара'];
+    const isExclResp=r=>{
+      const resp=(iResp>=0?String(r[iResp]||''):'').toLowerCase().trim().replace(/\s+/g,' ');
+      if(!resp)return false;
+      return EXCL_RESP_EXACT.includes(resp)||EXCL_RESP_PREFIX.some(p=>resp.startsWith(p));
+    };
+    let exclCnt=0;
     const leads=[],paid=[],done=[],meetings=[],deals=[];
     rows.slice(1).forEach(r=>{
-      if(iLead>=0){const d=parseDate(r[iLead]);if(d)leads.push(d);}
-      if(iCreatedDeal>=0){const d=parseDate(r[iCreatedDeal]);if(d)meetings.push(d);} // встреча = «Дата создания сделки»
-      if(iPaid>=0){const d=parseDate(r[iPaid]);if(d)paid.push(d);}
-      if(iDone>=0){
+      const excl=isExclResp(r); // тех. специалист — не учитываем в статистике количеств (но в дебиторку deals[] попадает)
+      if(excl)exclCnt++;
+      if(!excl&&iLead>=0){const d=parseDate(r[iLead]);if(d)leads.push(d);}
+      if(!excl&&iCreatedDeal>=0){const d=parseDate(r[iCreatedDeal]);if(d)meetings.push(d);} // встреча = «Дата создания сделки»
+      if(!excl&&iPaid>=0){const d=parseDate(r[iPaid]);if(d)paid.push(d);}
+      if(!excl&&iDone>=0){
         const d=parseDate(r[iDone]);
         const stage=iStage>=0?String(r[iStage]||'').toLowerCase().trim():'';
         if(d&&DONE_STAGES.includes(stage))done.push(d);
@@ -805,7 +816,7 @@ async function loadBflDeals(sheetId,apiKey){
       }
     });
     RAW_BFL={leads,paid,done,meetings,deals};
-    console.log(`[RawData_BFL] загружено: лидов ${leads.length}, встреч ${meetings.length}, оплат ${paid.length}, завершено ${done.length}, сделок ${deals.length}`);
+    console.log(`[RawData_BFL] загружено: лидов ${leads.length}, встреч ${meetings.length}, оплат ${paid.length}, завершено ${done.length}, сделок ${deals.length}; исключено тех.спец. строк ${exclCnt}`);
   }catch(e){console.warn('[RawData_BFL] не загружен:',e.message);}
 }
 
@@ -4138,11 +4149,11 @@ function renderMarketing(f){
     const pk=getPK(row);if(!pk)return;
     const out=parseNum(row[COL.OUTCOME]);if(out>=0)return;
     const sub=String(row[COL.ARTICLE_NAME]||'').trim();
-    periodsSet.add(pk);
     ['cpf','cpl','cpo'].forEach(m=>{
       if(mktMatch(m,sub)){
         costs[m][pk]=(costs[m][pk]||0)+out;
         (window._mktTxn[m+'|'+pk]=window._mktTxn[m+'|'+pk]||[]).push(row);
+        periodsSet.add(pk); // период попадает в отчёт только если есть маркетинговый расход (не любое списание)
       }
     });
   });
@@ -4333,6 +4344,14 @@ function renderMarketing(f){
   // Графики динамики — CPO и CPF раздельно, у каждого своя шкала
   ['_mktChartCpo','_mktChartCpf'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
   let anyClip=false;
+  // Короткие подписи оси X, чтобы много периодов влезало («Янв '26» вместо «Январь 2026»); полное имя — в тултипе
+  const SHORT_M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const shortPK=pk=>{
+    if(mode==='year')return pk;
+    if(mode==='quarter'){const[q,y]=pk.split(' ');return`${q} '${String(y).slice(2)}`;}
+    const parts=pk.split(' ');const mi=MONTHS_FULL.indexOf(parts[0]);return`${mi>=0?SHORT_M[mi]:parts[0]} '${String(parts[1]||'').slice(2)}`;
+  };
+  const chartLabels=periods.map(shortPK);
   const buildDyn=(canvasId,metric,field,color)=>{
     const cvs=document.getElementById(canvasId);if(!cvs||!window.Chart)return null;
     const data=periods.map(pk=>metricAt(metric,field,pk));
@@ -4341,11 +4360,11 @@ function renderMarketing(f){
     if(valid.length>=3){const med=valid[Math.floor(valid.length/2)];const max=valid[valid.length-1];if(max>med*3)yMax=Math.ceil(med*2.5/1000)*1000;}
     if(yMax!=null&&valid.some(v=>v>yMax))anyClip=true;
     return new Chart(cvs,{type:'line',
-      data:{labels:periods,datasets:[{label:metric.toUpperCase(),data,borderColor:color,backgroundColor:color,tension:.3,spanGaps:true,pointRadius:4}]},
+      data:{labels:chartLabels,datasets:[{label:metric.toUpperCase(),data,borderColor:color,backgroundColor:color,tension:.3,spanGaps:true,pointRadius:4}]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         plugins:{legend:{display:false},
-          tooltip:{callbacks:{label:c=>(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
-        scales:{x:{grid:{display:false},ticks:{font:{size:10}}},
+          tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
+        scales:{x:{grid:{display:false},ticks:{font:{size:9},autoSkip:true,maxRotation:45,minRotation:0}},
           y:{beginAtZero:true,max:yMax,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}}}}});
   };
   window._mktChartCpo=buildDyn('mktChartCpo','cpo','orders','#9333ea');
