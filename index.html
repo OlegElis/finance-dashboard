@@ -4106,10 +4106,9 @@ const MKT_SUBART={
   cpo:['111_Заработная плата АО','111_Заработная плата КО','111_Заработная плата КО2',
        '111_Заработная плата ОМ','111_Заработная плата ОП','226_Контроль качества']
 };
-// ФОТ-часть для CPMT/CPO «по ФОТ»: любое КО (колл-центр: КО, КО2, …) + ОМ (отдел маркетинга)
-const MKT_FOT_SUBART=['111_Заработная плата ОМ'];          // точное совпадение
-const MKT_FOT_PREFIX=['111_Заработная плата КО'];           // префикс — любое КО
-const mktFotMatch=sub=>MKT_FOT_SUBART.includes(sub)||MKT_FOT_PREFIX.some(p=>sub.startsWith(p));
+// ФОТ-часть «по ФОТ»: встреча (CPMT) = любое КО (колл-центр) + ОМ (маркетинг); сделка (CPO) = + ОП (отдел продаж)
+const mktFotMeetMatch=sub=>sub==='111_Заработная плата ОМ'||sub.startsWith('111_Заработная плата КО');
+const mktFotCpoMatch=sub=>mktFotMeetMatch(sub)||sub==='111_Заработная плата ОП';
 // Префиксы подстатей: 300_* = вся статья «Реклама / маркетинг» (Лидогенерация, Агенты, Медиа и т.д.)
 const MKT_PREFIX={cpl:['300_'],cpo:['300_'],cpf:[]};
 const mktMatch=(metric,sub)=>MKT_SUBART[metric].includes(sub)||MKT_PREFIX[metric].some(p=>sub.startsWith(p));
@@ -4200,7 +4199,7 @@ function renderMarketing(f){
   };
 
   // Агрегируем расходы по подстатьям + сохраняем строки для расшифровки (клик по «Расходы»)
-  const costs={cpf:{},cpl:{},cpo:{},cpoFot:{}};
+  const costs={cpf:{},cpl:{},cpo:{},cpoFot:{},meetFot:{}};
   const periodsSet=new Set();
   window._mktTxn={};
   baseData.forEach(row=>{
@@ -4214,16 +4213,18 @@ function renderMarketing(f){
         periodsSet.add(pk); // период попадает в отчёт только если есть маркетинговый расход (не любое списание)
       }
     });
-    // ФОТ-часть воронки = ЗП любого КО (колл-центр) и ОМ (отдел маркетинга)
-    if(mktFotMatch(sub)){
+    // ФОТ-часть: встреча = КО + ОМ; сделка = КО + ОМ + ОП (КО/ОМ попадают в оба бакета)
+    if(mktFotMeetMatch(sub)){
+      costs.meetFot[pk]=(costs.meetFot[pk]||0)+out;
+      (window._mktTxn['meetFot|'+pk]=window._mktTxn['meetFot|'+pk]||[]).push(row);
+    }
+    if(mktFotCpoMatch(sub)){
       costs.cpoFot[pk]=(costs.cpoFot[pk]||0)+out;
       (window._mktTxn['cpoFot|'+pk]=window._mktTxn['cpoFot|'+pk]||[]).push(row);
     }
   });
   // СВ (стоимость встречи) использует те же расходы воронки продаж, что и CPO, делённые на число встреч
   costs.meet=costs.cpo;
-  // Варианты «по ФОТ»: те же знаменатели (встречи/сделки), но в расходах — только зарплаты 111_*
-  costs.meetFot=costs.cpoFot;
 
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
 
@@ -4320,7 +4321,7 @@ function renderMarketing(f){
     ${kpiCard('meet','meetings','CPMT — стоимость встречи','#0ea5e9')}
     ${kpiCard('meetFot','meetings','CPMT по ФОТ — встреча (ЗП КО+ОМ)','#0e7490')}
     ${kpiCard('cpo','orders','CPO — стоимость сделки','#9333ea')}
-    ${kpiCard('cpoFot','orders','CPO по ФОТ — сделка (ЗП КО+ОМ)','#6b21a8')}
+    ${kpiCard('cpoFot','orders','CPO по ФОТ — сделка (ЗП КО+ОМ+ОП)','#6b21a8')}
     ${kpiCard('cpf','fulfilled','CPF — стоимость исполнения','#16a34a')}
     ${convCard()}
   </div>`;
@@ -4328,8 +4329,9 @@ function renderMarketing(f){
   // График динамики CPO/CPF
   const chartHtml=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:12px 24px">
     <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Динамика стоимости по периодам</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
       <div><div style="font-size:11px;font-weight:600;margin-bottom:4px;text-align:center"><span style="color:#0ea5e9">CPMT — встреча</span> · <span style="color:#9333ea">CPO — сделка</span></div><div style="height:240px"><canvas id="mktChartCpo"></canvas></div></div>
+      <div><div style="font-size:11px;font-weight:600;margin-bottom:4px;text-align:center"><span style="color:#0e7490">CPMT по ФОТ</span> · <span style="color:#6b21a8">CPO по ФОТ</span></div><div style="height:240px"><canvas id="mktChartFot"></canvas></div></div>
       <div><div style="font-size:11px;font-weight:600;color:#16a34a;margin-bottom:4px;text-align:center">CPF — стоимость исполнения</div><div style="height:240px"><canvas id="mktChartCpf"></canvas></div></div>
     </div>
     <div id="mkt-chart-note" style="font-size:10px;color:#9a6700;margin-top:4px"></div>
@@ -4395,7 +4397,7 @@ function renderMarketing(f){
     ${mkMetricRows('meet','CPMT — Стоимость встречи (Cost Per Meeting)','meetings','Количество встреч','#0ea5e9','#eef7fc')}
     ${mkMetricRows('meetFot','CPMT по ФОТ — стоимость встречи (ЗП КО колл-центр + ОМ маркетинг)','meetings','Количество встреч','#0e7490','#e6f3f6')}
     ${mkMetricRows('cpo','CPO — Cost Per Order','orders','Количество сделок','#9333ea','#f7f0fd')}
-    ${mkMetricRows('cpoFot','CPO по ФОТ — стоимость сделки (ЗП КО колл-центр + ОМ маркетинг)','orders','Количество сделок','#6b21a8','#f1ebf9')}
+    ${mkMetricRows('cpoFot','CPO по ФОТ — стоимость сделки (ЗП КО колл-центр + ОМ маркетинг + ОП продажи)','orders','Количество сделок','#6b21a8','#f1ebf9')}
     ${convRows()}
     ${mkMetricRows('cpf','CPF — Cost Per Fulfillment','fulfilled','Завершённых дел','#16a34a','#edf7f0')}
   </tbody>`;
@@ -4411,7 +4413,8 @@ function renderMarketing(f){
   const formulaHtml=`<div style="margin:0 24px 16px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:10.5px;color:var(--text2);line-height:1.7">
     <b style="color:#0ea5e9">CPMT</b> (Cost Per Meeting, стоимость встречи) = (те же расходы воронки, что у CPO) ÷ кол-во встреч («Дата создания сделки»)<br>
     <b style="color:#9333ea">CPO</b> = (${fmlList('cpo')}) ÷ кол-во сделок («Дата входа в стадию "Полная/частичная оплата"»)<br>
-    <b style="color:#0e7490">CPMT по ФОТ</b> / <b style="color:#6b21a8">CPO по ФОТ</b> = (только ЗП КО колл-центр + ОМ отдел маркетинга, без рекламы и прочих ЗП) ÷ кол-во встреч / сделок<br>
+    <b style="color:#0e7490">CPMT по ФОТ</b> = (ЗП КО колл-центр + ОМ маркетинг) ÷ кол-во встреч<br>
+    <b style="color:#6b21a8">CPO по ФОТ</b> = (ЗП КО колл-центр + ОМ маркетинг + ОП отдел продаж) ÷ кол-во сделок<br>
     <b style="color:#0891b2">Конверсия встреча→сделка</b> = кол-во сделок ÷ кол-во встреч &nbsp;(CPO = CPMT ÷ конверсия)<br>
     <b style="color:#16a34a">CPF</b> = (${fmlList('cpf')}) ÷ завершённые дела («Дата завершения сделки», только стадии «Акты подписаны»)<br>
     <span style="color:var(--text3)">Расходы — списания по дате ОПиУ выбранного направления. Клик по сумме расходов — детальная расшифровка строк.</span>
@@ -4420,7 +4423,7 @@ function renderMarketing(f){
   el.innerHTML=filterBar+kpiHtml+chartHtml+tableWrap+formulaHtml;
 
   // Графики динамики — CPO и CPF раздельно, у каждого своя шкала
-  ['_mktChartCpo','_mktChartCpf'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
+  ['_mktChartCpo','_mktChartCpf','_mktChartFot'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
   let anyClip=false;
   // Короткие подписи оси X, чтобы много периодов влезало («Янв '26» вместо «Январь 2026»); полное имя — в тултипе
   const SHORT_M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
@@ -4472,6 +4475,7 @@ function renderMarketing(f){
           y:{beginAtZero:true,max:yMax,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}}}}});
   };
   window._mktChartCpo=buildDyn('mktChartCpo',[{metric:'meet',field:'meetings',color:'#0ea5e9',label:'CPMT (встреча)'},{metric:'cpo',field:'orders',color:'#9333ea',label:'CPO (сделка)'}]);
+  window._mktChartFot=buildDyn('mktChartFot',[{metric:'meetFot',field:'meetings',color:'#0e7490',label:'CPMT по ФОТ'},{metric:'cpoFot',field:'orders',color:'#6b21a8',label:'CPO по ФОТ'}]);
   window._mktChartCpf=buildDyn('mktChartCpf',[{metric:'cpf',field:'fulfilled',color:'#16a34a',label:'CPF'}]);
   const note=document.getElementById('mkt-chart-note');
   if(note)note.textContent=anyClip?'⚠ Шкала ограничена для читаемости при выбросах — пиковое значение подписано числом над графиком (▲)':'';
@@ -4479,8 +4483,7 @@ function renderMarketing(f){
 // Расшифровка расходов метрики за период — в формате окна ДДС + сводка по подстатьям
 window.mktShowCostModal=function(metric,pk){
   if(metric==='meet')metric='cpo'; // СВ использует те же расходы, что и CPO
-  if(metric==='meetFot')metric='cpoFot'; // CPMT по ФОТ использует ту же ФОТ-часть расходов, что и CPO по ФОТ
-  const METRIC_NAME={cpo:'CPO',cpf:'CPF',cpl:'CPL',cpoFot:'CPO·ФОТ'}[metric]||metric.toUpperCase();
+  const METRIC_NAME={cpo:'CPO',cpf:'CPF',cpl:'CPL',cpoFot:'CPO·ФОТ',meetFot:'CPMT·ФОТ'}[metric]||metric.toUpperCase();
   const rows=(window._mktTxn||{})[metric+'|'+pk]||[];
   if(!rows.length)return;
   window._mktTxnCur=rows;
