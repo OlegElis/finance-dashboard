@@ -4708,10 +4708,14 @@ function renderLoans(f){
   shown.sort((a,b)=>b.balance-a.balance);
   window._loanRows=shown;
 
+  const today=new Date();today.setHours(0,0,0,0);
+  const daysB=(a,b)=>Math.floor((b-a)/86400000);
   const dsF=d=>d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';
-  const statusOf=x=>x.issued<=0?{t:'-',c:'var(--text3)'}:x.balance<=0.005?{t:'Погашен',c:'var(--income)'}:x.repaid>0?{t:'Частично',c:'#e87c25'}:{t:'Не возвращал',c:'var(--outcome)'};
+  const C_PAID='#2e9e6b',C_PART='#e0894a',C_NONE='#d35450';
+  const statusOf=x=>x.issued<=0?{t:'-',c:'var(--text3)'}:x.balance<=0.005?{t:'Погашен',c:C_PAID}:x.repaid>0?{t:'Частично',c:C_PART}:{t:'Не возвращал',c:C_NONE};
+  const agingOf=x=>{if(x.balance<=0.005)return null;const ref=x.lastRepay||x.lastIssue;return ref?daysB(ref,today):null;};
+  const agingColor=d=>d==null?'var(--text3)':d<=30?C_PAID:d<=90?C_PART:C_NONE;
 
-  const lblS='color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase';
   const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
     <div class="date-range"><input type="date" value="${f.dateFrom}" onchange="_tabFilters.loans.dateFrom=this.value;renderLoans(getFilters())"><span class="date-range-sep">-</span><input type="date" value="${f.dateTo}" onchange="_tabFilters.loans.dateTo=this.value;renderLoans(getFilters())"></div>
     <input type="text" value="${esc(f.search).replace(/"/g,'&quot;')}" placeholder="Поиск сотрудника..." oninput="_tabFilters.loans.search=this.value;clearTimeout(window._loanT);window._loanT=setTimeout(()=>renderLoans(getFilters()),300)" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);width:240px">
@@ -4719,57 +4723,72 @@ function renderLoans(f){
       <input type="checkbox" ${onlyDebt?'checked':''} onchange="_tabFilters.loans.onlyDebt=this.checked;renderLoans(getFilters())" style="cursor:pointer;margin:0"> Только непогашенные</label>
   </div>`;
 
-  if(!items.length){el.innerHTML=filterBar+emptyState('Займы сотрудникам не найдены','Не найдено операций по подстатье со словами «займ» и «сотрудник». Проверьте название подстатьи в учёте.');return;}
+  if(!items.length){el.innerHTML=filterBar+emptyState('Займы сотрудникам не найдены','Не найдено операций по кассе со словами «займ» и «сотрудник» в реквизитах счёта.');return;}
 
   const totIssued=shown.reduce((s,x)=>s+x.issued,0);
   const totRepaid=shown.reduce((s,x)=>s+x.repaid,0);
   const totBalance=shown.reduce((s,x)=>s+Math.max(0,x.balance),0);
-  const debtCount=shown.filter(x=>x.balance>0.005).length;
+  const cntPaid=shown.filter(x=>x.issued>0&&x.balance<=0.005).length;
+  const cntPart=shown.filter(x=>x.balance>0.005&&x.repaid>0).length;
+  const cntNone=shown.filter(x=>x.balance>0.005&&x.repaid<=0).length;
+  const chip=(c,n,lbl)=>`<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;white-space:nowrap"><span style="width:9px;height:9px;border-radius:50%;background:${c};flex-shrink:0"></span>${lbl} <b>${n}</b></span>`;
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card blue"><div class="kpi-label">Выдано займов</div><div class="kpi-value">${fmt(totIssued)}</div><div class="kpi-sub">${shown.length.toLocaleString('ru-RU')} сотр. в выборке</div></div>
     <div class="kpi-card green"><div class="kpi-label">Возвращено</div><div class="kpi-value positive">${fmt(totRepaid)}</div><div class="kpi-sub">${totIssued?fmtPct(totRepaid/totIssued):''} от выданного</div></div>
     <div class="kpi-card red"><div class="kpi-label">Остаток (непогашено)</div><div class="kpi-value negative">${fmt(totBalance)}</div><div class="kpi-sub">${totIssued?fmtPct(totBalance/totIssued):''} от выданного</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Сотрудников с займами</div><div class="kpi-value">${shown.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">${debtCount?'непогашено у: '+debtCount:'всё погашено'}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Статусы (${shown.length} сотр.)</div><div style="display:flex;flex-direction:column;gap:3px;margin-top:5px">${chip(C_PAID,cntPaid,'Погашено')}${chip(C_PART,cntPart,'Частично')}${chip(C_NONE,cntNone,'Не возвращал')}</div></div>
   </div>`;
 
-  const topDebt=shown.filter(x=>x.balance>0.005).slice(0,8);
-  const maxB=topDebt.length?topDebt[0].balance:0;
-  const ratingHtml=topDebt.length?`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:12px 0">
-    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Топ по непогашенному остатку</div>
-    ${topDebt.map(x=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
-      <div style="width:200px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.emp)}">${esc(x.emp)}</div>
-      <div style="flex:1;height:14px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${maxB?Math.round(x.balance/maxB*100):0}%;background:var(--outcome)"></div></div>
-      <div style="width:96px;text-align:right;font-size:11px;font-weight:700;color:var(--outcome)">${fmt(x.balance)}</div>
-    </div>`).join('')}
-  </div>`:'';
+  // Портфельная сводка: стопочная полоса Возвращено/Остаток + статусы
+  const pR=totIssued?totRepaid/totIssued:0,pB=totIssued?totBalance/totIssued:0;
+  const portfolioHtml=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:10px 0;box-shadow:var(--shadow)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+      <span style="font-size:12px;font-weight:600;color:var(--text2)">Портфель займов</span>
+      <span style="font-size:11px;color:var(--text3)">Выдано всего ${fmt(totIssued)}</span>
+    </div>
+    <div style="display:flex;height:24px;border-radius:6px;overflow:hidden;background:var(--surface2);font-size:10px;color:#fff;font-weight:700">
+      ${pR>0.001?`<div title="Возвращено" style="width:${(pR*100).toFixed(1)}%;background:${C_PAID};display:flex;align-items:center;justify-content:center;overflow:hidden">${pR>0.08?fmtPct(pR):''}</div>`:''}
+      ${pB>0.001?`<div title="Непогашено" style="width:${(pB*100).toFixed(1)}%;background:${C_PART};display:flex;align-items:center;justify-content:center;overflow:hidden">${pB>0.08?fmtPct(pB):''}</div>`:''}
+    </div>
+    <div style="display:flex;gap:18px;margin-top:10px;flex-wrap:wrap;font-size:11px;align-items:center">
+      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:2px;background:${C_PAID}"></span>Возвращено <b>${fmt(totRepaid)}</b> <span style="color:var(--text3)">${fmtPct(pR)}</span></span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:2px;background:${C_PART}"></span>Непогашено <b>${fmt(totBalance)}</b> <span style="color:var(--text3)">${fmtPct(pB)}</span></span>
+      <span style="margin-left:auto;display:flex;gap:14px">${chip(C_PAID,cntPaid,'Погашено')}${chip(C_PART,cntPart,'Частично')}${chip(C_NONE,cntNone,'Не возвращал')}</span>
+    </div>
+  </div>`;
 
-  const thS='background:var(--surface2);position:sticky;top:0;z-index:2;padding:6px 10px;font-size:10px;font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap';
-  const tdN=(v,color)=>`<td style="padding:4px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--border);${color?'color:'+color+';':''}">${v}</td>`;
-  const bar=p=>`<div style="display:flex;align-items:center;gap:6px;min-width:120px"><div style="flex:1;height:7px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${Math.round(p*100)}%;background:${p>=1?'var(--income)':'#e87c25'}"></div></div><span style="font-size:10px;color:var(--text3);width:34px;text-align:right">${fmtPct(p)}</span></div>`;
+  const thS='background:var(--surface2);position:sticky;top:0;z-index:2;padding:7px 10px;font-size:10px;font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;color:var(--text3);text-transform:uppercase';
+  const td='padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border)';
+  const tdNum=`${td};text-align:right;font-variant-numeric:tabular-nums`;
+  const bar=p=>`<div style="display:flex;align-items:center;gap:6px;min-width:110px"><div style="flex:1;height:8px;background:var(--surface2);border-radius:5px;overflow:hidden"><div style="height:100%;width:${Math.round(Math.max(0,Math.min(1,p))*100)}%;background:${p>=1?C_PAID:p>0?C_PART:'transparent'}"></div></div><span style="font-size:10px;color:var(--text3);width:34px;text-align:right">${fmtPct(p)}</span></div>`;
+  const balCellOf=x=>x.balance>0.005
+    ? `<td style="${tdNum};font-weight:800;color:${C_NONE}">${fmt(x.balance)}</td>`
+    : x.balance<-0.005 ? `<td title="Возвращено больше выданного" style="${tdNum};font-weight:700;color:${C_PAID};background:#e8f5ee">+${fmt(-x.balance)}</td>`
+    : `<td style="${tdNum};color:var(--text3)">0</td>`;
   const LIMIT=500;
-  const rows=shown.slice(0,LIMIT).map((x,i)=>{
-    const st=statusOf(x);
-    const balCell=x.balance>0.005
-      ?tdN(fmt(x.balance),'var(--outcome)')
-      :x.balance<-0.005
-        ?`<td title="Возвращено больше выданного" style="padding:4px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--border);color:var(--income);font-weight:700;background:#e8f5ee">+${fmt(-x.balance)}</td>`
-        :tdN('0','var(--text3)');
-    return`<tr>
-      <td style="padding:4px 10px;font-size:11px;border-bottom:1px solid var(--border);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="loanShowDetail(${i})" title="Нажмите: история выдачи и возвратов">
-        <span style="color:var(--accent);font-weight:600">${esc(x.emp)}</span> <span style="font-size:9px;color:var(--accent)">↗</span>
-      </td>
-      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.firstIssue)}</td>
-      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.lastIssue)}</td>
-      ${tdN(fmt(x.issued))}
-      ${tdN(fmt(x.repaid),'var(--income)')}
-      ${balCell}
-      <td style="padding:4px 10px;border-bottom:1px solid var(--border)">${bar(x.pct)}</td>
-      <td style="padding:4px 10px;font-size:11px;text-align:center;border-bottom:1px solid var(--border)">${x.ops}</td>
-      <td style="padding:4px 10px;font-size:10px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap">${dsF(x.lastRepay)}</td>
-      <td style="padding:3px 10px;font-size:10px;border-bottom:1px solid var(--border);white-space:nowrap"><span style="padding:1px 8px;border-radius:8px;font-weight:600;color:${st.c};background:color-mix(in srgb,${st.c} 12%,transparent)">${st.t}</span></td>
+  const debtors=shown.filter(x=>x.balance>0.005);
+  const settled=shown.filter(x=>x.balance<=0.005);
+  const ordered=debtors.concat(settled);
+  window._loanRows=ordered;
+  const rowHtml=(x,i,muted)=>{
+    const st=statusOf(x),ag=agingOf(x);
+    return`<tr class="ln-row"${muted?' style="opacity:.62"':''}>
+      <td style="${td};max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="loanShowDetail(${i})" title="История выдачи и возвратов">
+        <span style="width:7px;height:7px;border-radius:50%;background:${st.c};display:inline-block;margin-right:6px"></span><span style="color:var(--accent);font-weight:600">${esc(x.emp)}</span> <span style="font-size:9px;color:var(--accent)">↗</span></td>
+      <td style="${tdNum}">${fmt(x.issued)}</td>
+      <td style="${tdNum};color:${C_PAID}">${x.repaid?fmt(x.repaid):'-'}</td>
+      ${balCellOf(x)}
+      <td style="${td}">${bar(x.pct)}</td>
+      <td style="${td};text-align:center;font-weight:600;color:${agingColor(ag)}">${ag!=null?ag+' дн.':'-'}</td>
+      <td style="${td};text-align:center;font-size:10px;white-space:nowrap;color:var(--text2)">${dsF(x.lastRepay)}</td>
+      <td style="${td};text-align:center">${x.ops}</td>
     </tr>`;
-  }).join('');
-  const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
+  };
+  let bodyRows='',rc=0;
+  for(const x of debtors){if(rc>=LIMIT)break;bodyRows+=rowHtml(x,rc,false);rc++;}
+  if(settled.length&&rc<LIMIT)bodyRows+=`<tr><td colspan="8" style="padding:5px 12px;font-size:10px;font-weight:700;color:var(--text3);background:var(--surface2);text-transform:uppercase;letter-spacing:.3px">Погашенные · ${settled.length}</td></tr>`;
+  for(const x of settled){if(rc>=LIMIT)break;bodyRows+=rowHtml(x,rc,true);rc++;}
+  const trunc=ordered.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${ordered.length.toLocaleString('ru-RU')}</div>`:'';
   // Диагностика для сверки сумм: по реквизитам счёта (кассы)
   const comboArr=Object.entries(combo).sort((a,b)=>(b[1].issued+b[1].repaid)-(a[1].issued+a[1].repaid));
   const comboIssued=comboArr.reduce((s,[,c])=>s+c.issued,0),comboRepaid=comboArr.reduce((s,[,c])=>s+c.repaid,0);
@@ -4786,25 +4805,27 @@ function renderLoans(f){
     ${looseExtra?`<div style="font-size:10px;color:var(--outcome);margin-top:4px">⚠ Ещё ${looseExtra} строк с «займ» в реквизитах счёта без «сотрудник» НЕ вошли (иная займовая касса). Если это сотрудники - пришлите точное название.</div>`:''}
   </details>`;
 
-  el.innerHTML=filterBar+kpiHtml+ratingHtml+`
-  <div class="table-wrap">
-    <div class="table-header"><span class="table-title">Займы сотрудникам</span><span class="table-count">${shown.length.toLocaleString('ru-RU')} ${onlyDebt?'с остатком':'сотрудников'}</span></div>
-    ${note}
-    <div class="table-scroll" style="max-height:calc(100vh - 320px);overflow:auto">
-      <table class="report-table" style="white-space:nowrap;width:100%">
+  const styleTag=`<style>#tabLoans .ln-row:hover{background:var(--surface2)}#tabLoans .ln-row td{transition:background .1s}</style>`;
+  el.innerHTML=styleTag+filterBar+kpiHtml+portfolioHtml+`
+  <div class="table-wrap" style="margin-top:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border)">
+      <span style="font-size:12px;font-weight:600;color:var(--text2)">Детализация по сотрудникам</span>
+      <span style="font-size:11px;color:var(--text3)">${shown.length.toLocaleString('ru-RU')} ${onlyDebt?'с остатком':'сотрудников'}</span>
+    </div>
+    <div style="padding:0 12px">${note}</div>
+    <div class="table-scroll" style="max-height:calc(100vh - 340px);overflow:auto">
+      <table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
         <thead><tr>
           <th style="text-align:left;${thS}">Сотрудник (контрагент)</th>
-          <th style="text-align:center;${thS}">Первая выдача</th>
-          <th style="text-align:center;${thS}">Последняя выдача</th>
           <th style="text-align:right;${thS}">Выдано</th>
           <th style="text-align:right;${thS}">Возвращено</th>
           <th style="text-align:right;${thS}">Остаток</th>
           <th style="text-align:left;${thS}">Погашение</th>
-          <th style="text-align:center;${thS}">Опер.</th>
+          <th style="text-align:center;${thS}" title="Дней с последнего возврата (или с выдачи, если возвратов не было)">Без возврата</th>
           <th style="text-align:center;${thS}">Послед. возврат</th>
-          <th style="text-align:left;${thS}">Статус</th>
+          <th style="text-align:center;${thS}">Опер.</th>
         </tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${bodyRows}</tbody>
       </table>
     </div>
     ${trunc}
