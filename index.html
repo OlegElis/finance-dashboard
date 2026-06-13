@@ -2632,16 +2632,29 @@ function renderFOT(f){
     return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:520px;margin-top:2px">${search}${head}${list}</div>`;
   };
   const fotBtnLabel=(sel,def)=>(sel.length?sel.length+' выбрано':def)+' ▾';
-  const fotExtraFilters=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Статья:</label>
+  // Единый фильтр-бар ФОТ в одну строку (без пресетов): даты / Период / Детализация / Статья / Подстатья / Сотрудник
+  const fotCmpOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
+  const fotDetOpts=[{v:'direction',l:'По направлению'},{v:'subarticle',l:'По подстатье'},{v:'counterparty',l:'По контрагенту'}];
+  const fotLbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
+  const fotExtraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
+    <div class="date-range">
+      <input type="date" value="${f.dateFrom}" onchange="_tabFilters['fot'].dateFrom=this.value;renderFOT(getFilters())">
+      <span class="date-range-sep">—</span>
+      <input type="date" value="${f.dateTo}" onchange="_tabFilters['fot'].dateTo=this.value;renderFOT(getFilters())">
+    </div>
+    ${fotLbl('Период:')}
+    <select class="filter-extra-sel" onchange="_tabFilters['fot'].periodType=this.value;renderFOT(getFilters())">${fotCmpOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
+    ${fotLbl('Детализация:')}
+    <select class="filter-extra-sel" onchange="_tabFilters['fot'].fotDetail=this.value;renderFOT(getFilters())">${fotDetOpts.map(o=>`<option value="${o.v}"${detail===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
+    ${fotLbl('Статья:')}
     <div style="position:relative;display:inline-block"><button id="fot-art-btn" onclick="fotArtToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:90px;text-align:left">${fotBtnLabel(selArts,'Все')}</button>${mkFotDD('fot-art-dd',fotAllArts,selArts,'fotArt')}</div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Подстатья:</label>
+    ${fotLbl('Подстатья:')}
     <div style="position:relative;display:inline-block"><button id="fot-sub-btn" onclick="fotSubToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:90px;text-align:left">${fotBtnLabel(selSubs,'Все')}</button>${mkFotDD('fot-sub-dd',fotAllSubs,selSubs,'fotSub')}</div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Сотрудник / контрагент:</label>
+    ${fotLbl('Сотрудник / контрагент:')}
     <div style="position:relative;display:inline-block"><button id="fot-cp-btn" onclick="fotCpToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:90px;text-align:left">${fotBtnLabel(selCps,'Все')}</button>${mkFotDD('fot-cp-dd',fotAllCps,selCps,'fotCp')}</div>
     ${(selArts.length||selSubs.length||selCps.length)?`<button onclick="fotResetExtra()" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сброс</button>`:''}
   </div>`;
-  if(!data.length){el.innerHTML=renderFilterBar('fot')+fotExtraFilters+emptyState('Нет данных ФОТ','Измените фильтры');return;}
+  if(!data.length){el.innerHTML=fotExtraFilters+emptyState('Нет данных ФОТ','Измените фильтры');return;}
   // Период по DATE_OPIU
   const getFotPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(mode==='year')return String(y);if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
   const periodsSet=new Set(),psk={};
@@ -2697,7 +2710,7 @@ function renderFOT(f){
   const ths=periods.map(p=>`<th>${p}</th>`).join('');
   const rows=Object.entries(byPrimary).filter(([_,bp])=>Object.values(bp).some(v=>v!==0)).sort((a,b)=>Math.abs(Object.values(b[1]).reduce((x,y)=>x+y,0))-Math.abs(Object.values(a[1]).reduce((x,y)=>x+y,0))).map(([key,bp])=>{const vals=periods.map(p=>bp[p]||0);const tot=vals.reduce((a,b)=>a+b,0);const share=fmtPct(Math.abs(tot)/grandAbs);return`<tr><td></td><td>${key} <span style="color:var(--text3);font-size:9px">${share}</span></td>${vals.map(v=>td(v)).join('')}<td class="${numClass(tot)}">${fmt(tot)}</td></tr>`;}).join('');
   const totVals=periods.map(p=>totalByP[p]||0),grand=totVals.reduce((a,b)=>a+b,0);
-  el.innerHTML=renderFilterBar('fot')+fotExtraFilters+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Фонд оплаты труда и аутсорсинг</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>${rows}<tr class="total"><td></td><td>ИТОГО</td>${totVals.map(v=>td(v)).join('')}<td class="${numClass(grand)}">${fmt(grand)}</td></tr></tbody></table></div></div>`;
+  el.innerHTML=fotExtraFilters+kpiHtml+chartsHtml+`<div class="table-wrap"><div class="table-header"><span class="table-title">Фонд оплаты труда и аутсорсинг</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div><div class="table-scroll"><table class="report-table"><thead><tr><th></th><th></th>${ths}<th>ИТОГО</th></tr></thead><tbody>${rows}<tr class="total"><td></td><td>ИТОГО</td>${totVals.map(v=>td(v)).join('')}<td class="${numClass(grand)}">${fmt(grand)}</td></tr></tbody></table></div></div>`;
 
   // --- Графики ---
   ['_fotChartDyn','_fotChartRank'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
