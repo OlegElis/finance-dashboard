@@ -609,7 +609,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
-  marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',activityDir:'БФЛ - Банкротство физических лиц'},
+  marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',activityDir:'БФЛ - Банкротство физических лиц',years:[new Date().getFullYear()],months:[]},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
@@ -1542,15 +1542,16 @@ window.multiSelAll=function(tab,field,ddId,btnId,select){
 window.multiSelApply=function(tab,rerender){
   if(tab==='dds')renderDDS(getFilters());
   else if(tab==='opiu')renderOPIU(getFilters());
+  else if(tab==='marketing')renderMarketing(getFilters());
 };
 // Close on outside click
 document.addEventListener('click',function(e){
-  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd'].forEach(ddId=>{
+  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd'].forEach(ddId=>{
     const dd=document.getElementById(ddId);
     const btn=document.getElementById(ddId.replace('-dd','-btn'));
     if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){
       dd.style.display='none';
-      const tab=ddId.startsWith('dds')?'dds':'opiu';
+      const tab=ddId.startsWith('dds')?'dds':ddId.startsWith('opiu')?'opiu':'marketing';
       multiSelApply(tab);
     }
   });
@@ -4080,10 +4081,23 @@ function renderMarketing(f){
     _tabFilters.marketing.activityDir=selDir;
   }
   _mktDirKey=selDir||'__all__';
-  const baseData=applyBaseFilters(RAW,f).filter(r=>{
+  // Год/Месяц (как в ОПиУ), по дате ОПиУ
+  const selYears=(f.years||[]).map(Number);
+  const selMonths=(f.months||[]).map(Number);
+  const dirData=RAW.filter(r=>{
     const t=String(r[COL.TYPE]||'').trim().toLowerCase();
     if(t==='перемещение'||!parseDate(r[COL.DATE_OPIU]))return false;
     if(selDir&&String(r[COL.ACTIVITY_DIR]||'').trim()!==selDir)return false;
+    return true;
+  });
+  const allYears=[...new Set(dirData.map(r=>parseDate(r[COL.DATE_OPIU]).getFullYear()))].sort((a,b)=>a-b);
+  const monthsSrc=selYears.length?dirData.filter(r=>selYears.includes(parseDate(r[COL.DATE_OPIU]).getFullYear())):dirData;
+  const allMonths=[...new Set(monthsSrc.map(r=>parseDate(r[COL.DATE_OPIU]).getMonth()+1))].sort((a,b)=>a-b);
+  const MONTHS_SHORT_M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const baseData=dirData.filter(r=>{
+    const d=parseDate(r[COL.DATE_OPIU]);
+    if(selYears.length&&!selYears.includes(d.getFullYear()))return false;
+    if(selMonths.length&&!selMonths.includes(d.getMonth()+1))return false;
     return true;
   });
 
@@ -4129,17 +4143,29 @@ function renderMarketing(f){
     if(RAW_BFL.done.length){auto.fulfilled={};RAW_BFL.done.forEach(d=>{const pk=pkOfDate(d);auto.fulfilled[pk]=(auto.fulfilled[pk]||0)+1;});}
   }
 
-  // Filter bar
-  const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('');
+  // Filter bar (в стиле ОПиУ): Год / Месяц / Направление / Период
+  const ddBox=(id,inner,minw)=>`<div style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:${minw};margin-top:2px" id="${id}">${inner}</div>`;
+  const allBtns=(field,sel)=>`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('marketing','${field}','mkt-${field==='years'?'year':'month'}-dd','mkt-${field==='years'?'year':'month'}-btn',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="multiSelAll('marketing','${field}','mkt-${field==='years'?'year':'month'}-dd','mkt-${field==='years'?'year':'month'}-btn',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
+  const yearCb=allBtns('years')+allYears.map(y=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${y}" ${selYears.includes(y)?'checked':''} onchange="multiSelChange('marketing','years','mkt-year-dd','mkt-year-btn')"> <span>${y}</span></label>`).join('');
+  const monthCb=allBtns('months')+allMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${selMonths.includes(m)?'checked':''} onchange="multiSelChange('marketing','months','mkt-month-dd','mkt-month-btn')"> <span>${MONTHS_SHORT_M[m-1]}</span></label>`).join('');
+  const yearBtnLabel=(selYears.length?selYears.length+' выбрано':'Все')+' ▾';
+  const monthBtnLabel=(selMonths.length?selMonths.length+' выбрано':'Все')+' ▾';
   const dirOptsHtml=allDirs.map(d=>`<option value="${d.replace(/"/g,'&quot;')}"${selDir===d?' selected':''}>${d}</option>`).join('');
-  const extraHtml=`<select class="filter-extra-sel" onchange="_tabFilters['marketing'].periodType=this.value;renderMarketing(getFilters())">${ptOptsHtml}</select>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Направление:</label>
-    <select class="filter-extra-sel" style="max-width:280px" onchange="_tabFilters['marketing'].activityDir=this.value;renderMarketing(getFilters())" title="Метрики и количества считаются отдельно для каждого направления">${dirOptsHtml}</select>`;
-  const filterBar=renderFilterBar('marketing').replace('</div>','')
-    +`<div class="filter-sep"></div><div class="filter-extra" style="display:flex;align-items:center;gap:6px">${extraHtml}</div></div>`
-    +`<div style="padding:5px 28px;background:#fff8e1;border-bottom:1px solid var(--border);font-size:11px;color:#9a6700">ℹ Расходы и количества (сделки/дела) считаются и вводятся <b>отдельно для каждого направления</b> — выбранное сейчас: <b>${selDir||'Все направления'}</b></div>`;
+  const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('');
+  const lblS='color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase';
+  const btnS='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left';
+  const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
+    <label style="${lblS}">Год:</label>
+    <div style="position:relative;display:inline-block"><button id="mkt-year-btn" onclick="multiSelToggle('mkt-year-dd')" style="${btnS}">${yearBtnLabel}</button>${ddBox('mkt-year-dd',yearCb,'120px')}</div>
+    <label style="${lblS}">Месяц:</label>
+    <div style="position:relative;display:inline-block"><button id="mkt-month-btn" onclick="multiSelToggle('mkt-month-dd')" style="${btnS}">${monthBtnLabel}</button>${ddBox('mkt-month-dd',monthCb,'120px')}</div>
+    <label style="${lblS}">Направление:</label>
+    <select class="filter-extra-sel" style="max-width:280px" onchange="_tabFilters['marketing'].activityDir=this.value;renderMarketing(getFilters())">${dirOptsHtml}</select>
+    <label style="${lblS}">Период:</label>
+    <select class="filter-extra-sel" onchange="_tabFilters['marketing'].periodType=this.value;renderMarketing(getFilters())">${ptOptsHtml}</select>
+  </div>`;
 
-  if(!periods.length){el.innerHTML=filterBar+emptyState();return;}
+  if(!periods.length){el.innerHTML=filterBar+emptyState('Нет данных','Измените фильтры Год/Месяц/Направление');return;}
 
   // KPI итоговые
   const totalCost=m=>Object.values(costs[m]).reduce((s,v)=>s+v,0);
@@ -4181,6 +4207,7 @@ function renderMarketing(f){
   const chartHtml=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:12px 24px">
     <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Динамика стоимости по периодам</div>
     <div style="height:260px"><canvas id="mktChartDyn"></canvas></div>
+    <div id="mkt-chart-note" style="font-size:10px;color:#9a6700;margin-top:4px"></div>
   </div>`;
 
   // Таблица по периодам
@@ -4254,6 +4281,15 @@ function renderMarketing(f){
   if(cvs&&window.Chart){
     const cpoData=periods.map(pk=>metricAt('cpo','orders',pk));
     const cpfData=periods.map(pk=>metricAt('cpf','fulfilled',pk));
+    // Ограничение шкалы: если есть выброс (>3× медианы), ограничиваем ось медианой×, чтобы динамика читалась
+    const valid=[...cpoData,...cpfData].filter(v=>v!=null&&v>0).sort((a,b)=>a-b);
+    let yMax;
+    if(valid.length>=3){
+      const med=valid[Math.floor(valid.length/2)];
+      const max=valid[valid.length-1];
+      if(max>med*3)yMax=Math.ceil(med*2.5/1000)*1000; // есть выброс — режем шкалу
+    }
+    const hasClip=yMax!=null&&valid.some(v=>v>yMax);
     window._mktChartDyn=new Chart(cvs,{type:'line',
       data:{labels:periods,datasets:[
         {label:'CPO — стоимость сделки',data:cpoData,borderColor:'#9333ea',backgroundColor:'#9333ea',tension:.3,spanGaps:true,pointRadius:4},
@@ -4261,9 +4297,12 @@ function renderMarketing(f){
       ]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:10,padding:8}},
-          tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')}}},
+          tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
         scales:{x:{grid:{display:false},ticks:{font:{size:10}}},
-          y:{grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}}}}});
+          y:{beginAtZero:true,max:yMax,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}}}}});
+    // подпись про обрезанную шкалу
+    const note=document.getElementById('mkt-chart-note');
+    if(note)note.textContent=hasClip?'⚠ Шкала ограничена для читаемости — отдельные пиковые значения выходят за верх графика (точное число в подсказке)':'';
   }
 }
 // Расшифровка расходов метрики за период — в формате окна ДДС + сводка по подстатьям
