@@ -4375,9 +4375,25 @@ function renderMarketing(f){
     let yMax;
     if(valid.length>=3){const med=valid[Math.floor(valid.length/2)];const max=valid[valid.length-1];if(max>med*3)yMax=Math.ceil(med*2.5/1000)*1000;}
     if(yMax!=null&&valid.some(v=>v>yMax))anyClip=true;
+    // Плагин: пиковые значения, выходящие за обрезанную шкалу, подписываем числом над графиком (чтобы значение «влезло»)
+    const peakLabels={id:'peakLabels',afterDatasetsDraw(chart){
+      if(yMax==null)return;
+      const ctx=chart.ctx,top=chart.chartArea.top;
+      chart.data.datasets.forEach((ds,di)=>{
+        const meta=chart.getDatasetMeta(di);if(meta.hidden)return;
+        ds.data.forEach((v,i)=>{
+          if(v==null||v<=yMax||!meta.data[i])return;
+          ctx.save();ctx.fillStyle=ds.borderColor;ctx.font='bold 9px var(--sans, sans-serif)';ctx.textAlign='center';
+          ctx.fillText('▲ '+Math.round(v).toLocaleString('ru-RU'),meta.data[i].x,top+9);
+          ctx.restore();
+        });
+      });
+    }};
     return new Chart(cvs,{type:'line',
       data:{labels:chartLabels,datasets},
+      plugins:[peakLabels],
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        layout:{padding:{top:yMax!=null?16:4}},
         plugins:{legend:{display:series.length>1,labels:{font:{size:10},boxWidth:12,usePointStyle:true}},
           tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>`${c.dataset.label}: `+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
         scales:{x:{grid:{display:false},ticks:{font:{size:9},autoSkip:true,maxRotation:45,minRotation:0}},
@@ -4386,7 +4402,7 @@ function renderMarketing(f){
   window._mktChartCpo=buildDyn('mktChartCpo',[{metric:'meet',field:'meetings',color:'#0ea5e9',label:'CPMT (встреча)'},{metric:'cpo',field:'orders',color:'#9333ea',label:'CPO (сделка)'}]);
   window._mktChartCpf=buildDyn('mktChartCpf',[{metric:'cpf',field:'fulfilled',color:'#16a34a',label:'CPF'}]);
   const note=document.getElementById('mkt-chart-note');
-  if(note)note.textContent=anyClip?'⚠ Шкала ограничена для читаемости — отдельные пиковые значения выходят за верх графика (точное число в подсказке)':'';
+  if(note)note.textContent=anyClip?'⚠ Шкала ограничена для читаемости при выбросах — пиковое значение подписано числом над графиком (▲)':'';
 }
 // Расшифровка расходов метрики за период — в формате окна ДДС + сводка по подстатьям
 window.mktShowCostModal=function(metric,pk){
