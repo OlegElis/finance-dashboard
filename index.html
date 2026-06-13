@@ -790,16 +790,24 @@ async function loadBflDeals(sheetId,apiKey){
     };
     let exclCnt=0;
     const leads=[],paid=[],done=[],meetings=[],deals=[];
+    const leadsRows=[],meetingsRows=[],paidRows=[],doneRows=[]; // записи для расшифровки количеств (ФИО/ID/стадия/ссылка)
+    const mkRec=(d,r)=>({date:d,
+      fio:iFio>=0?String(r[iFio]||'').trim():'',
+      offer:iOffer>=0?String(r[iOffer]||'').trim():'',
+      contract:iNum>=0?String(r[iNum]||'').trim():'',
+      stage:iStage>=0?String(r[iStage]||'').trim():'',
+      responsible:iResp>=0?String(r[iResp]||'').trim():'',
+      url:iUrl>=0?String(r[iUrl]||'').trim():''});
     rows.slice(1).forEach(r=>{
       const excl=isExclResp(r); // тех. специалист — не учитываем в статистике количеств (но в дебиторку deals[] попадает)
       if(excl)exclCnt++;
-      if(!excl&&iLead>=0){const d=parseDate(r[iLead]);if(d)leads.push(d);}
-      if(!excl&&iCreatedDeal>=0){const d=parseDate(r[iCreatedDeal]);if(d)meetings.push(d);} // встреча = «Дата создания сделки»
-      if(!excl&&iPaid>=0){const d=parseDate(r[iPaid]);if(d)paid.push(d);}
+      if(!excl&&iLead>=0){const d=parseDate(r[iLead]);if(d){leads.push(d);leadsRows.push(mkRec(d,r));}}
+      if(!excl&&iCreatedDeal>=0){const d=parseDate(r[iCreatedDeal]);if(d){meetings.push(d);meetingsRows.push(mkRec(d,r));}} // встреча = «Дата создания сделки»
+      if(!excl&&iPaid>=0){const d=parseDate(r[iPaid]);if(d){paid.push(d);paidRows.push(mkRec(d,r));}}
       if(!excl&&iDone>=0){
         const d=parseDate(r[iDone]);
         const stage=iStage>=0?String(r[iStage]||'').toLowerCase().trim():'';
-        if(d&&DONE_STAGES.includes(stage))done.push(d);
+        if(d&&DONE_STAGES.includes(stage)){done.push(d);doneRows.push(mkRec(d,r));}
       }
       if(iOffer>=0){
         const offer=String(r[iOffer]||'').trim();
@@ -816,7 +824,7 @@ async function loadBflDeals(sheetId,apiKey){
         });
       }
     });
-    RAW_BFL={leads,paid,done,meetings,deals};
+    RAW_BFL={leads,paid,done,meetings,deals,leadsRows,meetingsRows,paidRows,doneRows};
     console.log(`[RawData_BFL] загружено: лидов ${leads.length}, встреч ${meetings.length}, оплат ${paid.length}, завершено ${done.length}, сделок ${deals.length}; исключено тех.спец. строк ${exclCnt}`);
   }catch(e){console.warn('[RawData_BFL] не загружен:',e.message);}
 }
@@ -4218,6 +4226,15 @@ function renderMarketing(f){
     if(RAW_BFL.paid.length){auto.orders={};RAW_BFL.paid.forEach(d=>{const pk=pkOfDate(d);auto.orders[pk]=(auto.orders[pk]||0)+1;});}
     if(RAW_BFL.done.length){auto.fulfilled={};RAW_BFL.done.forEach(d=>{const pk=pkOfDate(d);auto.fulfilled[pk]=(auto.fulfilled[pk]||0)+1;});}
   }
+  // Записи для расшифровки количеств (⚡ авто БФЛ): field → {pk → [records]}; ключи field совпадают с auto
+  window._mktCntRows={};
+  if(isBfl&&RAW_BFL){
+    const cntSrc={leads:RAW_BFL.leadsRows,meetings:RAW_BFL.meetingsRows,orders:RAW_BFL.paidRows,fulfilled:RAW_BFL.doneRows};
+    Object.entries(cntSrc).forEach(([field,arr])=>{
+      if(!arr)return;
+      arr.forEach(rec=>{if(!rec.date)return;const pk=pkOfDate(rec.date);const key=field+'|'+pk;(window._mktCntRows[key]=window._mktCntRows[key]||[]).push(rec);});
+    });
+  }
 
   // Filter bar (в стиле ОПиУ): Год / Месяц / Направление / Период
   const ddBox=(id,inner,minw)=>`<div style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:${minw};margin-top:2px" id="${id}">${inner}</div>`;
@@ -4336,9 +4353,9 @@ function renderMarketing(f){
       ${tdS(totalC?n0(totalC):'—',false,'var(--outcome)')}
     </tr>
     <tr>
-      ${tdL(countLabel+(auto[countField]?' <span style="font-size:9px;color:var(--accent)" title="Считается автоматически из листа RawData_BFL">⚡ авто</span>':''),'color:var(--text2)')}
+      ${tdL(countLabel+(auto[countField]?' <span style="font-size:9px;color:var(--accent)" title="Считается автоматически из листа RawData_BFL">⚡ авто</span> <span style="font-size:9px;color:var(--accent)">(клик — расшифровка)</span>':''),'color:var(--text2)')}
       ${periods.map(pk=>{
-        if(auto[countField]){const n=+(auto[countField][pk]||0);return`<td style="padding:4px 10px;font-size:11px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--accent);font-weight:600">${n||'0'}</td>`;}
+        if(auto[countField]){const n=+(auto[countField][pk]||0);const has=n>0&&(window._mktCntRows||{})[countField+'|'+pk];return`<td ${has?`onclick="mktShowCountModal('${countField}','${pk.replace(/'/g,"\\'")}','${(countLabel||'').replace(/'/g,"\\'")}')" title="Показать записи за период"`:''} style="padding:4px 10px;font-size:11px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--accent);font-weight:600;${has?'cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;':''}">${n||'0'}</td>`;}
         const c=(_mktCounts[_mktDirKey]||{})[pk]||{};return inputCell(pk,countField,c[countField]);
       }).join('')}
       ${tdS(totalN||'—',false)}
@@ -4497,6 +4514,47 @@ window.mktShowCostModal=function(metric,pk){
     <div style="overflow:auto;flex:1">
       <table style="border-collapse:collapse;width:100%;table-layout:fixed">
         <thead>${thead}</thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+};
+// Расшифровка количественного показателя за период (встречи/сделки/завершения/лиды) — список записей из RawData_BFL
+window.mktShowCountModal=function(field,pk,label){
+  const recs=(window._mktCntRows||{})[field+'|'+pk]||[];
+  if(!recs.length)return;
+  const esc=s=>String(s||'').replace(/</g,'&lt;');
+  const ds=v=>{const d=v instanceof Date?v:parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const fieldDateLbl={meetings:'Дата создания сделки (встреча)',orders:'Дата входа в оплату',fulfilled:'Дата завершения',leads:'Дата создания лида'}[field]||'Дата';
+  recs.sort((a,b)=>(a.date?a.date.getTime():0)-(b.date?b.date.getTime():0));
+  const TH=(t,w,al='left')=>`<th style="padding:5px 8px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;text-align:${al};${w?'width:'+w:''}">${t}</th>`;
+  const TD=(v,al='left')=>`<td style="padding:4px 8px;font-size:10px;border-top:1px solid var(--border);text-align:${al};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v}</td>`;
+  const body=recs.map(r=>`<tr>
+    ${TD(ds(r.date),'center')}
+    ${TD(esc(r.fio)||'—')}
+    ${TD(esc(r.offer)||'—')}
+    ${TD(esc(r.contract)||'—')}
+    ${TD(esc(r.stage)||'—')}
+    ${TD(r.url?`<a href="${esc(r.url)}" target="_blank" style="color:var(--accent);text-decoration:none">Bitrix24 ↗</a>`:'—','center')}
+  </tr>`).join('');
+  const overlay=document.createElement('div');
+  overlay.className='txn-card-overlay';
+  overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:90vw;max-width:1100px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:13px;font-weight:700;color:var(--text)">📋 ${esc((label||'').replace(/ ⚡.*$/,''))} · ${esc(pk)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px">Записи из RawData_BFL, попавшие в расчёт за период</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:12px;color:var(--accent);font-weight:800">${recs.length}</span>
+        <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
+      </div>
+    </div>
+    <div style="overflow:auto;flex:1">
+      <table style="border-collapse:collapse;width:100%">
+        <thead><tr>${TH(fieldDateLbl,'110px','center')}${TH('ФИО')}${TH('ID_Offer')}${TH('№ договора','110px')}${TH('Стадия')}${TH('Bitrix24','90px','center')}</tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>
