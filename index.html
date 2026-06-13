@@ -4610,13 +4610,18 @@ function renderLoans(f){
   const fromD=f.dateFrom,toD=f.dateTo;
   const inRange=d=>{if(!fromD&&!toD)return true;if(!d)return false;const iso=toIso(d);if(fromD&&iso<fromD)return false;if(toD&&iso>toD)return false;return true;};
   const loanRows=RAW.filter(isLoanRow);
-  const matchedSubs=[...new Set(loanRows.map(r=>S(r[COL.ARTICLE_NAME])).filter(Boolean))];
-  const byEmp={};
+  // строки со словом «займ», но без «сотрудник» — возможные пропущенные операции (напр. возвраты под иной подстатьёй)
+  const looseExtra=RAW.filter(r=>{const a=(S(r[COL.ARTICLE_NAME])+' '+S(r[COL.ARTICLE_CODE])).toLowerCase();return a.includes('займ')&&!a.includes('сотрудник');}).length;
+  const byEmp={},combo={};
   loanRows.forEach(r=>{
     const d=parseDate(r[COL.DATE_DDS]);
     if(!inRange(d))return;
     const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
     if(inc===0&&out===0)return;
+    // разбор для сверки: какие статья/подстатья попали и сколько по ним
+    const ck=(S(r[COL.ARTICLE_CODE])||'(без статьи)')+' ▸ '+(S(r[COL.ARTICLE_NAME])||'(без подстатьи)');
+    const cc=combo[ck]||(combo[ck]={issued:0,repaid:0,n:0});cc.n++;
+    if(out<0)cc.issued+=Math.abs(out); if(inc>0)cc.repaid+=inc;
     const emp=S(r[COL.SECOND_SIDE])||'- без контрагента -';
     const e=byEmp[emp]||(byEmp[emp]={emp,issued:0,repaid:0,ops:0,firstIssue:null,lastIssue:null,lastRepay:null,rows:[]});
     e.rows.push(r);e.ops++;
@@ -4693,7 +4698,21 @@ function renderLoans(f){
     </tr>`;
   }).join('');
   const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
-  const note=`<div style="font-size:10px;color:var(--text3);margin:0 0 6px">Операции по подстатьям: ${matchedSubs.length?matchedSubs.map(esc).join(', '):'—'}. Выдача = списание, возврат = поступление; группировка по контрагенту (кому заняли).</div>`;
+  // Диагностика для сверки сумм: какие статья/подстатья попали в расчёт и сколько по ним
+  const comboArr=Object.entries(combo).sort((a,b)=>(b[1].issued+b[1].repaid)-(a[1].issued+a[1].repaid));
+  const comboIssued=comboArr.reduce((s,[,c])=>s+c.issued,0),comboRepaid=comboArr.reduce((s,[,c])=>s+c.repaid,0);
+  const note=`<details style="margin:0 0 8px;font-size:11px"><summary style="cursor:pointer;color:var(--text3);font-size:10px">🔎 Сверка: что попало в расчёт (статья ▸ подстатья) - ${comboArr.length} комб. · выдано ${fmt(comboIssued)} · возвращено ${fmt(comboRepaid)}</summary>
+    <table style="border-collapse:collapse;width:100%;margin-top:6px"><thead><tr>
+      <th style="text-align:left;padding:4px 8px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Статья ▸ Подстатья</th>
+      <th style="text-align:right;padding:4px 8px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Строк</th>
+      <th style="text-align:right;padding:4px 8px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Выдано</th>
+      <th style="text-align:right;padding:4px 8px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border)">Возвращено</th>
+    </tr></thead><tbody>
+    ${comboArr.map(([k,c])=>`<tr><td style="padding:3px 8px;font-size:10px;border-bottom:1px solid var(--border)">${esc(k)}</td><td style="padding:3px 8px;font-size:10px;text-align:right;border-bottom:1px solid var(--border)">${c.n}</td><td style="padding:3px 8px;font-size:10px;text-align:right;border-bottom:1px solid var(--border)">${fmt(c.issued)}</td><td style="padding:3px 8px;font-size:10px;text-align:right;border-bottom:1px solid var(--border);color:var(--income)">${fmt(c.repaid)}</td></tr>`).join('')}
+    </tbody></table>
+    <div style="font-size:9px;color:var(--text3);margin-top:4px">Матчинг: статья/подстатья содержит «займ» и «сотрудник». Выдача = списание, возврат = поступление; группировка по контрагенту (ID_SecondSide - кому заняли).</div>
+    ${looseExtra?`<div style="font-size:10px;color:var(--outcome);margin-top:4px">⚠ Ещё ${looseExtra} строк со словом «займ» без «сотрудник» НЕ вошли в расчёт - возможно, это возвраты/выдачи под другой подстатьёй. Пришлите точное название - включу.</div>`:''}
+  </details>`;
 
   el.innerHTML=filterBar+kpiHtml+ratingHtml+`
   <div class="table-wrap">
