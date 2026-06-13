@@ -779,9 +779,10 @@ async function loadBflDeals(sheetId,apiKey){
     if(iLead<0&&iPaid<0&&iDone<0&&iOffer<0)return;
     // Завершённым (для CPF) считается дело только в этих стадиях
     const DONE_STAGES=['производство. акты подписаны, работы завершены','отдел сопровождения. акты подписаны'];
-    const leads=[],paid=[],done=[],deals=[];
+    const leads=[],paid=[],done=[],meetings=[],deals=[];
     rows.slice(1).forEach(r=>{
       if(iLead>=0){const d=parseDate(r[iLead]);if(d)leads.push(d);}
+      if(iCreatedDeal>=0){const d=parseDate(r[iCreatedDeal]);if(d)meetings.push(d);} // встреча = «Дата создания сделки»
       if(iPaid>=0){const d=parseDate(r[iPaid]);if(d)paid.push(d);}
       if(iDone>=0){
         const d=parseDate(r[iDone]);
@@ -803,8 +804,8 @@ async function loadBflDeals(sheetId,apiKey){
         });
       }
     });
-    RAW_BFL={leads,paid,done,deals};
-    console.log(`[RawData_BFL] загружено: лидов ${leads.length}, оплат ${paid.length}, завершено ${done.length}, сделок ${deals.length}`);
+    RAW_BFL={leads,paid,done,meetings,deals};
+    console.log(`[RawData_BFL] загружено: лидов ${leads.length}, встреч ${meetings.length}, оплат ${paid.length}, завершено ${done.length}, сделок ${deals.length}`);
   }catch(e){console.warn('[RawData_BFL] не загружен:',e.message);}
 }
 
@@ -4061,7 +4062,7 @@ function _kassaSaveLimits(){try{localStorage.setItem('kassaLimits',JSON.stringif
 
 window.mktCountChange=function(pk,field,val){
   if(!_mktCounts[_mktDirKey])_mktCounts[_mktDirKey]={};
-  if(!_mktCounts[_mktDirKey][pk])_mktCounts[_mktDirKey][pk]={leads:0,orders:0,fulfilled:0};
+  if(!_mktCounts[_mktDirKey][pk])_mktCounts[_mktDirKey][pk]={leads:0,meetings:0,orders:0,fulfilled:0};
   _mktCounts[_mktDirKey][pk][field]=parseFloat(val)||0;
   _mktSaveCounts();
   // обновляем только расчётные ячейки без полного ре-рендера
@@ -4069,14 +4070,18 @@ window.mktCountChange=function(pk,field,val){
 };
 function _mktUpdateCalc(pk){
   const c=(_mktCounts[_mktDirKey]||{})[pk]||{};
-  ['cpl','cpo','cpf'].forEach(m=>{
+  const cntOf=m=>m==='cpl'?+(c.leads||0):m==='cpo'||m==='meet'?(m==='meet'?+(c.meetings||0):+(c.orders||0)):+(c.fulfilled||0);
+  ['cpl','meet','cpo','cpf'].forEach(m=>{
     const costEl=document.getElementById(`mkt-cost-${m}-${pk}`);
     const valEl=document.getElementById(`mkt-val-${m}-${pk}`);
     if(!costEl||!valEl)return;
     const cost=parseFloat(costEl.dataset.cost)||0;
-    const cnt=m==='cpl'?+(c.leads||0):m==='cpo'?+(c.orders||0):+(c.fulfilled||0);
+    const cnt=cntOf(m);
     valEl.textContent=cnt>0?fmt(Math.abs(cost)/cnt):'—';
   });
+  // конверсия встреча→сделка
+  const convEl=document.getElementById(`mkt-conv-${pk}`);
+  if(convEl){const mt=+(c.meetings||0),or=+(c.orders||0);convEl.textContent=mt>0?fmtPct(or/mt):'—';}
 }
 
 function renderMarketing(f){
@@ -4141,15 +4146,18 @@ function renderMarketing(f){
       }
     });
   });
+  // СВ (стоимость встречи) использует те же расходы воронки продаж, что и CPO, делённые на число встреч
+  costs.meet=costs.cpo;
 
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
 
   // Авто-количества из RawData_BFL (для направления БФЛ): лиды = создание сделки, сделки = вход в оплату
   const isBfl=selDir.startsWith('БФЛ');
   const pkOfDate=d=>{const y=d.getFullYear(),m=d.getMonth()+1;if(mode==='year')return String(y);if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
-  const auto={leads:null,orders:null,fulfilled:null};
+  const auto={leads:null,orders:null,fulfilled:null,meetings:null};
   if(isBfl&&RAW_BFL){
     if(RAW_BFL.leads.length){auto.leads={};RAW_BFL.leads.forEach(d=>{const pk=pkOfDate(d);auto.leads[pk]=(auto.leads[pk]||0)+1;});}
+    if(RAW_BFL.meetings&&RAW_BFL.meetings.length){auto.meetings={};RAW_BFL.meetings.forEach(d=>{const pk=pkOfDate(d);auto.meetings[pk]=(auto.meetings[pk]||0)+1;});}
     if(RAW_BFL.paid.length){auto.orders={};RAW_BFL.paid.forEach(d=>{const pk=pkOfDate(d);auto.orders[pk]=(auto.orders[pk]||0)+1;});}
     if(RAW_BFL.done.length){auto.fulfilled={};RAW_BFL.done.forEach(d=>{const pk=pkOfDate(d);auto.fulfilled[pk]=(auto.fulfilled[pk]||0)+1;});}
   }
@@ -4209,9 +4217,26 @@ function renderMarketing(f){
       <div class="kpi-sub" style="font-size:9px;color:var(--text3)">${last?`${last}: расходы ${n0(lastCost)} · кол-во ${cnt}`:''}</div>
     </div>`;
   };
+  // Конверсия встреча→сделка = сделки ÷ встречи (выше = лучше)
+  const convAt=pk=>{const m=countOf(pk,'meetings');const o=countOf(pk,'orders');return m>0?o/m:null;};
+  const convCard=()=>{
+    const last=periods[periods.length-1],prev=periods[periods.length-2];
+    const vLast=last?convAt(last):null,vPrev=prev?convAt(prev):null;
+    let delta='';
+    if(vLast!=null&&vPrev!=null&&vPrev>0){const g=(vLast-vPrev)/vPrev;const c=g>0.001?'var(--income)':g<-0.001?'var(--outcome)':'var(--text3)';const arrow=g>0.001?'↑':g<-0.001?'↓':'→';delta=`<span style="color:${c};font-weight:700">${arrow} ${fmtPct(Math.abs(g))}</span> <span style="color:var(--text3)">к пред. периоду</span>`;}
+    const tM=totalCounts('meetings'),tO=totalCounts('orders');
+    return`<div class="kpi-card" style="border-left:3px solid #0891b2">
+      <div class="kpi-label">Конверсия встреча→сделка</div>
+      <div class="kpi-value" style="color:#0891b2">${tM>0?fmtPct(tO/tM):'—'}</div>
+      <div class="kpi-sub" style="font-size:9px">${delta||'&nbsp;'}</div>
+      <div class="kpi-sub" style="font-size:9px;color:var(--text3)">${tM?`встреч ${tM} · сделок ${tO}`:''}</div>
+    </div>`;
+  };
   const kpiHtml=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
+    ${kpiCard('meet','meetings','СВ — стоимость встречи','#0ea5e9')}
     ${kpiCard('cpo','orders','CPO — стоимость сделки','#9333ea')}
     ${kpiCard('cpf','fulfilled','CPF — стоимость исполнения','#16a34a')}
+    ${convCard()}
   </div>`;
 
   // График динамики CPO/CPF
@@ -4268,8 +4293,22 @@ function renderMarketing(f){
     </tr>`;
   };
 
+  const convRows=()=>{
+    const tM=totalCounts('meetings'),tO=totalCounts('orders');
+    return`
+    <tr style="background:#e8f6fb">
+      <td colspan="${periods.length+2}" style="padding:4px 10px;font-size:10px;font-weight:700;text-transform:uppercase;color:#0891b2;border-bottom:1px solid var(--border);border-top:2px solid #0891b2">Конверсия воронки</td>
+    </tr>
+    <tr style="background:#e8f6fb">
+      ${tdL('<b>Встреча → сделка</b>','color:#0891b2')}
+      ${periods.map(pk=>{const v=convAt(pk);return`<td id="mkt-conv-${pk}" style="padding:5px 10px;font-size:12px;font-weight:700;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:#0891b2">${v!=null?fmtPct(v):'—'}</td>`;}).join('')}
+      ${tdS(tM>0?fmtPct(tO/tM):'—',true,'#0891b2')}
+    </tr>`;
+  };
   const tbody=`<tbody>
+    ${mkMetricRows('meet','СВ — Стоимость встречи','meetings','Количество встреч','#0ea5e9','#eef7fc')}
     ${mkMetricRows('cpo','CPO — Cost Per Order','orders','Количество сделок','#9333ea','#f7f0fd')}
+    ${convRows()}
     ${mkMetricRows('cpf','CPF — Cost Per Fulfillment','fulfilled','Завершённых дел','#16a34a','#edf7f0')}
   </tbody>`;
 
@@ -4282,7 +4321,9 @@ function renderMarketing(f){
   // Справка: что берётся в расчёт
   const fmlList=m=>{const subs=MKT_SUBART[m].map(s=>s.replace('111_Заработная плата','ЗП'));const pre=MKT_PREFIX[m].map(p=>'все «'+p+'*»');return subs.concat(pre).join(', ');};
   const formulaHtml=`<div style="margin:0 24px 16px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:10.5px;color:var(--text2);line-height:1.7">
+    <b style="color:#0ea5e9">СВ</b> (стоимость встречи) = (те же расходы воронки, что у CPO) ÷ кол-во встреч («Дата создания сделки»)<br>
     <b style="color:#9333ea">CPO</b> = (${fmlList('cpo')}) ÷ кол-во сделок («Дата входа в стадию "Полная/частичная оплата"»)<br>
+    <b style="color:#0891b2">Конверсия встреча→сделка</b> = кол-во сделок ÷ кол-во встреч &nbsp;(CPO = СВ ÷ конверсия)<br>
     <b style="color:#16a34a">CPF</b> = (${fmlList('cpf')}) ÷ завершённые дела («Дата завершения сделки», только стадии «Акты подписаны»)<br>
     <span style="color:var(--text3)">Расходы — списания по дате ОПиУ выбранного направления. Клик по сумме расходов — детальная расшифровка строк.</span>
   </div>`;
@@ -4314,6 +4355,7 @@ function renderMarketing(f){
 }
 // Расшифровка расходов метрики за период — в формате окна ДДС + сводка по подстатьям
 window.mktShowCostModal=function(metric,pk){
+  if(metric==='meet')metric='cpo'; // СВ использует те же расходы, что и CPO
   const rows=(window._mktTxn||{})[metric+'|'+pk]||[];
   if(!rows.length)return;
   window._mktTxnCur=rows;
