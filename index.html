@@ -4434,25 +4434,34 @@ function renderMarketing(f){
     let yMax;
     if(valid.length>=3){const med=valid[Math.floor(valid.length/2)];const max=valid[valid.length-1];if(max>med*3)yMax=Math.ceil(med*2.5/1000)*1000;}
     if(yMax!=null&&valid.some(v=>v>yMax))anyClip=true;
-    // Плагин: пиковые значения, выходящие за обрезанную шкалу, подписываем числом над графиком (чтобы значение «влезло»)
-    const peakLabels={id:'peakLabels',afterDatasetsDraw(chart){
-      if(yMax==null)return;
+    // Плагин: подписываем значение у каждой точки (К/М). Пиковые значения выше обрезанной шкалы — числом над графиком.
+    const abbr=v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?Math.round(v/1e3)+'К':String(Math.round(v));};
+    const multi=datasets.length>1;
+    const valueLabels={id:'valueLabels',afterDatasetsDraw(chart){
       const ctx=chart.ctx,top=chart.chartArea.top;
+      ctx.save();ctx.font='bold 9px var(--sans, sans-serif)';ctx.textAlign='center';
       chart.data.datasets.forEach((ds,di)=>{
         const meta=chart.getDatasetMeta(di);if(meta.hidden)return;
         ds.data.forEach((v,i)=>{
-          if(v==null||v<=yMax||!meta.data[i])return;
-          ctx.save();ctx.fillStyle=ds.borderColor;ctx.font='bold 9px var(--sans, sans-serif)';ctx.textAlign='center';
-          ctx.fillText('▲ '+Math.round(v).toLocaleString('ru-RU'),meta.data[i].x,top+9);
-          ctx.restore();
+          if(v==null||!meta.data[i])return;
+          ctx.fillStyle=ds.borderColor;
+          if(yMax!=null&&v>yMax){ // пик выше шкалы — над графиком
+            ctx.textBaseline='top';
+            ctx.fillText('▲ '+abbr(v),meta.data[i].x,top+2);
+          }else{ // обычная точка: 1-я линия — подпись сверху, 2-я — снизу (чтобы не накладывались)
+            const below=multi&&di===1;
+            ctx.textBaseline=below?'top':'bottom';
+            ctx.fillText(abbr(v),meta.data[i].x,meta.data[i].y+(below?7:-7));
+          }
         });
       });
+      ctx.restore();
     }};
     return new Chart(cvs,{type:'line',
       data:{labels:chartLabels,datasets},
-      plugins:[peakLabels],
+      plugins:[valueLabels],
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-        layout:{padding:{top:yMax!=null?16:4}},
+        layout:{padding:{top:16,bottom:multi?12:2}},
         plugins:{legend:{display:false},
           tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>`${c.dataset.label}: `+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'—')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
         scales:{x:{grid:{display:false},ticks:{font:{size:9},autoSkip:true,maxRotation:45,minRotation:0}},
