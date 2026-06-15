@@ -15,6 +15,10 @@
 - Без фреймворков и сборщиков
 - Хостинг: GitHub Pages (или локально)
 
+### Живой счётчик «Сейчас на сайте» (Firebase Realtime Database)
+- Топбар: `#presenceBox` / `#presenceCount` (скрыт, пока не настроен Firebase). Firebase compat SDK подключён в `<head>` (CDN). Конфиг — константа `FIREBASE_CONFIG` (apiKey/databaseURL/projectId), заполняется пользователем; при пустом `databaseURL` блок `presenceCounter()` тихо выходит, дашборд работает как обычно
+- Каждая вкладка пишет `presence/{uuid}` = `{ts: ServerValue.TIMESTAMP, name:''}` (name — на будущее, вход по именам); пульс каждые 20с; авто-удаление `onDisconnect().remove()` + `pagehide`/`beforeunload`. Счёт = сессии с `ts` за последние 60с с поправкой на `.info/serverTimeOffset`. Всё в try/catch — не влияет на дашборд
+
 ### Источник данных
 - Google Sheets API (read-only, API Key)
 - Лист `RawData`, первая строка — заголовки
