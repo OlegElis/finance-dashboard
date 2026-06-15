@@ -4946,100 +4946,81 @@ function renderAnomaly(f){
   const fromD=f.dateFrom,toD=f.dateTo;
   const inRange=d=>{if(!fromD&&!toD)return true;if(!d)return false;const iso=toIso(d);if(fromD&&iso<fromD)return false;if(toD&&iso>toD)return false;return true;};
   const data=RAW.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return inRange(d);});
-  const MIN_OPS=5, conf=parseFloat(f.minConf)||0.9;
-  const RULE_LBL={analytics:'Подстатья → Аналитика',code:'Подстатья → Статья (код)',type:'Подстатья → Тип',cp:'Контрагент (выброс)'};
-  const flags=new Map();
-  const addFlag=(row,ri,field,rule,usual,got,c,scope)=>{const k=ri+'|'+field;const ex=flags.get(k);if(!ex||c>ex.conf)flags.set(k,{row,field,rule,usual,got,conf:c,scope});};
-  // R1 (Подстатья→Аналитика) и R3 (Подстатья→Тип) — по подстатье, %-логика с порогом
-  const bySub={};
-  data.forEach((r,i)=>{const sub=S(r[COL.ARTICLE_NAME]);if(sub)(bySub[sub]=bySub[sub]||[]).push(i);});
-  Object.entries(bySub).forEach(([sub,idxs])=>{
-    if(idxs.length<MIN_OPS)return;
-    // R1 — аналитика
-    {const cnt={};let tot=0;idxs.forEach(i=>{const v=S(data[i][COL.ANALYTICS]);if(v){cnt[v]=(cnt[v]||0)+1;tot++;}});
-     if(tot>=MIN_OPS){let dom='',dn=0;for(const v in cnt)if(cnt[v]>dn){dn=cnt[v];dom=v;}const ds=dn/tot,filled=tot/idxs.length;
-       if(ds>=conf)idxs.forEach(i=>{const v=S(data[i][COL.ANALYTICS]);
-         if(v&&v!==dom)addFlag(data[i],i,'Аналитика','analytics',dom,v,ds,'подстатья: '+sub);
-         else if(!v&&filled>=conf)addFlag(data[i],i,'Аналитика','analytics',dom,'(пусто)',filled,'подстатья: '+sub);});}}
-    // R3 — тип операции (только списание/поступление)
-    {const cnt={};let tot=0;idxs.forEach(i=>{const t=S(data[i][COL.TYPE]).toLowerCase();if(t==='списание'||t==='поступление'){cnt[t]=(cnt[t]||0)+1;tot++;}});
-     if(tot>=MIN_OPS){let dom='',dn=0;for(const v in cnt)if(cnt[v]>dn){dn=cnt[v];dom=v;}const ds=dn/tot;
-       if(ds>=conf)idxs.forEach(i=>{const t=S(data[i][COL.TYPE]).toLowerCase();if((t==='списание'||t==='поступление')&&t!==dom)addFlag(data[i],i,'Тип','type',dom,t,ds,'подстатья: '+sub);});}}
+  const norm=s=>S(s).toLowerCase().replace(/[^a-zа-яё0-9]/gi,'');
+  const code3=r=>{const a=S(r[COL.ARTICLE_CODE]).match(/^(\d{3})/);if(a)return a[1];const b=S(r[COL.ARTICLE_NAME]).match(/^(\d{3})/);return b?b[1]:'';};
+  const isMove=r=>S(r[COL.TYPE]).toLowerCase()==='перемещение';
+  // ── ЖЁСТКИЕ ПРАВИЛА (детерминированные). Чтобы добавить новое — допишите объект в массив. ──
+  const RULES=[
+    {id:'move',label:'Перемещение → Техническая операция',field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Техническая операция',where:isMove},
+    {id:'a300',label:'Статья 300 → Прямые / Переменные',field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='300'},
+    {id:'a112',label:'Статья 112 → Прямые / Переменные',field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='112'}
+  ];
+  RULES.forEach(rl=>rl.en=norm(rl.expect));
+  const items=[];
+  data.forEach(r=>{
+    RULES.forEach(rl=>{
+      if(!rl.where(r))return;
+      const actual=S(r[rl.field]);
+      if(norm(actual).includes(rl.en))return; // ок — содержит ожидаемое
+      items.push({row:r,rule:rl.id,ruleLabel:rl.label,fieldName:rl.fieldName,expect:rl.expect,got:actual||'(пусто)'});
+    });
   });
-  // R2 (Подстатья→Статья, код) — детерминированно: первые 3 цифры подстатьи = код статьи
-  data.forEach((r,i)=>{const ac=S(r[COL.ARTICLE_CODE]),an=S(r[COL.ARTICLE_NAME]);if(!ac||!an)return;const a=ac.match(/^(\d{3})/),b=an.match(/^(\d{3})/);if(a&&b&&a[1]!==b[1])addFlag(r,i,'Статья','code','код '+b[1]+'*',ac,1,'подстатья: '+an);});
-  // R4 (по контрагенту) — только единичные выбросы: история ≥8, обычное ≥90%, отклонение ≤2 строк
-  const byCp={};
-  data.forEach((r,i)=>{const cp=S(r[COL.SECOND_SIDE]);if(cp)(byCp[cp]=byCp[cp]||[]).push(i);});
-  const FIELDS=[{key:'Статья',col:COL.ARTICLE_CODE},{key:'Подстатья',col:COL.ARTICLE_NAME},{key:'Аналитика',col:COL.ANALYTICS}];
-  Object.entries(byCp).forEach(([cp,idxs])=>{
-    if(idxs.length<8)return;
-    FIELDS.forEach(F=>{const cnt={};let tot=0;idxs.forEach(i=>{const v=S(data[i][F.col]);if(v){cnt[v]=(cnt[v]||0)+1;tot++;}});
-      if(tot<8)return;let dom='',dn=0;for(const v in cnt)if(cnt[v]>dn){dn=cnt[v];dom=v;}const ds=dn/tot;if(ds<0.9)return;
-      idxs.forEach(i=>{const v=S(data[i][F.col]);if(v&&v!==dom&&cnt[v]<=2)addFlag(data[i],i,F.key,'cp',dom,v,ds,'контрагент: '+cp);});});
-  });
-  let items=[...flags.values()];
-  if(f.field)items=items.filter(x=>x.rule===f.field);
-  items.sort((a,b)=>b.conf-a.conf);
+  const shown=f.field?items.filter(x=>x.rule===f.field):items;
 
   const lbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
-  const ruleOpts=[['','Все правила'],['analytics','Подстатья → Аналитика'],['code','Подстатья → Статья (код)'],['type','Подстатья → Тип'],['cp','Контрагент (выброс)']];
-  const confOpts=[['0.7','≥ 70%'],['0.8','≥ 80%'],['0.9','≥ 90%'],['0.95','≥ 95%']];
+  const ruleOpts=[['','Все правила']].concat(RULES.map(rl=>[rl.id,rl.label]));
   const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
     <div class="date-range"><input type="date" value="${f.dateFrom}" onchange="_tabFilters.anomaly.dateFrom=this.value;renderAnomaly(getFilters())"><span class="date-range-sep">-</span><input type="date" value="${f.dateTo}" onchange="_tabFilters.anomaly.dateTo=this.value;renderAnomaly(getFilters())"></div>
-    ${lbl('Правило:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.field=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:220px">${ruleOpts.map(([v,t])=>`<option value="${v}"${f.field===v?' selected':''}>${t}</option>`).join('')}</select>
-    ${lbl('Порог «обычного»:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.minConf=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${confOpts.map(([v,t])=>`<option value="${v}"${String(conf)===v?' selected':''}>${t}</option>`).join('')}</select>
+    ${lbl('Правило:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.field=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:280px">${ruleOpts.map(([v,t])=>`<option value="${v}"${f.field===v?' selected':''}>${t}</option>`).join('')}</select>
   </div>`;
 
-  const cAn=items.filter(x=>x.rule==='analytics').length,cCode=items.filter(x=>x.rule==='code').length,cType=items.filter(x=>x.rule==='type').length,cCp=items.filter(x=>x.rule==='cp').length;
+  const kpiCards=RULES.map(rl=>{const n=items.filter(x=>x.rule===rl.id).length;return `<div class="kpi-card ${n?'orange':'green'}"><div class="kpi-label">${rl.label}</div><div class="kpi-value ${n?'':'positive'}">${n}</div></div>`;}).join('');
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card ${items.length?'red':'green'}"><div class="kpi-label">Отклонений всего</div><div class="kpi-value ${items.length?'negative':'positive'}">${items.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">порог ≥ ${fmtPct(conf)}, группа ≥ ${MIN_OPS}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Подстатья → Аналитика</div><div class="kpi-value">${cAn}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Подстатья → Статья (код)</div><div class="kpi-value">${cCode}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Тип / Контрагент</div><div class="kpi-value">${cType+cCp}</div><div class="kpi-sub">тип ${cType} · контрагент ${cCp}</div></div>
+    <div class="kpi-card ${items.length?'red':'green'}"><div class="kpi-label">Нарушений всего</div><div class="kpi-value ${items.length?'negative':'positive'}">${items.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">жёсткие правила (без статистики)</div></div>
+    ${kpiCards}
   </div>`;
 
-  if(!items.length){el.innerHTML=filterBar+kpiHtml+emptyState('Аномалий не найдено','По выбранным правилам и порогу классификация выглядит непротиворечиво ✓');return;}
+  if(!shown.length){el.innerHTML=filterBar+kpiHtml+emptyState('Нарушений не найдено','По заданным жёстким правилам всё корректно ✓');return;}
 
-  window._anomRows=items.map(x=>x.row);
+  window._anomRows=shown.map(x=>x.row);
   const dsF=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const thS='background:var(--surface2);position:sticky;top:0;z-index:2;padding:7px 10px;font-size:10px;font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;color:var(--text3);text-transform:uppercase';
   const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
-  const LIMIT=1000;
-  const rows=items.slice(0,LIMIT).map((x,i)=>`<tr class="anom-row" style="cursor:pointer" onclick="anomShowCard(${i})" title="Карточка операции">
-    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)">${RULE_LBL[x.rule]||x.rule}</span></td>
-    <td style="${td};color:var(--income);font-weight:600">${esc(x.usual)}</td>
+  const LIMIT=2000;
+  const rows=shown.slice(0,LIMIT).map((x,i)=>`<tr class="anom-row" style="cursor:pointer" onclick="anomShowCard(${i})" title="Карточка операции">
+    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)">${esc(x.ruleLabel)}</span></td>
+    <td style="${td};font-size:10px;color:var(--text3)">${esc(x.fieldName)}</td>
+    <td style="${td};color:var(--income);font-weight:600">${esc(x.expect)}</td>
     <td style="${td};color:var(--outcome);font-weight:700;background:#fdecea">${esc(x.got)}</td>
-    <td style="${td};text-align:right;font-variant-numeric:tabular-nums">${fmtPct(x.conf)}</td>
-    <td style="${td};font-size:10px;color:var(--text3);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.scope)}">${esc(x.scope)}</td>
     <td style="${td};text-align:center;font-size:10px;white-space:nowrap">${dsF(x.row[COL.DATE_DDS])}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.SECOND_SIDE]))}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.ARTICLE_NAME]))}</td>
     <td style="${td}">${esc(S(x.row[COL.ARTICLE_CODE]))}</td>
     <td style="${td};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.ANALYTICS]))||'<span style="color:var(--text3)">—</span>'}</td>
+    <td style="${td};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.FIN_OP]))||'<span style="color:var(--text3)">—</span>'}</td>
   </tr>`).join('');
-  const trunc=items.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${items.length.toLocaleString('ru-RU')}</div>`:'';
+  const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
 
   el.innerHTML=`<style>#tabAnomaly .anom-row:hover{background:var(--surface2)}</style>`+filterBar+kpiHtml+`
-  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">Правила: <b>Подстатья→Аналитика/Тип</b> — значение отличается от преобладающего у подстатьи (порог ${fmtPct(conf)}, группа ≥${MIN_OPS}); <b>Подстатья→Статья</b> — код статьи ≠ первым 3 цифрам подстатьи; <b>Контрагент</b> — единичный выброс (история ≥8, обычное ≥90%, ≤2 строк). «Обычно» — ожидаемое, «Указано» — фактическое. Read-only, правки — в Google Sheets.</div>
+  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">Жёсткие правила: ${RULES.map(rl=>'<b>'+esc(rl.label)+'</b>').join('; ')}. «Ожидается» — что должно быть в поле, «Указано» — фактическое значение. Read-only, правки — в Google Sheets.</div>
   <div class="table-wrap" style="margin-top:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border)">
-      <span style="font-size:12px;font-weight:600;color:var(--text2)">Строки-отклонения</span>
-      <span style="font-size:11px;color:var(--text3)">${items.length.toLocaleString('ru-RU')}</span>
+      <span style="font-size:12px;font-weight:600;color:var(--text2)">Нарушения правил</span>
+      <span style="font-size:11px;color:var(--text3)">${shown.length.toLocaleString('ru-RU')}</span>
     </div>
     <div class="table-scroll" style="max-height:calc(100vh - 320px);overflow:auto">
       <table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
         <thead><tr>
           <th style="text-align:left;${thS}">Правило</th>
-          <th style="text-align:left;${thS}">Обычно (ожидалось)</th>
+          <th style="text-align:left;${thS}">Поле</th>
+          <th style="text-align:left;${thS}">Ожидается</th>
           <th style="text-align:left;${thS}">Указано</th>
-          <th style="text-align:right;${thS}">Увер.</th>
-          <th style="text-align:left;${thS}">Где</th>
           <th style="text-align:center;${thS}">Дата</th>
           <th style="text-align:left;${thS}">Контрагент</th>
           <th style="text-align:left;${thS}">Подстатья</th>
           <th style="text-align:left;${thS}">Статья</th>
           <th style="text-align:left;${thS}">Аналитика</th>
+          <th style="text-align:left;${thS}">Фин. операция</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
