@@ -4949,20 +4949,29 @@ function renderAnomaly(f){
   const norm=s=>S(s).toLowerCase().replace(/[^a-zа-яё0-9]/gi,'');
   const code3=r=>{const a=S(r[COL.ARTICLE_CODE]).match(/^(\d{3})/);if(a)return a[1];const b=S(r[COL.ARTICLE_NAME]).match(/^(\d{3})/);return b?b[1]:'';};
   const isMove=r=>S(r[COL.TYPE]).toLowerCase()==='перемещение';
-  // ── ЖЁСТКИЕ ПРАВИЛА (детерминированные). Чтобы добавить новое — допишите объект в массив. ──
+  const is127div=r=>norm(r[COL.ARTICLE_NAME]).includes('дивиденд');
+  // ── ЖЁСТКИЕ ПРАВИЛА (детерминированные). where(r) — когда применяется; checks[] — что проверяем. ──
+  // checks: {field, fieldName, expect}  ИЛИ  {field, fieldName, requireFilled:true} (обязательно непусто)
   const RULES=[
-    {id:'move',label:'Перемещение → Техническая операция',field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Техническая операция',where:isMove},
-    {id:'a300',label:'Статья 300 → Прямые / Переменные',field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='300'},
-    {id:'a112',label:'Статья 112 → Прямые / Переменные',field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='112'}
+    {id:'move',label:'Перемещение → Техническая операция',where:isMove,checks:[{field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Техническая операция'}]},
+    {id:'a300',label:'Статья 300 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='300',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
+    {id:'a112',label:'Статья 112 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='112',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
+    {id:'div',label:'127 Дивиденды → Вывод прибыли · Финансовая · контрагент',where:is127div,checks:[
+      {field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Вывод чистой прибыли'},
+      {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Финансовая'},
+      {field:COL.SECOND_SIDE,fieldName:'Контрагент (ID_SecondSide)',requireFilled:true}
+    ]}
   ];
-  RULES.forEach(rl=>rl.en=norm(rl.expect));
+  RULES.forEach(rl=>rl.checks.forEach(c=>c.en=c.requireFilled?'':norm(c.expect)));
   const items=[];
   data.forEach(r=>{
     RULES.forEach(rl=>{
       if(!rl.where(r))return;
-      const actual=S(r[rl.field]);
-      if(norm(actual).includes(rl.en))return; // ок — содержит ожидаемое
-      items.push({row:r,rule:rl.id,ruleLabel:rl.label,fieldName:rl.fieldName,expect:rl.expect,got:actual||'(пусто)'});
+      rl.checks.forEach(c=>{
+        const actual=S(r[c.field]);
+        const bad=c.requireFilled?actual==='':!norm(actual).includes(c.en);
+        if(bad)items.push({row:r,rule:rl.id,ruleLabel:rl.label,fieldName:c.fieldName,expect:c.requireFilled?'(обязательно заполнить)':c.expect,got:actual||'(пусто)'});
+      });
     });
   });
   const shown=f.field?items.filter(x=>x.rule===f.field):items;
