@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;600;700;800&display=swap');
   :root {
@@ -254,6 +255,22 @@
 </head>
 <body>
 
+<!-- ── Экран входа (Firebase Authentication) ── -->
+<div id="authGate" style="display:none;position:fixed;inset:0;z-index:99999;background:var(--bg,#0e1116);align-items:center;justify-content:center;font-family:var(--sans,system-ui,sans-serif)">
+  <div style="width:340px;max-width:92vw;background:var(--surface,#171b22);border:1px solid var(--border,#2a2f3a);border-radius:16px;padding:28px 26px;box-shadow:0 24px 60px rgba(0,0,0,.45)">
+    <div style="font-size:20px;font-weight:800;color:var(--text,#e6e9ef);text-align:center">УПР.Финансы</div>
+    <div style="font-size:12px;color:var(--text3,#8a93a3);text-align:center;margin-top:4px;margin-bottom:20px">Вход в дашборд</div>
+    <form id="authForm" autocomplete="on">
+      <label style="display:block;font-size:11px;color:var(--text3,#8a93a3);margin-bottom:4px">Email</label>
+      <input id="authEmail" type="email" required autocomplete="username" placeholder="you@example.com" style="width:100%;box-sizing:border-box;padding:9px 11px;font-size:13px;border:1px solid var(--border,#2a2f3a);border-radius:8px;background:var(--surface2,#1f242d);color:var(--text,#e6e9ef);margin-bottom:14px;font-family:inherit">
+      <label style="display:block;font-size:11px;color:var(--text3,#8a93a3);margin-bottom:4px">Пароль</label>
+      <input id="authPass" type="password" required autocomplete="current-password" placeholder="••••••••" style="width:100%;box-sizing:border-box;padding:9px 11px;font-size:13px;border:1px solid var(--border,#2a2f3a);border-radius:8px;background:var(--surface2,#1f242d);color:var(--text,#e6e9ef);margin-bottom:16px;font-family:inherit">
+      <button id="authBtn" type="submit" style="width:100%;padding:10px;font-size:13px;font-weight:700;border:none;border-radius:8px;background:var(--accent,#3a6ea5);color:#fff;cursor:pointer;font-family:inherit">Войти</button>
+      <div id="authErr" style="display:none;font-size:11px;color:#d35450;text-align:center;margin-top:12px"></div>
+    </form>
+  </div>
+</div>
+
 <!-- ── Sidebar ── -->
 <aside class="sidebar">
   <div class="sidebar-logo">
@@ -362,6 +379,10 @@
       <span id="presenceBox" title="Активные вкладки сайта (онлайн за последние 60 сек)" style="display:none;margin-left:auto;align-items:center;gap:6px;font-size:12px;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:4px 12px;white-space:nowrap">
         <span style="width:8px;height:8px;border-radius:50%;background:#2e9e6b;box-shadow:0 0 0 3px rgba(46,158,107,.18);flex-shrink:0"></span>
         Сейчас на сайте: <b id="presenceCount" style="color:var(--text)">—</b>
+      </span>
+      <span id="authUserBox" style="display:none;align-items:center;gap:8px;margin-left:14px;font-size:12px;color:var(--text2);white-space:nowrap">
+        <span id="authUserEmail" style="color:var(--text3)"></span>
+        <button onclick="appLogout()" title="Выйти" style="font-size:11px;font-weight:600;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Выйти</button>
       </span>
     </div>
     <div class="content" id="mainContent">
@@ -5358,10 +5379,11 @@ window.depShowDetail=function(idx){
   document.body.appendChild(overlay);
 };
 
-// ── Живой счётчик «Сейчас на сайте: N» через Firebase Realtime Database ──
-// ВСТАВЬТЕ конфиг вашего Firebase-проекта: Firebase Console → ⚙ Project settings → раздел "Your apps" (Web) → SDK setup → Config.
-// Обязателен databaseURL (создайте Realtime Database). Пока он пуст — счётчик скрыт, дашборд работает как обычно.
-// Правила БД для теста: { "rules": { "presence": { ".read": true, ".write": true } } }
+// ── Конфиг Firebase (счётчик «Сейчас на сайте» + вход по логину/паролю) ──
+// Firebase Console → ⚙ Project settings → "Your apps" (Web) → SDK setup → Config.
+// • Счётчик: нужен databaseURL (Realtime Database). Правила: { "rules": { "presence": { ".read": true, ".write": true } } }
+// • Вход: нужны apiKey+authDomain, в Firebase включить Authentication → Sign-in method → Email/Password, и создать пользователей (Users → Add user).
+//   Если Firebase/конфиг недоступны — дашборд открывается БЕЗ входа (fail-open), это барьер от посторонних, а не строгая защита.
 const FIREBASE_CONFIG={
   apiKey:"AIzaSyA7XzpJ0yl9FzX-o-8rrCimjy79jVGPdCE",
   authDomain:"upr-finance-opora-8521b.firebaseapp.com",
@@ -5371,18 +5393,35 @@ const FIREBASE_CONFIG={
   messagingSenderId:"40767153300",
   appId:"1:40767153300:web:ea95df96887d017a8d8081"
 };
-(function presenceCounter(){
+// Единая инициализация Firebase (вызывается один раз; и auth, и presence используют один app)
+function fbApp(){ if(!window.firebase)return null; if(!firebase.apps||!firebase.apps.length){firebase.initializeApp(FIREBASE_CONFIG);} return firebase.app(); }
+
+// Запуск дашборда: подключение к данным (бывш. init). Идемпотентно
+function bootApp(){
+  if(window._appBooted)return; window._appBooted=true;
+  const{sheetId,apiKey}=loadSavedCredentials();
+  if(sheetId&&apiKey){
+    document.getElementById('setupWrap').classList.add('hidden');
+    document.getElementById('dashWrap').classList.remove('hidden');
+    document.getElementById('dashWrap').style.display='flex';
+    connectAndLoad();
+  }
+}
+
+// ── Живой счётчик «Сейчас на сайте: N» через Firebase Realtime Database ──
+function startPresence(displayName){
+  if(window._presenceStarted)return; window._presenceStarted=true;
   try{
-    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; // не настроено — тихо выходим
-    firebase.initializeApp(FIREBASE_CONFIG);
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; // БД не настроена — тихо выходим
+    fbApp();
     const db=firebase.database();
     const myId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():'s'+Date.now()+Math.random().toString(36).slice(2);
     const ref=db.ref('presence/'+myId);
     const box=document.getElementById('presenceBox'),cnt=document.getElementById('presenceCount');
     let offset=0;
     db.ref('.info/serverTimeOffset').on('value',s=>{offset=s.val()||0;});
-    // запись сессии: серверная метка времени + пустое name (на будущее — вход по именам)
-    const beat=()=>ref.update({ts:firebase.database.ServerValue.TIMESTAMP,name:''});
+    // запись сессии: серверная метка времени + имя (email вошедшего пользователя)
+    const beat=()=>ref.update({ts:firebase.database.ServerValue.TIMESTAMP,name:displayName||''});
     db.ref('.info/connected').on('value',s=>{ if(s.val()){ ref.onDisconnect().remove(); beat(); } });
     setInterval(beat,20000); // пульс каждые 20 сек
     const leave=()=>{try{ref.remove();}catch(e){}};
@@ -5396,16 +5435,54 @@ const FIREBASE_CONFIG={
       if(box)box.style.display='inline-flex';
     });
   }catch(e){console.warn('[presence] счётчик не запущен:',e&&e.message);}
-})();
+}
 
-(function init(){
-  const{sheetId,apiKey}=loadSavedCredentials();
-  if(sheetId&&apiKey){
-    document.getElementById('setupWrap').classList.add('hidden');
-    document.getElementById('dashWrap').classList.remove('hidden');
-    document.getElementById('dashWrap').style.display='flex';
-    connectAndLoad();
+// ── Авторизация (Firebase Authentication, email + пароль) ──
+function authErrMsg(err){
+  const c=(err&&err.code)||'';
+  if(c.includes('invalid-credential')||c.includes('wrong-password')||c.includes('user-not-found'))return 'Неверный email или пароль';
+  if(c.includes('invalid-email'))return 'Некорректный email';
+  if(c.includes('too-many-requests'))return 'Слишком много попыток. Попробуйте позже';
+  if(c.includes('network'))return 'Нет сети. Проверьте подключение';
+  return (err&&err.message)||'Ошибка входа';
+}
+window.appLogout=function(){ try{ if(window.firebase&&firebase.auth) firebase.auth().signOut(); }catch(e){} };
+(function authGate(){
+  const gate=document.getElementById('authGate');
+  const authEnabled=!!(window.firebase&&firebase.auth&&FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.authDomain);
+  if(!authEnabled){
+    // авторизация не настроена (нет Firebase/конфига) — работаем без входа, как раньше
+    if(gate)gate.style.display='none';
+    bootApp(); startPresence('');
+    return;
   }
+  if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
+  fbApp();
+  const auth=firebase.auth();
+  try{ auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
+  const form=document.getElementById('authForm'),emailEl=document.getElementById('authEmail'),passEl=document.getElementById('authPass');
+  const errEl=document.getElementById('authErr'),btn=document.getElementById('authBtn');
+  const userBox=document.getElementById('authUserBox'),userEmail=document.getElementById('authUserEmail');
+  if(form)form.addEventListener('submit',function(e){
+    e.preventDefault();
+    if(errEl)errEl.style.display='none';
+    if(btn){btn.disabled=true;btn.textContent='Вход…';}
+    auth.signInWithEmailAndPassword((emailEl.value||'').trim(),passEl.value||'')
+      .catch(err=>{ if(errEl){errEl.textContent=authErrMsg(err);errEl.style.display='block';} })
+      .finally(()=>{ if(btn){btn.disabled=false;btn.textContent='Войти';} });
+  });
+  auth.onAuthStateChanged(function(user){
+    if(user){
+      if(gate)gate.style.display='none';
+      if(userBox)userBox.style.display='inline-flex';
+      if(userEmail)userEmail.textContent=user.email||'';
+      if(passEl)passEl.value='';
+      bootApp(); startPresence(user.email||'');
+    }else{
+      if(gate)gate.style.display='flex';
+      if(userBox)userBox.style.display='none';
+    }
+  });
 })();
 </script>
 </body>
