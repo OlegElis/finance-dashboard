@@ -5020,9 +5020,8 @@ function renderAnomaly(f){
   const fnsYes=a=>['да','true','1','+'].includes(S(a).toLowerCase());
   // Справочник сделок Bitrix24 (RawData_BFL) для сверки ID_Offer — логика как в Дебиторке БФЛ
   const BFL_DIR='БФЛ - Банкротство физических лиц';
-  const refOffer=new Set(),refLead=new Set();
-  if(RAW_BFL&&RAW_BFL.deals)RAW_BFL.deals.forEach(d=>{const k=_arNormId(d.offer);if(k)refOffer.add(k);const l=_arLeadId(d.offer);if(l)refLead.add(l);});
-  const idInRef=row=>{const off=_arNormId(row[COL.OFFER_ID]);if(!off)return true;if(refOffer.has(off))return true;const l=_arLeadId(off);return l?refLead.has(l):false;};
+  const refOffer=new Set(),refLeadOffer={};
+  if(RAW_BFL&&RAW_BFL.deals)RAW_BFL.deals.forEach(d=>{const off=String(d.offer||'').trim();const k=_arNormId(off);if(k)refOffer.add(k);const l=_arLeadId(off);if(l&&!refLeadOffer[l])refLeadOffer[l]=off;});
   // ── ЖЁСТКИЕ ПРАВИЛА (детерминированные). where(r) — когда применяется; checks[] — что проверяем. ──
   // checks: {field, fieldName, expect}  ИЛИ  {field, fieldName, requireFilled:true} (обязательно непусто)
   const RULES=[
@@ -5037,8 +5036,8 @@ function renderAnomaly(f){
     {id:'fns',label:'Счёт ООО/ИП → ФНС «да»',where:r=>!isMove(r)&&isOfficialAcc(r),checks:[{field:COL.FNS,fieldName:'ФНС',expect:'да',ok:fnsYes}]},
     {id:'movebal',label:'Перемещение → парность (+/− в Поступлении, сумма 0)',group:true}
   ];
-  // ID_Offer должен быть в справочнике сделок Bitrix24 (только БФЛ, только если справочник загружен)
-  if(refOffer.size)RULES.push({id:'offerref',label:'ID_Offer → есть в справочнике Bitrix24',where:r=>S(r[COL.ACTIVITY_DIR])===BFL_DIR&&S(r[COL.OFFER_ID])!=='',checks:[{field:COL.OFFER_ID,fieldName:'ID_Offer',expect:'есть в справочнике (RawData_BFL)',ok:(a,row)=>idInRef(row)}]});
+  // ID_Offer — сверка со справочником Bitrix24 (считается отдельным блоком ниже; здесь только для фильтра/KPI)
+  if(refOffer.size)RULES.push({id:'offerref',label:'ID_Offer → сверка со справочником Bitrix24',group:true});
   RULES.forEach(rl=>(rl.checks||[]).forEach(c=>c.en=c.requireFilled?'':norm(c.expect)));
   const items=[];
   data.forEach(r=>{
@@ -5067,6 +5066,14 @@ function renderAnomaly(f){
   Object.values(mvGrp).forEach(g=>{
     const sum=g.reduce((s,x)=>s+x.inc,0);
     if(Math.abs(sum)>=0.005)g.forEach(x=>mvAdd(x.row,'нет парной записи / сумма группы ≠ 0 ('+(x.inc>0?'+':'')+Math.round(x.inc).toLocaleString('ru-RU')+')'));
+  });
+  // ID_Offer: сверка со справочником Bitrix24. Полное совпадение — ок; иначе ищем по ID (цифры до «|») и показываем справочный ID
+  if(refOffer.size)data.forEach(r=>{
+    if(S(r[COL.ACTIVITY_DIR])!==BFL_DIR)return;
+    const raw=S(r[COL.OFFER_ID]);if(!raw)return;
+    if(refOffer.has(_arNormId(raw)))return; // ID совпадает со справочником
+    const lead=_arLeadId(raw),ref=lead?refLeadOffer[lead]:'';
+    items.push({row:r,rule:'offerref',ruleLabel:'ID_Offer → сверка со справочником Bitrix24',fieldName:'ID_Offer',expect:ref||'нет в справочнике (по ID)',got:raw});
   });
   // Агрегация: повторяющиеся ID_Offer (правило offerref) → одна строка с расшифровкой при клике
   const aitems=[],offAgg={};
