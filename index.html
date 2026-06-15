@@ -1641,7 +1641,7 @@ window.showKassaLimitsPopup=function(){
     <div style="padding:16px 20px 20px">
       ${summaryBlock}
       <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.6">
-        Лимит остатка задаётся для каждого реквизита (счёт ООО/ИП, карта ФЛ, касса). Если текущий остаток превышает лимит - реквизит подсвечивается как <b style="color:var(--outcome)">превышение</b>. Лимиты сохраняются в браузере.
+        Лимит остатка задаётся для каждого реквизита (счёт ООО/ИП, карта ФЛ, касса). Если текущий остаток превышает лимит - реквизит подсвечивается как <b style="color:var(--outcome)">превышение</b>. Лимиты сохраняются в облаке (Firebase) и видны на всех устройствах.
       </p>
       <div style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
         <table style="width:100%;border-collapse:collapse">
@@ -4313,9 +4313,32 @@ let _mktCounts=(()=>{try{
 function _mktSaveCounts(){try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){}}
 let _mktDirKey='__all__'; // текущее направление (устанавливается в renderMarketing)
 
-// Лимиты касс {accName: limitNumber} - персистится в localStorage
+// Лимиты касс {accName: limitNumber} — общие для всех устройств (Firebase RTDB config/kassaLimits) + локальный кэш в localStorage
 let _kassaLimits=(()=>{try{return JSON.parse(localStorage.getItem('kassaLimits')||'{}')}catch(e){return{}}})();
-function _kassaSaveLimits(){try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}}
+function _kassaSaveLimits(){
+  try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}
+  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/kassaLimits').set(_kassaLimits); } }catch(e){}
+}
+// Синхронизация лимитов между устройствами: подписка на config/kassaLimits
+function startLimitsSync(){
+  if(window._limitsSyncStarted)return; window._limitsSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
+    fbApp();
+    firebase.database().ref('config/kassaLimits').on('value',s=>{
+      const v=s.val();
+      if(v&&typeof v==='object'){
+        _kassaLimits=v;
+        try{localStorage.setItem('kassaLimits',JSON.stringify(v));}catch(e){}
+        if(activeTab==='bank')renderBank(getFilters()); // обновить карточку/контроль лимитов
+      }else if(!window._limitsMigrated&&_kassaLimits&&Object.keys(_kassaLimits).length){
+        // в облаке ещё нет лимитов — один раз переносим локальные «вверх»
+        window._limitsMigrated=true;
+        firebase.database().ref('config/kassaLimits').set(_kassaLimits);
+      }
+    });
+  }catch(e){console.warn('[limits] синхронизация не активна:',e&&e.message);}
+}
 
 window.mktCountChange=function(pk,field,val){
   if(!_mktCounts[_mktDirKey])_mktCounts[_mktDirKey]={};
@@ -5611,7 +5634,7 @@ function watchForceLogout(authMs){
   if(!authEnabled){
     // авторизация не настроена (нет Firebase/конфига) — работаем без входа, как раньше
     if(gate)gate.style.display='none';
-    bootApp(); startPresence('');
+    bootApp(); startPresence(''); startLimitsSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -5650,7 +5673,7 @@ function watchForceLogout(authMs){
       if(logoutAllBtn)logoutAllBtn.style.display=((user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase())?'block':'none';
       // слежение за рубильником по времени входа этой сессии (серверное auth_time)
       user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-      bootApp(); startPresence(user.email||'');
+      bootApp(); startPresence(user.email||''); startLimitsSync();
     }else{
       if(gate)gate.style.display='flex';
       if(userBox)userBox.style.display='none';
