@@ -4812,8 +4812,21 @@ function renderLoans(f){
     ${looseExtra?`<div style="font-size:10px;color:var(--outcome);margin-top:4px">⚠ Ещё ${looseExtra} строк с «займ» в реквизитах счёта без «сотрудник» НЕ вошли (иная займовая касса). Если это сотрудники - пришлите точное название.</div>`:''}
   </details>`;
 
+  // Динамика по месяцам: выдачи vs возвраты (могут идти не синхронно) + накопленный остаток
+  const MON_S=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const byMonth={};
+  shown.forEach(x=>x.rows.forEach(r=>{const d=parseDate(r[COL.DATE_DDS]);if(!d)return;const amount=parseNum(r[COL.INCOME])+parseNum(r[COL.OUTCOME]);if(amount===0)return;const k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');const b=byMonth[k]||(byMonth[k]={issued:0,repaid:0});if(amount>0)b.issued+=amount;else b.repaid+=-amount;}));
+  const monthKeys=Object.keys(byMonth).sort();
+  window._loanDyn={labels:monthKeys.map(k=>{const[y,m]=k.split('-');return MON_S[+m-1]+" '"+y.slice(2);}),
+    issued:monthKeys.map(k=>byMonth[k].issued),repaid:monthKeys.map(k=>byMonth[k].repaid),
+    balance:(()=>{let s=0;return monthKeys.map(k=>{s+=byMonth[k].issued-byMonth[k].repaid;return s;});})()};
+  const dynCard=monthKeys.length?`<div class="table-wrap" style="margin-top:10px;padding:10px 14px">
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Динамика: выдачи и возвраты по месяцам <span style="font-weight:400;color:var(--text3);font-size:10px">(столбцы), накопленный остаток (линия)</span></div>
+    <div style="height:230px"><canvas id="loanChartDyn"></canvas></div>
+  </div>`:'';
+
   const styleTag=`<style>#tabLoans .ln-row:hover{background:var(--surface2)}#tabLoans .ln-row td{transition:background .1s}</style>`;
-  el.innerHTML=styleTag+filterBar+kpiHtml+portfolioHtml+`
+  el.innerHTML=styleTag+filterBar+kpiHtml+portfolioHtml+dynCard+`
   <div class="table-wrap" style="margin-top:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;font-weight:600;color:var(--text2)">Детализация по сотрудникам</span>
@@ -4837,6 +4850,22 @@ function renderLoans(f){
     </div>
     ${trunc}
   </div>`;
+
+  // График динамики выдач/возвратов
+  if(window._loanChartDyn){try{window._loanChartDyn.destroy();}catch(e){}window._loanChartDyn=null;}
+  const dynCvs=document.getElementById('loanChartDyn');
+  if(dynCvs&&window.Chart&&window._loanDyn.labels.length){
+    const D=window._loanDyn;const kfmt=v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?Math.round(v/1e3)+'К':Math.round(v);};
+    window._loanChartDyn=new Chart(dynCvs,{data:{labels:D.labels,datasets:[
+      {type:'bar',label:'Выдано',data:D.issued,backgroundColor:'#e0894a',borderRadius:3,order:2},
+      {type:'bar',label:'Возвращено',data:D.repaid,backgroundColor:'#2e9e6b',borderRadius:3,order:2},
+      {type:'line',label:'Остаток (накопл.)',data:D.balance,borderColor:'#3a6ea5',backgroundColor:'#3a6ea5',tension:.3,pointRadius:3,order:1,fill:false}
+    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:12,usePointStyle:true}},
+        tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Math.round(c.raw).toLocaleString('ru-RU')}`}}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:9},autoSkip:false,maxRotation:60,minRotation:60}},
+        y:{beginAtZero:true,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:kfmt}}}}});
+  }
 }
 // Детализация займа: движения по сотруднику в формате окна ДДС (15 колонок)
 window.loanShowDetail=function(idx){
