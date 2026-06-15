@@ -5219,28 +5219,46 @@ function renderDepAU(f){
   const dsF=d=>d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';
   const today=new Date();today.setHours(0,0,0,0);
   const daysB=(a,b)=>Math.floor((b-a)/86400000);
-  // группируем по ID_Offer депозиты и дивиденды
+  // группируем по ID_Offer; копим депозиты и дивиденды как ОТДЕЛЬНЫЕ операции (сумма + дата) — для сопоставления по сумме
   const byId={};
   RAW.forEach(r=>{
     const dep=isDep(r),div=isDiv(r);if(!dep&&!div)return;
     const d=parseDate(r[COL.DATE_DDS]);if(!inRange(d))return;
     const id=S(r[COL.OFFER_ID])||'— без ID_Offer —';
-    const e=byId[id]||(byId[id]={id,depSum:0,divSum:0,depFirst:null,depLast:null,divLast:null,rows:[]});
+    const e=byId[id]||(byId[id]={id,deps:[],divs:[],rows:[]});
     e.rows.push(r);
-    if(dep){const inc=parseNum(r[COL.INCOME]);e.depSum+=inc;if(d){if(!e.depFirst||d<e.depFirst)e.depFirst=d;if(!e.depLast||d>e.depLast)e.depLast=d;}}
-    if(div){e.divSum+=Math.abs(parseNum(r[COL.OUTCOME])||parseNum(r[COL.INCOME]));if(d){if(!e.divLast||d>e.divLast)e.divLast=d;}}
+    if(dep){const inc=parseNum(r[COL.INCOME]);if(inc>0)e.deps.push({amt:inc,date:d});}
+    if(div){const out=Math.abs(parseNum(r[COL.OUTCOME])||parseNum(r[COL.INCOME]));if(out>0)e.divs.push({amt:out,date:d});}
   });
+  const EPS=0.5; // допуск совпадения суммы депозита и вывода, ₽
   // только ID с депозитом
-  let items=Object.values(byId).filter(e=>e.depSum>0).map(e=>{
-    const balance=e.depSum-e.divSum;
-    const laterDiv=e.divSum>0&&e.divLast&&e.depFirst&&e.divLast>=e.depFirst;
+  let items=Object.values(byId).filter(e=>e.deps.length).map(e=>{
+    const deps=[...e.deps].sort((a,b)=>(a.date||0)-(b.date||0));
+    const divs=e.divs.map(x=>({amt:x.amt,date:x.date,used:false}));
+    const depSum=deps.reduce((s,x)=>s+x.amt,0);
+    const divSum=divs.reduce((s,x)=>s+x.amt,0);
+    // сопоставление по сумме: каждый депозит ищет вывод ТОЙ ЖЕ суммы (один-к-одному)
+    let matchedSum=0,earlyMatchedSum=0; // выведено той же суммой позже / раньше депозита
+    deps.forEach(dp=>{
+      const same=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-dp.amt)<=EPS);
+      // приоритет — вывод той же суммы ПОЗЖЕ депозита (правило: депозит выводится дивидендами позже)
+      const later=same.filter(dv=>dv.date&&dp.date&&dv.date>=dp.date).sort((a,b)=>a.date-b.date);
+      if(later.length){later[0].used=true;matchedSum+=dp.amt;return;}
+      const early=same.sort((a,b)=>(b.date||0)-(a.date||0)); // та же сумма, но раньше депозита / без даты
+      if(early.length){early[0].used=true;earlyMatchedSum+=dp.amt;}
+    });
+    const depFirst=deps[0]?deps[0].date:null;
+    const depLast=deps.reduce((m,x)=>x.date&&(!m||x.date>m)?x.date:m,null);
+    const divLast=divs.reduce((m,x)=>x.date&&(!m||x.date>m)?x.date:m,null);
+    const balance=depSum-matchedSum; // не выведено той же суммой
     let st;
-    if(e.divSum<=0.005)st={t:'Не выведено',c:'#d35450'};
-    else if(!laterDiv)st={t:'⚠ вывод раньше депозита',c:'#d35450'};
+    if(divSum<=0.005)st={t:'Не выведено',c:'#d35450'};
+    else if(matchedSum<=0.005&&earlyMatchedSum>0.005)st={t:'⚠ вывод раньше депозита',c:'#d35450'};
+    else if(matchedSum<=0.005)st={t:'⚠ нет вывода на сумму депозита',c:'#d35450'};
     else if(balance>0.005)st={t:'Частично',c:'#e0894a'};
     else st={t:'Выведено',c:'#2e9e6b'};
-    const days=e.depLast?daysB(e.depLast,today):null;
-    return {...e,balance,status:st,days};
+    const days=depLast?daysB(depLast,today):null;
+    return {id:e.id,rows:e.rows,depSum,divSum,matchedSum,earlyMatchedSum,depFirst,depLast,divLast,balance,status:st,days};
   });
   const q=S(f.search).toLowerCase(),onlyOpen=!!f.onlyOpen;
   let shown=items;
@@ -5258,13 +5276,13 @@ function renderDepAU(f){
 
   if(!items.length){el.innerHTML=filterBar+emptyState('Депозиты не найдены','Нет операций по подстатье со словом «депозит» (поступление). Проверьте «120_Поступление депозитов».');return;}
 
-  const totDep=shown.reduce((s,x)=>s+x.depSum,0),totDiv=shown.reduce((s,x)=>s+x.divSum,0),totBal=shown.reduce((s,x)=>s+Math.max(0,x.balance),0);
-  const openCnt=shown.filter(x=>x.divSum<=0.005).length;
+  const totDep=shown.reduce((s,x)=>s+x.depSum,0),totMatched=shown.reduce((s,x)=>s+x.matchedSum,0),totBal=shown.reduce((s,x)=>s+Math.max(0,x.balance),0);
+  const openCnt=shown.filter(x=>x.matchedSum<=0.005).length;
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card blue"><div class="kpi-label">Депозиты (поступило)</div><div class="kpi-value">${fmt(totDep)}</div><div class="kpi-sub">${shown.length.toLocaleString('ru-RU')} ID в выборке</div></div>
-    <div class="kpi-card green"><div class="kpi-label">Выведено дивидендами</div><div class="kpi-value positive">${fmt(totDiv)}</div><div class="kpi-sub">${totDep?fmtPct(totDiv/totDep):''} от депозитов</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Выведено (та же сумма)</div><div class="kpi-value positive">${fmt(totMatched)}</div><div class="kpi-sub">${totDep?fmtPct(totMatched/totDep):''} от депозитов</div></div>
     <div class="kpi-card red"><div class="kpi-label">Не выведено</div><div class="kpi-value negative">${fmt(totBal)}</div><div class="kpi-sub">${totDep?fmtPct(totBal/totDep):''} от депозитов</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">ID без вывода</div><div class="kpi-value">${openCnt}</div><div class="kpi-sub">нет дивидендов</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">ID без вывода на сумму</div><div class="kpi-value">${openCnt}</div><div class="kpi-sub">нет дивиденда той же суммы</div></div>
   </div>`;
 
   const thS='background:var(--surface2);position:sticky;top:0;z-index:2;padding:7px 10px;font-size:10px;font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;color:var(--text3);text-transform:uppercase';
@@ -5276,7 +5294,7 @@ function renderDepAU(f){
     <td style="${td};text-align:center;font-size:10px;white-space:nowrap">${dsF(x.depFirst)}</td>
     ${tdN(fmt(x.depSum))}
     <td style="${td};text-align:center;font-size:10px;white-space:nowrap">${dsF(x.divLast)}</td>
-    ${tdN(x.divSum?fmt(x.divSum):'-','var(--income)')}
+    ${tdN(x.matchedSum?fmt(x.matchedSum):'-','var(--income)')}
     ${tdN(x.balance>0.005?fmt(x.balance):x.balance<-0.005?'+'+fmt(-x.balance):'0',x.balance>0.005?'var(--outcome)':'var(--text3)')}
     <td style="${td};text-align:center;font-weight:600;color:${x.days>90?'#d35450':x.days>30?'#e0894a':'var(--text3)'}">${x.days!=null?x.days+' дн.':'-'}</td>
     <td style="${td};white-space:nowrap"><span style="padding:1px 8px;border-radius:8px;font-weight:600;color:${x.status.c};background:color-mix(in srgb,${x.status.c} 12%,transparent)">${x.status.t}</span></td>
@@ -5284,7 +5302,7 @@ function renderDepAU(f){
   const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
 
   el.innerHTML=`<style>#tabDepau .dep-row:hover{background:var(--surface2)}</style>`+filterBar+kpiHtml+`
-  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">По каждому ID_Offer: депозит (поступление «120_Поступление депозитов») должен позже вывестись дивидендами («127_Дивиденды»). «Не выведено» — дивидендов нет; «⚠ вывод раньше депозита» — дивиденд есть, но до даты депозита. Read-only.</div>
+  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">По каждому ID_Offer: депозит (поступление «120_Поступление депозитов») должен позже вывестись дивидендами («127_Дивиденды») <b>ровно на ту же сумму</b>. Вывод засчитывается, только если есть дивиденд той же суммы и позже по дате (сопоставление один-к-одному). «Не выведено» — дивидендов нет; «⚠ нет вывода на сумму депозита» — дивиденды есть, но другой суммы; «⚠ вывод раньше депозита» — сумма совпала, но дата раньше. Read-only.</div>
   <div class="table-wrap" style="margin-top:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;font-weight:600;color:var(--text2)">Депозиты по ID_Offer</span>
@@ -5297,7 +5315,7 @@ function renderDepAU(f){
           <th style="text-align:center;${thS}">Дата депозита</th>
           <th style="text-align:right;${thS}">Депозит</th>
           <th style="text-align:center;${thS}">Дата вывода</th>
-          <th style="text-align:right;${thS}">Выведено (дивиденды)</th>
+          <th style="text-align:right;${thS}">Выведено (та же сумма)</th>
           <th style="text-align:right;${thS}">Не выведено</th>
           <th style="text-align:center;${thS}">Дней с депозита</th>
           <th style="text-align:left;${thS}">Статус</th>
@@ -5324,7 +5342,7 @@ window.depShowDetail=function(idx){
   overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-width:1400px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35)">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
       <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;color:var(--text)">🏦 Депозит АУ · ${esc(x.id)}</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:1px">Депозит ${fmt(x.depSum)} · выведено дивидендами ${fmt(x.divSum)} · остаток ${fmt(x.balance)} · ${esc(x.status.t)}</div></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px">Депозит ${fmt(x.depSum)} · выведено той же суммой ${fmt(x.matchedSum)}${x.divSum>x.matchedSum+0.005?' (всего дивидендов '+fmt(x.divSum)+')':''} · остаток ${fmt(x.balance)} · ${esc(x.status.t)}</div></div>
       <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
     </div>
     <div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;table-layout:fixed"><thead>${thead}</thead><tbody>${body}</tbody></table></div>
