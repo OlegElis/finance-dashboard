@@ -2720,9 +2720,17 @@ function renderFOT(f){
   const topGroups=groupTotals.slice(0,TOPN).map(g=>g[0]);
   const restGroups=groupTotals.slice(TOPN).map(g=>g[0]);
   const colorOf={};groupTotals.forEach(([k],i)=>{colorOf[k]=i<TOPN?PAL[i%PAL.length]:'#cbd5e1';});
-  // Доля ФОТ в расходах: все списания по дате ОПиУ в том же диапазоне дат
-  let totalExpAbs=0;
-  RAW.forEach(row=>{const t=String(row[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const o=parseNum(row[COL.OUTCOME]);if(o>=0)return;const d=parseDate(row[COL.DATE_OPIU]);if(!d)return;if(f.dateFrom&&toIso(d)<f.dateFrom)return;if(f.dateTo&&toIso(d)>f.dateTo)return;totalExpAbs+=Math.abs(o);});
+  // База для долей (по дате ОПиУ, в выбранном периоде Год/Месяц; перемещения исключены): все расходы и выручка
+  const fotInScope=d=>(!selYears.length||selYears.includes(d.getFullYear()))&&(!selMonths.length||selMonths.includes(d.getMonth()+1));
+  let totalExpAbs=0,totalRev=0;
+  RAW.forEach(row=>{
+    const t=String(row[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;
+    const d=parseDate(row[COL.DATE_OPIU]);if(!d||!fotInScope(d))return;
+    const o=parseNum(row[COL.OUTCOME]),inc=parseNum(row[COL.INCOME]);
+    if(t==='списание'&&o<0)totalExpAbs+=Math.abs(o);
+    const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)totalRev+=inc;
+  });
   // KPI + динамика к прошлому периоду
   let growthTxt='—',growthColor='var(--text3)',growthHint='';
   if(np>=2){
@@ -2730,10 +2738,12 @@ function renderFOT(f){
     if(prev>0){const g=(last-prev)/prev;growthTxt=(g>=0?'+':'')+fmtPct(g);growthColor=g>0?'var(--outcome)':'var(--income)';growthHint=g>0?'рост к пред. периоду':'снижение к пред. периоду';}
   }
   const shareExp=totalExpAbs?grandAbs/totalExpAbs:0;
+  const shareRev=totalRev?grandAbs/totalRev:0;
   const perEmp=detail==='counterparty'&&groupTotals.length?grandAbs/groupTotals.length:null;
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card red"><div class="kpi-label">ФОТ итого</div><div class="kpi-value negative">${fmt(grandTotal)}</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Доля ФОТ в расходах</div><div class="kpi-value">${totalExpAbs?fmtPct(shareExp):'—'}</div><div class="kpi-sub">расходы всего ${fmt(-totalExpAbs)}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Доля ФОТ в выручке</div><div class="kpi-value">${totalRev?fmtPct(shareRev):'—'}</div><div class="kpi-sub">выручка ${fmt(totalRev)}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${growthColor}"><div class="kpi-label">Динамика (посл. период)</div><div class="kpi-value" style="color:${growthColor}">${growthTxt}</div><div class="kpi-sub" style="color:${growthColor};font-size:9px">${growthHint}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Среднее / период</div><div class="kpi-value negative">${fmt(grandTotal/Math.max(1,np))}</div></div>
     ${perEmp!=null?`<div class="kpi-card green"><div class="kpi-label">Средний на сотрудника</div><div class="kpi-value negative">${fmt(-perEmp)}</div><div class="kpi-sub">${groupTotals.length} чел.</div></div>`:''}
