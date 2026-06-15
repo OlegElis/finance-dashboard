@@ -384,6 +384,7 @@
       </span>
       <span id="authUserBox" style="display:none;align-items:center;gap:8px;margin-left:14px;font-size:12px;color:var(--text2);white-space:nowrap">
         <span id="authUserEmail" style="color:var(--text3)"></span>
+        <button id="authLogoutAll" onclick="appLogoutAll()" title="Разлогинить все сессии всех пользователей" style="display:none;font-size:11px;font-weight:600;padding:4px 10px;border:1px solid #d35450;border-radius:6px;background:transparent;color:#d35450;cursor:pointer;font-family:var(--sans)">Выйти всех</button>
         <button onclick="appLogout()" title="Выйти" style="font-size:11px;font-weight:600;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Выйти</button>
       </span>
     </div>
@@ -5448,7 +5449,26 @@ function authErrMsg(err){
   if(c.includes('network'))return 'Нет сети. Проверьте подключение';
   return (err&&err.message)||'Ошибка входа';
 }
+const ADMIN_EMAIL='o017ev@gmail.com'; // кому видна кнопка «Выйти всех»
 window.appLogout=function(){ try{ if(window.firebase&&firebase.auth) firebase.auth().signOut(); }catch(e){} };
+// «Рубильник»: ставим метку времени — все сессии, вошедшие раньше неё, разлогинятся (включая текущую)
+window.appLogoutAll=function(){
+  if(!confirm('Выйти всех пользователей (включая вас)?\nВсе открытые сессии вернутся на экран входа. Войти заново можно сразу.'))return;
+  try{ fbApp(); firebase.database().ref('config/forceLogoutAfter').set(firebase.database.ServerValue.TIMESTAMP); }
+  catch(e){ alert('Не удалось: '+((e&&e.message)||e)); }
+};
+// слежение за рубильником: если метка позже времени входа этой сессии — выходим
+function watchForceLogout(authMs){
+  if(window._flWatch)return; window._flWatch=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
+    fbApp();
+    firebase.database().ref('config/forceLogoutAfter').on('value',s=>{
+      const v=s.val();
+      if(v&&authMs&&v>authMs){ try{firebase.auth().signOut();}catch(e){} }
+    });
+  }catch(e){console.warn('[forceLogout] не активен:',e&&e.message);}
+}
 (function authGate(){
   const gate=document.getElementById('authGate');
   const authEnabled=!!(window.firebase&&firebase.auth&&FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.authDomain);
@@ -5489,10 +5509,17 @@ window.appLogout=function(){ try{ if(window.firebase&&firebase.auth) firebase.au
       if(userBox)userBox.style.display='inline-flex';
       if(userEmail)userEmail.textContent=user.email||'';
       if(passEl)passEl.value='';
+      // кнопка «Выйти всех» — только админу
+      const logoutAllBtn=document.getElementById('authLogoutAll');
+      if(logoutAllBtn)logoutAllBtn.style.display=((user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase())?'inline-block':'none';
+      // слежение за рубильником по времени входа этой сессии (серверное auth_time)
+      user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
       bootApp(); startPresence(user.email||'');
     }else{
       if(gate)gate.style.display='flex';
       if(userBox)userBox.style.display='none';
+      const logoutAllBtn=document.getElementById('authLogoutAll');
+      if(logoutAllBtn)logoutAllBtn.style.display='none';
     }
   });
 })();
