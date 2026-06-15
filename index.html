@@ -853,6 +853,7 @@ async function connectAndLoad(){
     RAW=rows.slice(1).map(r=>{while(r.length<15)r.push('');return r.map((v,i)=>{if(i===COL.INCOME||i===COL.OUTCOME)return parseNum(v);return v;});});
     localStorage.setItem('fin_sheetId',sheetId);
     localStorage.setItem('fin_apiKey',apiKey);
+    try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/sheets').set({sheetId,apiKey}); } }catch(e){} // реквизиты — в облако (общие для устройств)
     await loadBflDeals(sheetId,apiKey); // лист сделок БФЛ (не критичен - ошибки не валят загрузку)
     onDataLoaded();
   }catch(e){setStatus('error','Ошибка: '+e.message);alert('Ошибка:\n'+e.message);}
@@ -4319,6 +4320,32 @@ function _kassaSaveLimits(){
   try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}
   try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/kassaLimits').set(_kassaLimits); } }catch(e){}
 }
+// Синхронизация реквизитов подключения (ID таблицы + API Key) между устройствами через config/sheets
+function startConfigSync(){
+  if(window._cfgSyncStarted)return; window._cfgSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
+    fbApp();
+    const ref=firebase.database().ref('config/sheets');
+    ref.once('value').then(s=>{
+      const v=s.val();
+      if(v&&v.sheetId&&v.apiKey){
+        // реквизиты есть в облаке — записываем локально и в инпуты
+        localStorage.setItem('fin_sheetId',v.sheetId);
+        localStorage.setItem('fin_apiKey',v.apiKey);
+        const si=document.getElementById('sheetId'),ak=document.getElementById('apiKey');
+        if(si)si.value=v.sheetId; if(ak)ak.value=v.apiKey;
+        // если данные ещё не загружены (новое устройство — показан экран setup) — загрузить
+        const dash=document.getElementById('dashWrap');
+        if(dash&&dash.classList.contains('hidden'))connectAndLoad();
+      }else{
+        // в облаке пусто — один раз переносим локальные реквизиты «вверх»
+        const sid=localStorage.getItem('fin_sheetId')||'',key=localStorage.getItem('fin_apiKey')||'';
+        if(sid&&key)ref.set({sheetId:sid,apiKey:key});
+      }
+    }).catch(e=>console.warn('[config] sheets sync:',e&&e.message));
+  }catch(e){console.warn('[config] sheets sync не активен:',e&&e.message);}
+}
 // Синхронизация лимитов между устройствами: подписка на config/kassaLimits
 function startLimitsSync(){
   if(window._limitsSyncStarted)return; window._limitsSyncStarted=true;
@@ -5634,7 +5661,7 @@ function watchForceLogout(authMs){
   if(!authEnabled){
     // авторизация не настроена (нет Firebase/конфига) — работаем без входа, как раньше
     if(gate)gate.style.display='none';
-    bootApp(); startPresence(''); startLimitsSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -5673,7 +5700,7 @@ function watchForceLogout(authMs){
       if(logoutAllBtn)logoutAllBtn.style.display=((user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase())?'block':'none';
       // слежение за рубильником по времени входа этой сессии (серверное auth_time)
       user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-      bootApp(); startPresence(user.email||''); startLimitsSync();
+      bootApp(); startPresence(user.email||''); startLimitsSync(); startConfigSync();
     }else{
       if(gate)gate.style.display='flex';
       if(userBox)userBox.style.display='none';
