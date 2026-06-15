@@ -5237,15 +5237,22 @@ function renderDepAU(f){
     const divs=e.divs.map(x=>({amt:x.amt,date:x.date,used:false}));
     const depSum=deps.reduce((s,x)=>s+x.amt,0);
     const divSum=divs.reduce((s,x)=>s+x.amt,0);
-    // сопоставление по сумме: каждый депозит ищет вывод ТОЙ ЖЕ суммы (один-к-одному)
+    // сопоставление по сумме: депозит ищет вывод ТОЙ ЖЕ суммы — одним дивидендом ЛИБО двумя равными половинами (X/2 + X/2)
     let matchedSum=0,earlyMatchedSum=0; // выведено той же суммой позже / раньше депозита
     deps.forEach(dp=>{
-      const same=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-dp.amt)<=EPS);
-      // приоритет — вывод той же суммы ПОЗЖЕ депозита (правило: депозит выводится дивидендами позже)
-      const later=same.filter(dv=>dv.date&&dp.date&&dv.date>=dp.date).sort((a,b)=>a.date-b.date);
-      if(later.length){later[0].used=true;matchedSum+=dp.amt;return;}
-      const early=same.sort((a,b)=>(b.date||0)-(a.date||0)); // та же сумма, но раньше депозита / без даты
-      if(early.length){early[0].used=true;earlyMatchedSum+=dp.amt;}
+      const half=dp.amt/2;
+      const later=dv=>dv.date&&dp.date&&dv.date>=dp.date;
+      // 1) один дивиденд той же суммы, ПОЗЖЕ депозита
+      let s1=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-dp.amt)<=EPS&&later(dv)).sort((a,b)=>a.date-b.date);
+      if(s1.length){s1[0].used=true;matchedSum+=dp.amt;return;}
+      // 2) две равные половины (X/2 + X/2), обе ПОЗЖЕ депозита
+      let h1=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-half)<=EPS&&later(dv)).sort((a,b)=>a.date-b.date);
+      if(h1.length>=2){h1[0].used=true;h1[1].used=true;matchedSum+=dp.amt;return;}
+      // 3) та же сумма / две половины, но РАНЬШЕ депозита (или без даты)
+      let s2=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-dp.amt)<=EPS).sort((a,b)=>(b.date||0)-(a.date||0));
+      if(s2.length){s2[0].used=true;earlyMatchedSum+=dp.amt;return;}
+      let h2=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-half)<=EPS).sort((a,b)=>(b.date||0)-(a.date||0));
+      if(h2.length>=2){h2[0].used=true;h2[1].used=true;earlyMatchedSum+=dp.amt;}
     });
     const depFirst=deps[0]?deps[0].date:null;
     const depLast=deps.reduce((m,x)=>x.date&&(!m||x.date>m)?x.date:m,null);
@@ -5302,7 +5309,7 @@ function renderDepAU(f){
   const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
 
   el.innerHTML=`<style>#tabDepau .dep-row:hover{background:var(--surface2)}</style>`+filterBar+kpiHtml+`
-  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">По каждому ID_Offer: депозит (поступление только по подстатье «120_Поступление депозита») должен позже вывестись дивидендами («127_Дивиденды») <b>ровно на ту же сумму</b>. Вывод засчитывается, только если есть дивиденд той же суммы и позже по дате (сопоставление один-к-одному). «Не выведено» — дивидендов нет; «⚠ нет вывода на сумму депозита» — дивиденды есть, но другой суммы; «⚠ вывод раньше депозита» — сумма совпала, но дата раньше. Read-only.</div>
+  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">По каждому ID_Offer: депозит (поступление только по подстатье «120_Поступление депозита») должен позже вывестись дивидендами («127_Дивиденды») <b>ровно на ту же сумму</b>. Вывод засчитывается, если есть дивиденд той же суммы (или две равные половины X/2 + X/2) позже по дате. «Не выведено» — дивидендов нет; «⚠ нет вывода на сумму депозита» — дивиденды есть, но другой суммы; «⚠ вывод раньше депозита» — сумма совпала, но дата раньше. Read-only.</div>
   <div class="table-wrap" style="margin-top:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;font-weight:600;color:var(--text2)">Депозиты по ID_Offer</span>
