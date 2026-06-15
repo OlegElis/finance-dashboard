@@ -4950,6 +4950,11 @@ function renderAnomaly(f){
   const code3=r=>{const a=S(r[COL.ARTICLE_CODE]).match(/^(\d{3})/);if(a)return a[1];const b=S(r[COL.ARTICLE_NAME]).match(/^(\d{3})/);return b?b[1]:'';};
   const isMove=r=>S(r[COL.TYPE]).toLowerCase()==='перемещение';
   const is127div=r=>norm(r[COL.ARTICLE_NAME]).includes('дивиденд');
+  // Классификация счёта как в БАНКе: ООО/ИП = денежные средства (требуют ФНС)
+  const isOOO=n=>/^(ООО|ОАО|ЗАО|ПАО|АО)[\s\-«"]/i.test(n)||/^(ООО|ОАО|ЗАО|ПАО|АО)$/i.test(n);
+  const isIP=n=>/^ИП[\s\-«"]/i.test(n)||/^ИП$/i.test(n);
+  const isOfficialAcc=r=>{const n=S(r[COL.ACCOUNT]);return isOOO(n)||isIP(n);};
+  const fnsYes=a=>['да','true','1','+'].includes(S(a).toLowerCase());
   // ── ЖЁСТКИЕ ПРАВИЛА (детерминированные). where(r) — когда применяется; checks[] — что проверяем. ──
   // checks: {field, fieldName, expect}  ИЛИ  {field, fieldName, requireFilled:true} (обязательно непусто)
   const RULES=[
@@ -4961,6 +4966,7 @@ function renderAnomaly(f){
       {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Финансовая'},
       {field:COL.SECOND_SIDE,fieldName:'Контрагент (ID_SecondSide)',requireFilled:true}
     ]},
+    {id:'fns',label:'Счёт ООО/ИП → ФНС «да»',where:r=>!isMove(r)&&isOfficialAcc(r),checks:[{field:COL.FNS,fieldName:'ФНС',expect:'да',ok:fnsYes}]},
     {id:'movebal',label:'Перемещение → парность (+/− в Поступлении, сумма 0)',group:true}
   ];
   RULES.forEach(rl=>(rl.checks||[]).forEach(c=>c.en=c.requireFilled?'':norm(c.expect)));
@@ -4970,7 +4976,7 @@ function renderAnomaly(f){
       if(rl.group||!rl.where(r))return;
       rl.checks.forEach(c=>{
         const actual=S(r[c.field]);
-        const bad=c.requireFilled?actual==='':!norm(actual).includes(c.en);
+        const bad=c.ok?!c.ok(actual,r):c.requireFilled?actual==='':!norm(actual).includes(c.en);
         if(bad)items.push({row:r,rule:rl.id,ruleLabel:rl.label,fieldName:c.fieldName,expect:c.requireFilled?'(обязательно заполнить)':c.expect,got:actual||'(пусто)'});
       });
     });
