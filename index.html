@@ -627,7 +627,7 @@ const _tabFilters={
   anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
-  fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
+  fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]}
 };
 
 function getFilters(){return _tabFilters[activeTab]||_tabFilters.bank;}
@@ -1575,15 +1575,16 @@ window.multiSelApply=function(tab,rerender){
   if(tab==='dds')renderDDS(getFilters());
   else if(tab==='opiu')renderOPIU(getFilters());
   else if(tab==='marketing')renderMarketing(getFilters());
+  else if(tab==='fot')renderFOT(getFilters());
 };
 // Close on outside click
 document.addEventListener('click',function(e){
-  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd'].forEach(ddId=>{
+  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd','fot-year-dd','fot-month-dd'].forEach(ddId=>{
     const dd=document.getElementById(ddId);
     const btn=document.getElementById(ddId.replace('-dd','-btn'));
     if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){
       dd.style.display='none';
-      const tab=ddId.startsWith('dds')?'dds':ddId.startsWith('opiu')?'opiu':'marketing';
+      const tab=ddId.startsWith('dds')?'dds':ddId.startsWith('opiu')?'opiu':ddId.startsWith('fot')?'fot':'marketing';
       multiSelApply(tab);
     }
   });
@@ -2628,17 +2629,25 @@ function renderFOT(f){
     if(type!=='списание')return false;
     if(parseNum(row[COL.OUTCOME])>=0)return false;
     const d=parseDate(row[COL.DATE_OPIU]);if(!d)return false;
-    if(f.dateFrom||f.dateTo){const iso=toIso(d);if(f.dateFrom&&iso<f.dateFrom)return false;if(f.dateTo&&iso>f.dateTo)return false;}
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
     return FOT_PREFIXES.some(p=>ac.startsWith(p)||an.startsWith(p));
   });
+  // Год/Месяц (как в ДДС), по дате ОПиУ
+  const FOT_MS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const selYears=(f.years||[]).map(Number),selMonths=(f.months||[]).map(Number);
+  const fotAllYears=[...new Set(dataBase.map(r=>parseDate(r[COL.DATE_OPIU]).getFullYear()))].sort((a,b)=>a-b);
+  const fotMonthsSrc=selYears.length?dataBase.filter(r=>selYears.includes(parseDate(r[COL.DATE_OPIU]).getFullYear())):dataBase;
+  const fotAllMonths=[...new Set(fotMonthsSrc.map(r=>parseDate(r[COL.DATE_OPIU]).getMonth()+1))].sort((a,b)=>a-b);
   // Списки значений для фильтров (из dataBase, до extra-фильтров)
   const fotAllArts=[...new Set(dataBase.map(r=>String(r[COL.ARTICLE_CODE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const fotAllSubs=[...new Set(dataBase.map(r=>String(r[COL.ARTICLE_NAME]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const fotAllCps=[...new Set(dataBase.map(r=>String(r[COL.SECOND_SIDE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const selArts=(f.articles||[]).map(String),selSubs=(f.subarticles||[]).map(String),selCps=(f.counterparties||[]).map(String);
-  // Применяем extra-фильтры
+  // Применяем Год/Месяц + extra-фильтры
   const data=dataBase.filter(r=>{
+    const d=parseDate(r[COL.DATE_OPIU]);
+    if(selYears.length&&!selYears.includes(d.getFullYear()))return false;
+    if(selMonths.length&&!selMonths.includes(d.getMonth()+1))return false;
     if(selArts.length&&!selArts.includes(String(r[COL.ARTICLE_CODE]||'').trim()))return false;
     if(selSubs.length&&!selSubs.includes(String(r[COL.ARTICLE_NAME]||'').trim()))return false;
     if(selCps.length&&!selCps.includes(String(r[COL.SECOND_SIDE]||'').trim()))return false;
@@ -2656,12 +2665,15 @@ function renderFOT(f){
   const fotCmpOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
   const fotDetOpts=[{v:'direction',l:'По направлению'},{v:'subarticle',l:'По подстатье'},{v:'counterparty',l:'По контрагенту'}];
   const fotLbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
+  const fotDD=(id,inner)=>`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${inner}</div>`;
+  const fotAllBtns=(field)=>`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('fot','${field}','fot-${field==='years'?'year':'month'}-dd','fot-${field==='years'?'year':'month'}-btn',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="multiSelAll('fot','${field}','fot-${field==='years'?'year':'month'}-dd','fot-${field==='years'?'year':'month'}-btn',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
+  const fotYearCb=fotAllBtns('years')+fotAllYears.map(y=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${y}" ${selYears.includes(y)?'checked':''} onchange="multiSelChange('fot','years','fot-year-dd','fot-year-btn')"> <span>${y}</span></label>`).join('');
+  const fotMonthCb=fotAllBtns('months')+fotAllMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${selMonths.includes(m)?'checked':''} onchange="multiSelChange('fot','months','fot-month-dd','fot-month-btn')"> <span>${FOT_MS[m-1]}</span></label>`).join('');
   const fotExtraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px 28px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
-    <div class="date-range">
-      <input type="date" value="${f.dateFrom}" onchange="_tabFilters['fot'].dateFrom=this.value;renderFOT(getFilters())">
-      <span class="date-range-sep">—</span>
-      <input type="date" value="${f.dateTo}" onchange="_tabFilters['fot'].dateTo=this.value;renderFOT(getFilters())">
-    </div>
+    ${fotLbl('Год:')}
+    <div style="position:relative;display:inline-block"><button id="fot-year-btn" onclick="multiSelToggle('fot-year-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${(selYears.length?selYears.length+' выбрано':'Все')+' ▾'}</button>${fotDD('fot-year-dd',fotYearCb)}</div>
+    ${fotLbl('Месяц:')}
+    <div style="position:relative;display:inline-block"><button id="fot-month-btn" onclick="multiSelToggle('fot-month-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${(selMonths.length?selMonths.length+' выбрано':'Все')+' ▾'}</button>${fotDD('fot-month-dd',fotMonthCb)}</div>
     ${fotLbl('Период:')}
     <select class="filter-extra-sel" onchange="_tabFilters['fot'].periodType=this.value;renderFOT(getFilters())">${fotCmpOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
     ${fotLbl('Детализация:')}
