@@ -5068,7 +5068,14 @@ function renderAnomaly(f){
     const sum=g.reduce((s,x)=>s+x.inc,0);
     if(Math.abs(sum)>=0.005)g.forEach(x=>mvAdd(x.row,'нет парной записи / сумма группы ≠ 0 ('+(x.inc>0?'+':'')+Math.round(x.inc).toLocaleString('ru-RU')+')'));
   });
-  const shown=f.field?items.filter(x=>x.rule===f.field):items;
+  // Агрегация: повторяющиеся ID_Offer (правило offerref) → одна строка с расшифровкой при клике
+  const aitems=[],offAgg={};
+  items.forEach(x=>{
+    if(x.rule==='offerref'){const id=_arNormId(x.row[COL.OFFER_ID])||S(x.row[COL.OFFER_ID]);const g=offAgg[id]||(offAgg[id]={...x,rows:[],agg:true});g.rows.push(x.row);return;}
+    aitems.push({...x,rows:[x.row]});
+  });
+  Object.values(offAgg).forEach(g=>{g.count=g.rows.length;g.got=S(g.row[COL.OFFER_ID]);aitems.push(g);});
+  const shown=f.field?aitems.filter(x=>x.rule===f.field):aitems;
 
   const lbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
   const ruleOpts=[['','Все правила']].concat(RULES.map(rl=>[rl.id,rl.label]));
@@ -5077,15 +5084,15 @@ function renderAnomaly(f){
     ${lbl('Правило:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.field=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:280px">${ruleOpts.map(([v,t])=>`<option value="${v}"${f.field===v?' selected':''}>${t}</option>`).join('')}</select>
   </div>`;
 
-  const kpiCards=RULES.map(rl=>{const n=items.filter(x=>x.rule===rl.id).length;return `<div class="kpi-card ${n?'orange':'green'}"><div class="kpi-label">${rl.label}</div><div class="kpi-value ${n?'':'positive'}">${n}</div></div>`;}).join('');
+  const kpiCards=RULES.map(rl=>{const n=aitems.filter(x=>x.rule===rl.id).length;return `<div class="kpi-card ${n?'orange':'green'}"><div class="kpi-label">${rl.label}</div><div class="kpi-value ${n?'':'positive'}">${n}</div></div>`;}).join('');
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card ${items.length?'red':'green'}"><div class="kpi-label">Нарушений всего</div><div class="kpi-value ${items.length?'negative':'positive'}">${items.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">жёсткие правила (без статистики)</div></div>
+    <div class="kpi-card ${aitems.length?'red':'green'}"><div class="kpi-label">Нарушений всего</div><div class="kpi-value ${aitems.length?'negative':'positive'}">${aitems.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">жёсткие правила (без статистики)</div></div>
     ${kpiCards}
   </div>`;
 
   if(!shown.length){el.innerHTML=filterBar+kpiHtml+emptyState('Нарушений не найдено','По заданным жёстким правилам всё корректно ✓');return;}
 
-  window._anomRows=shown.map(x=>x.row);
+  window._anomItems=shown;
   const dsF=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const thS='background:var(--surface2);position:sticky;top:0;z-index:2;padding:7px 10px;font-size:10px;font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;color:var(--text3);text-transform:uppercase';
   const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
@@ -5094,8 +5101,8 @@ function renderAnomaly(f){
     <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)">${esc(x.ruleLabel)}</span></td>
     <td style="${td};font-size:10px;color:var(--text3)">${esc(x.fieldName)}</td>
     <td style="${td};color:var(--income);font-weight:600">${esc(x.expect)}</td>
-    <td style="${td};color:var(--outcome);font-weight:700;background:#fdecea">${esc(x.got)}</td>
-    <td style="${td};text-align:center;font-size:10px;white-space:nowrap">${dsF(x.row[COL.DATE_DDS])}</td>
+    <td style="${td};color:var(--outcome);font-weight:700;background:#fdecea">${esc(x.got)}${x.agg?` <span style="color:var(--text3);font-weight:400">· ${x.count} оп. ↗</span>`:''}</td>
+    <td style="${td};text-align:center;font-size:10px;white-space:nowrap">${x.agg?'разные':dsF(x.row[COL.DATE_DDS])}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.SECOND_SIDE]))}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.ARTICLE_NAME]))}</td>
     <td style="${td}">${esc(S(x.row[COL.ARTICLE_CODE]))}</td>
@@ -5131,7 +5138,31 @@ function renderAnomaly(f){
     ${trunc}
   </div>`;
 }
-window.anomShowCard=function(idx){const r=(window._anomRows||[])[idx];if(!r)return;const keep=window._dupesRows;window._dupesRows=[r];try{window.dupesShowCard(0);}finally{window._dupesRows=keep;}};
+window.anomShowCard=function(idx){
+  const it=(window._anomItems||[])[idx];if(!it)return;
+  if(!it.agg){const keep=window._dupesRows;window._dupesRows=[it.row];try{window.dupesShowCard(0);}finally{window._dupesRows=keep;}return;}
+  // агрегированная строка (повтор ID_Offer) — список операций в формате окна ДДС
+  const mv=[...(it.rows||[])].sort((a,b)=>(parseDate(a[COL.DATE_DDS])||0)-(parseDate(b[COL.DATE_DDS])||0));
+  window._anomMoves=mv;
+  const esc=s=>String(s||'').replace(/</g,'&lt;'),c=v=>String(v||'').trim();
+  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
+  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const TH=(l,w,al='left',col='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${al};${col?'color:'+col:''}">${l}</th>`;
+  const thead=`<tr style="position:sticky;top:0;z-index:1">${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}${TH('Поступление','6%','right','var(--income)')}${TH('Списание','6%','right','var(--outcome)')}${TH('ФНС','3%','center')}${TH('Реквизиты счёта','9%')}${TH('Статья','7%')}${TH('Подстатья','7%')}${TH('Аналитика','5%','center')}${TH('Контрагент','9%')}${TH('Назначение','12%')}${TH('Направление','8%')}${TH('Фин. операция','8%')}</tr>`;
+  const TD=(v,ex='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${ex}">${v}</td>`;
+  const body=mv.map((row,i)=>{const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);return`<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="ddsShowRecordCard(window._anomMoves[${i}])">${TD(ds(row[COL.DATE_DDS]),'text-align:center')}${TD(dsOpiu(row[COL.DATE_OPIU]),'text-align:center')}${TD(c(row[COL.TYPE]),'text-align:center')}${TD(c(row[COL.OFFER_ID]))}${TD(inc?f2(inc):'','text-align:right;'+(inc>0?'color:var(--income)':''))}${TD(out?f2(out):'','text-align:right;'+(out<0?'color:var(--outcome)':''))}${TD(c(row[COL.FNS]),'text-align:center')}${TD(c(row[COL.ACCOUNT]))}${TD(c(row[COL.ARTICLE_CODE]))}${TD(c(row[COL.ARTICLE_NAME]))}${TD(c(row[COL.ANALYTICS]),'text-align:center')}${TD(c(row[COL.SECOND_SIDE]))}${TD(c(row[COL.PURPOSE]))}${TD(c(row[COL.ACTIVITY_DIR]))}${TD(c(row[COL.FIN_OP]))}</tr>`;}).join('');
+  const overlay=document.createElement('div');overlay.className='txn-card-overlay';
+  overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-width:1400px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
+      <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;color:var(--text)">🎯 ${esc(it.ruleLabel)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px">ID_Offer: ${esc(it.got)} · ${mv.length} операций (нет в справочнике Bitrix24)</div></div>
+      <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
+    </div>
+    <div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;table-layout:fixed"><thead>${thead}</thead><tbody>${body}</tbody></table></div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  document.body.appendChild(overlay);
+};
 
 (function init(){
   const{sheetId,apiKey}=loadSavedCredentials();
