@@ -5018,6 +5018,11 @@ function renderAnomaly(f){
   const isIP=n=>/^ИП[\s\-«"]/i.test(n)||/^ИП$/i.test(n);
   const isOfficialAcc=r=>{const n=S(r[COL.ACCOUNT]);return isOOO(n)||isIP(n);};
   const fnsYes=a=>['да','true','1','+'].includes(S(a).toLowerCase());
+  // Справочник сделок Bitrix24 (RawData_BFL) для сверки ID_Offer — логика как в Дебиторке БФЛ
+  const BFL_DIR='БФЛ - Банкротство физических лиц';
+  const refOffer=new Set(),refLead=new Set();
+  if(RAW_BFL&&RAW_BFL.deals)RAW_BFL.deals.forEach(d=>{const k=_arNormId(d.offer);if(k)refOffer.add(k);const l=_arLeadId(d.offer);if(l)refLead.add(l);});
+  const idInRef=row=>{const off=_arNormId(row[COL.OFFER_ID]);if(!off)return true;if(refOffer.has(off))return true;const l=_arLeadId(off);return l?refLead.has(l):false;};
   // ── ЖЁСТКИЕ ПРАВИЛА (детерминированные). where(r) — когда применяется; checks[] — что проверяем. ──
   // checks: {field, fieldName, expect}  ИЛИ  {field, fieldName, requireFilled:true} (обязательно непусто)
   const RULES=[
@@ -5032,6 +5037,8 @@ function renderAnomaly(f){
     {id:'fns',label:'Счёт ООО/ИП → ФНС «да»',where:r=>!isMove(r)&&isOfficialAcc(r),checks:[{field:COL.FNS,fieldName:'ФНС',expect:'да',ok:fnsYes}]},
     {id:'movebal',label:'Перемещение → парность (+/− в Поступлении, сумма 0)',group:true}
   ];
+  // ID_Offer должен быть в справочнике сделок Bitrix24 (только БФЛ, только если справочник загружен)
+  if(refOffer.size)RULES.push({id:'offerref',label:'ID_Offer → есть в справочнике Bitrix24',where:r=>S(r[COL.ACTIVITY_DIR])===BFL_DIR&&S(r[COL.OFFER_ID])!=='',checks:[{field:COL.OFFER_ID,fieldName:'ID_Offer',expect:'есть в справочнике (RawData_BFL)',ok:(a,row)=>idInRef(row)}]});
   RULES.forEach(rl=>(rl.checks||[]).forEach(c=>c.en=c.requireFilled?'':norm(c.expect)));
   const items=[];
   data.forEach(r=>{
