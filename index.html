@@ -624,7 +624,7 @@ const _tabFilters={
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'direction',noOpening:false},
   debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffOn:true,dateSort:''},
   loans:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyDebt:false},
-  anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.7'},
+  anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',articles:[],subarticles:[],counterparties:[]}
@@ -4946,62 +4946,60 @@ function renderAnomaly(f){
   const fromD=f.dateFrom,toD=f.dateTo;
   const inRange=d=>{if(!fromD&&!toD)return true;if(!d)return false;const iso=toIso(d);if(fromD&&iso<fromD)return false;if(toD&&iso>toD)return false;return true;};
   const data=RAW.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return inRange(d);});
-  const MIN_OPS=4, RARE=0.25, conf=parseFloat(f.minConf)||0.7;
-  const FIELDS=[{key:'Статья',col:COL.ARTICLE_CODE},{key:'Подстатья',col:COL.ARTICLE_NAME},{key:'Аналитика',col:COL.ANALYTICS}];
+  const MIN_OPS=5, conf=parseFloat(f.minConf)||0.9;
+  const RULE_LBL={analytics:'Подстатья → Аналитика',code:'Подстатья → Статья (код)',type:'Подстатья → Тип',cp:'Контрагент (выброс)'};
   const flags=new Map();
-  const addFlag=(row,ri,field,usual,got,c,scope)=>{const k=ri+'|'+field;const ex=flags.get(k);if(!ex||c>ex.conf)flags.set(k,{row,field,usual,got,conf:c,scope});};
-  // Вариант 1 — по контрагенту
-  const byCp={};
-  data.forEach((r,i)=>{const cp=S(r[COL.SECOND_SIDE]);if(cp)(byCp[cp]=byCp[cp]||[]).push(i);});
-  Object.entries(byCp).forEach(([cp,idxs])=>{
-    if(idxs.length<MIN_OPS)return;
-    FIELDS.forEach(F=>{
-      const cnt={};let tot=0;
-      idxs.forEach(i=>{const v=S(data[i][F.col]);if(v){cnt[v]=(cnt[v]||0)+1;tot++;}});
-      if(tot<MIN_OPS)return;
-      let dom='',domN=0;for(const v in cnt)if(cnt[v]>domN){domN=cnt[v];dom=v;}
-      const domShare=domN/tot;if(domShare<conf)return;
-      idxs.forEach(i=>{const v=S(data[i][F.col]);if(v&&v!==dom&&cnt[v]/tot<=RARE)addFlag(data[i],i,F.key,dom,v,domShare,'контрагент: '+cp);});
-    });
-  });
-  // Вариант 2 — Аналитика ↔ Подстатья
+  const addFlag=(row,ri,field,rule,usual,got,c,scope)=>{const k=ri+'|'+field;const ex=flags.get(k);if(!ex||c>ex.conf)flags.set(k,{row,field,rule,usual,got,conf:c,scope});};
+  // R1 (Подстатья→Аналитика) и R3 (Подстатья→Тип) — по подстатье, %-логика с порогом
   const bySub={};
   data.forEach((r,i)=>{const sub=S(r[COL.ARTICLE_NAME]);if(sub)(bySub[sub]=bySub[sub]||[]).push(i);});
   Object.entries(bySub).forEach(([sub,idxs])=>{
     if(idxs.length<MIN_OPS)return;
-    const cnt={};let tot=0;
-    idxs.forEach(i=>{const v=S(data[i][COL.ANALYTICS]);if(v){cnt[v]=(cnt[v]||0)+1;tot++;}});
-    if(tot<MIN_OPS)return;
-    const filledShare=tot/idxs.length;
-    let dom='',domN=0;for(const v in cnt)if(cnt[v]>domN){domN=cnt[v];dom=v;}
-    const domShare=domN/tot;if(domShare<conf)return;
-    idxs.forEach(i=>{const v=S(data[i][COL.ANALYTICS]);
-      if(v&&v!==dom&&cnt[v]/tot<=RARE)addFlag(data[i],i,'Аналитика',dom,v,domShare,'подстатья: '+sub);
-      else if(!v&&filledShare>=conf)addFlag(data[i],i,'Аналитика',dom,'(пусто)',filledShare,'подстатья: '+sub);
-    });
+    // R1 — аналитика
+    {const cnt={};let tot=0;idxs.forEach(i=>{const v=S(data[i][COL.ANALYTICS]);if(v){cnt[v]=(cnt[v]||0)+1;tot++;}});
+     if(tot>=MIN_OPS){let dom='',dn=0;for(const v in cnt)if(cnt[v]>dn){dn=cnt[v];dom=v;}const ds=dn/tot,filled=tot/idxs.length;
+       if(ds>=conf)idxs.forEach(i=>{const v=S(data[i][COL.ANALYTICS]);
+         if(v&&v!==dom)addFlag(data[i],i,'Аналитика','analytics',dom,v,ds,'подстатья: '+sub);
+         else if(!v&&filled>=conf)addFlag(data[i],i,'Аналитика','analytics',dom,'(пусто)',filled,'подстатья: '+sub);});}}
+    // R3 — тип операции (только списание/поступление)
+    {const cnt={};let tot=0;idxs.forEach(i=>{const t=S(data[i][COL.TYPE]).toLowerCase();if(t==='списание'||t==='поступление'){cnt[t]=(cnt[t]||0)+1;tot++;}});
+     if(tot>=MIN_OPS){let dom='',dn=0;for(const v in cnt)if(cnt[v]>dn){dn=cnt[v];dom=v;}const ds=dn/tot;
+       if(ds>=conf)idxs.forEach(i=>{const t=S(data[i][COL.TYPE]).toLowerCase();if((t==='списание'||t==='поступление')&&t!==dom)addFlag(data[i],i,'Тип','type',dom,t,ds,'подстатья: '+sub);});}}
+  });
+  // R2 (Подстатья→Статья, код) — детерминированно: первые 3 цифры подстатьи = код статьи
+  data.forEach((r,i)=>{const ac=S(r[COL.ARTICLE_CODE]),an=S(r[COL.ARTICLE_NAME]);if(!ac||!an)return;const a=ac.match(/^(\d{3})/),b=an.match(/^(\d{3})/);if(a&&b&&a[1]!==b[1])addFlag(r,i,'Статья','code','код '+b[1]+'*',ac,1,'подстатья: '+an);});
+  // R4 (по контрагенту) — только единичные выбросы: история ≥8, обычное ≥90%, отклонение ≤2 строк
+  const byCp={};
+  data.forEach((r,i)=>{const cp=S(r[COL.SECOND_SIDE]);if(cp)(byCp[cp]=byCp[cp]||[]).push(i);});
+  const FIELDS=[{key:'Статья',col:COL.ARTICLE_CODE},{key:'Подстатья',col:COL.ARTICLE_NAME},{key:'Аналитика',col:COL.ANALYTICS}];
+  Object.entries(byCp).forEach(([cp,idxs])=>{
+    if(idxs.length<8)return;
+    FIELDS.forEach(F=>{const cnt={};let tot=0;idxs.forEach(i=>{const v=S(data[i][F.col]);if(v){cnt[v]=(cnt[v]||0)+1;tot++;}});
+      if(tot<8)return;let dom='',dn=0;for(const v in cnt)if(cnt[v]>dn){dn=cnt[v];dom=v;}const ds=dn/tot;if(ds<0.9)return;
+      idxs.forEach(i=>{const v=S(data[i][F.col]);if(v&&v!==dom&&cnt[v]<=2)addFlag(data[i],i,F.key,'cp',dom,v,ds,'контрагент: '+cp);});});
   });
   let items=[...flags.values()];
-  if(f.field)items=items.filter(x=>x.field===f.field);
+  if(f.field)items=items.filter(x=>x.rule===f.field);
   items.sort((a,b)=>b.conf-a.conf);
 
   const lbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
-  const fldOpts=[['','Все поля'],['Статья','Статья'],['Подстатья','Подстатья'],['Аналитика','Аналитика']];
-  const confOpts=[['0.5','≥ 50%'],['0.7','≥ 70%'],['0.85','≥ 85%'],['0.95','≥ 95%']];
+  const ruleOpts=[['','Все правила'],['analytics','Подстатья → Аналитика'],['code','Подстатья → Статья (код)'],['type','Подстатья → Тип'],['cp','Контрагент (выброс)']];
+  const confOpts=[['0.7','≥ 70%'],['0.8','≥ 80%'],['0.9','≥ 90%'],['0.95','≥ 95%']];
   const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
     <div class="date-range"><input type="date" value="${f.dateFrom}" onchange="_tabFilters.anomaly.dateFrom=this.value;renderAnomaly(getFilters())"><span class="date-range-sep">-</span><input type="date" value="${f.dateTo}" onchange="_tabFilters.anomaly.dateTo=this.value;renderAnomaly(getFilters())"></div>
-    ${lbl('Поле:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.field=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${fldOpts.map(([v,t])=>`<option value="${v}"${f.field===v?' selected':''}>${t}</option>`).join('')}</select>
-    ${lbl('Уверенность «обычного»:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.minConf=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${confOpts.map(([v,t])=>`<option value="${v}"${String(conf)===v?' selected':''}>${t}</option>`).join('')}</select>
+    ${lbl('Правило:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.field=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:220px">${ruleOpts.map(([v,t])=>`<option value="${v}"${f.field===v?' selected':''}>${t}</option>`).join('')}</select>
+    ${lbl('Порог «обычного»:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.minConf=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${confOpts.map(([v,t])=>`<option value="${v}"${String(conf)===v?' selected':''}>${t}</option>`).join('')}</select>
   </div>`;
 
-  const cArt=items.filter(x=>x.field==='Статья').length,cSub=items.filter(x=>x.field==='Подстатья').length,cAn=items.filter(x=>x.field==='Аналитика').length;
+  const cAn=items.filter(x=>x.rule==='analytics').length,cCode=items.filter(x=>x.rule==='code').length,cType=items.filter(x=>x.rule==='type').length,cCp=items.filter(x=>x.rule==='cp').length;
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card ${items.length?'red':'green'}"><div class="kpi-label">Отклонений всего</div><div class="kpi-value ${items.length?'negative':'positive'}">${items.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">порог «обычного» ≥ ${fmtPct(conf)}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">По Статье</div><div class="kpi-value">${cArt}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">По Подстатье</div><div class="kpi-value">${cSub}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">По Аналитике</div><div class="kpi-value">${cAn}</div></div>
+    <div class="kpi-card ${items.length?'red':'green'}"><div class="kpi-label">Отклонений всего</div><div class="kpi-value ${items.length?'negative':'positive'}">${items.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">порог ≥ ${fmtPct(conf)}, группа ≥ ${MIN_OPS}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Подстатья → Аналитика</div><div class="kpi-value">${cAn}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Подстатья → Статья (код)</div><div class="kpi-value">${cCode}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Тип / Контрагент</div><div class="kpi-value">${cType+cCp}</div><div class="kpi-sub">тип ${cType} · контрагент ${cCp}</div></div>
   </div>`;
 
-  if(!items.length){el.innerHTML=filterBar+kpiHtml+emptyState('Аномалий не найдено','По выбранному порогу классификация выглядит непротиворечиво ✓');return;}
+  if(!items.length){el.innerHTML=filterBar+kpiHtml+emptyState('Аномалий не найдено','По выбранным правилам и порогу классификация выглядит непротиворечиво ✓');return;}
 
   window._anomRows=items.map(x=>x.row);
   const dsF=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
@@ -5009,7 +5007,7 @@ function renderAnomaly(f){
   const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
   const LIMIT=1000;
   const rows=items.slice(0,LIMIT).map((x,i)=>`<tr class="anom-row" style="cursor:pointer" onclick="anomShowCard(${i})" title="Карточка операции">
-    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:var(--outcome);background:color-mix(in srgb,var(--outcome) 12%,transparent)">${x.field}</span></td>
+    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)">${RULE_LBL[x.rule]||x.rule}</span></td>
     <td style="${td};color:var(--income);font-weight:600">${esc(x.usual)}</td>
     <td style="${td};color:var(--outcome);font-weight:700;background:#fdecea">${esc(x.got)}</td>
     <td style="${td};text-align:right;font-variant-numeric:tabular-nums">${fmtPct(x.conf)}</td>
@@ -5023,16 +5021,16 @@ function renderAnomaly(f){
   const trunc=items.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${items.length.toLocaleString('ru-RU')}</div>`:'';
 
   el.innerHTML=`<style>#tabAnomaly .anom-row:hover{background:var(--surface2)}</style>`+filterBar+kpiHtml+`
-  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">Отклонение = поле указано не так, как у большинства похожих операций (по контрагенту — Статья/Подстатья/Аналитика; по подстатье — Аналитика). «Обычно» — преобладающее значение, «Указано» — фактическое. Это диагностика: правки — в Google Sheets.</div>
+  <div style="padding:6px 28px;font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">Правила: <b>Подстатья→Аналитика/Тип</b> — значение отличается от преобладающего у подстатьи (порог ${fmtPct(conf)}, группа ≥${MIN_OPS}); <b>Подстатья→Статья</b> — код статьи ≠ первым 3 цифрам подстатьи; <b>Контрагент</b> — единичный выброс (история ≥8, обычное ≥90%, ≤2 строк). «Обычно» — ожидаемое, «Указано» — фактическое. Read-only, правки — в Google Sheets.</div>
   <div class="table-wrap" style="margin-top:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;font-weight:600;color:var(--text2)">Строки-отклонения</span>
-      <span style="font-size:11px;color:var(--text3)">${items.length.toLocaleString('ru-RU')} ${f.field?'по полю «'+f.field+'»':''}</span>
+      <span style="font-size:11px;color:var(--text3)">${items.length.toLocaleString('ru-RU')}</span>
     </div>
     <div class="table-scroll" style="max-height:calc(100vh - 320px);overflow:auto">
       <table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
         <thead><tr>
-          <th style="text-align:left;${thS}">Поле</th>
+          <th style="text-align:left;${thS}">Правило</th>
           <th style="text-align:left;${thS}">Обычно (ожидалось)</th>
           <th style="text-align:left;${thS}">Указано</th>
           <th style="text-align:right;${thS}">Увер.</th>
