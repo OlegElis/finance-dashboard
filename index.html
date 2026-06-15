@@ -5020,8 +5020,20 @@ function renderAnomaly(f){
   const fnsYes=a=>['да','true','1','+'].includes(S(a).toLowerCase());
   // Справочник сделок Bitrix24 (RawData_BFL) для сверки ID_Offer — логика как в Дебиторке БФЛ
   const BFL_DIR='БФЛ - Банкротство физических лиц';
-  const refOffer=new Set(),refLeadOffer={};
-  if(RAW_BFL&&RAW_BFL.deals)RAW_BFL.deals.forEach(d=>{const off=String(d.offer||'').trim();const k=_arNormId(off);if(k)refOffer.add(k);const l=_arLeadId(off);if(l&&!refLeadOffer[l])refLeadOffer[l]=off;});
+  const refOffer=new Set(),refLead={};
+  if(RAW_BFL&&RAW_BFL.deals)RAW_BFL.deals.forEach(d=>{
+    const off=String(d.offer||'').trim();const k=_arNormId(off);if(k)refOffer.add(k);
+    const l=_arLeadId(off);if(!l)return;
+    const dt=d.created instanceof Date?d.created:(d.dateContract instanceof Date?d.dateContract:null);
+    const yr=dt?dt.getFullYear():'?';
+    const e=refLead[l]||(refLead[l]={offers:{},years:{}});
+    e.years[yr]=(e.years[yr]||0)+1;e.offers[off]=(e.offers[off]||0)+1;
+  });
+  // Как ID выглядит в справочнике: представительный offer + годы (кол-во записей)
+  const refLeadDesc=l=>{const e=refLead[l];if(!e)return null;
+    const repOff=(Object.entries(e.offers).sort((a,b)=>b[1]-a[1]).find(([o])=>o)||[''])[0];
+    const yrs=Object.keys(e.years).sort().map(y=>`${y} (${e.years[y]})`).join(', ');
+    return (repOff||('ID '+l))+' · '+yrs;};
   // ── ЖЁСТКИЕ ПРАВИЛА (детерминированные). where(r) — когда применяется; checks[] — что проверяем. ──
   // checks: {field, fieldName, expect}  ИЛИ  {field, fieldName, requireFilled:true} (обязательно непусто)
   const RULES=[
@@ -5072,7 +5084,7 @@ function renderAnomaly(f){
     if(S(r[COL.ACTIVITY_DIR])!==BFL_DIR)return;
     const raw=S(r[COL.OFFER_ID]);if(!raw)return;
     if(refOffer.has(_arNormId(raw)))return; // ID совпадает со справочником
-    const lead=_arLeadId(raw),ref=lead?refLeadOffer[lead]:'';
+    const lead=_arLeadId(raw),ref=lead?refLeadDesc(lead):null;
     const expect=ref?ref:(lead?'нет в справочнике (ID '+lead+')':'ID не указан (только текст/ФИО)');
     items.push({row:r,rule:'offerref',ruleLabel:'ID_Offer → сверка со справочником Bitrix24',fieldName:'ID_Offer',expect,got:raw});
   });
