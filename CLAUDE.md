@@ -89,8 +89,8 @@ _mktCounts   // {periodKey: {leads, orders, fulfilled}} — ручной вво�
 - Карточка в KPI-баре показывает статус: «Превышение: N» (красный) / «В норме» (зелёный) / «Не настроено» / «Нет счетов»
 - Лимиты задаются для **всех именованных реквизитов**: счета ООО/ИП, Карты ФЛ, Кассы (исключая «без реквизитов»). Остаток = `total` счёта (с учётом фильтров)
 - Клик → попап (широкий): таблица Тип / Реквизит / Остаток / Лимит (редактируемое поле) / Статус. Изменения применяются сразу
-- Лимиты хранятся в **localStorage** (`kassaLimits` = `{accName: number}`), функции `_kassaLimits`, `_kassaSaveLimits`, `kassaSetLimit`, `showKassaLimitsPopup`
-- При закрытии попапа — `renderBank` обновляет карточку. В планах: перенос лимитов в Google Sheets
+- Лимиты хранятся в **Firebase RTDB** (`config/kassaLimits` = `{accName: number}`) — **общие для всех устройств**; localStorage (`kassaLimits`) остаётся локальным кэшем. Функции `_kassaLimits` (объект), `_kassaSaveLimits` (пишет в localStorage + RTDB), `startLimitsSync` (подписка на `config/kassaLimits`, при изменении — `_kassaLimits` обновляется и `renderBank`, если активна вкладка; разовая миграция локальных лимитов в облако через `_limitsMigrated`), `kassaSetLimit`, `showKassaLimitsPopup`. `startLimitsSync()` вызывается вместе с `startPresence()` после входа
+- При закрытии попапа — `renderBank` обновляет карточку
 
 #### Cash Runway
 - Текущий баланс (saldo из отфильтрованных данных) ÷ средний операционный расход × 30
