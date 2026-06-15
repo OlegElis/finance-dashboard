@@ -21,6 +21,7 @@
 - Топбар: `#authUserBox` (email + кнопка «Выйти») показывается после входа. Persistence LOCAL (вход запоминается)
 - **Пользователи заводятся в консоли Firebase** (Authentication → Users), НЕ в коде. Нужно включить Sign-in method → Email/Password
 - **fail-open**: если Firebase/CDN недоступны или нет `apiKey`/`authDomain` — дашборд открывается без входа (барьер от посторонних, а не строгая защита; данные и так тянутся по API-ключу из исходников). `authErrMsg` — человекочитаемые ошибки
+- **Рубильник «Выйти всех»** (`appLogoutAll`): кнопка `#authLogoutAll` в топбаре, видна только админу (`ADMIN_EMAIL='o017ev@gmail.com'`). Пишет `config/forceLogoutAfter` = ServerValue.TIMESTAMP в Realtime Database; каждая сессия слушает это значение (`watchForceLogout(authMs)`, `authMs` = серверный `auth_time` из `getIdTokenResult`) и при `forceLogoutAfter > authMs` делает `signOut()`. Разлогинивает все сессии (включая админа), вошедшие до метки. Требует правил RTDB на `config` (`.read/.write: auth != null`)
 
 ### Живой счётчик «Сейчас на сайте» (Firebase Realtime Database)
 - Топбар: `#presenceBox` / `#presenceCount` (скрыт, пока не настроен Firebase). Firebase compat SDK подключён в `<head>` (CDN). Конфиг — константа `FIREBASE_CONFIG` (apiKey/authDomain/databaseURL/projectId/...); при пустом `databaseURL` `startPresence()` тихо выходит, дашборд работает как обычно
