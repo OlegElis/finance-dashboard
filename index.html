@@ -398,6 +398,7 @@
       <span id="statusText">Не подключено</span>
     </div>
     <button id="refreshDataBtn" onclick="refreshData()" title="Заново загрузить данные из Google Sheets" style="width:100%;margin-top:8px;font-size:11px;font-weight:600;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">↻ Обновить данные</button>
+    <button id="authAccessBtn" onclick="showAccessPanel()" title="Управление доступом: кто и какую вкладку видит" style="display:none;width:100%;margin-top:8px;font-size:11px;font-weight:600;padding:6px 10px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👥 Доступ</button>
     <button id="authLogoutAll" onclick="appLogoutAll()" title="Разлогинить все сессии всех пользователей" style="display:none;width:100%;margin-top:8px;font-size:11px;font-weight:600;padding:6px 10px;border:1px solid #d35450;border-radius:6px;background:transparent;color:#d35450;cursor:pointer;font-family:var(--sans)">Сбросить сессии</button>
   </div>
 </aside>
@@ -5657,6 +5658,99 @@ window.appLoginGoogle=function(){
     });
   }catch(e){}
 };
+// HTML строки таблицы доступа (email + выбор вкладки/полного доступа)
+window._accessRowHtml=function(email,sheet){
+  const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const titles=window._accessTitles||[];
+  const sel=sheet||'__full__';
+  let opts='<option value="__full__"'+(sel==='__full__'?' selected':'')+'>— Полный доступ (RawData) —</option>';
+  const all=(sel&&sel!=='__full__'&&titles.indexOf(sel)<0)?[sel].concat(titles):titles;
+  all.forEach(t=>{opts+='<option value="'+esc(t)+'"'+(t===sel?' selected':'')+'>'+esc(t)+'</option>';});
+  return `<tr>
+    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><input class="acc-email" value="${esc(email)}" placeholder="email@gmail.com" style="width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>
+    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><select class="acc-sheet" style="width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)">${opts}</select></td>
+    <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:center"><button onclick="this.closest('tr').remove()" title="Удалить" style="border:none;background:none;color:#d35450;cursor:pointer;font-size:15px;line-height:1">✕</button></td>
+  </tr>`;
+};
+window.accessAddRow=function(){
+  const tb=document.getElementById('acc-tbody'); if(!tb)return;
+  tb.insertAdjacentHTML('beforeend',window._accessRowHtml('',''));
+};
+window.accessSavePanel=function(btn){
+  const tb=document.getElementById('acc-tbody'); if(!tb)return;
+  const allowed=[],sheetAcc=[],seen={};
+  let dup=false;
+  [...tb.querySelectorAll('tr')].forEach(tr=>{
+    const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();
+    const sh=tr.querySelector('.acc-sheet').value;
+    if(!em)return;
+    if(seen[em]){dup=true;return;} seen[em]=1;
+    if(sh==='__full__')allowed.push(em); else if(sh)sheetAcc.push({email:em,sheet:sh});
+  });
+  if(dup&&!confirm('Есть повторяющиеся email — будут учтены только первые. Сохранить?'))return;
+  if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
+  fbApp();const db=firebase.database();
+  Promise.all([db.ref('config/allowedEmails').set(allowed),db.ref('config/sheetAccess').set(sheetAcc)])
+    .then(()=>{ const ov=document.getElementById('accessPanelOverlay'); if(ov)ov.remove(); })
+    .catch(e=>{ if(btn){btn.disabled=false;btn.textContent='Сохранить';} alert('Не удалось сохранить: '+((e&&e.message)||e)+'\n\nПроверьте правила БД: запись config/allowedEmails и config/sheetAccess должна быть разрешена админу.'); });
+};
+// Админ-панель «Доступ»: кто что видит (config/allowedEmails + config/sheetAccess)
+window.showAccessPanel=async function(){
+  if(document.getElementById('accessPanelOverlay'))return;
+  if(!window.firebase||!FIREBASE_CONFIG.databaseURL){alert('Firebase не настроен');return;}
+  fbApp();const db=firebase.database();
+  let allowed=[],sheetAcc=[],titles=[];
+  try{
+    const [ae,sa]=await Promise.all([db.ref('config/allowedEmails').once('value'),db.ref('config/sheetAccess').once('value')]);
+    const aev=ae.val(); allowed=aev?(Array.isArray(aev)?aev:Object.values(aev)):[];
+    const sav=sa.val(); sheetAcc=sav?(Array.isArray(sav)?sav:Object.values(sav)):[];
+  }catch(e){}
+  try{
+    const sid=localStorage.getItem('fin_sheetId')||'',key=localStorage.getItem('fin_apiKey')||'';
+    if(sid&&key){
+      const r=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sid}?key=${key}&fields=sheets.properties.title`);
+      if(r.ok){const j=await r.json();titles=(j.sheets||[]).map(s=>s.properties&&s.properties.title).filter(t=>t&&/^RawData/i.test(t)&&t!=='RawData'&&t!=='RawData_BFL');}
+    }
+  }catch(e){}
+  window._accessTitles=titles;
+  const rows=[];
+  sheetAcc.forEach(x=>{if(x&&x.email)rows.push(window._accessRowHtml(String(x.email),String(x.sheet||'')));});
+  allowed.forEach(em=>{if(em)rows.push(window._accessRowHtml(String(em),'__full__'));});
+  const body=rows.length?rows.join(''):'';
+  const titleNote=titles.length?titles.length+' персональных вкладок найдено':'⚠ список вкладок не загрузился (проверьте подключение) — вкладку можно вписать вручную позже';
+  const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='accessPanelOverlay';
+  overlay.innerHTML=`<div class="txn-card" style="max-width:720px;width:94vw">
+    <div class="txn-card-head"><h3>👥 Управление доступом</h3><button class="txn-card-close">✕</button></div>
+    <div style="padding:16px 20px 20px">
+      <p style="font-size:12px;color:var(--text2);margin:0 0 12px;line-height:1.6">
+        Кто и что видит. <b>Полный доступ</b> = весь <code>RawData</code>; иначе — только выбранная персональная вкладка.
+        Вы (<b>${ADMIN_EMAIL}</b>) всегда админ с полным доступом. <span style="color:var(--text3)">${titleNote}</span>
+      </p>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:50vh;overflow-y:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Email</th>
+            <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Доступ / вкладка</th>
+            <th style="width:40px;background:var(--surface2);border-bottom:1px solid var(--border)"></th>
+          </tr></thead>
+          <tbody id="acc-tbody">${body}</tbody>
+        </table>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:10px;flex-wrap:wrap">
+        <button onclick="accessAddRow()" style="font-size:12px;font-weight:600;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">+ Добавить</button>
+        <div style="display:flex;gap:8px">
+          <button onclick="document.getElementById('accessPanelOverlay').remove()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Отмена</button>
+          <button onclick="accessSavePanel(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>
+        </div>
+      </div>
+      <p style="font-size:10px;color:var(--text3);margin:12px 0 0">Изменения вступают в силу при следующем входе пользователя (или после «↻ Обновить данные»). Запись доступна только админу — настройте правила БД, если будет ошибка сохранения.</p>
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  overlay.querySelector('.txn-card-close').addEventListener('click',()=>overlay.remove());
+  document.body.appendChild(overlay);
+};
+
 // Доступ + область данных: возвращает {allowed, sheet}.
 //   админ → полный RawData; email в config/sheetAccess → своя вкладка; email в config/allowedEmails → полный RawData; иначе отказ
 function resolveAccess(user){
@@ -5745,9 +5839,12 @@ function watchForceLogout(authMs){
         if(userBox)userBox.style.display='inline-flex';
         if(userEmail)userEmail.textContent=user.email||'';
         if(passEl)passEl.value='';
-        // кнопка «Сбросить сессии» — только админу
+        // кнопки админа — только админу
+        const isAdmin=((user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());
         const logoutAllBtn=document.getElementById('authLogoutAll');
-        if(logoutAllBtn)logoutAllBtn.style.display=((user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase())?'block':'none';
+        if(logoutAllBtn)logoutAllBtn.style.display=isAdmin?'block':'none';
+        const accessBtn=document.getElementById('authAccessBtn');
+        if(accessBtn)accessBtn.style.display=isAdmin?'block':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
         bootApp(); startPresence(user.email||''); startLimitsSync(); startConfigSync();
@@ -5757,6 +5854,8 @@ function watchForceLogout(authMs){
       if(userBox)userBox.style.display='none';
       const logoutAllBtn=document.getElementById('authLogoutAll');
       if(logoutAllBtn)logoutAllBtn.style.display='none';
+      const accessBtn=document.getElementById('authAccessBtn');
+      if(accessBtn)accessBtn.style.display='none';
     }
   });
 })();
