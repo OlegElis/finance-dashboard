@@ -15,9 +15,16 @@
 - Без фреймворков и сборщиков
 - Хостинг: GitHub Pages (или локально)
 
+### Авторизация (Firebase Authentication, email+пароль)
+- Доступ к дашборду закрыт экраном входа `#authGate` (оверлей поверх всего, z-index 99999): поля email/пароль, кнопка «Войти», ссылка «Забыли пароль?» (`sendPasswordResetEmail`). Auth compat SDK подключён в `<head>`
+- Логика: `fbApp()` — единая инициализация Firebase (один app для auth и presence); `bootApp()` — идемпотентный запуск дашборда (бывш. `init`, грузит данные); `startPresence(name)` — счётчик; `authGate()` — контроллер входа; `appLogout()` — выход. Дашборд и счётчик стартуют **только после** `onAuthStateChanged` с пользователем
+- Топбар: `#authUserBox` (email + кнопка «Выйти») показывается после входа. Persistence LOCAL (вход запоминается)
+- **Пользователи заводятся в консоли Firebase** (Authentication → Users), НЕ в коде. Нужно включить Sign-in method → Email/Password
+- **fail-open**: если Firebase/CDN недоступны или нет `apiKey`/`authDomain` — дашборд открывается без входа (барьер от посторонних, а не строгая защита; данные и так тянутся по API-ключу из исходников). `authErrMsg` — человекочитаемые ошибки
+
 ### Живой счётчик «Сейчас на сайте» (Firebase Realtime Database)
-- Топбар: `#presenceBox` / `#presenceCount` (скрыт, пока не настроен Firebase). Firebase compat SDK подключён в `<head>` (CDN). Конфиг — константа `FIREBASE_CONFIG` (apiKey/databaseURL/projectId), заполняется пользователем; при пустом `databaseURL` блок `presenceCounter()` тихо выходит, дашборд работает как обычно
-- Каждая вкладка пишет `presence/{uuid}` = `{ts: ServerValue.TIMESTAMP, name:''}` (name — на будущее, вход по именам); пульс каждые 20с; авто-удаление `onDisconnect().remove()` + `pagehide`/`beforeunload`. Счёт = сессии с `ts` за последние 60с с поправкой на `.info/serverTimeOffset`. Всё в try/catch — не влияет на дашборд
+- Топбар: `#presenceBox` / `#presenceCount` (скрыт, пока не настроен Firebase). Firebase compat SDK подключён в `<head>` (CDN). Конфиг — константа `FIREBASE_CONFIG` (apiKey/authDomain/databaseURL/projectId/...); при пустом `databaseURL` `startPresence()` тихо выходит, дашборд работает как обычно
+- После входа пишет `presence/{uuid}` = `{ts: ServerValue.TIMESTAMP, name: <email>}`; пульс каждые 20с; авто-удаление `onDisconnect().remove()` + `pagehide`/`beforeunload`. Счёт = сессии с `ts` за последние 60с с поправкой на `.info/serverTimeOffset`. Всё в try/catch — не влияет на дашборд
 
 ### Источник данных
 - Google Sheets API (read-only, API Key)
