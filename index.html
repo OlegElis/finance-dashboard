@@ -49,11 +49,15 @@
   .nav-item.active{background:var(--accent-light);color:var(--accent);border-left-color:var(--accent);font-weight:600;}
   .nav-item .nav-icon{font-size:15px;width:20px;text-align:center;flex-shrink:0;}
   .sidebar-footer{padding:16px;border-top:1px solid var(--border);}
-  .status-pill{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface2);border-radius:8px;font-size:11px;color:var(--text2);}
-  .status-dot{width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0;}
-  .status-dot.ok{background:var(--income);}
-  .status-dot.loading{background:var(--orange);animation:pulse 1s infinite;}
-  .status-dot.error{background:var(--outcome);}
+  .status-pill{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text2);width:100%;cursor:pointer;font-family:var(--sans);text-align:left;transition:border-color .15s,color .15s;}
+  .status-pill:hover{border-color:var(--accent);}
+  .status-pill:disabled{cursor:default;opacity:.7;}
+  .status-pill[data-state="error"]{border-color:var(--outcome);color:var(--outcome);}
+  .status-refresh{font-size:13px;line-height:1;color:var(--text3);flex-shrink:0;display:inline-block;}
+  .status-pill:hover .status-refresh{color:var(--accent);}
+  .status-pill[data-state="error"] .status-refresh{color:var(--outcome);}
+  @keyframes spin2{to{transform:rotate(360deg);}}
+  .status-refresh.spin{animation:spin2 .8s linear infinite;}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 
   /* ── Main area ── */
@@ -403,12 +407,11 @@
     </div>
   </nav>
   <div class="sidebar-footer">
-    <div class="status-pill">
-      <div class="status-dot" id="statusDot"></div>
+    <button class="status-pill" id="statusPill" onclick="refreshData()" title="Обновить данные из Google Sheets">
+      <span class="status-refresh" id="statusRefresh">↻</span>
       <span id="statusText">Не подключено</span>
-    </div>
+    </button>
     <div class="foot-actions">
-      <button class="foot-btn" id="refreshDataBtn" onclick="refreshData()" title="Заново загрузить данные из Google Sheets">↻ Обновить</button>
       <button class="foot-btn" id="authAccessBtn" onclick="showAccessPanel()" title="Управление доступом: кто какую вкладку видит" style="display:none">👥 Доступ</button>
       <button class="foot-btn danger" id="authLogoutAll" onclick="appLogoutAll()" title="Разлогинить все сессии всех пользователей" style="display:none">⎋ Сбросить сессии</button>
     </div>
@@ -716,7 +719,12 @@ function bankRebuildChartData(){
   bankChartSwitch(document.getElementById('btnMonths')?.classList.contains('active')?'months':'years');
 }
 
-function setStatus(dot,text){document.getElementById('statusDot').className='status-dot '+dot;document.getElementById('statusText').textContent=text;}
+function setStatus(state,text){
+  const p=document.getElementById('statusPill'),r=document.getElementById('statusRefresh'),t=document.getElementById('statusText');
+  if(t)t.textContent=text;
+  if(p)p.dataset.state=state||'';
+  if(r)r.classList.toggle('spin',state==='loading');
+}
 function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const cls=numClass(v);const display=typeof val==='number'?fmt(val):(val||'—');return`<td class="${cls} ${extra}">${display}</td>`;}
 
 function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${day}`;}
@@ -843,9 +851,9 @@ function showSetup(){
 // Кнопка «Обновить данные»: заново тянем RawData из Google Sheets (по сохранённым реквизитам)
 window.refreshData=function(){
   loadSavedCredentials(); // восстановить sheetId/apiKey в инпутах на случай очистки
-  const btn=document.getElementById('refreshDataBtn');
-  if(btn){btn.disabled=true;btn._t=btn.textContent;btn.textContent='Обновление…';}
-  Promise.resolve(connectAndLoad()).finally(()=>{ if(btn){btn.disabled=false;btn.textContent=btn._t||'↻ Обновить данные';} });
+  const p=document.getElementById('statusPill');
+  if(p)p.disabled=true; // setStatus('loading',…) внутри connectAndLoad покажет спиннер
+  Promise.resolve(connectAndLoad()).finally(()=>{ if(p)p.disabled=false; });
 };
 
 function loadSavedCredentials(){
