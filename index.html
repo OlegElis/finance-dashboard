@@ -4960,19 +4960,37 @@ function renderAnomaly(f){
       {field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Вывод чистой прибыли'},
       {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Финансовая'},
       {field:COL.SECOND_SIDE,fieldName:'Контрагент (ID_SecondSide)',requireFilled:true}
-    ]}
+    ]},
+    {id:'movebal',label:'Перемещение → парность (+/− в Поступлении, сумма 0)',group:true}
   ];
-  RULES.forEach(rl=>rl.checks.forEach(c=>c.en=c.requireFilled?'':norm(c.expect)));
+  RULES.forEach(rl=>(rl.checks||[]).forEach(c=>c.en=c.requireFilled?'':norm(c.expect)));
   const items=[];
   data.forEach(r=>{
     RULES.forEach(rl=>{
-      if(!rl.where(r))return;
+      if(rl.group||!rl.where(r))return;
       rl.checks.forEach(c=>{
         const actual=S(r[c.field]);
         const bad=c.requireFilled?actual==='':!norm(actual).includes(c.en);
         if(bad)items.push({row:r,rule:rl.id,ruleLabel:rl.label,fieldName:c.fieldName,expect:c.requireFilled?'(обязательно заполнить)':c.expect,got:actual||'(пусто)'});
       });
     });
+  });
+  // Парность перемещений: должны быть пары +X/−X в ПОСТУПЛЕНИИ, сумма группы = 0 (группировка по дате ДДС + |сумме|)
+  const mvLbl='Перемещение → парность (+/− в Поступлении, сумма 0)';
+  const mvAdd=(row,got)=>items.push({row,rule:'movebal',ruleLabel:mvLbl,fieldName:'Поступление',expect:'пара +X/−X, сумма 0',got});
+  const mvGrp={};
+  data.forEach(r=>{
+    if(!isMove(r))return;
+    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    if(out!==0&&inc===0){mvAdd(r,'оформлено в «Списание» (должно быть в «Поступление»)');return;}
+    if(inc===0){mvAdd(r,'нулевое перемещение (Поступление = 0)');return;}
+    const d=parseDate(r[COL.DATE_DDS]),dk=d?toIso(d):'(без даты)';
+    const key=dk+'|'+Math.abs(inc);
+    (mvGrp[key]=mvGrp[key]||[]).push({row:r,inc});
+  });
+  Object.values(mvGrp).forEach(g=>{
+    const sum=g.reduce((s,x)=>s+x.inc,0);
+    if(Math.abs(sum)>=0.005)g.forEach(x=>mvAdd(x.row,'нет парной записи / сумма группы ≠ 0 ('+(x.inc>0?'+':'')+Math.round(x.inc).toLocaleString('ru-RU')+')'));
   });
   const shown=f.field?items.filter(x=>x.rule===f.field):items;
 
