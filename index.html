@@ -5525,20 +5525,34 @@ window.showPresenceList=function(keepOpen){
   if(exist&&!keepOpen){ exist.remove(); return; } // повторный клик — закрыть
   const box=document.getElementById('presenceBox'); if(!box)return;
   const list=window._presenceList||[];
-  // группируем по email (имени), собираем устройства
-  const byName={};
-  list.forEach(x=>{const k=x.name||'(без имени)';const e=byName[k]||(byName[k]={name:k,count:0,minAgo:1e9,devs:{}}); e.count++; e.minAgo=Math.min(e.minAgo,x.ago); const d=(x.dev||'').trim(); if(d)e.devs[d]=(e.devs[d]||0)+1;});
-  const rows=Object.values(byName).sort((a,b)=>a.name.localeCompare(b.name));
+  // именованные группируем по email; безымянные — каждая отдельной строкой (это разные сессии/люди)
+  const named={},anons=[];
+  list.forEach(x=>{
+    const nm=(x.name||'').trim();
+    const d=(x.dev||'').trim();
+    if(!nm){anons.push({name:'(без имени)',count:1,minAgo:x.ago,devs:d?{[d]:1}:{}});return;}
+    const e=named[nm]||(named[nm]={name:nm,count:0,minAgo:1e9,devs:{}});
+    e.count++; e.minAgo=Math.min(e.minAgo,x.ago); if(d)e.devs[d]=(e.devs[d]||0)+1;
+  });
+  const rows=Object.values(named).sort((a,b)=>a.name.localeCompare(b.name)).concat(anons.sort((a,b)=>a.minAgo-b.minAgo));
   const esc=s=>String(s||'').replace(/</g,'&lt;');
   const agoTxt=s=>s<60?(s+' c назад'):(Math.round(s/60)+' мин назад');
   const devTxt=devs=>{const ks=Object.keys(devs);if(!ks.length)return '<span style="color:var(--text3);font-style:italic">устройство неизвестно</span>';return ks.map(d=>esc(d)+(devs[d]>1?` ×${devs[d]}`:'')).join(' · ');};
-  const body=rows.length?rows.map(r=>`<div style="padding:6px 0;border-top:1px solid var(--border)">
+  const body=rows.length?rows.map(r=>{
+    const isAnon=r.name==='(без имени)';
+    const dot=isAnon?'#d35450':'#2e9e6b';
+    const noDev=!Object.keys(r.devs).length;
+    // безымянная: с устройством — кто-то сидит без входа (внимание); без устройства — старая кэш-вкладка
+    const nameHtml=isAnon
+      ?`<span style="color:#d35450;font-weight:700;white-space:nowrap">⚠ Без входа</span><span style="font-size:9px;color:var(--text3)">${noDev?'(старая вкладка)':'(зашёл без логина)'}</span>`
+      :`<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">${esc(r.name)}</span>`;
+    return `<div style="padding:6px 0;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:14px">
-        <span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:7px;height:7px;border-radius:50%;background:#2e9e6b;flex-shrink:0"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">${esc(r.name)}</span>${r.count>1?`<span style="font-size:10px;color:var(--text3)">×${r.count} вкл.</span>`:''}</span>
+        <span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:7px;height:7px;border-radius:50%;background:${dot};flex-shrink:0"></span>${nameHtml}${r.count>1?`<span style="font-size:10px;color:var(--text3)">×${r.count} вкл.</span>`:''}</span>
         <span style="font-size:10px;color:var(--text3);white-space:nowrap">${agoTxt(r.minAgo)}</span>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-left:15px">${devTxt(r.devs)}</div>
-    </div>`).join(''):'<div style="padding:8px 0;color:var(--text3);font-size:12px">Нет активных сессий</div>';
+    </div>`;}).join(''):'<div style="padding:8px 0;color:var(--text3);font-size:12px">Нет активных сессий</div>';
   let pop=exist;
   if(!pop){
     pop=document.createElement('div'); pop.id='presenceListPopup';
