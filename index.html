@@ -5478,8 +5478,9 @@ function startPresence(displayName){
     const box=document.getElementById('presenceBox'),cnt=document.getElementById('presenceCount');
     let offset=0;
     db.ref('.info/serverTimeOffset').on('value',s=>{offset=s.val()||0;});
-    // запись сессии: серверная метка времени + имя (email вошедшего пользователя)
-    const beat=()=>ref.update({ts:firebase.database.ServerValue.TIMESTAMP,name:displayName||''});
+    // запись сессии: серверная метка времени + имя (email) + устройство (ОС/браузер)
+    const dev=uaShort(navigator.userAgent);
+    const beat=()=>ref.update({ts:firebase.database.ServerValue.TIMESTAMP,name:displayName||'',dev:dev});
     db.ref('.info/connected').on('value',s=>{ if(s.val()){ ref.onDisconnect().remove(); beat(); } });
     setInterval(beat,20000); // пульс каждые 20 сек
     const leave=()=>{try{ref.remove();}catch(e){}};
@@ -5488,7 +5489,7 @@ function startPresence(displayName){
     // подписка: считаем сессии с меткой за последние 60 сек (с поправкой на серверное время)
     db.ref('presence').on('value',s=>{
       const now=Date.now()+offset;let n=0;const list=[];
-      s.forEach(c=>{const v=c.val();if(v&&v.ts&&(now-v.ts)<60000){n++;list.push({name:(v.name||'').trim(),ago:Math.max(0,Math.round((now-v.ts)/1000))});}});
+      s.forEach(c=>{const v=c.val();if(v&&v.ts&&(now-v.ts)<60000){n++;list.push({name:(v.name||'').trim(),dev:(v.dev||'').trim(),ago:Math.max(0,Math.round((now-v.ts)/1000))});}});
       window._presenceList=list;
       if(cnt)cnt.textContent=n;
       if(box)box.style.display='inline-flex';
@@ -5498,21 +5499,36 @@ function startPresence(displayName){
   }catch(e){console.warn('[presence] счётчик не запущен:',e&&e.message);}
 }
 
-// Попап «Кто сейчас на сайте» — список по email (с числом вкладок у каждого)
+// Короткое описание устройства из userAgent: «📱 Android · Chrome» / «💻 Windows · Firefox»
+function uaShort(ua){
+  if(!ua)return '';
+  ua=String(ua);
+  const os=/Windows NT/.test(ua)?'Windows':/iPhone|iPad|iPod/.test(ua)?'iOS':/Android/.test(ua)?'Android':/Mac OS X|Macintosh/.test(ua)?'macOS':/Linux/.test(ua)?'Linux':'';
+  const br=/Edg\//.test(ua)?'Edge':/OPR\/|Opera/.test(ua)?'Opera':/YaBrowser/.test(ua)?'Yandex':/Firefox\//.test(ua)?'Firefox':/Chrome\//.test(ua)?'Chrome':/Safari\//.test(ua)?'Safari':'';
+  const mob=/Mobile|Android|iPhone|iPad|iPod/.test(ua)?'📱':'💻';
+  const t=[os,br].filter(Boolean).join(' · ');
+  return mob+(t?' '+t:'');
+}
+
+// Попап «Кто сейчас на сайте» — список по email (с числом вкладок и устройствами)
 window.showPresenceList=function(keepOpen){
   const exist=document.getElementById('presenceListPopup');
   if(exist&&!keepOpen){ exist.remove(); return; } // повторный клик — закрыть
   const box=document.getElementById('presenceBox'); if(!box)return;
   const list=window._presenceList||[];
-  // группируем по email (имени)
+  // группируем по email (имени), собираем устройства
   const byName={};
-  list.forEach(x=>{const k=x.name||'(без имени)';(byName[k]||(byName[k]={name:k,count:0,minAgo:1e9})); byName[k].count++; byName[k].minAgo=Math.min(byName[k].minAgo,x.ago);});
+  list.forEach(x=>{const k=x.name||'(без имени)';const e=byName[k]||(byName[k]={name:k,count:0,minAgo:1e9,devs:{}}); e.count++; e.minAgo=Math.min(e.minAgo,x.ago); const d=(x.dev||'').trim(); if(d)e.devs[d]=(e.devs[d]||0)+1;});
   const rows=Object.values(byName).sort((a,b)=>a.name.localeCompare(b.name));
   const esc=s=>String(s||'').replace(/</g,'&lt;');
   const agoTxt=s=>s<60?(s+' c назад'):(Math.round(s/60)+' мин назад');
-  const body=rows.length?rows.map(r=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:6px 0;border-top:1px solid var(--border)">
-      <span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:7px;height:7px;border-radius:50%;background:#2e9e6b;flex-shrink:0"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">${esc(r.name)}</span>${r.count>1?`<span style="font-size:10px;color:var(--text3)">×${r.count} вкл.</span>`:''}</span>
-      <span style="font-size:10px;color:var(--text3);white-space:nowrap">${agoTxt(r.minAgo)}</span>
+  const devTxt=devs=>{const ks=Object.keys(devs);if(!ks.length)return '<span style="color:var(--text3);font-style:italic">устройство неизвестно</span>';return ks.map(d=>esc(d)+(devs[d]>1?` ×${devs[d]}`:'')).join(' · ');};
+  const body=rows.length?rows.map(r=>`<div style="padding:6px 0;border-top:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:14px">
+        <span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:7px;height:7px;border-radius:50%;background:#2e9e6b;flex-shrink:0"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">${esc(r.name)}</span>${r.count>1?`<span style="font-size:10px;color:var(--text3)">×${r.count} вкл.</span>`:''}</span>
+        <span style="font-size:10px;color:var(--text3);white-space:nowrap">${agoTxt(r.minAgo)}</span>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-left:15px">${devTxt(r.devs)}</div>
     </div>`).join(''):'<div style="padding:8px 0;color:var(--text3);font-size:12px">Нет активных сессий</div>';
   let pop=exist;
   if(!pop){
