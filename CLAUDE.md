@@ -25,7 +25,8 @@
 
 ### Живой счётчик «Сейчас на сайте» (Firebase Realtime Database)
 - Топбар: `#presenceBox` / `#presenceCount` (скрыт, пока не настроен Firebase). Firebase compat SDK подключён в `<head>` (CDN). Конфиг — константа `FIREBASE_CONFIG` (apiKey/authDomain/databaseURL/projectId/...); при пустом `databaseURL` `startPresence()` тихо выходит, дашборд работает как обычно
-- После входа пишет `presence/{uuid}` = `{ts: ServerValue.TIMESTAMP, name: <email>}`; пульс каждые 20с; авто-удаление `onDisconnect().remove()` + `pagehide`/`beforeunload`. Счёт = сессии с `ts` за последние 60с с поправкой на `.info/serverTimeOffset`. Всё в try/catch — не влияет на дашборд
+- После входа пишет `presence/{uuid}` = `{ts: ServerValue.TIMESTAMP, name: <email>, dev: <устройство>}` (`dev` = `uaShort(navigator.userAgent)`, напр. «📱 Android · Chrome»); пульс каждые 20с; авто-удаление `onDisconnect().remove()` + `pagehide`/`beforeunload`. Счёт = сессии с `ts` за последние 60с с поправкой на `.info/serverTimeOffset`. Всё в try/catch — не влияет на дашборд
+- Клик по `#presenceBox` → попап `showPresenceList()`: список онлайн, сгруппированный по email (×N вкл.), под каждым — устройства (`dev`) и время последней активности; безымянные старые вкладки (кэш до ввода имён) — «устройство неизвестно». Список в `window._presenceList`, живо обновляется при открытом попапе
 
 ### Источник данных
 - Google Sheets API (read-only, API Key)
