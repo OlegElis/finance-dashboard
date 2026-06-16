@@ -5481,20 +5481,20 @@ function renderDepAU(f){
     const depSum=deps.reduce((s,x)=>s+x.amt,0);
     const divSum=divs.reduce((s,x)=>s+x.amt,0);
     // сопоставление вывода (127) с возвратом (120) по сумме, ПОЗЖЕ: 1:1, 1:2 (X/2+X/2), 2:1 (два равных = один)
-    let matchedSum=0,earlyMatchedSum=0;
+    let matchedSum=0,earlyMatchedSum=0;const matchedDates=[];
     const laterThan=(dv,dt)=>dv.date&&dt&&dv.date>=dt;
     deps.forEach(dp=>{
       if(dp.done)return;
       const half=dp.amt/2;
       let s1=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-dp.amt)<=EPS&&laterThan(dv,dp.date)).sort((a,b)=>a.date-b.date);
-      if(s1.length){s1[0].used=true;dp.done=true;matchedSum+=dp.amt;return;}
+      if(s1.length){s1[0].used=true;dp.done=true;matchedSum+=dp.amt;matchedDates.push(s1[0].date);return;}
       let h1=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-half)<=EPS&&laterThan(dv,dp.date)).sort((a,b)=>a.date-b.date);
-      if(h1.length>=2){h1[0].used=true;h1[1].used=true;dp.done=true;matchedSum+=dp.amt;return;}
+      if(h1.length>=2){h1[0].used=true;h1[1].used=true;dp.done=true;matchedSum+=dp.amt;matchedDates.push(h1[0].date,h1[1].date);return;}
       let dp2=deps.find(d=>!d.done&&d!==dp&&Math.abs(d.amt-dp.amt)<=EPS);
       if(dp2){
         const pairDate=(dp.date&&dp2.date)?Math.max(dp.date,dp2.date):(dp.date||dp2.date);
         let su=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-(dp.amt+dp2.amt))<=EPS&&dv.date&&pairDate&&dv.date>=pairDate).sort((a,b)=>a.date-b.date);
-        if(su.length){su[0].used=true;dp.done=true;dp2.done=true;matchedSum+=dp.amt+dp2.amt;return;}
+        if(su.length){su[0].used=true;dp.done=true;dp2.done=true;matchedSum+=dp.amt+dp2.amt;matchedDates.push(su[0].date);return;}
       }
       let s2=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-dp.amt)<=EPS).sort((a,b)=>(b.date||0)-(a.date||0));
       if(s2.length){s2[0].used=true;dp.done=true;earlyMatchedSum+=dp.amt;return;}
@@ -5504,6 +5504,7 @@ function renderDepAU(f){
       if(dp2e){let sue=divs.filter(dv=>!dv.used&&Math.abs(dv.amt-(dp.amt+dp2e.amt))<=EPS).sort((a,b)=>(b.date||0)-(a.date||0));if(sue.length){sue[0].used=true;dp.done=true;dp2e.done=true;earlyMatchedSum+=dp.amt+dp2e.amt;return;}}
     });
     const depLast=deps.reduce((m,x)=>x.date&&(!m||x.date>m)?x.date:m,null);
+    const withdrawnDate=matchedDates.reduce((m,d)=>d&&(!m||d>m)?d:m,null); // дата вывода (последний сопоставленный дивиденд)
     const balance=depSum-matchedSum; // вернулось, но не выведено той же суммой
     const hasIssue=issuedSum>EPS,hasDep=depSum>EPS;
     const noIssue=hasDep&&!hasIssue;                       // вернулось без выдачи 112
@@ -5519,7 +5520,7 @@ function renderDepAU(f){
     const refDate=(hasIssue&&!hasDep)?issueLast:depLast;
     const days=refDate?daysB(refDate,today):null;
     const isProblem=st.t.startsWith('⚠')||noIssue||mismatch;
-    return {id:e.id,rows:e.rows,issuedSum,issueLast,depSum,divSum,matchedSum,depLast,balance,noIssue,mismatch,isProblem,status:st,days};
+    return {id:e.id,rows:e.rows,issuedSum,issueLast,depSum,divSum,matchedSum,withdrawnDate,depLast,balance,noIssue,mismatch,isProblem,status:st,days};
   });
   const q=S(f.search).toLowerCase(),onlyOpen=!!f.onlyOpen;
   let shown=items;
@@ -5554,7 +5555,7 @@ function renderDepAU(f){
     <td style="${td};max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="width:7px;height:7px;border-radius:50%;background:${x.status.c};display:inline-block;margin-right:6px"></span><span style="color:var(--accent);font-weight:600">${esc(x.id)}</span> <span style="font-size:9px;color:var(--accent)">↗</span></td>
     ${x.noIssue?`<td style="${td};text-align:right;color:var(--outcome);font-size:10px">нет 112</td>`:cellAD(x.issuedSum,x.issueLast)}
     ${cellAD(x.depSum,x.depLast,x.mismatch?'var(--outcome)':'')}
-    <td style="${td};text-align:right;font-variant-numeric:tabular-nums;color:var(--income)">${x.matchedSum?fmt(x.matchedSum):'-'}</td>
+    ${cellAD(x.matchedSum,x.withdrawnDate,'var(--income)')}
     <td style="${td};text-align:right;font-variant-numeric:tabular-nums;color:${x.balance>0.005?'var(--outcome)':'var(--text3)'}">${x.balance>0.005?fmt(x.balance):'0'}</td>
     <td style="${td};text-align:center;font-weight:600;color:${x.days>90?'#d35450':x.days>30?'#e0894a':'var(--text3)'}">${x.days!=null?x.days+' дн.':'-'}</td>
     <td style="${td};white-space:nowrap"><span style="padding:1px 8px;border-radius:8px;font-weight:600;color:${x.status.c};background:color-mix(in srgb,${x.status.c} 12%,transparent)">${x.status.t}</span>${x.mismatch?' <span title="Возврат не равен выдаче" style="color:var(--outcome);font-size:10px">⚠≠</span>':''}</td>
