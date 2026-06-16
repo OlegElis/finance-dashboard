@@ -738,7 +738,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',activityDir:'БФЛ - Банкротство физических лиц',years:[new Date().getFullYear()],months:[]},
-  expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics'},
+  expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics',articles:[],subarticles:[]},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'direction',noOpening:false},
@@ -3001,11 +3001,17 @@ function renderExpenses(f){
   // Направление-фильтр
   const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const selDirs=f.activityDirs||[];
-  const data=selDirs.length?baseData.filter(r=>selDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):baseData;
+  const dataDir=selDirs.length?baseData.filter(r=>selDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):baseData;
 
-  // Выручка (база для % от выручки)
+  // Опции Статья/Подстатья (из dir-данных, до фильтров статья/подстатья - чтобы списки не схлопывались)
+  const expArts=[...new Set(dataDir.map(r=>String(r[COL.ARTICLE_CODE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const expSubs=[...new Set(dataDir.map(r=>String(r[COL.ARTICLE_NAME]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const selArts=f.articles||[],selSubs=f.subarticles||[];
+  const data=dataDir.filter(r=>(!selArts.length||selArts.includes(String(r[COL.ARTICLE_CODE]||'').trim()))&&(!selSubs.length||selSubs.includes(String(r[COL.ARTICLE_NAME]||'').trim())));
+
+  // Выручка (база для % от выручки) - из dir-данных, не зависит от выбора статьи/подстатьи
   let totalRev=0;
-  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();const inc=parseNum(r[COL.INCOME]);if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)totalRev+=inc;});
+  dataDir.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();const inc=parseNum(r[COL.INCOME]);if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)totalRev+=inc;});
 
   // Группировка: аналитика / статья / подстатья
   const groupMode=f.expGroup||'analytics';
@@ -3039,6 +3045,16 @@ function renderExpenses(f){
   // Фильтр-бар + направление
   const dirCb=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="expDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="expDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="expDirChange()"> <span>${d}</span></label>`).join('');
   const dirBtn=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
+  // Дропдауны Статья/Подстатья (мультивыбор + поиск)
+  const mkOptList=(items,sel,changeCall)=>items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${sel.includes(v)?'checked':''} onchange="${changeCall}"> <span>${String(v).replace(/</g,'&lt;')}</span></label>`).join('');
+  const mkSearch=ddId=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="expFilterList('${ddId}',this.value)" placeholder="Поиск..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)"></div>`;
+  const mkAllBtns=allCall=>`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${allCall.replace('%s','true')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="${allCall.replace('%s','false')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
+  const artBtnLabel=(selArts.length?selArts.length+' выбрано':'Все статьи')+' ▾';
+  const subBtnLabel=(selSubs.length?selSubs.length+' выбрано':'Все подстатьи')+' ▾';
+  const artDDinner=mkSearch('exp-art-dd')+mkAllBtns("expMultiAll('exp-art-dd','exp-art-btn','articles','Все статьи',%s)")+mkOptList(expArts,selArts,"expMultiChange('exp-art-dd','exp-art-btn','articles','Все статьи')");
+  const subDDinner=mkSearch('exp-sub-dd')+mkAllBtns("expMultiAll('exp-sub-dd','exp-sub-btn','subarticles','Все подстатьи',%s)")+mkOptList(expSubs,selSubs,"expMultiChange('exp-sub-dd','exp-sub-btn','subarticles','Все подстатьи')");
+  const ddStyle='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow-y:auto;min-width:240px;margin-top:2px';
+  const btnStyle='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:120px;text-align:left';
   const grpOpts=[{v:'analytics',l:'По аналитике'},{v:'article',l:'По статье'},{v:'subarticle',l:'По подстатье'}];
   const grpSel=`<select onchange="_tabFilters['expenses'].expGroup=this.value;renderExpenses(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${grpOpts.map(o=>`<option value="${o.v}"${groupMode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>`;
   const cmpOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
@@ -3052,12 +3068,19 @@ function renderExpenses(f){
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Сравнение:</label>
     <select class="filter-extra-sel" onchange="_tabFilters['expenses'].periodType=this.value;renderExpenses(getFilters())">${cmpOpts.map(o=>`<option value="${o.v}"${cmpMode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
   </div>`;
-  const extra=`<div style="display:flex;align-items:center;gap:8px;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border)">
+  const extra=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border)">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Группировка:</label>
     ${grpSel}
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Направление:</label>
     <div style="position:relative;display:inline-block"><button id="exp-dir-btn" onclick="expDirToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:160px;text-align:left">${dirBtn}</button>
     <div id="exp-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:300px;overflow-y:auto;min-width:300px;margin-top:2px">${dirCb}</div></div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Статья:</label>
+    <div style="position:relative;display:inline-block"><button id="exp-art-btn" onclick="expMultiToggle('exp-art-dd')" style="${btnStyle}">${artBtnLabel}</button>
+    <div id="exp-art-dd" style="${ddStyle}">${artDDinner}</div></div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase;margin-left:8px">Подстатья:</label>
+    <div style="position:relative;display:inline-block"><button id="exp-sub-btn" onclick="expMultiToggle('exp-sub-dd')" style="${btnStyle}">${subBtnLabel}</button>
+    <div id="exp-sub-dd" style="${ddStyle}">${subDDinner}</div></div>
+    ${(selArts.length||selSubs.length)?`<button onclick="expResetExtra()" style="font-size:10px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">× сброс</button>`:''}
   </div>`;
 
   if(!catArr.length){el.innerHTML=filterBar+extra+emptyState('Нет расходов','Измените фильтры');return;}
@@ -3148,6 +3171,12 @@ function renderExpenses(f){
 window.expDirToggle=function(){const dd=document.getElementById('exp-dir-dd');if(!dd)return;const willOpen=dd.style.display!=='block';dd.style.display=willOpen?'block':'none';if(!willOpen)renderExpenses(getFilters());};
 window.expDirChange=function(){const dd=document.getElementById('exp-dir-dd');const btn=document.getElementById('exp-dir-btn');if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(cb=>cb.value);btn.textContent=(checked.length?checked.length+' выбрано':'Все направления')+' ▾';_tabFilters.expenses.activityDirs=checked;};
 window.expDirSelectAll=function(s){const dd=document.getElementById('exp-dir-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.expDirChange();};
+// Мультивыбор Статья/Подстатья (универсальные)
+window.expMultiToggle=function(ddId){const dd=document.getElementById(ddId);if(!dd)return;const open=dd.style.display!=='block';dd.style.display=open?'block':'none';if(!open)renderExpenses(getFilters());};
+window.expMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.expenses[field]=checked;};
+window.expMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.expMultiChange(ddId,btnId,field,labelAll);};
+window.expFilterList=function(ddId,q){const dd=document.getElementById(ddId);if(!dd)return;q=(q||'').toLowerCase();dd.querySelectorAll('label').forEach(l=>{l.style.display=l.textContent.toLowerCase().includes(q)?'':'none';});};
+window.expResetExtra=function(){_tabFilters.expenses.articles=[];_tabFilters.expenses.subarticles=[];renderExpenses(getFilters());};
 
 // ─── КОНТРОЛЬ: ДУБЛИ ЗАПИСЕЙ ─────────────────────────────────────────────────
 function renderDupes(f){
