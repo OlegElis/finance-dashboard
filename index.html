@@ -3151,10 +3151,16 @@ function renderExpenses(f){
   else allSubs=catArr.map(c=>[c.name,c.total]);
   const topSubs=allSubs.sort((a,b)=>b[1]-a[1]).slice(0,10);
   const moneyTick=v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;};
+  const lblColor=(getComputedStyle(document.body).getPropertyValue('--text2')||'#52606d').trim();
+  const sysFont=getComputedStyle(document.body).fontFamily||'sans-serif';
+  // ярлыки суммы в конце каждого горизонтального бара
+  const barValPlugin={id:'barVals',afterDatasetsDraw(ch){const ctx=ch.ctx,meta=ch.getDatasetMeta(0);if(!meta)return;ctx.save();ctx.font='600 9px '+sysFont;ctx.fillStyle=lblColor;ctx.textBaseline='middle';ctx.textAlign='left';meta.data.forEach((el,i)=>{const v=ch.data.datasets[0].data[i];if(!v)return;ctx.fillText(moneyTick(v),el.x+4,el.y);});ctx.restore();}};
+  // ярлык «Итого» над каждым столбцом сравнения по периодам
+  const cmpTotPlugin={id:'cmpTot',afterDatasetsDraw(ch){const ctx=ch.ctx,last=ch.getDatasetMeta(ch.data.datasets.length-1);if(!last)return;ctx.save();ctx.font='700 10px '+sysFont;ctx.fillStyle=lblColor;ctx.textAlign='center';ctx.textBaseline='bottom';ch.data.labels.forEach((lab,i)=>{let t=0;ch.data.datasets.forEach(ds=>t+=ds.data[i]||0);if(t<=0)return;const b=last.data[i];if(!b)return;ctx.fillText(moneyTick(t),b.x,b.y-3);});ctx.restore();}};
   const bar=document.getElementById('expChartBar');
-  if(bar&&window.Chart)window._expChartBar=new Chart(bar,{type:'bar',
+  if(bar&&window.Chart)window._expChartBar=new Chart(bar,{type:'bar',plugins:[barValPlugin],
     data:{labels:topSubs.map(s=>s[0].length>28?s[0].slice(0,27)+'…':s[0]),datasets:[{data:topSubs.map(s=>s[1]),backgroundColor:topSubs.map((_,i)=>PAL[i%PAL.length]),borderRadius:3}]},
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(-c.raw)+(totalRev?' · '+fmtPct(c.raw/revAbs)+' от выручки':'')}}},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,layout:{padding:{right:46}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(-c.raw)+(totalRev?' · '+fmtPct(c.raw/revAbs)+' от выручки':'')}}},
       scales:{x:{grid:{color:'#ebebeb'},ticks:{font:{size:9},callback:moneyTick}},y:{grid:{display:false},ticks:{font:{size:9}}}}}});
   // Сравнение по периодам (накопительный бар по категориям)
   const cmpTop=catArr.slice(0,6).map(c=>c.name);
@@ -3162,9 +3168,9 @@ function renderExpenses(f){
   const cmpDatasets=cmpTop.map((cat,i)=>({label:cat.length>20?cat.slice(0,19)+'…':cat,data:cmpPeriods.map(p=>(perCat[cat]&&perCat[cat][p])||0),backgroundColor:PAL[i%PAL.length],stack:'e',borderRadius:2}));
   if(cmpRest.length)cmpDatasets.push({label:'Прочее',data:cmpPeriods.map(p=>{let s=0;cmpRest.forEach(c=>{s+=(perCat[c]&&perCat[c][p])||0;});return s;}),backgroundColor:'#cbd5e1',stack:'e',borderRadius:2});
   const cmp=document.getElementById('expChartCmp');
-  if(cmp&&window.Chart)window._expChartCmp=new Chart(cmp,{type:'bar',
+  if(cmp&&window.Chart)window._expChartCmp=new Chart(cmp,{type:'bar',plugins:[cmpTotPlugin],
     data:{labels:cmpPeriods,datasets:cmpDatasets},
-    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},layout:{padding:{top:18}},
       plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:10,padding:8}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt(-c.raw)}}},
       scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:10}}},y:{stacked:true,grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:moneyTick}}}}});
 }
@@ -3177,6 +3183,15 @@ window.expMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getE
 window.expMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.expMultiChange(ddId,btnId,field,labelAll);};
 window.expFilterList=function(ddId,q){const dd=document.getElementById(ddId);if(!dd)return;q=(q||'').toLowerCase();dd.querySelectorAll('label').forEach(l=>{l.style.display=l.textContent.toLowerCase().includes(q)?'':'none';});};
 window.expResetExtra=function(){_tabFilters.expenses.articles=[];_tabFilters.expenses.subarticles=[];renderExpenses(getFilters());};
+// авто-применение: клик вне открытого дропдауна закрывает его и перерисовывает (фильтры применяются)
+document.addEventListener('mousedown',function(e){
+  if(typeof activeTab==='undefined'||activeTab!=='expenses')return;
+  let anyOpen=false,inside=false;
+  ['exp-dir-dd','exp-art-dd','exp-sub-dd'].forEach(id=>{const dd=document.getElementById(id);if(dd&&dd.style.display==='block'){anyOpen=true;if(dd.contains(e.target))inside=true;}});
+  if(!anyOpen||inside)return;
+  if(e.target.closest&&e.target.closest('#exp-dir-btn,#exp-art-btn,#exp-sub-btn'))return; // клик по кнопке-открывашке - обработает она сама
+  renderExpenses(getFilters());
+});
 
 // ─── КОНТРОЛЬ: ДУБЛИ ЗАПИСЕЙ ─────────────────────────────────────────────────
 function renderDupes(f){
