@@ -5754,52 +5754,58 @@ window.appLoginGoogle=function(){
   }catch(e){}
 };
 // HTML строки таблицы доступа (email + выбор вкладки/полного доступа)
-window._accessRowHtml=function(email,sheet){
+window._accessRowHtml=function(email,sheet,name){
   const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const titles=window._accessTitles||[];
   const sel=sheet||'__full__';
   let opts='<option value="__full__"'+(sel==='__full__'?' selected':'')+'>- Полный доступ (RawData) -</option>';
   const all=(sel&&sel!=='__full__'&&titles.indexOf(sel)<0)?[sel].concat(titles):titles;
   all.forEach(t=>{opts+='<option value="'+esc(t)+'"'+(t===sel?' selected':'')+'>'+esc(t)+'</option>';});
+  const inp='width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)';
   return `<tr>
-    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><input class="acc-email" value="${esc(email)}" placeholder="email@gmail.com" style="width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>
-    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><select class="acc-sheet" style="width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)">${opts}</select></td>
+    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><input class="acc-email" value="${esc(email)}" placeholder="email@gmail.com" style="${inp}"></td>
+    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><input class="acc-name" value="${esc(name)}" placeholder="Фамилия Имя" style="${inp}"></td>
+    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><select class="acc-sheet" style="${inp}">${opts}</select></td>
     <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:center"><button onclick="this.closest('tr').remove()" title="Удалить" style="border:none;background:none;color:#d35450;cursor:pointer;font-size:15px;line-height:1">✕</button></td>
   </tr>`;
 };
 window.accessAddRow=function(){
   const tb=document.getElementById('acc-tbody'); if(!tb)return;
-  tb.insertAdjacentHTML('beforeend',window._accessRowHtml('',''));
+  tb.insertAdjacentHTML('beforeend',window._accessRowHtml('','',''));
 };
 window.accessSavePanel=function(btn){
   const tb=document.getElementById('acc-tbody'); if(!tb)return;
-  const allowed=[],sheetAcc=[],seen={};
+  const allowed=[],sheetAcc=[],names=[],seen={};
   let dup=false;
   [...tb.querySelectorAll('tr')].forEach(tr=>{
     const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();
     const sh=tr.querySelector('.acc-sheet').value;
+    const nm=(tr.querySelector('.acc-name').value||'').trim();
     if(!em)return;
     if(seen[em]){dup=true;return;} seen[em]=1;
     if(sh==='__full__')allowed.push(em); else if(sh)sheetAcc.push({email:em,sheet:sh});
+    if(nm)names.push({email:em,name:nm});
   });
   if(dup&&!confirm('Есть повторяющиеся email - будут учтены только первые. Сохранить?'))return;
   if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
   fbApp();const db=firebase.database();
-  Promise.all([db.ref('config/allowedEmails').set(allowed),db.ref('config/sheetAccess').set(sheetAcc)])
+  Promise.all([db.ref('config/allowedEmails').set(allowed),db.ref('config/sheetAccess').set(sheetAcc),db.ref('config/names').set(names)])
     .then(()=>{ const ov=document.getElementById('accessPanelOverlay'); if(ov)ov.remove(); })
-    .catch(e=>{ if(btn){btn.disabled=false;btn.textContent='Сохранить';} alert('Не удалось сохранить: '+((e&&e.message)||e)+'\n\nПроверьте правила БД: запись config/allowedEmails и config/sheetAccess должна быть разрешена админу.'); });
+    .catch(e=>{ if(btn){btn.disabled=false;btn.textContent='Сохранить';} alert('Не удалось сохранить: '+((e&&e.message)||e)+'\n\nПроверьте правила БД: запись config/allowedEmails, config/sheetAccess и config/names должна быть разрешена админу.'); });
 };
 // Админ-панель «Доступ»: кто что видит (config/allowedEmails + config/sheetAccess)
 window.showAccessPanel=async function(){
   if(document.getElementById('accessPanelOverlay'))return;
   if(!window.firebase||!FIREBASE_CONFIG.databaseURL){alert('Firebase не настроен');return;}
   fbApp();const db=firebase.database();
-  let allowed=[],sheetAcc=[],titles=[];
+  let allowed=[],sheetAcc=[],names=[],titles=[];
   try{
-    const [ae,sa]=await Promise.all([db.ref('config/allowedEmails').once('value'),db.ref('config/sheetAccess').once('value')]);
+    const [ae,sa,nm]=await Promise.all([db.ref('config/allowedEmails').once('value'),db.ref('config/sheetAccess').once('value'),db.ref('config/names').once('value')]);
     const aev=ae.val(); allowed=aev?(Array.isArray(aev)?aev:Object.values(aev)):[];
     const sav=sa.val(); sheetAcc=sav?(Array.isArray(sav)?sav:Object.values(sav)):[];
+    const nmv=nm.val(); names=nmv?(Array.isArray(nmv)?nmv:Object.values(nmv)):[];
   }catch(e){}
+  const nameOf=em=>{const h=names.find(x=>x&&String(x.email||'').trim().toLowerCase()===String(em).trim().toLowerCase());return h?String(h.name||''):'';};
   try{
     const sid=localStorage.getItem('fin_sheetId')||'',key=localStorage.getItem('fin_apiKey')||'';
     if(sid&&key){
@@ -5809,8 +5815,8 @@ window.showAccessPanel=async function(){
   }catch(e){}
   window._accessTitles=titles;
   const rows=[];
-  sheetAcc.forEach(x=>{if(x&&x.email)rows.push(window._accessRowHtml(String(x.email),String(x.sheet||'')));});
-  allowed.forEach(em=>{if(em)rows.push(window._accessRowHtml(String(em),'__full__'));});
+  sheetAcc.forEach(x=>{if(x&&x.email)rows.push(window._accessRowHtml(String(x.email),String(x.sheet||''),nameOf(x.email)));});
+  allowed.forEach(em=>{if(em)rows.push(window._accessRowHtml(String(em),'__full__',nameOf(em)));});
   const body=rows.length?rows.join(''):'';
   const titleNote=titles.length?titles.length+' персональных вкладок найдено':'⚠ список вкладок не загрузился (проверьте подключение) - вкладку можно вписать вручную позже';
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='accessPanelOverlay';
@@ -5825,6 +5831,7 @@ window.showAccessPanel=async function(){
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
             <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Email</th>
+            <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">ФИО</th>
             <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Доступ / вкладка</th>
             <th style="width:40px;background:var(--surface2);border-bottom:1px solid var(--border)"></th>
           </tr></thead>
@@ -5855,20 +5862,24 @@ window.showAccessPanel=async function(){
 function resolveAccess(user){
   const email=((user&&user.email)||'').toLowerCase();
   if(!email)return Promise.resolve({allowed:false});
-  if(email===ADMIN_EMAIL.toLowerCase())return Promise.resolve({allowed:true,sheet:'RawData'});
+  const isAdmin=email===ADMIN_EMAIL.toLowerCase();
   try{
     fbApp();
     const db=firebase.database();
-    return Promise.all([db.ref('config/sheetAccess').once('value'),db.ref('config/allowedEmails').once('value')]).then(([sa,ae])=>{
+    return Promise.all([db.ref('config/sheetAccess').once('value'),db.ref('config/allowedEmails').once('value'),db.ref('config/names').once('value')]).then(([sa,ae,nm])=>{
+      const nmv=nm.val(); const names=nmv?(Array.isArray(nmv)?nmv:Object.values(nmv)):[];
+      const nh=names.find(x=>x&&String(x.email||'').trim().toLowerCase()===email);
+      const name=nh?String(nh.name||'').trim():'';
+      if(isAdmin)return {allowed:true,sheet:'RawData',name};
       const sav=sa.val(); const arr=sav?(Array.isArray(sav)?sav:Object.values(sav)):[];
       const hit=arr.find(x=>x&&String(x.email||'').trim().toLowerCase()===email);
-      if(hit&&hit.sheet)return {allowed:true,sheet:String(hit.sheet).trim()};
+      if(hit&&hit.sheet)return {allowed:true,sheet:String(hit.sheet).trim(),name};
       const aev=ae.val(); const al=aev?(Array.isArray(aev)?aev:Object.values(aev)):[];
-      if(al.map(x=>String(x||'').trim().toLowerCase()).includes(email))return {allowed:true,sheet:'RawData'};
+      if(al.map(x=>String(x||'').trim().toLowerCase()).includes(email))return {allowed:true,sheet:'RawData',name};
       console.warn('[access] '+email+' не найден ни в config/sheetAccess, ни в config/allowedEmails');
       return {allowed:false,reason:'notlisted'};
-    }).catch(e=>{console.warn('[access] не удалось прочитать config/* (проверьте правила Realtime Database: config .read должно быть "auth != null"):',e&&e.message);return {allowed:false,reason:'rules'};});
-  }catch(e){console.warn('[access] ошибка:',e&&e.message);return Promise.resolve({allowed:false,reason:'error'});}
+    }).catch(e=>{console.warn('[access] не удалось прочитать config/* (проверьте правила Realtime Database: config .read должно быть "auth != null"):',e&&e.message);return isAdmin?{allowed:true,sheet:'RawData'}:{allowed:false,reason:'rules'};});
+  }catch(e){console.warn('[access] ошибка:',e&&e.message);return Promise.resolve(isAdmin?{allowed:true,sheet:'RawData'}:{allowed:false,reason:'error'});}
 }
 // «Рубильник»: ставим метку времени - все сессии, вошедшие раньше неё, разлогинятся (включая текущую)
 window.appLogoutAll=function(){
@@ -5939,10 +5950,11 @@ function watchForceLogout(authMs){
           return;
         }
         window._dataSheet=acc.sheet||'RawData'; // какую вкладку грузить этому пользователю
+        const display=(acc.name||'').trim()||user.email||''; // ФИО, если задано, иначе email
         clearMsgs();
         if(gate)gate.style.display='none';
         if(userBox)userBox.style.display='inline-flex';
-        if(userEmail)userEmail.textContent=user.email||'';
+        if(userEmail){userEmail.textContent=display;userEmail.title=user.email||'';}
         if(passEl)passEl.value='';
         // кнопки админа - только админу
         const isAdmin=((user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());
@@ -5950,7 +5962,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(user.email||''); startLimitsSync(); startConfigSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync();
       });
     }else{
       if(gate)gate.style.display='flex';
