@@ -5865,9 +5865,10 @@ function resolveAccess(user){
       if(hit&&hit.sheet)return {allowed:true,sheet:String(hit.sheet).trim()};
       const aev=ae.val(); const al=aev?(Array.isArray(aev)?aev:Object.values(aev)):[];
       if(al.map(x=>String(x||'').trim().toLowerCase()).includes(email))return {allowed:true,sheet:'RawData'};
-      return {allowed:false};
-    }).catch(()=>({allowed:false}));
-  }catch(e){return Promise.resolve({allowed:false});}
+      console.warn('[access] '+email+' не найден ни в config/sheetAccess, ни в config/allowedEmails');
+      return {allowed:false,reason:'notlisted'};
+    }).catch(e=>{console.warn('[access] не удалось прочитать config/* (проверьте правила Realtime Database: config .read должно быть "auth != null"):',e&&e.message);return {allowed:false,reason:'rules'};});
+  }catch(e){console.warn('[access] ошибка:',e&&e.message);return Promise.resolve({allowed:false,reason:'error'});}
 }
 // «Рубильник»: ставим метку времени - все сессии, вошедшие раньше неё, разлогинятся (включая текущую)
 window.appLogoutAll=function(){
@@ -5929,7 +5930,10 @@ function watchForceLogout(authMs){
       // проверка доступа + определение области данных (вкладки) перед выдачей доступа
       resolveAccess(user).then(acc=>{
         if(!acc.allowed){
-          if(errEl){errEl.textContent='Доступ для '+(user.email||'этого аккаунта')+' не разрешён. Обратитесь к администратору.';errEl.style.display='block';}
+          const msg=acc.reason==='rules'
+            ? 'Не удалось проверить доступ (настройки базы). Сообщите администратору.'
+            : 'Доступ для '+(user.email||'этого аккаунта')+' не разрешён. Обратитесь к администратору.';
+          if(errEl){errEl.textContent=msg;errEl.style.display='block';}
           if(gate)gate.style.display='flex';
           try{auth.signOut();}catch(e){}
           return;
