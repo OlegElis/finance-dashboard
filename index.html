@@ -738,7 +738,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',activityDir:'БФЛ - Банкротство физических лиц',years:[new Date().getFullYear()],months:[]},
-  expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics',articles:[],subarticles:[]},
+  expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics',articles:[],subarticles:[],years:[],months:[]},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'direction',noOpening:false},
@@ -1745,15 +1745,16 @@ window.multiSelApply=function(tab,rerender){
   else if(tab==='opiu')renderOPIU(getFilters());
   else if(tab==='marketing')renderMarketing(getFilters());
   else if(tab==='fot')renderFOT(getFilters());
+  else if(tab==='expenses')renderExpenses(getFilters());
 };
 // Close on outside click
 document.addEventListener('click',function(e){
-  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd','fot-year-dd','fot-month-dd'].forEach(ddId=>{
+  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd','fot-year-dd','fot-month-dd','exp-year-dd','exp-month-dd'].forEach(ddId=>{
     const dd=document.getElementById(ddId);
     const btn=document.getElementById(ddId.replace('-dd','-btn'));
     if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){
       dd.style.display='none';
-      const tab=ddId.startsWith('dds')?'dds':ddId.startsWith('opiu')?'opiu':ddId.startsWith('fot')?'fot':'marketing';
+      const tab=ddId.startsWith('dds')?'dds':ddId.startsWith('opiu')?'opiu':ddId.startsWith('fot')?'fot':ddId.startsWith('exp')?'expenses':'marketing';
       multiSelApply(tab);
     }
   });
@@ -2998,10 +2999,18 @@ function renderExpenses(f){
     const t=String(r[COL.TYPE]||'').trim().toLowerCase();
     return t!=='перемещение' && !!parseDate(r[COL.DATE_OPIU]);
   });
+  // Фильтр Год/Месяц (по дате ОПиУ), как в ОПиУ
+  const selYears=f.years||[],selMonths=f.months||[];
+  const allYears=[...new Set(baseData.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>b-a);
+  const monthsSrc=selYears.length?baseData.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&selYears.includes(d.getFullYear());}):baseData;
+  const allMonths=[...new Set(monthsSrc.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getMonth()+1:null;}).filter(Boolean))].sort((a,b)=>a-b);
+  let baseYM=baseData;
+  if(selYears.length)baseYM=baseYM.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&selYears.includes(d.getFullYear());});
+  if(selMonths.length)baseYM=baseYM.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&selMonths.includes(d.getMonth()+1);});
   // Направление-фильтр
   const allDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const selDirs=f.activityDirs||[];
-  const dataDir=selDirs.length?baseData.filter(r=>selDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):baseData;
+  const dataDir=selDirs.length?baseYM.filter(r=>selDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):baseYM;
 
   // Опции Статья/Подстатья (из dir-данных, до фильтров статья/подстатья - чтобы списки не схлопывались)
   const expArts=[...new Set(dataDir.map(r=>String(r[COL.ARTICLE_CODE]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
@@ -3058,14 +3067,20 @@ function renderExpenses(f){
   const grpOpts=[{v:'analytics',l:'По аналитике'},{v:'article',l:'По статье'},{v:'subarticle',l:'По подстатье'}];
   const grpSel=`<select onchange="_tabFilters['expenses'].expGroup=this.value;renderExpenses(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${grpOpts.map(o=>`<option value="${o.v}"${groupMode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>`;
   const cmpOpts=[{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
-  const filterBar=`<div class="tab-filters">
-    <div class="date-range">
-      <input type="date" value="${f.dateFrom}" onchange="_tabFilters['expenses'].dateFrom=this.value;renderExpenses(getFilters())">
-      <span class="date-range-sep">-</span>
-      <input type="date" value="${f.dateTo}" onchange="_tabFilters['expenses'].dateTo=this.value;renderExpenses(getFilters())">
-    </div>
-    <div class="filter-sep"></div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Сравнение:</label>
+  const MON_SH=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const ymAll=call=>`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${call.replace('%s','true')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="${call.replace('%s','false')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
+  const expYearCb=ymAll("multiSelAll('expenses','years','exp-year-dd','exp-year-btn',%s)")+allYears.map(y=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${y}" ${selYears.includes(y)?'checked':''} onchange="multiSelChange('expenses','years','exp-year-dd','exp-year-btn')"> <span>${y}</span></label>`).join('');
+  const expMonthCb=ymAll("multiSelAll('expenses','months','exp-month-dd','exp-month-btn',%s)")+allMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${selMonths.includes(m)?'checked':''} onchange="multiSelChange('expenses','months','exp-month-dd','exp-month-btn')"> <span>${MON_SH[m-1]}</span></label>`).join('');
+  const yBtn=(selYears.length?selYears.length+' выбрано':'Все')+' ▾';
+  const mBtn=(selMonths.length?selMonths.length+' выбрано':'Все')+' ▾';
+  const ddStyleYM='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px';
+  const ymBtnStyle='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left';
+  const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px 28px;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
+    <div style="position:relative;display:inline-block"><button id="exp-year-btn" onclick="multiSelToggle('exp-year-dd')" style="${ymBtnStyle}">${yBtn}</button><div id="exp-year-dd" style="${ddStyleYM}">${expYearCb}</div></div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
+    <div style="position:relative;display:inline-block"><button id="exp-month-btn" onclick="multiSelToggle('exp-month-dd')" style="${ymBtnStyle}">${mBtn}</button><div id="exp-month-dd" style="${ddStyleYM}">${expMonthCb}</div></div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>
     <select class="filter-extra-sel" onchange="_tabFilters['expenses'].periodType=this.value;renderExpenses(getFilters())">${cmpOpts.map(o=>`<option value="${o.v}"${cmpMode===o.v?' selected':''}>${o.l}</option>`).join('')}</select>
   </div>`;
   const extra=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 28px;background:var(--surface);border-bottom:1px solid var(--border)">
