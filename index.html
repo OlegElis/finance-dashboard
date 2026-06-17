@@ -4561,11 +4561,12 @@ function renderPlanFact(f){
   const esc=s=>String(s||'').replace(/</g,'&lt;');
   const MON=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const dirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  const years=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))];
-  const cy=new Date().getFullYear(); if(!years.includes(cy))years.push(cy); years.sort((a,b)=>b-a);
-  // дефолты
+  const dataYears=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>b-a);
+  const cy=new Date().getFullYear();
+  const years=dataYears.includes(cy)?dataYears.slice():[cy,...dataYears].sort((a,b)=>b-a);
+  // дефолты: направление с данными (приоритет БФЛ); год - последний год С ДАННЫМИ (или текущий, если данных нет)
   if(!f.dir||!dirs.includes(f.dir))f.dir=dirs.find(d=>/^бфл/i.test(d))||dirs[0]||'';
-  if(!f.year||!years.includes(f.year))f.year=years.includes(cy)?cy:years[0];
+  if(!f.year||!years.includes(f.year))f.year=dataYears.includes(cy)?cy:(dataYears[0]||cy);
   const dir=f.dir,year=f.year,level=f.level||'subarticle',period=f.period||'year';
   const isYear=period==='year';
   const isAdmin=window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase();
@@ -4673,7 +4674,9 @@ function renderPlanFact(f){
     <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Расходы: план vs факт по месяцам - ${year}</div>
     <div style="height:300px"><canvas id="pfChart"></canvas></div></div>`;
 
-  el.innerHTML=filterBar+kpiHtml+tableHtml+chartHtml;
+  const noPlans=!plans.some(p=>p.level===level||p.level==='revenue');
+  const banner=noPlans?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:var(--accent-light);border:1px solid #c7d7fd;border-radius:8px;font-size:12px;color:#1e40af">Планы на «${esc(dir)}» за ${year} (уровень ${level==='article'?'статья':'подстатья'}) ещё не заданы. ${isAdmin?'Нажмите «✏ Редактировать планы».':'Их задаёт администратор.'} Пока показан только факт.</div>`:'';
+  el.innerHTML=filterBar+banner+kpiHtml+tableHtml+chartHtml;
 
   // данные графика
   const planMonthTotal=m=>{let s=0,has=false;Object.keys(codeSet).forEach(c=>{const v=planMonth(level,c,m);if(v!=null){s+=v;has=true;}});return has?s:0;};
