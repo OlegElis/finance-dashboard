@@ -938,12 +938,36 @@ window.showSettingsMenu=function(){
   menu.innerHTML=`<div style="padding:6px 10px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);font-weight:600">Настройки</div>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showSetup()">🔌 Подключение к Google</button>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showAccessPanel()">👥 Управление доступом</button>
-    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showPlansPanel()">🎯 Планы (план-факт)</button>`;
+    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showPlansPanel()">🎯 Планы (план-факт)</button>
+    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();downloadBackup(this)">⬇ Бэкап (данные + настройки)</button>`;
   document.body.appendChild(menu);
   const rc=btn.getBoundingClientRect();
   menu.style.top=(rc.bottom+6)+'px';
   menu.style.left=Math.max(8,Math.min(rc.left,window.innerWidth-menu.offsetWidth-8))+'px';
   setTimeout(()=>{const off=e=>{if(!menu.contains(e.target)&&e.target!==btn&&!btn.contains(e.target)){menu.remove();document.removeEventListener('mousedown',off);}};document.addEventListener('mousedown',off);},0);
+};
+
+// Бэкап (только админ): один JSON-файл - текущие данные RawData + сделки БФЛ + все настройки config/*
+window.downloadBackup=async function(){
+  try{
+    let config={};
+    try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); const s=await firebase.database().ref('config').once('value'); config=s.val()||{}; } }catch(e){}
+    const data={
+      exportedAt:new Date().toISOString(),
+      by:(window.firebase&&firebase.auth&&firebase.auth().currentUser&&firebase.auth().currentUser.email)||'',
+      sheet:window._dataSheet||'RawData',
+      columns:['ДДС','ОПиУ','Тип','ID_Offer','Поступление','Списание','ФНС','Реквизиты','Статья','Подстатья','Аналитика','Контрагент','Назначение','Направление','Фин.операция'],
+      rowsCount:(typeof RAW!=='undefined'&&RAW)?RAW.length:0,
+      config,                                                  // планы, лимиты, доступ, ФИО, реквизиты
+      rawData:(typeof RAW!=='undefined'&&RAW)?RAW:[],          // строки операций (без заголовка)
+      rawBfl:(typeof RAW_BFL!=='undefined'&&RAW_BFL&&RAW_BFL.deals)?RAW_BFL.deals:null
+    };
+    const blob=new Blob([JSON.stringify(data)],{type:'application/json'});
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download='backup_'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1500);
+  }catch(e){alert('Не удалось сформировать бэкап: '+((e&&e.message)||e));}
 };
 
 // Кнопка «Обновить данные»: заново тянем RawData из Google Sheets (по сохранённым реквизитам)
