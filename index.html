@@ -2903,6 +2903,40 @@ function renderOPIU(f){
   </div>`;
 }
 
+// Разбивка ЗП сотрудника по направлениям (с удельным весом) - по клику на ФИО в таблице ФОТ
+window.fotShowEmployee=function(name){
+  const rows=(window._fotRows||[]).filter(r=>String(r[COL.SECOND_SIDE]||'Не указан').trim()===name);
+  if(!rows.length)return;
+  const esc=s=>String(s||'').replace(/</g,'&lt;');
+  const byDir={};let total=0;
+  rows.forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'Не указано').trim();const v=Math.abs(parseNum(r[COL.OUTCOME]));byDir[dir]=(byDir[dir]||0)+v;total+=v;});
+  const arr=Object.entries(byDir).sort((a,b)=>b[1]-a[1]);
+  const tABS=total||1;
+  const body=arr.map(([d,v])=>`<tr>
+    <td style="padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border)">${esc(d)}</td>
+    <td style="padding:6px 10px;font-size:11px;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums;color:var(--outcome)">${fmt(v)}</td>
+    <td style="padding:6px 10px;font-size:11px;text-align:right;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><div style="width:60px;height:6px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${Math.round(v/tABS*100)}%;background:var(--accent)"></div></div><span style="width:42px;text-align:right">${fmtPct(v/tABS)}</span></div>
+    </td></tr>`).join('');
+  const overlay=document.createElement('div');overlay.className='txn-card-overlay';
+  overlay.innerHTML=`<div class="txn-card" style="max-width:560px;width:94vw">
+    <div class="txn-card-head"><h3>👤 ${esc(name)} - ФОТ по направлениям</h3><button class="txn-card-close">✕</button></div>
+    <div style="padding:14px 18px 18px">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Удельный вес направления в ЗП сотрудника (за выбранный период/фильтры). Итого: <b style="color:var(--outcome)">${fmt(total)}</b> · направлений: ${arr.length}</div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="text-align:left;padding:6px 10px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Направление</th>
+          <th style="text-align:right;padding:6px 10px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Сумма</th>
+          <th style="text-align:right;padding:6px 10px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Удельный вес</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  </div>`;
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+  overlay.querySelector('.txn-card-close').addEventListener('click',()=>overlay.remove());
+  document.body.appendChild(overlay);
+};
 function renderFOT(f){
   const el=document.getElementById('tabFot');
   const mode=f.periodType,detail=f.fotDetail||'direction';
@@ -2936,6 +2970,7 @@ function renderFOT(f){
     if(selCps.length&&!selCps.includes(String(r[COL.SECOND_SIDE]||'').trim()))return false;
     return true;
   });
+  window._fotRows=data; // для расшифровки по клику на ФИО (разбивка по направлению)
   // Фильтр-бар ФОТ (Статья / Подстатья / Контрагент с поиском)
   const mkFotDD=(id,items,selArr,fn)=>{
     const search=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`;
@@ -3052,8 +3087,10 @@ function renderFOT(f){
   const ths=periods.map(p=>`<th style="text-align:right">${p}</th>`).join('');
   const rows=Object.entries(byPrimary).filter(([_,bp])=>Object.values(bp).some(v=>v!==0)).sort((a,b)=>Math.abs(Object.values(b[1]).reduce((x,y)=>x+y,0))-Math.abs(Object.values(a[1]).reduce((x,y)=>x+y,0))).map(([key,bp])=>{
     const vals=periods.map(p=>bp[p]||0);const tot=vals.reduce((a,b)=>a+b,0);const pct=Math.abs(tot)/grandAbs;
-    return`<tr>
-      <td class="fot-name"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf[key]||'#cbd5e1'};margin-right:7px;vertical-align:middle"></span>${escF(key)}</td>
+    const clickable=detail==='counterparty';
+    const keyJs=String(key).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return`<tr${clickable?` style="cursor:pointer" onclick="fotShowEmployee('${keyJs}')" title="Разбивка ЗП по направлениям"`:''}>
+      <td class="fot-name"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf[key]||'#cbd5e1'};margin-right:7px;vertical-align:middle"></span>${escF(key)}${clickable?' <span style="font-size:9px;color:var(--accent)">↗</span>':''}</td>
       <td>${barPct(pct,colorOf[key])}</td>
       ${vals.map(v=>`<td class="fot-num" style="${cellBg(v)}">${v?fmt(Math.abs(v)):'<span style="color:var(--text3)">-</span>'}</td>`).join('')}
       <td class="fot-num" style="font-weight:700">${fmt(Math.abs(tot))}</td>
