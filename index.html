@@ -5598,9 +5598,11 @@ function renderAnomaly(f){
   const fnsYes=a=>['да','true','1','+'].includes(S(a).toLowerCase());
   // Справочник сделок Bitrix24 (RawData_BFL) для сверки ID_Offer - логика как в Дебиторке БФЛ
   const BFL_DIR='БФЛ - Банкротство физических лиц';
-  const refOffer=new Set(),refLead={};
+  const refOffer=new Set(),refLead={},refContract=new Set();
+  const cNorm=s=>String(s||'').toUpperCase().replace(/[\s«»"']/g,'').trim(); // нормализация № договора
   if(RAW_BFL&&RAW_BFL.deals)RAW_BFL.deals.forEach(d=>{
     const off=String(d.offer||'').trim();const k=_arNormId(off);if(k)refOffer.add(k);
+    const cN=cNorm(d.contract)||cNorm(off.split('|')[1]||'');if(cN.length>=4)refContract.add(cN); // № договора (из поля или среднего сегмента ID)
     const l=_arLeadId(off);if(!l)return;
     const dt=d.created instanceof Date?d.created:(d.dateContract instanceof Date?d.dateContract:null);
     const yr=dt?dt.getFullYear():'?';
@@ -5663,6 +5665,7 @@ function renderAnomaly(f){
     if(S(r[COL.ACTIVITY_DIR])!==BFL_DIR)return;
     const raw=S(r[COL.OFFER_ID]);if(!raw)return;
     if(refOffer.has(_arNormId(raw)))return; // ID совпадает со справочником
+    const opC=cNorm(raw.split('|')[1]||'');if(opC.length>=4&&refContract.has(opC))return; // найдено по № договора (тот же средний сегмент)
     const lead=_arLeadId(raw),ref=lead?refLeadDesc(lead):null;
     const expect=ref?ref:(lead?'нет в справочнике (ID '+lead+')':'ID не указан (только текст/ФИО)');
     items.push({row:r,rule:'offerref',ruleLabel:'ID_Offer → сверка со справочником Bitrix24',fieldName:'ID_Offer',expect,got:raw});
