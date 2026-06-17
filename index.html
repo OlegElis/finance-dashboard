@@ -4571,7 +4571,8 @@ function renderPlanFact(f){
   const isAdmin=window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase();
 
   // ── ФАКТ из RAW (по дате ОПиУ, выбранное направление+год, перемещения исключены) ──
-  const factByCode={},revByMonth=new Array(13).fill(0);
+  const nrm=s=>String(s||'').toLowerCase().replace(/[^а-яёa-z0-9]/gi,'');
+  const factByCode={},revByMonth=new Array(13).fill(0),npExpMonth=new Array(13).fill(0); // npExpMonth - расходы для ЧП (без «Вывода прибыли»)
   RAW.forEach(r=>{
     if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
     const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
@@ -4579,14 +4580,23 @@ function renderPlanFact(f){
     const m=d.getMonth()+1,out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)revByMonth[m]+=inc;
-    if(t==='списание'&&out<0){const c=level==='article'?ac:an;if(c)(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=Math.abs(out);}
+    if(t==='списание'&&out<0){
+      const c=level==='article'?ac:an;if(c)(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=Math.abs(out);
+      const anl=nrm(r[COL.ANALYTICS]); // ЧП как в ОПиУ: исключаем раздел «Вывод чистой прибыли»
+      if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExpMonth[m]+=Math.abs(out);
+    }
   });
   // ── ПЛАН из _planRecords ──
   const plans=(_planRecords||[]).filter(p=>p.dir===dir&&p.year===year);
+  const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const revBaseMonth=m=>{const r=plans.find(p=>p.level==='revenue'&&p.month===m);return(r&&r.value>0)?r.value:revByMonth[m];};
   const revBaseYear=()=>{const yr=plans.find(p=>p.level==='revenue'&&p.month===0);if(yr&&yr.value>0)return yr.value;let s=0;for(let m=1;m<=12;m++)s+=revBaseMonth(m);return s;};
-  const planMonth=(rl,code,m)=>{const r=plans.find(p=>p.level===rl&&p.code===code&&p.month===m);if(!r)return null;return r.mode==='pct'?r.value*revBaseMonth(m):r.value;};
-  const planYear=(rl,code)=>{const yr=plans.find(p=>p.level===rl&&p.code===code&&p.month===0);if(yr)return yr.mode==='pct'?yr.value*revBaseYear():yr.value;let s=null;for(let m=1;m<=12;m++){const v=planMonth(rl,code,m);if(v!=null)s=(s||0)+v;}return s;};
+  // чистая прибыль (факт) = выручка − все расходы, КРОМЕ раздела «Вывод чистой прибыли» (как в ОПиУ); отрицательную обнуляем
+  const netBaseMonth=m=>Math.max(0,revByMonth[m]-npExpMonth[m]);
+  const netBaseYear=()=>{let s=0;for(let m=1;m<=12;m++)s+=netBaseMonth(m);return s;};
+  const cvt=(r,baseM,baseY,m)=>r.mode==='pct'?r.value*(m?revBaseMonth(m):revBaseYear()):r.mode==='pct_profit'?r.value*(m?netBaseMonth(m):netBaseYear()):r.value;
+  const planMonth=(rl,code,m)=>{const r=plans.find(p=>p.level===rl&&p.code===code&&p.month===m);if(!r)return null;return cvt(r,1,0,m);};
+  const planYear=(rl,code)=>{const yr=plans.find(p=>p.level===rl&&p.code===code&&p.month===0);if(yr)return cvt(yr,0,1,0);let s=null;for(let m=1;m<=12;m++){const v=planMonth(rl,code,m);if(v!=null)s=(s||0)+v;}return s;};
   const planOf=(rl,code)=>isYear?planYear(rl,code):planMonth(rl,code,+period);
   const factExp=code=>{const a=factByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const revFact=()=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=revByMonth[m];return s;}return revByMonth[+period];};
@@ -6197,10 +6207,13 @@ function _planCodes(dir,level){
   });
   return Object.keys(set).sort((a,b)=>a.localeCompare(b,'ru'));
 }
+function _planModeDisp(mode){return mode==='pct'?['%','#e8f5ee','var(--income)']:mode==='pct_profit'?['%ЧП','#fdf6e3','#9a6700']:['₽','var(--accent-light)','var(--accent)'];}
 window.planSetMode=function(btn){
-  const nx=btn.getAttribute('data-mode')==='money'?'pct':'money';
-  btn.setAttribute('data-mode',nx);btn.textContent=nx==='money'?'₽':'%';
-  btn.style.background=nx==='money'?'var(--accent-light)':'#e8f5ee';btn.style.color=nx==='money'?'var(--accent)':'var(--income)';
+  const allowP=btn.getAttribute('data-allow-profit')==='1';
+  const cur=btn.getAttribute('data-mode');
+  let nx; if(cur==='money')nx='pct'; else if(cur==='pct')nx=allowP?'pct_profit':'money'; else nx='money';
+  btn.setAttribute('data-mode',nx);
+  const d=_planModeDisp(nx);btn.textContent=d[0];btn.style.background=d[1];btn.style.color=d[2];
 };
 function _planStage(){
   const wrap=document.getElementById('plan-matrix'); if(!wrap||!wrap.dataset.dir)return;
@@ -6212,7 +6225,7 @@ function _planStage(){
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
       const raw=String(inp.value||'').trim().replace(/\s/g,'').replace('%','').replace(',','.');
       if(raw===''||isNaN(parseFloat(raw)))return;
-      let val=parseFloat(raw); if(mode==='pct')val=val/100;
+      let val=parseFloat(raw); if(mode!=='money')val=val/100;
       _planRecords.push({dir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val});
     });
   });
@@ -6224,10 +6237,12 @@ function _planRenderMatrix(){
   const esc=s=>String(s||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const MON=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   const find=(rl,code,m)=>_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===rl&&p.code===code&&p.month===m);
-  const cellVal=(rl,code,m)=>{const r=find(rl,code,m);return r?(r.mode==='pct'?(+(r.value*100).toFixed(2)):r.value):'';};
+  const cellVal=(rl,code,m)=>{const r=find(rl,code,m);return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
+  const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const rowHtml=(rl,code,label,rev)=>{
     let mode='money'; if(!rev){const any=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
-    const modeBtn=rev?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" onclick="planSetMode(this)" style="font-size:11px;width:26px;height:24px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${mode==='money'?'var(--accent-light)':'#e8f5ee'};color:${mode==='money'?'var(--accent)':'var(--income)'}">${mode==='money'?'₽':'%'}</button>`;
+    const allowP=!rev&&c3(code)==='127'; const md=_planModeDisp(mode);
+    const modeBtn=rev?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const cells=[...Array(12)].map((_,i)=>`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" value="${cellVal(rl,code,i+1)}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`).join('');
     const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" value="${cellVal(rl,code,0)}" placeholder="авто" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;
     return `<tr data-code="${esc(code)}" data-level="${rl}">
@@ -6263,7 +6278,7 @@ window.showPlansPanel=async function(){
         <select id="plan-year" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${years.map(y=>`<option value="${y}"${y===cy?' selected':''}>${y}</option>`).join('')}</select>
         <select id="plan-level" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"><option value="subarticle">Уровень: Подстатья</option><option value="article">Уровень: Статья</option></select>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">План по месяцам и/или на год. Кнопка ₽/% - режим строки (% = доля от выручки направления). Пусто = плана нет; «Год» пусто = сумма месяцев.</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">План по месяцам и/или на год. Кнопка режима: ₽ → % (доля выручки) → %ЧП (доля чистой прибыли, только для статьи 127). Пусто = плана нет; «Год» пусто = сумма месяцев.</div>
       <div id="plan-matrix" style="overflow:auto;max-height:55vh;border:1px solid var(--border);border-radius:8px"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--text3)">Хранится в облаке (Firebase), запись только админу</span>
