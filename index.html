@@ -333,8 +333,8 @@
     .txn-table th:first-child,.txn-table td:first-child{position:sticky;left:0;background:var(--surface);z-index:1;box-shadow:1px 0 0 rgba(0,0,0,.08);}
     .txn-table thead th:first-child{background:var(--surface2);z-index:3;}
     .txn-table tr:hover td:first-child{background:var(--surface2);}
-    /* модалки-движения (ДДС-формат): не сжимать в кашу, дать горизонтальный скролл */
-    .txn-card-overlay table{min-width:600px;}
+    /* модалки с редактируемыми таблицами (не карточки) - горизонтальный скролл вместо сжатия */
+    .txn-card-overlay table:not(.mcards){min-width:600px;}
     /* таблица-обёртка скроллится по горизонтали с инерцией */
     .table-scroll{-webkit-overflow-scrolling:touch;}
     /* ===== Банк на телефоне: КАРТОЧКИ вместо тесных таблиц ===== */
@@ -1096,10 +1096,11 @@ function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank
 
 // Мобильные карточки: на телефоне любая таблица превращается в карточки; подписи полей берём из заголовка таблицы.
 // Банк имеет свою форму (.bank-table и таблица в .txn-scroll) - её пропускаем. Класс/атрибуты инертны на десктопе (стили только в media ≤820px).
-function mobileCardify(){
-  const root=document.getElementById('mainContent'); if(!root)return;
+function mobileCardify(scope){
+  const root=scope||document.getElementById('mainContent'); if(!root)return;
   root.querySelectorAll('table').forEach(tbl=>{
     if(tbl.classList.contains('bank-table')||tbl.closest('.txn-scroll'))return; // у Банка своя мобильная форма
+    if(tbl.querySelector('input,select,textarea'))return; // редактируемые таблицы (лимиты/доступ) - не трогаем
     const heads=tbl.querySelectorAll('thead tr'); if(!heads.length)return;
     const hr=heads[heads.length-1];
     const labels=[...hr.children].map(th=>th.textContent.trim());
@@ -1113,12 +1114,21 @@ function mobileCardify(){
   });
 }
 (function watchMobileCards(){
-  const root=document.getElementById('mainContent'); if(!root||!window.MutationObserver)return;
-  let raf=null;
-  const run=()=>{raf=null;try{mobileCardify();}catch(e){}};
-  // childList/subtree наблюдаем; наши изменения - это атрибуты (не отслеживаются), значит цикла нет
-  const obs=new MutationObserver(()=>{if(raf)cancelAnimationFrame(raf);raf=requestAnimationFrame(run);});
-  obs.observe(root,{childList:true,subtree:true});
+  if(!window.MutationObserver)return;
+  const root=document.getElementById('mainContent');
+  if(root){
+    let raf=null;
+    const run=()=>{raf=null;try{mobileCardify();}catch(e){}};
+    new MutationObserver(()=>{if(raf)cancelAnimationFrame(raf);raf=requestAnimationFrame(run);}).observe(root,{childList:true,subtree:true});
+  }
+  // модальные окна добавляются прямо в body - ловим их появление и тоже превращаем таблицы в карточки
+  new MutationObserver(muts=>{
+    muts.forEach(m=>{(m.addedNodes||[]).forEach(n=>{
+      if(n.nodeType!==1)return;
+      const isOverlay=n.classList&&(n.classList.contains('txn-card-overlay')||n.id==='accessPanelOverlay');
+      if(isOverlay||(n.querySelector&&n.querySelector('table'))){try{mobileCardify(n);}catch(e){}}
+    });});
+  }).observe(document.body,{childList:true});
 })();
 
 
