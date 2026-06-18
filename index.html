@@ -93,10 +93,7 @@
   .filter-extra select{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:11px;outline:none;cursor:pointer;}
   .filter-extra-sel{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:11px;outline:none;cursor:pointer;}
 
-  /* ── Бар пресетов (вверху рабочей области, над фильтрами вкладки) ── */
-  #presetBar{display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap;}
-  #presetBar .preset-bar-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--label);font-weight:600;}
-  #presetBar select{font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans);cursor:pointer;min-width:170px;outline:none;}
+  /* ── Пресеты: инлайн-контрол в строке фильтров + панель в настройках ── */
   .preset-cfg-btn{font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px;}
   .preset-cfg-btn:hover{border-color:var(--accent);color:var(--accent);}
   .preset-rtab{font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);}
@@ -1220,18 +1217,31 @@ function startPresetsSync(){
 function _presetAvailYears(){return [...new Set((typeof RAW!=='undefined'?RAW:[]).map(getYear).filter(Boolean))].sort((a,b)=>b-a);}
 function _presetAvailDirs(){return [...new Set((typeof RAW!=='undefined'?RAW:[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));}
 function _presetIsAdmin(){const b=document.getElementById('logoSetupBtn');return !!(b&&b.style.display&&b.style.display!=='none');}
-// Устойчивый бар пресетов вверху рабочей области (живёт вне контейнеров вкладок)
+// Выбор пресета встраивается ИНЛАЙН в строку фильтров вкладки (не отдельной строкой).
+// Цель: .tab-filters (Банк) или .dds-extra-filters (ОПиУ/ДДС/ОСВ/ФОТ). Идемпотентно; MutationObserver переинжектит после любой перерисовки.
+let _presetObsOn=false;
+function _setupPresetObserver(){
+  if(_presetObsOn)return; const mc=document.getElementById('mainContent'); if(!mc)return;
+  _presetObsOn=true;
+  try{ new MutationObserver(()=>{try{_injectPresetBar();}catch(e){}}).observe(mc,{childList:true,subtree:true}); }catch(e){}
+}
 function _injectPresetBar(){
-  const mc=document.getElementById('mainContent'); if(!mc)return;
-  let bar=document.getElementById('presetBar');
-  if(!['bank','opiu','dds','osv','fot'].includes(activeTab)){ if(bar)bar.style.display='none'; return; }
-  if(!bar){ bar=document.createElement('div'); bar.id='presetBar'; mc.insertBefore(bar,mc.firstChild); }
-  bar.style.display='flex';
+  _setupPresetObserver();
+  const oldBar=document.getElementById('presetBar'); if(oldBar)oldBar.remove(); // убрать прежний отдельный бар, если остался
+  if(!['bank','opiu','dds','osv','fot'].includes(activeTab))return;
+  const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1));
+  if(!cont)return;
+  const bar=cont.querySelector('.tab-filters, .dds-extra-filters');
+  if(!bar||bar.querySelector(':scope > .preset-inline'))return; // нет бара или уже встроено
   const list=_presets[activeTab]||[];
-  const opts=['<option value="">- не выбран -</option>'].concat(list.map(p=>`<option value="${p.id}">${_pesc(p.name)}</option>`)).join('');
-  bar.innerHTML=`<span class="preset-bar-lbl">Пресет</span>
-    <select onchange="presetApply('${activeTab}',this.value)">${opts}</select>
-    ${_presetIsAdmin()?`<button class="preset-cfg-btn" onclick="showPresetsPanel('${activeTab}')"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2" fill="var(--surface)"/><circle cx="15" cy="12" r="2" fill="var(--surface)"/><circle cx="9" cy="18" r="2" fill="var(--surface)"/></svg>Настроить</button>`:''}`;
+  const opts=['<option value="">пресет: - не выбран -</option>'].concat(list.map(p=>`<option value="${p.id}">${_pesc(p.name)}</option>`)).join('');
+  const wrap=document.createElement('span');
+  wrap.className='preset-inline';
+  wrap.style.cssText='display:inline-flex;align-items:center;gap:6px;margin-right:2px';
+  wrap.innerHTML=`<select onchange="presetApply('${activeTab}',this.value)" title="Пресет фильтров" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);cursor:pointer;max-width:180px;outline:none">${opts}</select>
+    ${_presetIsAdmin()?`<button class="preset-cfg-btn" onclick="showPresetsPanel('${activeTab}')" title="Настроить пресеты" style="padding:2px 8px"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 13a7 7 0 0 0 0-2l1.6-1.2-1.8-3.1L17 7.4a7 7 0 0 0-1.7-1L15 4.5H9l-.3 1.9a7 7 0 0 0-1.7 1L5.2 6.7 3.4 9.8 5 11a7 7 0 0 0 0 2l-1.6 1.2 1.8 3.1L7 16.6a7 7 0 0 0 1.7 1L9 19.5h6l.3-1.9a7 7 0 0 0 1.7-1l1.8.7 1.8-3.1z"/></svg></button>`:''}
+    <span class="filter-sep" style="width:1px;height:18px;background:var(--border);margin:0 2px"></span>`;
+  bar.insertBefore(wrap,bar.firstChild);
 }
 window.presetApply=function(tab,id){
   if(!id)return;
