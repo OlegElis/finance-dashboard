@@ -6675,6 +6675,14 @@ window.planFillRow=function(btn){
   let val=''; for(const inp of months){if(String(inp.value).trim()!==''){val=inp.value;break;}}
   if(String(val).trim()===''){val=prompt('Значение для всех 12 месяцев:',''); if(val==null)return;}
   months.forEach(i=>{i.value=val;});
+  if(months[0])window.planRowYear(months[0]); // пересчитать авто-«Год»
+};
+// Пересчёт авто-«Год» (сумма месяцев) - только если поле «Год» в авто-режиме (₽, не переопределено вручную)
+window.planRowYear=function(inp){
+  const tr=inp.closest('tr'); if(!tr)return;
+  const yr=tr.querySelector('input.plan-val[data-month="0"]'); if(!yr||yr.dataset.auto!=='1')return;
+  let s=0;tr.querySelectorAll('input.plan-val').forEach(i=>{if(i.getAttribute('data-month')==='0')return;const v=parseFloat(String(i.value||'').replace(/\s/g,'').replace(',','.'));if(!isNaN(v))s+=v;});
+  yr.value=s?(+s.toFixed(2)):'';
 };
 function _planStage(){
   const wrap=document.getElementById('plan-matrix'); if(!wrap||!wrap.dataset.dir)return;
@@ -6688,6 +6696,7 @@ function _planStage(){
     const code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level');
     const mb=tr.querySelector('.plan-mode');const mode=rlevel==='revenue'?'money':(mb?mb.getAttribute('data-mode'):'money');
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
+      if(inp.getAttribute('data-month')==='0'&&inp.dataset.auto==='1')return; // авто-«Год» (сумма месяцев) - не сохраняем как явный
       const raw=String(inp.value||'').trim().replace(/\s/g,'').replace('%','').replace(',','.');
       if(raw===''||isNaN(parseFloat(raw)))return;
       let val=parseFloat(raw); if(mode!=='money')val=val/100;
@@ -6710,8 +6719,13 @@ function _planRenderMatrix(){
     let mode='money'; if(!moneyOnly){const any=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
-    const cells=[...Array(12)].map((_,i)=>`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" value="${cellVal(rl,code,i+1)}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`).join('');
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" value="${cellVal(rl,code,0)}" placeholder="авто" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;
+    const moVals=[...Array(12)].map((_,i)=>cellVal(rl,code,i+1));
+    const cells=moVals.map((mv,i)=>`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" value="${mv}" oninput="planRowYear(this)" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`).join('');
+    const yrExpl=cellVal(rl,code,0); // явный годовой план (если задан)
+    const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
+    const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
+    const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" value="${yrShown}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" title="${yrIsAuto?'Авто: сумма месяцев. Введите своё значение, чтобы переопределить':'Годовой план (переопределяет сумму месяцев)'}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     return `<tr data-code="${esc(code)}" data-level="${rl}">
       <td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${esc(label)}</td>
       <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button></td>${cells}${yr}</tr>`;
