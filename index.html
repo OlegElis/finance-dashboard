@@ -6610,14 +6610,19 @@ window.planFillRow=function(btn){
 function _planStage(){
   const wrap=document.getElementById('plan-matrix'); if(!wrap||!wrap.dataset.dir)return;
   const dir=wrap.dataset.dir,year=+wrap.dataset.year,level=wrap.dataset.level;
-  _planRecords=_planRecords.filter(p=>!(p.dir===dir&&p.year===year&&(p.level===level||p.level==='revenue'||p.level==='income')));
-  wrap.querySelectorAll('tr[data-code]').forEach(tr=>{
+  const rows=[...wrap.querySelectorAll('tr[data-code]')];
+  if(!rows.length)return; // форма не отрисована (данные ещё грузятся) - ничего не трогаем, чтобы не стереть планы
+  // удаляем только те уровни, что РЕАЛЬНО присутствуют в форме (иначе можно стереть доходы/расходы, которых сейчас нет на экране)
+  const presentLevels=new Set(rows.map(tr=>tr.getAttribute('data-level')));
+  _planRecords=_planRecords.filter(p=>!(p.dir===dir&&p.year===year&&presentLevels.has(p.level)));
+  rows.forEach(tr=>{
     const code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level');
     const mb=tr.querySelector('.plan-mode');const mode=rlevel==='revenue'?'money':(mb?mb.getAttribute('data-mode'):'money');
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
       const raw=String(inp.value||'').trim().replace(/\s/g,'').replace('%','').replace(',','.');
       if(raw===''||isNaN(parseFloat(raw)))return;
       let val=parseFloat(raw); if(mode!=='money')val=val/100;
+      if(val===0)return; // 0 = плана нет (не сохраняем как план)
       _planRecords.push({dir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val});
     });
   });
