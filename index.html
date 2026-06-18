@@ -751,6 +751,7 @@ window.bankResetAllFilters=function(){
   _bankTxnFilter={accs:null,date:null};
   const b=_tabFilters.bank;
   b.offerIds=[];b.articles=[];b.subarticles=[];b.finOps=[];b.secondSides=[];b.activityDirs=[];b.includeFuture=true;
+  if(typeof _activePreset==='object')_activePreset.bank=''; setPreset('bank','all'); // полный сброс, включая период/пресет
   renderBank(getFilters());
 };
 
@@ -926,6 +927,7 @@ function renderFilterBarUpdate(tab){
 }
 
 window.applyPreset=function(tab,preset){
+  if(typeof _activePreset==='object'&&tab in _activePreset)_activePreset[tab]=''; // ручной выбор периода снимает выбранный пресет
   setPreset(tab,preset);
   const f=_tabFilters[tab];
   // Обновляем поля дат в DOM если они есть
@@ -1197,6 +1199,7 @@ const PRESET_FIELDS={
 };
 const _pesc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 let _presets={bank:[],opiu:[],dds:[],osv:[],fot:[]};
+const _activePreset={bank:'',opiu:'',dds:'',osv:'',fot:''}; // какой пресет сейчас выбран в выпадашке (для отображения + снятия)
 try{const _ls=JSON.parse(localStorage.getItem('reportPresets')||'null');if(_ls&&typeof _ls==='object')_presets=Object.assign({bank:[],opiu:[],dds:[],osv:[],fot:[]},_ls);}catch(e){}
 function _presetsNormalize(v){const out={bank:[],opiu:[],dds:[],osv:[],fot:[]};if(v&&typeof v==='object'){['bank','opiu','dds','osv','fot'].forEach(t=>{const a=v[t];out[t]=Array.isArray(a)?a.filter(Boolean):(a&&typeof a==='object'?Object.values(a).filter(Boolean):[]);});}return out;}
 function _presetsSave(){
@@ -1238,7 +1241,8 @@ function _injectPresetBar(){
   const bar=cont.querySelector('.tab-filters, .dds-extra-filters');
   if(!bar||bar.querySelector(':scope > .preset-inline'))return; // нет бара или уже встроено
   const list=_presets[activeTab]||[];
-  const opts=['<option value="">пресет: - не выбран -</option>'].concat(list.map(p=>`<option value="${p.id}">${_pesc(p.name)}</option>`)).join('');
+  const av=_activePreset[activeTab]||'';
+  const opts=[`<option value=""${av?'':' selected'}>пресет: - не выбран -</option>`].concat(list.map(p=>`<option value="${p.id}"${av===p.id?' selected':''}>${_pesc(p.name)}</option>`)).join('');
   const wrap=document.createElement('span');
   wrap.className='preset-inline';
   wrap.style.cssText='display:inline-flex;align-items:center;gap:6px;margin-right:2px';
@@ -1261,12 +1265,17 @@ function _presetApplyRel(tab,rel){
   else if(rel==='all'){F.years=[];F.months=[];if(tab==='osv')setPT('all');}
 }
 window.presetApply=function(tab,id){
-  if(!id)return;
-  const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
   const F=_tabFilters[tab]; if(!F)return;
+  if(!id){ // снять пресет → вернуть период по умолчанию (всё время)
+    _activePreset[tab]='';
+    if(tab==='bank')setPreset('bank','all'); else { if('rel'in F)F.rel=''; F.years=[]; F.months=[]; }
+    renderActiveTab(); return;
+  }
+  const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
   Object.entries(p.f||{}).forEach(([k,v])=>{F[k]=Array.isArray(v)?v.slice():v;});
   if(tab==='bank'&&p.f&&p.f.preset)setPreset('bank',p.f.preset); // банк: пресет дат всегда относителен (setPreset считает от now)
   if(tab!=='bank'&&p.f&&p.f.rel)_presetApplyRel(tab,p.f.rel);   // прочие: авто-период от сегодня
+  _activePreset[tab]=id;
   renderActiveTab();
 };
 // ── Панель управления пресетами (в Настройках) ──
@@ -1836,6 +1845,12 @@ function renderBank(f){
   [['Направление',bankSelDirs],['ID Offer',selOfferIds],['Статья',selArticles],['Подстатья',selSubarticles],['Фин. операция',selFinOps],['Контрагент',selSecondSides]]
     .forEach(([n,a])=>{const s=fmtSel(n,a);if(s)fSumm.push(s);});
   if(!f.includeFuture)fSumm.push('<b style="color:var(--text2);font-weight:600">Будущие оплаты:</b> выкл');
+  if(f.preset&&f.preset!=='all'){
+    const PL={today:'Сегодня',yesterday:'Вчера',week:'Эта неделя',month:'Этот месяц',prev_month:'Прош. месяц',quarter:'Этот квартал',prev_quarter:'Прош. квартал',year:'Этот год',prev_year:'Прош. год'};
+    const lbl=PL[f.preset]||((f.dateFrom||'…')+' - '+(f.dateTo||'…'));
+    const pn=(typeof _activePreset==='object'&&_activePreset.bank)?(( _presets.bank||[]).find(x=>x.id===_activePreset.bank)||{}).name:'';
+    fSumm.unshift('<b style="color:var(--text2);font-weight:600">Период:</b> '+lbl+(pn?` <span style="color:var(--text3)">(пресет «${_pesc(pn)}»)</span>`:''));
+  }
   const summaryHtml=`<div style="display:flex;align-items:center;gap:8px;padding:4px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;color:var(--text3);flex-wrap:wrap">
     <b style="color:var(--text2);font-weight:600">Фильтры:</b> <span style="flex:1;min-width:200px">${fSumm.length?fSumm.join('&nbsp;·&nbsp;'):'не заданы'}</span>
     ${fSumm.length?`<button onclick="bankResetAllFilters()" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сбросить всё</button>`:''}
