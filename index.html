@@ -3242,6 +3242,15 @@ function renderOPIU(f){
 }
 
 // Разбивка ЗП сотрудника по направлениям (с удельным весом) - по клику на ФИО в таблице ФОТ
+// Расшифровка ячейки ФОТ (группа × период) - переиспользует модал операций ОПиУ
+window.fotShowTxnCell=function(key,pk){
+  const g=window._fotTxnMap&&window._fotTxnMap[key]; if(!g||!g.rows.length)return;
+  const rows=[];g.rows.forEach((r,i)=>{if(!pk||g.pks[i]===pk)rows.push(r);});
+  if(!rows.length)return;
+  window._opiuTxnMap=window._opiuTxnMap||{};
+  window._opiuTxnMap['__fotcell']={label:key+(pk?' · '+pk:''),artLabel:'ФОТ',secLabel:'Фонд оплаты труда',rows};
+  window.opiuShowTxnModal('__fotcell');
+};
 window.fotShowEmployee=function(name){
   const rows=(window._fotRows||[]).filter(r=>String(r[COL.SECOND_SIDE]||'Не указан').trim()===name);
   if(!rows.length)return;
@@ -3347,6 +3356,7 @@ function renderFOT(f){
   const getFotPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(mode==='year')return String(y);if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
   const periodsSet=new Set(),psk={};
   const byPrimary={},totalByP={};
+  window._fotTxnMap={}; // group key → {rows, pks} для расшифровки по ячейке (переиспользует модал ОПиУ)
   data.forEach(row=>{
     const pk=getFotPK(row);if(!pk)return;
     periodsSet.add(pk);psk[pk]=periodSortKey(pk,mode);
@@ -3359,6 +3369,7 @@ function renderFOT(f){
     if(!byPrimary[key])byPrimary[key]={};
     byPrimary[key][pk]=(byPrimary[key][pk]||0)+out;
     totalByP[pk]=(totalByP[pk]||0)+out;
+    const g=window._fotTxnMap[key]||(window._fotTxnMap[key]={rows:[],pks:[]});g.rows.push(row);g.pks.push(pk);
   });
   const periods=[...periodsSet].sort((a,b)=>psk[a].localeCompare(psk[b]));
   const np=periods.length;
@@ -3430,7 +3441,7 @@ function renderFOT(f){
     return`<tr${clickable?` style="cursor:pointer" onclick="fotShowEmployee('${keyJs}')" title="Разбивка ЗП по направлениям"`:''}>
       <td class="fot-name"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${colorOf[key]||'#cbd5e1'};margin-right:7px;vertical-align:middle"></span>${escF(key)}${clickable?' <span style="font-size:9px;color:var(--accent)">↗</span>':''}</td>
       <td>${barPct(pct,colorOf[key])}</td>
-      ${vals.map(v=>`<td class="fot-num" style="${cellBg(v)}">${v?fmt(Math.abs(v)):'<span style="color:var(--text3)">-</span>'}</td>`).join('')}
+      ${periods.map((p,pi)=>{const v=vals[pi];return`<td class="fot-num" style="${cellBg(v)}${v?';cursor:pointer':''}"${v?` onclick="event.stopPropagation();fotShowTxnCell('${keyJs}','${String(p).replace(/'/g,"\\'")}')" title="Операции: ${String(p).replace(/"/g,'')}"`:''}>${v?fmt(Math.abs(v)):'<span style="color:var(--text3)">-</span>'}</td>`;}).join('')}
       <td class="fot-num" style="font-weight:700">${fmt(Math.abs(tot))}</td>
     </tr>`;}).join('');
   const totVals=periods.map(p=>totalByP[p]||0),grand=totVals.reduce((a,b)=>a+b,0);
