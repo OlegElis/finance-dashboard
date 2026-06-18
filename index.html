@@ -1163,22 +1163,25 @@ const PRESET_TABS=[['bank','БАНК'],['opiu','ОПиУ'],['dds','ДДС'],['os
 const PRESET_MONTHS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
 const PRESET_FIELDS={
   bank:[
-    {k:'preset',t:'select',l:'Период',o:[['all','Всё время'],['month','Этот месяц'],['prev_month','Прош. месяц'],['quarter','Этот квартал'],['prev_quarter','Прош. квартал'],['year','Этот год'],['prev_year','Прош. год']]},
+    {k:'preset',t:'select',l:'Период (всегда относительно сегодня)',o:[['all','Всё время'],['today','Сегодня'],['week','Эта неделя'],['month','Этот месяц'],['prev_month','Прош. месяц'],['quarter','Этот квартал'],['prev_quarter','Прош. квартал'],['year','Этот год (с 1 января по сегодня)'],['prev_year','Прош. год']]},
     {k:'activityDirs',t:'dirs',l:'Направление'},
     {k:'includeFuture',t:'toggle',l:'Будущие оплаты'}
   ],
   opiu:[
+    {k:'rel',t:'select',l:'Авто-период (всегда относительно сегодня)',o:[['','— фиксированный (по выбору ниже) —'],['cur_month','Текущий месяц'],['cur_quarter','Текущий квартал'],['cur_year','Текущий год'],['ytd_month','С начала года по текущий месяц'],['all','Всё время']]},
     {k:'periodType',t:'select',l:'Разрез',o:[['month','По месяцам'],['quarter','По кварталам'],['year','По годам']]},
     {k:'years',t:'years',l:'Годы'},{k:'months',t:'months',l:'Месяцы'},
     {k:'activityDirs',t:'dirs',l:'Направление'},
     {k:'ebitdaInclBelow',t:'toggle',l:'EBITDA-корректировки в составе EBITDA'}
   ],
   dds:[
+    {k:'rel',t:'select',l:'Авто-период (всегда относительно сегодня)',o:[['','— фиксированный (по выбору ниже) —'],['cur_month','Текущий месяц'],['cur_quarter','Текущий квартал'],['cur_year','Текущий год'],['ytd_month','С начала года по текущий месяц'],['all','Всё время']]},
     {k:'periodType',t:'select',l:'Разрез',o:[['month','По месяцам'],['quarter','По кварталам'],['year','По годам']]},
     {k:'years',t:'years',l:'Годы'},{k:'months',t:'months',l:'Месяцы'},
     {k:'activityDirs',t:'dirs',l:'Направление'}
   ],
   osv:[
+    {k:'rel',t:'select',l:'Авто-период (всегда относительно сегодня)',o:[['','— фиксированный (по выбору ниже) —'],['cur_day','Текущий день'],['cur_month','Текущий месяц'],['cur_quarter','Текущий квартал'],['cur_year','Текущий год'],['ytd_month','С начала года по текущий месяц'],['all','Весь период']]},
     {k:'periodType',t:'select',l:'Разрез',o:[['all','Весь период'],['year','По годам'],['month','По месяцам'],['day','По дням']]},
     {k:'years',t:'years',l:'Годы'},{k:'months',t:'months',l:'Месяцы'},
     {k:'activityDirs',t:'dirs',l:'Направление'},
@@ -1186,6 +1189,7 @@ const PRESET_FIELDS={
     {k:'noOpening',t:'toggle',l:'Без входящего сальдо'}
   ],
   fot:[
+    {k:'rel',t:'select',l:'Авто-период (всегда относительно сегодня)',o:[['','— фиксированный (по выбору ниже) —'],['cur_month','Текущий месяц'],['cur_quarter','Текущий квартал'],['cur_year','Текущий год'],['ytd_month','С начала года по текущий месяц'],['all','Всё время']]},
     {k:'periodType',t:'select',l:'Разрез',o:[['month','По месяцам'],['quarter','По кварталам'],['year','По годам']]},
     {k:'years',t:'years',l:'Годы'},{k:'months',t:'months',l:'Месяцы'},
     {k:'fotDetail',t:'select',l:'Детализация',o:[['direction','По направлению'],['subarticle','По подстатье'],['counterparty','По контрагенту']]}
@@ -1243,12 +1247,26 @@ function _injectPresetBar(){
     <span class="filter-sep" style="width:1px;height:18px;background:var(--border);margin:0 2px"></span>`;
   bar.insertBefore(wrap,bar.firstChild);
 }
+// Разрешение динамического (относительного) периода - всегда считается от текущей даты
+function _presetApplyRel(tab,rel){
+  if(!rel)return; const F=_tabFilters[tab]; if(!F)return;
+  const now=new Date(), y=now.getFullYear(), mo=now.getMonth()+1;
+  const q=Math.floor((mo-1)/3), qMonths=[q*3+1,q*3+2,q*3+3];
+  const setPT=v=>{ if('periodType'in F)F.periodType=v; };
+  if(rel==='cur_month'){F.years=[y];F.months=[mo];setPT('month');}
+  else if(rel==='cur_quarter'){F.years=[y];F.months=qMonths.slice();setPT('quarter');}
+  else if(rel==='cur_year'){F.years=[y];F.months=[];setPT(tab==='osv'?'year':'month');}
+  else if(rel==='ytd_month'){F.years=[y];F.months=Array.from({length:mo},(_,i)=>i+1);setPT('month');}
+  else if(rel==='cur_day'){F.years=[y];F.months=[mo];setPT('day');}
+  else if(rel==='all'){F.years=[];F.months=[];if(tab==='osv')setPT('all');}
+}
 window.presetApply=function(tab,id){
   if(!id)return;
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
   const F=_tabFilters[tab]; if(!F)return;
   Object.entries(p.f||{}).forEach(([k,v])=>{F[k]=Array.isArray(v)?v.slice():v;});
-  if(tab==='bank'&&p.f&&p.f.preset)setPreset('bank',p.f.preset);
+  if(tab==='bank'&&p.f&&p.f.preset)setPreset('bank',p.f.preset); // банк: пресет дат всегда относителен (setPreset считает от now)
+  if(tab!=='bank'&&p.f&&p.f.rel)_presetApplyRel(tab,p.f.rel);   // прочие: авто-период от сегодня
   renderActiveTab();
 };
 // ── Панель управления пресетами (в Настройках) ──
@@ -1299,7 +1317,7 @@ function _presetFormHtml(tab,p){
     <div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Название</div>
       <input id="presetName" type="text" value="${p?_pesc(p.name):''}" placeholder="напр. БФЛ · текущий год" style="width:100%;box-sizing:border-box;font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)"></div>
     ${fields}
-    <div style="font-size:10.5px;color:var(--text3);margin:4px 0 10px">Пустые мультиполя (Годы/Месяцы/Направление) = «все».</div>
+    <div style="font-size:10.5px;color:var(--text3);margin:4px 0 10px">«Авто-период» (если задан) всегда считается от сегодня и перекрывает ручные Годы/Месяцы. Пустые мультиполя = «все».</div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-primary" onclick="_presetSave('${tab}')">Сохранить</button>
       ${p?`<button class="btn btn-secondary" onclick="_presetRenderBody('${tab}')">Отмена</button>`:''}
