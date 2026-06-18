@@ -6368,7 +6368,22 @@ function startPresence(displayName){
     db.ref('.info/serverTimeOffset').on('value',s=>{offset=s.val()||0;});
     // запись сессии: серверная метка времени + имя (email) + устройство (ОС/браузер)
     const dev=uaShort(navigator.userAgent);
-    const beat=()=>ref.update({ts:firebase.database.ServerValue.TIMESTAMP,name:displayName||'',dev:dev});
+    let _email='';try{_email=((firebase.auth&&firebase.auth().currentUser&&firebase.auth().currentUser.email)||'').toLowerCase();}catch(e){}
+    const _ekey=_email?_email.replace(/[.#$\[\]\/]/g,'_'):'';
+    let _actDay='';
+    // История посещений: activity/{email}/days/{дата}/{сессия} = {first,last,dev}; + lastSeen/name/email
+    const logActivity=()=>{ if(!_ekey)return; try{
+      const dt=new Date(Date.now()+offset);
+      const day=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+      const base='activity/'+_ekey;
+      const upd={last:firebase.database.ServerValue.TIMESTAMP,dev:dev};
+      if(_actDay!==day){upd.first=firebase.database.ServerValue.TIMESTAMP;_actDay=day;}
+      db.ref(base+'/days/'+day+'/'+myId).update(upd);
+      db.ref(base+'/lastSeen').set(firebase.database.ServerValue.TIMESTAMP);
+      db.ref(base+'/name').set(displayName||_email);
+      db.ref(base+'/email').set(_email);
+    }catch(e){} };
+    const beat=()=>{ref.update({ts:firebase.database.ServerValue.TIMESTAMP,name:displayName||'',dev:dev,email:_email});logActivity();};
     db.ref('.info/connected').on('value',s=>{ if(s.val()){ ref.onDisconnect().remove(); beat(); } });
     setInterval(beat,20000); // пульс каждые 20 сек
     const leave=()=>{try{ref.remove();}catch(e){}};
@@ -6377,7 +6392,7 @@ function startPresence(displayName){
     // подписка: считаем сессии с меткой за последние 60 сек (с поправкой на серверное время)
     db.ref('presence').on('value',s=>{
       const now=Date.now()+offset;let n=0;const list=[];
-      s.forEach(c=>{const v=c.val();if(v&&v.ts&&(now-v.ts)<60000){n++;list.push({name:(v.name||'').trim(),dev:(v.dev||'').trim(),ago:Math.max(0,Math.round((now-v.ts)/1000))});}});
+      s.forEach(c=>{const v=c.val();if(v&&v.ts&&(now-v.ts)<60000){n++;list.push({name:(v.name||'').trim(),dev:(v.dev||'').trim(),ago:Math.max(0,Math.round((now-v.ts)/1000)),email:(v.email||'').trim()});}});
       window._presenceList=list;
       if(cnt)cnt.textContent=n;
       if(box)box.style.display='inline-flex';
@@ -6402,14 +6417,15 @@ window.showPresenceList=function(keepOpen){
   if(exist&&!keepOpen){ exist.remove(); return; } // повторный клик - закрыть
   const box=document.getElementById('presenceBox'); if(!box)return;
   const list=window._presenceList||[];
+  const isAdmin=(()=>{try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}})();
   // именованные группируем по email; безымянные - каждая отдельной строкой (это разные сессии/люди)
   const named={},anons=[];
   list.forEach(x=>{
     const nm=(x.name||'').trim();
     const d=(x.dev||'').trim();
     if(!nm){anons.push({name:'(без имени)',count:1,minAgo:x.ago,devs:d?{[d]:1}:{}});return;}
-    const e=named[nm]||(named[nm]={name:nm,count:0,minAgo:1e9,devs:{}});
-    e.count++; e.minAgo=Math.min(e.minAgo,x.ago); if(d)e.devs[d]=(e.devs[d]||0)+1;
+    const e=named[nm]||(named[nm]={name:nm,count:0,minAgo:1e9,devs:{},email:''});
+    e.count++; e.minAgo=Math.min(e.minAgo,x.ago); if(d)e.devs[d]=(e.devs[d]||0)+1; if(x.email)e.email=e.email||x.email;
   });
   const rows=Object.values(named).sort((a,b)=>a.name.localeCompare(b.name)).concat(anons.sort((a,b)=>a.minAgo-b.minAgo));
   const esc=s=>String(s||'').replace(/</g,'&lt;');
@@ -6423,9 +6439,12 @@ window.showPresenceList=function(keepOpen){
     const nameHtml=isAnon
       ?`<span style="color:#d35450;font-weight:700;white-space:nowrap">⚠ Без входа</span><span style="font-size:9px;color:var(--text3)">${noDev?'(старая вкладка)':'(зашёл без логина)'}</span>`
       :`<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">${esc(r.name)}</span>`;
-    return `<div style="padding:6px 0;border-top:1px solid var(--border)">
+    const clickable=isAdmin&&!isAnon&&r.email;
+    const emailJs=String(r.email||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    const nameJs=String(r.name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return `<div style="padding:6px 0;border-top:1px solid var(--border)${clickable?';cursor:pointer':''}"${clickable?` onclick="showEmployeeActivity('${emailJs}','${nameJs}')" title="Статистика активности"`:''}>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:14px">
-        <span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:7px;height:7px;border-radius:50%;background:${dot};flex-shrink:0"></span>${nameHtml}${r.count>1?`<span style="font-size:10px;color:var(--text3)">×${r.count} вкл.</span>`:''}</span>
+        <span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:7px;height:7px;border-radius:50%;background:${dot};flex-shrink:0"></span>${nameHtml}${r.count>1?`<span style="font-size:10px;color:var(--text3)">×${r.count} вкл.</span>`:''}${clickable?' <span style="font-size:9px;color:var(--accent)">↗</span>':''}</span>
         <span style="font-size:10px;color:var(--text3);white-space:nowrap">${agoTxt(r.minAgo)}</span>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px;margin-left:15px">${devTxt(r.devs)}</div>
@@ -6442,6 +6461,34 @@ window.showPresenceList=function(keepOpen){
   const rc=box.getBoundingClientRect();
   pop.style.top=(rc.bottom+6)+'px';
   pop.style.right=Math.max(8,(window.innerWidth-rc.right))+'px';
+};
+// Статистика активности сотрудника (история посещений из activity/{email}) - только админу
+window.showEmployeeActivity=function(email,name){
+  if(!email)return;
+  const ex=document.getElementById('empActOverlay'); if(ex)ex.remove();
+  const esc=s=>String(s||'').replace(/</g,'&lt;');
+  const ekey=String(email).toLowerCase().replace(/[.#$\[\]\/]/g,'_');
+  const ov=document.createElement('div');ov.className='txn-card-overlay';ov.id='empActOverlay';ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  ov.innerHTML=`<div class="txn-card" style="width:560px;max-width:94vw;max-height:88vh;overflow:auto"><div class="txn-card-head"><h3>Активность · ${esc(name||email)}</h3><button class="txn-card-close" onclick="document.getElementById('empActOverlay').remove()">✕</button></div><div id="empActBody" style="padding:14px 20px 20px;font-size:12px;color:var(--text2)">Загрузка…</div></div>`;
+  document.body.appendChild(ov);
+  const setBody=h=>{const b=document.getElementById('empActBody');if(b)b.innerHTML=h;};
+  if(!(window.firebase&&FIREBASE_CONFIG.databaseURL)){setBody('Firebase не настроен.');return;}
+  try{fbApp();}catch(e){}
+  const fmtDur=ms=>{const min=Math.round(ms/60000);if(min<1)return '<1 мин';if(min<60)return min+' мин';return Math.floor(min/60)+' ч '+(min%60)+' мин';};
+  const fmtDt=ts=>{if(!ts)return '-';const d=new Date(ts);const p=n=>String(n).padStart(2,'0');return `${p(d.getDate())}.${p(d.getMonth()+1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;};
+  const fmtDay=dk=>{const a=dk.split('-');return a[2]+'.'+a[1]+'.'+a[0];};
+  firebase.database().ref('activity/'+ekey).once('value').then(s=>{
+    const v=s.val()||{};const days=v.days||{};
+    const dayKeys=Object.keys(days).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort((a,b)=>b.localeCompare(a));
+    if(!dayKeys.length){setBody('Пока нет данных об активности. История посещений копится с момента включения логирования (после этого обновления).');return;}
+    let totalSessions=0,totalMs=0;const devSet={};
+    const rows=dayKeys.map(dk=>{const sess=days[dk]||{};const ids=Object.keys(sess);let dms=0,lastTs=0;ids.forEach(id=>{const x=sess[id]||{};const span=Math.max((x.last||0)-(x.first||x.last||0),20000);dms+=span;if((x.last||0)>lastTs)lastTs=x.last||0;if(x.dev)devSet[x.dev]=1;});totalSessions+=ids.length;totalMs+=dms;return{dk,sessions:ids.length,ms:dms,last:lastTs};});
+    const maxMs=Math.max(...rows.map(r=>r.ms),1);
+    const kpi=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${[['Последний визит',v.lastSeen?fmtDt(v.lastSeen):'-'],['Активных дней',dayKeys.length],['Всего сессий',totalSessions],['Время онлайн (≈)',fmtDur(totalMs)]].map(([l,val])=>`<div style="flex:1;min-width:120px;background:var(--surface2);border-radius:8px;padding:8px 10px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600">${l}</div><div style="font-size:14px;font-weight:600;color:var(--text);font-family:var(--mono)">${val}</div></div>`).join('')}</div>`;
+    const devTxt=Object.keys(devSet).length?Object.keys(devSet).map(esc).join(' · '):'-';
+    const listHtml=rows.slice(0,30).map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-top:1px solid var(--divider)"><span style="width:74px;font-family:var(--mono);font-size:11px;color:var(--text)">${fmtDay(r.dk)}</span><div style="flex:1;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${Math.round(r.ms/maxMs*100)}%;background:var(--accent)"></div></div><span style="font-size:10px;color:var(--text3);white-space:nowrap;width:130px;text-align:right">${r.sessions} сес. · ${fmtDur(r.ms)}</span></div>`).join('');
+    setBody(kpi+`<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600;margin:2px 0 3px">Устройства</div><div style="margin-bottom:12px;color:var(--text);font-size:11px">${devTxt}</div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600;margin-bottom:2px">По дням (≈ время онлайн, до 30)</div>${listHtml}<div style="font-size:10px;color:var(--text3);margin-top:8px">Время приблизительное - по пульсу присутствия (каждые 20 сек). Накапливается с момента включения логирования.</div>`);
+  }).catch(e=>{setBody('Не удалось загрузить статистику. Нужно правило чтения <code>activity</code> для админа в Realtime Database.');});
 };
 
 // ── Авторизация (Firebase Authentication, email + пароль) ──
