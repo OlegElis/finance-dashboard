@@ -70,7 +70,14 @@ activeTab    // 'bank' | 'dds' | 'opiu' | 'osv' | 'fot' | 'planfact' | 'expenses
 _tabFilters  // фильтры per-tab (dateFrom, dateTo, preset, periodType, activityDirs, ...)
 _bankTxnFilter  // {accs, date} - фильтр таблицы операций (счёт/день)
 _mktCounts   // {periodKey: {leads, orders, fulfilled}} - ручной ввод маркетинга, персистится в localStorage
+_presets     // {bank:[],opiu:[],dds:[],osv:[],fot:[]} - пользовательские пресеты фильтров по отчётам
 ```
+
+### Пресеты отчётов (`config/presets`)
+- Пресет = именованный частичный снимок фильтров вкладки (`{id, name, f:{...поля _tabFilters[tab]...}}`). Поддержаны 5 отчётов: **БАНК, ОПиУ, ДДС, ОСВ, ФОТ** (`PRESET_TABS`); схема полей на отчёт - `PRESET_FIELDS` (типы: select / toggle / years / months / dirs; динамические списки годов/направлений из `RAW`). Пустые мультиполя = «все»
+- Хранение: **Firebase RTDB `config/presets`** (общие для всех устройств) + localStorage-кэш (`reportPresets`). `_presetsSave` (localStorage + RTDB set), `startPresetsSync` (подписка, вызывается вместе с `startPlansSync` после входа), `_presetsNormalize` (RTDB-массив/объект → массив). Требует правил БД на запись `config/presets`
+- Редактор - **Настройки → «Пресеты отчётов»** (`showPresetsPanel`, только админу): модал с переключателем отчёта (`_presetSelReport`), списком пресетов и формой (`_presetFormHtml`, `_presetSave`, `_presetEdit`, `_presetDelete`)
+- Применение - устойчивый бар **`#presetBar`** вверху рабочей области (вставляется в `#mainContent` в `renderActiveTab` → `_injectPresetBar`, переживает перерисовку контейнеров вкладок): выпадашка пресетов активного отчёта + кнопка «Настроить» (только админу). `presetApply(tab,id)` мёржит `f` в `_tabFilters[tab]` и ре-рендерит (для банка вызывает `setPreset`). ⚠ Имя `applyPreset` занято дат-чипами фильтр-бара - пользовательские пресеты называются `presetApply`. Свой эскейпер `_pesc` (глобального `esc` нет - он локален в каждой render-функции)
 
 ### Паттерн рендера
 Каждая вкладка - функция `renderXxx(f)`, где `f = getFilters()`. Функция полностью перестраивает innerHTML вкладки. Вызывается из `renderActiveTab()`.
