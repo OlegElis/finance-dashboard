@@ -2366,9 +2366,16 @@ window.opiuTgl=function(nodeId){
 };
 
 // ОПиУ transaction modal
-window.opiuShowTxnModal=function(subNodeId){
-  const data=window._opiuTxnMap&&window._opiuTxnMap[subNodeId];
+window.opiuShowTxnModal=function(subNodeId,pk){
+  let data=window._opiuTxnMap&&window._opiuTxnMap[subNodeId];
   if(!data||!data.rows.length)return;
+  if(pk){ // клик по конкретной ячейке-периоду - только операции этого периода
+    const rows=[];(data.rows||[]).forEach((r,i)=>{if(data.pks&&data.pks[i]===pk)rows.push(r);});
+    if(!rows.length)return;
+    const useId=subNodeId+'__pk';
+    window._opiuTxnMap[useId]={label:data.label,artLabel:data.artLabel,secLabel:data.secLabel+' · '+pk,rows};
+    subNodeId=useId;data=window._opiuTxnMap[useId];
+  }
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const c=v=>String(v||'').trim();
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
@@ -2492,9 +2499,16 @@ window.ddsShowRecordCard=function(row){
   document.body.appendChild(overlay);
 };
 
-window.ddsShowTxnModal=function(subNodeId){
-  const data=window._ddsTxnMap&&window._ddsTxnMap[subNodeId];
+window.ddsShowTxnModal=function(subNodeId,pk){
+  let data=window._ddsTxnMap&&window._ddsTxnMap[subNodeId];
   if(!data||!data.rows.length)return;
+  if(pk){ // клик по конкретной ячейке-периоду - только операции этого периода
+    const rows=[];(data.rows||[]).forEach((r,i)=>{if(data.pks&&data.pks[i]===pk)rows.push(r);});
+    if(!rows.length)return;
+    const useId=subNodeId+'__pk';
+    window._ddsTxnMap[useId]={label:data.label,artLabel:data.artLabel,secLabel:data.secLabel+' · '+pk,inc:rows.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0),out:rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0),rows};
+    subNodeId=useId;data=window._ddsTxnMap[useId];
+  }
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const c=v=>String(v||'').trim();
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
@@ -2739,13 +2753,14 @@ function renderDDS(f){
   </tr></thead>`;
 
   // Helper: build period+total cells from perInc and perOut maps
-  const periodCells=(perInc,perOut,bgColor='',bold=false)=>{
+  const periodCells=(perInc,perOut,bgColor='',bold=false,nodeId='')=>{
     const style=`text-align:right;padding:3px 8px;white-space:nowrap;font-size:11px;${bgColor?'background:'+bgColor+';':''}${bold?'font-weight:700;':''}`;
     return periods.map(p=>{
       const inc=perInc[p]||0,out=perOut[p]||0,net=inc+out;
       if(net===0&&inc===0&&out===0)return`<td style="${style}"></td>`;
       const cls=net>0?'color:var(--income)':net<0?'color:var(--outcome)':'';
-      return`<td style="${style}${cls}">${fmt(net)}</td>`;
+      const clk=nodeId?` onclick="event.stopPropagation();ddsShowTxnModal('${nodeId}','${String(p).replace(/'/g,"\\'")}')" title="Операции: ${String(p).replace(/"/g,'')}"`:'';
+      return`<td style="${style}${cls}${nodeId?';cursor:pointer':''}"${clk}>${fmt(net)}</td>`;
     }).join('')+
     (()=>{
       const tInc=Object.values(perInc).reduce((a,b)=>a+b,0);
@@ -2782,9 +2797,9 @@ function renderDDS(f){
 
   // SubArticle row - opens modal on click
   const subRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
-    return`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="ddsShowTxnModal('${nodeId}')" title="Нажмите для просмотра операций">
+    return`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="ddsShowTxnModal('${nodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
       <td style="padding:3px 8px 3px 52px;font-size:10px;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${label} <span style="font-size:9px;color:var(--accent);margin-left:4px">↗</span></td>
-      ${periodCells(perInc,perOut,'',false)}
+      ${periodCells(perInc,perOut,'',false,nodeId)}
     </tr>`;
   };
 
@@ -2865,7 +2880,8 @@ function renderDDS(f){
             secLabel: sectionNames[sk],
             inc: Object.values(subData.perInc).reduce((a,b)=>a+b,0),
             out: Object.values(subData.perOut).reduce((a,b)=>a+b,0),
-            rows: subData.rows
+            rows: subData.rows,
+            pks: subData.rows.map(getDDSPeriodKey)
           };
           rows+=subRow(subNodeId,artNodeId,sub,subData.perInc,subData.perOut);
         });
@@ -2893,7 +2909,8 @@ function renderDDS(f){
             secLabel: sectionNames[sk],
             inc: Object.values(subData.perInc).reduce((a,b)=>a+b,0),
             out: Object.values(subData.perOut).reduce((a,b)=>a+b,0),
-            rows: subData.rows
+            rows: subData.rows,
+            pks: subData.rows.map(getDDSPeriodKey)
           };
           rows+=subRow(subNodeId,artNodeId,sub,subData.perInc,subData.perOut);
         });
@@ -3080,13 +3097,14 @@ function renderOPIU(f){
   </tr></thead>`;
 
   // --- helpers ---
-  const periodCellsOPIU=(perMap,bg='',bold=false)=>{
+  const periodCellsOPIU=(perMap,bg='',bold=false,nodeId='')=>{
     const style=`text-align:right;padding:3px 8px;white-space:nowrap;font-size:10px;${bg?'background:'+bg+';':''}${bold?'font-weight:700;':''}`;
     return periods.map(p=>{
       const v=perMap[p]||0;
       if(v===0)return`<td style="${style}"></td>`;
       const color=v>0?'color:var(--income)':'color:var(--outcome)';
-      return`<td style="${style}${color}">${fmt(v)}</td>`;
+      const clk=nodeId?` onclick="event.stopPropagation();opiuShowTxnModal('${nodeId}','${String(p).replace(/'/g,"\\'")}')" title="Операции: ${String(p).replace(/"/g,'')}"`:'';
+      return`<td style="${style}${color}${nodeId?';cursor:pointer':''}"${clk}>${fmt(v)}</td>`;
     }).join('')+(()=>{
       const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
       const color=tot>0?'color:var(--income)':tot<0?'color:var(--outcome)':'';
@@ -3129,10 +3147,10 @@ function renderOPIU(f){
       Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
         const subData=artData.subs[sub];
         const subNodeId=artNodeId+'-s'+subi;
-        window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:catName,rows:subData.rows};
-        html+=`<tr class="dds-sub dds-child-${artNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите для просмотра">
+        window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:catName,rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
+        html+=`<tr class="dds-sub dds-child-${artNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
           <td style="padding:3px 8px 3px 46px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
-          ${periodCellsOPIU(subData.perOut,'',false)}
+          ${periodCellsOPIU(subData.perOut,'',false,subNodeId)}
         </tr>`;
       });
     });
@@ -3145,10 +3163,10 @@ function renderOPIU(f){
     Object.keys(rev.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,i)=>{
       const subData=rev.arts[sub];
       const subNodeId=parentNodeId+'-rs'+i;
-      window._opiuTxnMap[subNodeId]={label:sub,artLabel:'Выручка',secLabel:'ВЫРУЧКА',rows:subData.rows};
-      html+=`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите для просмотра">
+      window._opiuTxnMap[subNodeId]={label:sub,artLabel:'Выручка',secLabel:'ВЫРУЧКА',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
+      html+=`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
         <td style="padding:3px 8px 3px 24px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
-        ${periodCellsOPIU(subData.perInc,'',false)}
+        ${periodCellsOPIU(subData.perInc,'',false,subNodeId)}
       </tr>`;
     });
     return html;
