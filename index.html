@@ -4916,39 +4916,43 @@ function renderPlanFact(f){
   const cy=new Date().getFullYear();
   const years=dataYears.includes(cy)?dataYears.slice():[cy,...dataYears].sort((a,b)=>b-a);
   // дефолты: направление с данными (приоритет БФЛ); год - последний год С ДАННЫМИ (или текущий, если данных нет)
-  if(!f.dir||!dirs.includes(f.dir))f.dir=dirs.find(d=>/^бфл/i.test(d))||dirs[0]||'';
+  if(f.dir!=='__all__'&&(!f.dir||!dirs.includes(f.dir)))f.dir=dirs.find(d=>/^бфл/i.test(d))||dirs[0]||'';
   if(!f.year||!years.includes(f.year))f.year=dataYears.includes(cy)?cy:(dataYears[0]||cy);
   const dir=f.dir,year=f.year,level=f.level||'subarticle',period=f.period||'year';
+  const isAll=dir==='__all__';const dirsToAgg=isAll?dirs:[dir]; // свод - агрегируем по всем направлениям
   const isYear=period==='year';
   const isAdmin=window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase();
 
   // ── ФАКТ из RAW (по дате ОПиУ, выбранное направление+год, перемещения исключены) ──
   const nrm=s=>String(s||'').toLowerCase().replace(/[^а-яёa-z0-9]/gi,'');
   const factByCode={},incByCode={},revByMonth=new Array(13).fill(0),npExpMonth=new Array(13).fill(0); // incByCode - факт доходов по кодам; npExpMonth - расходы для ЧП (без «Вывода прибыли»)
+  const revByMonthD={},npExpMonthD={}; // по направлениям - для разрешения %-планов в режиме «Свод»
   RAW.forEach(r=>{
-    if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
+    const rd=String(r[COL.ACTIVITY_DIR]||'').trim();
+    if(!isAll&&rd!==dir)return;
     const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
     const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
     const m=d.getMonth()+1,out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0){revByMonth[m]+=inc;const ic=level==='article'?ac:an;if(ic)(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;}
+    const rvD=revByMonthD[rd]||(revByMonthD[rd]=new Array(13).fill(0)),npD=npExpMonthD[rd]||(npExpMonthD[rd]=new Array(13).fill(0));
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?ac:an;if(ic)(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;}
     if(t==='списание'&&out<0){
       const c=level==='article'?ac:an;if(c)(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=Math.abs(out);
       const anl=nrm(r[COL.ANALYTICS]); // ЧП как в ОПиУ: исключаем раздел «Вывод чистой прибыли»
-      if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExpMonth[m]+=Math.abs(out);
+      if(!(anl.includes('вывод')&&anl.includes('прибыл'))){npExpMonth[m]+=Math.abs(out);npD[m]+=Math.abs(out);}
     }
   });
   // ── ПЛАН из _planRecords ──
-  const plans=(_planRecords||[]).filter(p=>p.dir===dir&&p.year===year);
+  const plans=(_planRecords||[]).filter(p=>p.year===year&&dirsToAgg.includes(p.dir));
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
-  const revBaseMonth=m=>{const r=plans.find(p=>p.level==='revenue'&&p.month===m);return(r&&r.value>0)?r.value:revByMonth[m];};
-  const revBaseYear=()=>{const yr=plans.find(p=>p.level==='revenue'&&p.month===0);if(yr&&yr.value>0)return yr.value;let s=0;for(let m=1;m<=12;m++)s+=revBaseMonth(m);return s;};
-  // чистая прибыль (факт) = выручка − все расходы, КРОМЕ раздела «Вывод чистой прибыли» (как в ОПиУ); отрицательную обнуляем
-  const netBaseMonth=m=>Math.max(0,revByMonth[m]-npExpMonth[m]);
-  const netBaseYear=()=>{let s=0;for(let m=1;m<=12;m++)s+=netBaseMonth(m);return s;};
-  const cvt=(r,baseM,baseY,m)=>r.mode==='pct'?r.value*(m?revBaseMonth(m):revBaseYear()):r.mode==='pct_profit'?r.value*(m?netBaseMonth(m):netBaseYear()):r.value;
-  const planMonth=(rl,code,m)=>{const r=plans.find(p=>p.level===rl&&p.code===code&&p.month===m);if(!r)return null;return cvt(r,1,0,m);};
-  const planYear=(rl,code)=>{const yr=plans.find(p=>p.level===rl&&p.code===code&&p.month===0);if(yr)return cvt(yr,0,1,0);let s=null;for(let m=1;m<=12;m++){const v=planMonth(rl,code,m);if(v!=null)s=(s||0)+v;}return s;};
+  // базы выручки/чистой прибыли - ПО НАПРАВЛЕНИЮ (чтобы %-планы разрешались корректно и суммировались в своде)
+  const revBaseMonthD=(d,m)=>{const r=plans.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);return(r&&r.value>0)?r.value:((revByMonthD[d]||[])[m]||0);};
+  const revBaseYearD=d=>{const yr=plans.find(p=>p.dir===d&&p.level==='revenue'&&p.month===0);if(yr&&yr.value>0)return yr.value;let s=0;for(let m=1;m<=12;m++)s+=revBaseMonthD(d,m);return s;};
+  const netBaseMonthD=(d,m)=>Math.max(0,((revByMonthD[d]||[])[m]||0)-((npExpMonthD[d]||[])[m]||0));
+  const netBaseYearD=d=>{let s=0;for(let m=1;m<=12;m++)s+=netBaseMonthD(d,m);return s;};
+  const cvtD=(r,m)=>r.mode==='pct'?r.value*(m?revBaseMonthD(r.dir,m):revBaseYearD(r.dir)):r.mode==='pct_profit'?r.value*(m?netBaseMonthD(r.dir,m):netBaseYearD(r.dir)):r.value;
+  const planMonth=(rl,code,m)=>{let tot=null;dirsToAgg.forEach(d=>{const r=plans.find(p=>p.dir===d&&p.level===rl&&p.code===code&&p.month===m);if(r)tot=(tot||0)+cvtD(r,m);});return tot;};
+  const planYear=(rl,code)=>{let tot=null;dirsToAgg.forEach(d=>{const yr=plans.find(p=>p.dir===d&&p.level===rl&&p.code===code&&p.month===0);let v=null;if(yr)v=cvtD(yr,0);else{for(let m=1;m<=12;m++){const r=plans.find(p=>p.dir===d&&p.level===rl&&p.code===code&&p.month===m);if(r)v=(v||0)+cvtD(r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
   const planOf=(rl,code)=>isYear?planYear(rl,code):planMonth(rl,code,+period);
   const factExp=code=>{const a=factByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const revFact=()=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=revByMonth[m];return s;}return revByMonth[+period];};
@@ -4968,7 +4972,7 @@ function renderPlanFact(f){
 
   // фильтр-бар
   const sel=(id,opts)=>`<select onchange="_tabFilters.planfact.${id}=this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${opts}</select>`;
-  const dirOpts=dirs.map(d=>`<option value="${esc(d).replace(/"/g,'&quot;')}"${d===dir?' selected':''}>${esc(d)}</option>`).join('');
+  const dirOpts=`<option value="__all__"${isAll?' selected':''}>Свод · все направления</option>`+dirs.map(d=>`<option value="${esc(d).replace(/"/g,'&quot;')}"${d===dir?' selected':''}>${esc(d)}</option>`).join('');
   const yearOpts=years.map(y=>`<option value="${y}"${y===year?' selected':''}>${y}</option>`).join('');
   const lvlOpts=`<option value="subarticle"${level==='subarticle'?' selected':''}>Подстатья</option><option value="article"${level==='article'?' selected':''}>Статья</option>`;
   const perOpts=`<option value="year"${isYear?' selected':''}>Весь год</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>${m}</option>`).join('');
@@ -5026,7 +5030,7 @@ function renderPlanFact(f){
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumPlan||null,sumFact,false,true);
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netPlanV,netFactV,true,true);
   const periodLbl=isYear?('Весь год '+year):(MON[+period-1]+' '+year);
-  const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">План-факт · ${esc(dir)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.</span></div>
+  const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">План-факт · ${isAll?'Свод (все направления)':esc(dir)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.</span></div>
     <div class="table-scroll" style="overflow-x:auto"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
       <thead><tr><th style="text-align:left;${th}">${level==='article'?'Статья':'Подстатья'}</th><th style="${th}">План</th><th style="${th}">Факт</th><th style="${th}">Δ</th><th style="${th}">Δ %</th><th style="text-align:left;${th}">Статус</th></tr></thead>
       <tbody>${secRow('Доходы')}${incBodyRows}${incTotalRow}${secRow('Расходы')}${bodyRows}${totalRow}${netRow}</tbody></table></div></div>`;
@@ -5037,7 +5041,7 @@ function renderPlanFact(f){
     <div style="height:300px"><canvas id="pfChart"></canvas></div></div>`;
 
   const noPlans=!plans.some(p=>p.level===level||p.level==='revenue'||p.level==='income');
-  const banner=noPlans?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:var(--accent-light);border:1px solid #d6d2f2;border-radius:8px;font-size:12px;color:var(--accent-hover)">Планы на «${esc(dir)}» за ${year} (уровень ${level==='article'?'статья':'подстатья'}) ещё не заданы. ${isAdmin?'Нажмите «✏ Редактировать планы».':'Их задаёт администратор.'} Пока показан только факт.</div>`:'';
+  const banner=noPlans?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:var(--accent-light);border:1px solid #d6d2f2;border-radius:8px;font-size:12px;color:var(--accent-hover)">Планы на «${isAll?'Свод (все направления)':esc(dir)}» за ${year} (уровень ${level==='article'?'статья':'подстатья'}) ещё не заданы. ${isAdmin?'Нажмите «✏ Редактировать планы».':'Их задаёт администратор.'} Пока показан только факт.</div>`:'';
   el.innerHTML=filterBar+banner+kpiHtml+tableHtml+chartHtml;
 
   // данные графика
