@@ -3493,11 +3493,27 @@ function renderFOT(f){
   const dData=dG.map(g=>g[1]).concat(dRest.length?[dRest.reduce((s,g)=>s+g[1],0)]:[]);
   const dColors=dG.map((_,i)=>PAL[i%PAL.length]).concat(dRest.length?['#cbd5e1']:[]);
   const rankCanvas=document.getElementById('fotChartRank');
+  // Плагин: подписи % долей прямо на сегментах donut
+  const fotDonutPct={id:'fotDonutPct',afterDatasetsDraw(chart){
+    const ds=chart.data.datasets[0]&&chart.data.datasets[0].data||[];const total=ds.reduce((a,b)=>a+Math.abs(b||0),0)||1;
+    const meta=chart.getDatasetMeta(0);if(!meta||!meta.data)return;const ctx=chart.ctx;
+    ctx.save();ctx.font='600 11px "IBM Plex Mono", monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+    meta.data.forEach((arc,i)=>{
+      const pct=Math.abs(ds[i]||0)/total; if(pct<0.04)return; // совсем мелкие не подписываем
+      const p=arc.getProps(['x','y','startAngle','endAngle','innerRadius','outerRadius'],true);
+      const mid=(p.startAngle+p.endAngle)/2, r=(p.innerRadius+p.outerRadius)/2;
+      const x=p.x+Math.cos(mid)*r, y=p.y+Math.sin(mid)*r, txt=Math.round(pct*100)+'%';
+      ctx.lineWidth=2.6;ctx.strokeStyle='rgba(0,0,0,.4)';ctx.strokeText(txt,x,y);
+      ctx.fillStyle='#fff';ctx.fillText(txt,x,y);
+    });
+    ctx.restore();
+  }};
   if(rankCanvas&&window.Chart)window._fotChartRank=new Chart(rankCanvas,{type:'doughnut',
     data:{labels:dLabels,datasets:[{data:dData,backgroundColor:dColors,borderColor:'#fff',borderWidth:1}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'58%',
       plugins:{legend:{position:'right',labels:{font:{size:9},boxWidth:10,padding:6}},
-        tooltip:{callbacks:{label:c=>c.label+': '+fmt(c.raw)+' ('+fmtPct(c.raw/grandAbs)+')'}}}}});
+        tooltip:{callbacks:{label:c=>c.label+': '+fmt(c.raw)+' ('+fmtPct(c.raw/grandAbs)+')'}}}},
+    plugins:[fotDonutPct]});
 }
 
 // ─── СТРУКТУРА РАСХОДОВ ──────────────────────────────────────────────────────
