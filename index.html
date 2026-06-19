@@ -6810,6 +6810,24 @@ window.planFillRow=function(btn){
   months.forEach(i=>{i.value=val;if(window.planFmtInput)window.planFmtInput(i);});
   if(months[0])window.planRowYear(months[0]); // пересчитать авто-«Год»
 };
+// «План = факт»: вставить в ячейку фактическую сумму (data-fact). Только в режиме ₽ (факт - в рублях)
+window.planFillCellFact=function(inp){
+  const tr=inp.closest('tr'); if(!tr)return;
+  const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
+  if(mode!=='money'){alert('Вставка факта доступна только в режиме ₽ (переключите режим строки)');return;}
+  const f=inp.getAttribute('data-fact'); const n=parseFloat(f);
+  inp.value=(!isNaN(n)&&n)?_planFmtNum(n):'0';
+  if(inp.getAttribute('data-month')==='0'){inp.dataset.auto='0';inp.style.color='var(--text)';}
+  else if(window.planRowYear)window.planRowYear(inp);
+};
+// Заполнить все 12 месяцев строки фактом (по data-fact). Месяцы без факта остаются пустыми
+window.planFillRowFact=function(btn){
+  const tr=btn.closest('tr'); if(!tr)return;
+  const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
+  if(mode!=='money'){alert('Заполнение фактом доступно только в режиме ₽ (переключите режим строки)');return;}
+  tr.querySelectorAll('input.plan-val').forEach(i=>{if(i.getAttribute('data-month')==='0')return;const n=parseFloat(i.getAttribute('data-fact'));i.value=(!isNaN(n)&&n)?_planFmtNum(n):'';});
+  const m1=tr.querySelector('input.plan-val[data-month="1"]'); if(m1&&window.planRowYear)window.planRowYear(m1);
+};
 // Пересчёт авто-«Год» (сумма месяцев) - только если поле «Год» в авто-режиме (₽, не переопределено вручную)
 window.planRowYear=function(inp){
   const tr=inp.closest('tr'); if(!tr)return;
@@ -6847,21 +6865,35 @@ function _planRenderMatrix(){
   const find=(rl,code,m)=>_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===rl&&p.code===code&&p.month===m);
   const cellVal=(rl,code,m)=>{const r=find(rl,code,m);return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
+  // ── ФАКТ по подстатьям/месяцам (для вставки «план = факт» по двойному клику) - выбранное направление+год, по дате ОПиУ, перемещения исключены ──
+  const FA={inc:{},exp:{},rev:new Array(13).fill(0)};
+  (RAW||[]).forEach(r=>{
+    if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
+    const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
+    const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
+    const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(),key=level==='article'?ac:an;
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){FA.rev[m]+=inc;if(key)(FA.inc[key]=FA.inc[key]||new Array(13).fill(0))[m]+=inc;}
+    if(t==='списание'&&out<0&&key)(FA.exp[key]=FA.exp[key]||new Array(13).fill(0))[m]+=Math.abs(out);
+  });
+  const factOf=(rl,code,m)=>{if(rl==='revenue')return FA.rev[m]||0;const a=(rl==='income'?FA.inc:FA.exp)[code];return a?(a[m]||0):0;};
+  const factYr=(rl,code)=>{let s=0;for(let m=1;m<=12;m++)s+=factOf(rl,code,m);return s;};
   const rowHtml=(rl,code,label,rev)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
     let mode='money'; if(!moneyOnly){const any=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rl,code,i+1));
-    const cells=moVals.map((mv,i)=>`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" value="${_planFmtNum(mv)}" oninput="planRowYear(this)" onblur="planFmtInput(this)" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`).join('');
+    const cells=moVals.map((mv,i)=>{const fv=factOf(rl,code,i+1);return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this)" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="Двойной клик - вставить факт: ${fmt(fv)}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
     const yrExpl=cellVal(rl,code,0); // явный годовой план (если задан)
     const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
     const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
     const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" onblur="planFmtInput(this)" title="${yrIsAuto?'Авто: сумма месяцев. Введите своё значение, чтобы переопределить':'Годовой план (переопределяет сумму месяцев)'}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
+    const yrFact=factYr(rl,code);
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="${yrIsAuto?'Авто: сумма месяцев. Двойной клик - вставить факт за год: '+fmt(yrFact):'Годовой план. Двойной клик - вставить факт за год: '+fmt(yrFact)}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     return `<tr data-code="${esc(code)}" data-level="${rl}">
       <td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${esc(label)}</td>
-      <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button></td>${cells}${yr}</tr>`;
+      <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}</tr>`;
   };
   const incCodes=_planIncomeCodes(dir,level);
   const codes=_planCodes(dir,level);
@@ -6897,7 +6929,7 @@ window.showPlansPanel=async function(){
         <input type="hidden" id="plan-level" value="subarticle">
         <span style="font-size:11px;color:var(--text3);align-self:center">Уровень: Подстатья · статьи собираются автоматически по первым 3 цифрам</span>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">План по месяцам и/или на год. Кнопка режима: ₽ → %выр (доля выручки) → %ЧП (доля чистой прибыли, только для статьи 127). Пусто = плана нет; «Год» пусто = сумма месяцев.</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">План по месяцам и/или на год. Кнопка режима: ₽ → %выр (доля выручки) → %ЧП (доля чистой прибыли, только для статьи 127). <b>Двойной клик по ячейке</b> или кнопка <b>⤓</b> - вставить ФАКТ (поступления/расходы по подстатье, режим ₽). Пусто = плана нет; «Год» пусто = сумма месяцев.</div>
       <div id="plan-matrix" style="overflow:auto;max-height:55vh;border:1px solid var(--border);border-radius:8px"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--text3)">Хранится в облаке (Firebase), запись только админу</span>
