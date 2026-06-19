@@ -616,6 +616,8 @@ try{if(window.Chart){Chart.defaults.font.family="'IBM Plex Mono','SFMono-Regular
 const MONTHS_FULL=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const FOT_PREFIXES=['111_','226_','127_'];
 const REVENUE_PREFIX='120_';
+// «120_Ввод начального остатка» - это входящий остаток, НЕ выручка. Исключается ИЗ ВСЕХ расчётов выручки (ОПиУ, ПФХД, ФОТ, Структура расходов, Юнит-экономика) для единства. Прочие 120_ (вкл. реализацию имущества) - выручка.
+const isOpeningBalance=name=>{const x=String(name||'').toLowerCase();return x.includes('начальн')&&x.includes('остат');};
 let RAW=[];
 let activeTab='bank';
 
@@ -3009,7 +3011,7 @@ function renderOPIU(f){
     const an=String(row[COL.ARTICLE_NAME]||'').trim();
     const analytics=String(row[COL.ANALYTICS]||'').trim();
     const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
-    if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0){
+    if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){
       rev.perInc[pk]=(rev.perInc[pk]||0)+inc;
       const sub=an||ac||'Без подстатьи';
       if(!rev.arts[sub])rev.arts[sub]={perInc:{},rows:[]};
@@ -3412,7 +3414,7 @@ function renderFOT(f){
     const o=parseNum(row[COL.OUTCOME]),inc=parseNum(row[COL.INCOME]);
     if(t==='списание'&&o<0)totalExpAbs+=Math.abs(o);
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)totalRev+=inc;
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))totalRev+=inc;
   });
   // KPI + динамика к прошлому периоду
   let growthTxt='-',growthColor='var(--text3)',growthHint='';
@@ -3550,7 +3552,7 @@ function renderExpenses(f){
 
   // Выручка (база для % от выручки) - из dir-данных, не зависит от выбора статьи/подстатьи
   let totalRev=0;
-  dataDir.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();const inc=parseNum(r[COL.INCOME]);if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0)totalRev+=inc;});
+  dataDir.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();const inc=parseNum(r[COL.INCOME]);if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))totalRev+=inc;});
 
   // Группировка: аналитика / статья / подстатья
   const groupMode=f.expGroup||'analytics';
@@ -5012,8 +5014,6 @@ function renderPlanFact(f){
 
   // ── ФАКТ из RAW (по дате ОПиУ, выбранное направление+год, перемещения исключены) ──
   const nrm=s=>String(s||'').toLowerCase().replace(/[^а-яёa-z0-9]/gi,'');
-  // Служебные/неоперационные «120_», которые НЕ считаются выручкой (не идут в доходы и в базу ЧП): ввод начального остатка, реализация имущества
-  const isNonOpInc=name=>{const x=nrm(name);return (x.includes('начальн')&&x.includes('остат'))||(x.includes('реализаци')&&x.includes('имуществ'));};
   const factByCode={},incByCode={},revByMonth=new Array(13).fill(0),npExpMonth=new Array(13).fill(0); // incByCode - факт доходов по кодам; npExpMonth - расходы для ЧП (без «Вывода прибыли»)
   const revByMonthD={},npExpMonthD={}; // по направлениям - для разрешения %-планов в режиме «Свод»
   RAW.forEach(r=>{
@@ -5024,7 +5024,7 @@ function renderPlanFact(f){
     const m=d.getMonth()+1,out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
     const rvD=revByMonthD[rd]||(revByMonthD[rd]=new Array(13).fill(0)),npD=npExpMonthD[rd]||(npExpMonthD[rd]=new Array(13).fill(0));
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isNonOpInc(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?ac:an;if(ic)(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;}
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?ac:an;if(ic)(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;}
     if(t==='списание'&&out<0){
       const c=level==='article'?ac:an;if(c)(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=Math.abs(out);
       const anl=nrm(r[COL.ANALYTICS]); // ЧП как в ОПиУ: исключаем раздел «Вывод чистой прибыли»
@@ -5391,7 +5391,7 @@ function renderMarketing(f){
     const inc=parseNum(row[COL.INCOME]);if(inc<=0)return;
     const type=String(row[COL.TYPE]||'').trim().toLowerCase();
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
-    if(type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))revByP[pk]=(revByP[pk]||0)+inc;
+    if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an))revByP[pk]=(revByP[pk]||0)+inc;
   });
 
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
@@ -6769,7 +6769,7 @@ function _planIncomeCodes(dir,level){
     if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
     const t=String(r[COL.TYPE]||'').trim().toLowerCase();
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
-    if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&parseNum(r[COL.INCOME])>0))return;
+    if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&parseNum(r[COL.INCOME])>0)||isOpeningBalance(an))return;
     const c=level==='article'?ac:an; if(c)set[c]=1;
   });
   return Object.keys(set).sort((a,b)=>a.localeCompare(b,'ru'));
