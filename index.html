@@ -4942,11 +4942,12 @@ function renderRegistry(f){
   el.innerHTML=`<div class="tab-filters">
       <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:240px;background:var(--surface);border:1px solid var(--accent);border-radius:8px;padding:5px 10px">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.5-3.5"/></svg>
-        <input id="regSearch" type="text" value="${String(q).replace(/"/g,'&quot;')}" oninput="registrySearch(this.value)" placeholder="Поиск по любому полю: сумма, ФИО, № договора, статья, дата…" style="flex:1;border:none;outline:none;background:transparent;font-size:12.5px;color:var(--text);font-family:var(--sans)">
+        <input id="regSearch" type="text" value="${String(q).replace(/"/g,'&quot;')}" oninput="registrySearch(this.value)" placeholder="Поиск: слова через пробел = И · поле:значение (контрагент:иванов статья:120)" style="flex:1;border:none;outline:none;background:transparent;font-size:12.5px;color:var(--text);font-family:var(--sans)">
         ${q?`<button onclick="document.getElementById('regSearch').value='';registrySearch('')" title="Очистить" style="border:none;background:none;cursor:pointer;color:var(--text3);font-size:16px;line-height:1">✕</button>`:''}
       </div>
       <span id="regCount" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:8px;font-family:var(--mono);white-space:nowrap"></span>
     </div>
+    <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Поля: контрагент, статья, подстатья, направление, тип, счёт, аналитика, назначение, id, дата, поступление, списание, фнс, финоп. Пример: <code>статья:120 направление:бфл</code></div>
     <div class="txn-wrap" style="margin:6px var(--secpx) 0">
       <div class="txn-header"><span class="table-title">Реестр операций</span><span class="table-count" id="regHdrCount"></span></div>
       <div class="txn-scroll" id="regScroll" style="max-height:none"></div>
@@ -4958,17 +4959,21 @@ window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;
 function registryRender(q){
   const scroll=document.getElementById('regScroll'); if(!scroll)return;
   q=String(q||'').trim().toLowerCase();
-  const terms=q?q.split(/\s+/).filter(Boolean):[];
+  // Прицельный поиск по полю: «поле:значение». Алиасы полей → индекс COL.
+  const ALIAS={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
+  const dstr=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
+  const tokens=(q?q.split(/\s+/).filter(Boolean):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci);if(ALIAS[k]!=null)return{col:ALIAS[k],val:t.slice(ci+1)};}return{val:t};}).filter(tk=>tk.val!=='');
   const blobs=_buildRegBlobs();
   const idx=[];
-  for(let i=0;i<RAW.length;i++){ if(!terms.length){idx.push(i);continue;} const b=blobs[i]; let ok=true; for(let t=0;t<terms.length;t++){if(b.indexOf(terms[t])<0){ok=false;break;}} if(ok)idx.push(i); }
+  for(let i=0;i<RAW.length;i++){ if(!tokens.length){idx.push(i);continue;} let ok=true; for(let t=0;t<tokens.length;t++){const tk=tokens[t]; if(tk.col!=null){let fv=String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).toLowerCase();if(tk.col===0||tk.col===1)fv+=' '+dstr(RAW[i][tk.col]);if(fv.indexOf(tk.val)<0){ok=false;break;}} else if(blobs[i].indexOf(tk.val)<0){ok=false;break;} } if(ok)idx.push(i); }
   window._regRows=idx.map(i=>RAW[i]);
   const total=idx.length, limit=window._regLimit||500, show=Math.min(limit,total);
-  const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=terms.length?('найдено: '+total.toLocaleString('ru-RU')):('всего: '+total.toLocaleString('ru-RU'));
+  const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=tokens.length?('найдено: '+total.toLocaleString('ru-RU')):('всего: '+total.toLocaleString('ru-RU'));
   const hc=document.getElementById('regHdrCount'); if(hc)hc.textContent=show.toLocaleString('ru-RU')+(show<total?(' из '+total.toLocaleString('ru-RU')):'')+' строк';
   if(!total){scroll.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Ничего не найдено по запросу</div>';return;}
+  const hlTerms=tokens.map(tk=>tk.val).filter(Boolean);
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
-  const hl=s=>{let o=esc(s);if(terms.length){terms.forEach(t=>{if(!t)return;const re=new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');o=o.replace(re,'<mark style="background:#fde68a;color:#23272f;padding:0 1px;border-radius:2px">$1</mark>');});}return o;};
+  const hl=s=>{let o=esc(s);if(hlTerms.length){hlTerms.forEach(t=>{if(!t)return;const re=new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');o=o.replace(re,'<mark style="background:#fde68a;color:#23272f;padding:0 1px;border-radius:2px">$1</mark>');});}return o;};
   const ds=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
   const dsO=v=>{const d=parseDate(v);if(!d)return '';const M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];return M[d.getMonth()]+' '+d.getFullYear();};
   const f2=v=>{const n=parseNum(v);return n?n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';};
