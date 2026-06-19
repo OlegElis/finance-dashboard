@@ -4999,7 +4999,8 @@ function renderPlanFact(f){
   if(!f.year||!years.includes(f.year))f.year=dataYears.includes(cy)?cy:(dataYears[0]||cy);
   const dir=f.dir,year=f.year,level=f.level||'subarticle',period=f.period||'year';
   const isAll=dir==='__all__';const dirsToAgg=isAll?dirs:[dir]; // свод - агрегируем по всем направлениям
-  const isYear=period==='year';
+  const isMonthly=period==='monthly'; // матрица «все месяцы (план/факт)»
+  const isYear=period==='year'||isMonthly; // для KPI и колонки «Год» считаем год целиком
   const isAdmin=window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase();
 
   // ── ФАКТ из RAW (по дате ОПиУ, выбранное направление+год, перемещения исключены) ──
@@ -5040,6 +5041,12 @@ function renderPlanFact(f){
   const planInc=code=>level==='article'?planAgg('income',code):planOf('income',code);
   const factExp=code=>{const a=factByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const revFact=()=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=revByMonth[m];return s;}return revByMonth[+period];};
+  // ── помесячно (для матрицы «все месяцы»): план/факт по конкретному месяцу ──
+  const planMonthAgg=(lvl,artCode,m)=>{const tc=c3(artCode);let tot=null;_subCodes(lvl).forEach(sc=>{if(c3(sc)!==tc)return;const v=planMonth(lvl,sc,m);if(v!=null)tot=(tot||0)+v;});return tot;};
+  const planExpM=(code,m)=>level==='article'?planMonthAgg('subarticle',code,m):planMonth('subarticle',code,m);
+  const planIncM=(code,m)=>level==='article'?planMonthAgg('income',code,m):planMonth('income',code,m);
+  const factExpM=(code,m)=>{const a=factByCode[code];return a?(a[m]||0):0;};
+  const incFactM=(code,m)=>{const a=incByCode[code];return a?(a[m]||0):0;};
 
   // ── строки ──
   const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle')codeSet[p.code]=1;});
@@ -5059,7 +5066,7 @@ function renderPlanFact(f){
   const dirOpts=`<option value="__all__"${isAll?' selected':''}>Свод · все направления</option>`+dirs.map(d=>`<option value="${esc(d).replace(/"/g,'&quot;')}"${d===dir?' selected':''}>${esc(d)}</option>`).join('');
   const yearOpts=years.map(y=>`<option value="${y}"${y===year?' selected':''}>${y}</option>`).join('');
   const lvlOpts=`<option value="subarticle"${level==='subarticle'?' selected':''}>Подстатья</option><option value="article"${level==='article'?' selected':''}>Статья</option>`;
-  const perOpts=`<option value="year"${isYear?' selected':''}>Весь год</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>${m}</option>`).join('');
+  const perOpts=`<option value="monthly"${isMonthly?' selected':''}>Все месяцы (план/факт)</option><option value="year"${period==='year'?' selected':''}>Весь год (итог)</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>${m}</option>`).join('');
   // year/period select coerces to string; нормализуем в onchange через число для period - оставим строкой, обрабатываем +period
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>${sel('dir',dirOpts)}
@@ -5113,7 +5120,43 @@ function renderPlanFact(f){
   const bodyRows=rowsArr.map(r=>dRow(r.code,r.plan,r.fact,false,false)).join('');
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumPlan||null,sumFact,false,true);
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netPlanV,netFactV,true,true);
-  const periodLbl=isYear?('Весь год '+year):(MON[+period-1]+' '+year);
+  const periodLbl=period==='monthly'?('все месяцы '+year):isYear?('Весь год '+year):(MON[+period-1]+' '+year);
+  // ── Матрица «все месяцы (план/факт)»: строки статьи/подстатьи, колонки месяцы, в ячейке факт (цвет по отклонению) + план мелким ──
+  let monthlyHtml='';
+  if(isMonthly){
+    const MS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    const monthsOn=[];for(let m=1;m<=12;m++){let any=false;for(const c in factByCode){if(factByCode[c][m]){any=true;break;}}if(!any)for(const c in incByCode){if(incByCode[c][m]){any=true;break;}}if(!any&&plans.some(p=>p.month===m))any=true;if(any)monthsOn.push(m);}
+    if(!monthsOn.length)for(let m=1;m<=12;m++)monthsOn.push(m);
+    const mth=`text-align:right;padding:6px 7px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:2px solid var(--border);color:var(--label);text-transform:uppercase;white-space:nowrap`;
+    const cellHtml=(plan,fact,kind)=>{
+      const hasP=plan!=null&&Math.abs(plan)>0.0001; let col='var(--text)';
+      if(kind==='net')col=(fact>=-0.0001)?'var(--income)':'var(--outcome)';
+      else if(hasP)col=((kind==='inc'?fact>=plan-0.0001:Math.abs(fact)<=Math.abs(plan)+0.0001)?'var(--income)':'var(--outcome)');
+      else if(fact)col='var(--text2)';
+      return `<td style="text-align:right;padding:4px 7px;border-bottom:1px solid var(--divider);white-space:nowrap"><div style="color:${col};font-weight:600;font-size:11px;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${hasP?`<div style="font-size:8.5px;color:var(--text3);font-family:var(--mono)">пл ${fmt(plan)}</div>`:''}</td>`;
+    };
+    const mrow=(label,getPlan,getFact,kind,bold)=>{
+      let cells='',yp=null,yf=0;
+      monthsOn.forEach(m=>{const p=getPlan(m),fa=getFact(m)||0;if(p!=null)yp=(yp||0)+p;yf+=fa;cells+=cellHtml(p,fa,kind);});
+      const ycol=kind==='net'?(yf>=-0.0001?'var(--income)':'var(--outcome)'):(yp!=null?((kind==='inc'?yf>=yp:Math.abs(yf)<=Math.abs(yp))?'var(--income)':'var(--outcome)'):'var(--text)');
+      const yc=`<td style="text-align:right;padding:4px 7px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:700;font-size:11px;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${yp!=null?`<div style="font-size:8.5px;color:var(--text3);font-family:var(--mono)">пл ${fmt(yp)}</div>`:''}</td>`;
+      return `<tr${bold?' style="background:var(--surface2)"':''}><td style="position:sticky;left:0;background:${bold?'var(--total-bg)':'var(--surface)'};padding:5px 10px;font-size:11px;${bold?'font-weight:700;':''}white-space:nowrap;z-index:1">${esc(label)}</td>${cells}${yc}</tr>`;
+    };
+    const secR=t=>`<tr><td colspan="${monthsOn.length+2}" style="position:sticky;left:0;padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
+    const sumP=(arr,getter,m)=>{let s=null;arr.forEach(r=>{const v=getter(r.code,m);if(v!=null)s=(s||0)+v;});return s;};
+    let rh=secR('Доходы');
+    incRowsArr.forEach(r=>{rh+=mrow(r.code,m=>planIncM(r.code,m),m=>incFactM(r.code,m),'inc',false);});
+    rh+=mrow('ИТОГО ДОХОДЫ',m=>sumP(incRowsArr,planIncM,m),m=>revByMonth[m]||0,'inc',true);
+    rh+=secR('Расходы');
+    rowsArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factExpM(r.code,m),'exp',false);});
+    rh+=mrow('ИТОГО РАСХОДЫ',m=>sumP(rowsArr,planExpM,m),m=>{let s=0;rowsArr.forEach(r=>{s+=factExpM(r.code,m);});return s;},'exp',true);
+    rh+=mrow('ЧИСТАЯ ПРИБЫЛЬ',m=>{const ip=sumP(incRowsArr,planIncM,m),ep=sumP(rowsArr,planExpM,m);return (ip==null&&ep==null)?null:((ip||0)-(ep||0));},m=>{let ef=0;rowsArr.forEach(r=>{ef+=factExpM(r.code,m);});return (revByMonth[m]||0)-ef;},'net',true);
+    const ths=monthsOn.map(m=>`<th style="${mth}">${MS[m-1]}</th>`).join('');
+    monthlyHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">ПФХД · ${isAll?'Свод (все направления)':esc(dir)} · все месяцы ${year}</span><span class="table-count">факт + план по месяцам</span></div>
+      <div class="table-scroll" style="overflow-x:auto"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
+        <thead><tr><th style="text-align:left;${mth};position:sticky;left:0;z-index:2">${level==='article'?'Статья':'Подстатья'}</th>${ths}<th style="${mth};border-left:2px solid var(--border)">Год</th></tr></thead>
+        <tbody>${rh}</tbody></table></div></div>`;
+  }
   const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">ПФХД · ${isAll?'Свод (все направления)':esc(dir)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.</span></div>
     <div class="table-scroll" style="overflow-x:auto"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
       <thead><tr><th style="text-align:left;${th}">${level==='article'?'Статья':'Подстатья'}</th><th style="${th}">План</th><th style="${th}">Факт</th><th style="${th}">Δ</th><th style="${th}">Δ %</th><th style="text-align:left;${th}">Статус</th></tr></thead>
@@ -5126,7 +5169,7 @@ function renderPlanFact(f){
 
   const noPlans=!plans.some(p=>p.level==='subarticle'||p.level==='revenue'||p.level==='income');
   const banner=noPlans?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:var(--accent-light);border:1px solid #d6d2f2;border-radius:8px;font-size:12px;color:var(--accent-hover)">Планы на «${isAll?'Свод (все направления)':esc(dir)}» за ${year} (уровень ${level==='article'?'статья':'подстатья'}) ещё не заданы. ${isAdmin?'Нажмите «✏ Редактировать планы».':'Их задаёт администратор.'} Пока показан только факт.</div>`:'';
-  el.innerHTML=filterBar+banner+kpiHtml+tableHtml+chartHtml;
+  el.innerHTML=filterBar+banner+kpiHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
 
   // данные графика
   const planMonthTotal=m=>{let s=0,has=false;Object.keys(codeSet).forEach(c=>{const v=planMonth(level,c,m);if(v!=null){s+=v;has=true;}});return has?s:0;};
