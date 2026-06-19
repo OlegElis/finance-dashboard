@@ -4947,7 +4947,7 @@ function renderRegistry(f){
       </div>
       <span id="regCount" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:8px;font-family:var(--mono);white-space:nowrap"></span>
     </div>
-    <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Поля: контрагент, статья, подстатья, направление, тип, счёт, аналитика, назначение, id, дата, поступление, списание, фнс, финоп. Пример: <code>статья:120 направление:бфл</code></div>
+    <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Поля: контрагент, статья, подстатья, направление, тип, счёт, аналитика, назначение, id, дата, поступление, списание, фнс, финоп. Пример: <code>статья:120 направление:бфл</code>. Пустые ячейки: <code>поле:пусто</code> (напр. <code>контрагент:пусто</code>, <code>статья:-</code>)</div>
     <div class="txn-wrap" style="margin:6px var(--secpx) 0">
       <div class="txn-header"><span class="table-title">Реестр операций</span><span class="table-count" id="regHdrCount"></span></div>
       <div class="txn-scroll" id="regScroll" style="max-height:none"></div>
@@ -4962,10 +4962,12 @@ function registryRender(q){
   // Прицельный поиск по полю: «поле:значение». Алиасы полей → индекс COL.
   const ALIAS={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
   const dstr=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
-  const tokens=(q?q.split(/\s+/).filter(Boolean):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci);if(ALIAS[k]!=null)return{col:ALIAS[k],val:t.slice(ci+1)};}return{val:t};}).filter(tk=>tk.val!=='');
+  // Маркеры «пустое поле»: поле:пусто / поле:- → ищем записи, где это поле НЕ заполнено
+  const EMPTY=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
+  const tokens=(q?q.split(/\s+/).filter(Boolean):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci);if(ALIAS[k]!=null){const v=t.slice(ci+1);if(EMPTY.has(v))return{col:ALIAS[k],empty:true};return{col:ALIAS[k],val:v};}}return{val:t};}).filter(tk=>tk.empty||tk.val!=='');
   const blobs=_buildRegBlobs();
   const idx=[];
-  for(let i=0;i<RAW.length;i++){ if(!tokens.length){idx.push(i);continue;} let ok=true; for(let t=0;t<tokens.length;t++){const tk=tokens[t]; if(tk.col!=null){let fv=String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).toLowerCase();if(tk.col===0||tk.col===1)fv+=' '+dstr(RAW[i][tk.col]);if(fv.indexOf(tk.val)<0){ok=false;break;}} else if(blobs[i].indexOf(tk.val)<0){ok=false;break;} } if(ok)idx.push(i); }
+  for(let i=0;i<RAW.length;i++){ if(!tokens.length){idx.push(i);continue;} let ok=true; for(let t=0;t<tokens.length;t++){const tk=tokens[t]; if(tk.empty){if(String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).trim()!==''){ok=false;break;}} else if(tk.col!=null){let fv=String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).toLowerCase();if(tk.col===0||tk.col===1)fv+=' '+dstr(RAW[i][tk.col]);if(fv.indexOf(tk.val)<0){ok=false;break;}} else if(blobs[i].indexOf(tk.val)<0){ok=false;break;} } if(ok)idx.push(i); }
   window._regRows=idx.map(i=>RAW[i]);
   const total=idx.length, limit=window._regLimit||500, show=Math.min(limit,total);
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=tokens.length?('найдено: '+total.toLocaleString('ru-RU')):('всего: '+total.toLocaleString('ru-RU'));
