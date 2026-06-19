@@ -5014,7 +5014,7 @@ function renderPlanFact(f){
 
   // ── ФАКТ из RAW (по дате ОПиУ, выбранное направление+год, перемещения исключены) ──
   const nrm=s=>String(s||'').toLowerCase().replace(/[^а-яёa-z0-9]/gi,'');
-  const factByCode={},incByCode={},revByMonth=new Array(13).fill(0),npExpMonth=new Array(13).fill(0); // incByCode - факт доходов по кодам; npExpMonth - расходы для ЧП (без «Вывода прибыли»)
+  const factByCode={},incByCode={},vyvodByCode={},vyvodCodes={},revByMonth=new Array(13).fill(0),npExpMonth=new Array(13).fill(0); // factByCode - расходы БЕЗ вывода прибыли; vyvodByCode - вывод (127, распределение); npExpMonth = Σ factByCode
   const revByMonthD={},npExpMonthD={}; // по направлениям - для разрешения %-планов в режиме «Свод»
   RAW.forEach(r=>{
     const rd=String(r[COL.ACTIVITY_DIR]||'').trim();
@@ -5026,9 +5026,10 @@ function renderPlanFact(f){
     const rvD=revByMonthD[rd]||(revByMonthD[rd]=new Array(13).fill(0)),npD=npExpMonthD[rd]||(npExpMonthD[rd]=new Array(13).fill(0));
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?ac:an;if(ic)(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;}
     if(t==='списание'&&out<0){
-      const c=level==='article'?ac:an;if(c)(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=Math.abs(out);
-      const anl=nrm(r[COL.ANALYTICS]); // ЧП как в ОПиУ: исключаем раздел «Вывод чистой прибыли»
-      if(!(anl.includes('вывод')&&anl.includes('прибыл'))){npExpMonth[m]+=Math.abs(out);npD[m]+=Math.abs(out);}
+      const c=level==='article'?ac:an,av=Math.abs(out);
+      const anl=nrm(r[COL.ANALYTICS]),isVyvod=anl.includes('вывод')&&anl.includes('прибыл'); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
+      if(isVyvod){if(c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;}}
+      else{if(c)(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=av;npExpMonth[m]+=av;npD[m]+=av;}
     }
   });
   // ── ПЛАН из _planRecords ──
@@ -5056,10 +5057,17 @@ function renderPlanFact(f){
   const planIncM=(code,m)=>level==='article'?planMonthAgg('income',code,m):planMonth('income',code,m);
   const factExpM=(code,m)=>{const a=factByCode[code];return a?(a[m]||0):0;};
   const incFactM=(code,m)=>{const a=incByCode[code];return a?(a[m]||0):0;};
+  const factVyvodM=(code,m)=>{const a=vyvodByCode[code];return a?(a[m]||0):0;};
 
   // ── строки ──
-  const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle')codeSet[p.code]=1;});
+  const isVyvodCode=code=>!!vyvodCodes[code]||c3(code)==='127'; // распределение прибыли (вывод) - отдельно от расходов
+  const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});
   const rowsArr=Object.keys(codeSet).map(code=>{const plan=planExp(code),fact=factExp(code);return{code,plan,fact};}).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
+  // ── РАСПРЕДЕЛЕНИЕ ПРИБЫЛИ (вывод, код 127) - ниже линии ЧП, как в ОПиУ; в расходы и ЧП НЕ входит ──
+  const factVyvodOf=code=>{const a=vyvodByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
+  const vyvodSet={};Object.keys(vyvodByCode).forEach(c=>vyvodSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&isVyvodCode(p.code))vyvodSet[p.code]=1;});
+  const vyvodArr=Object.keys(vyvodSet).map(code=>({code,plan:planExp(code),fact:factVyvodOf(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
+  const sumVyvodPlan=vyvodArr.reduce((s,r)=>s+(r.plan||0),0),sumVyvodFact=vyvodArr.reduce((s,r)=>s+r.fact,0);
   const revRow={plan:planOf('revenue','__rev__'),fact:revFact()};
   const sumPlan=rowsArr.reduce((s,r)=>s+(r.plan||0),0),sumFact=rowsArr.reduce((s,r)=>s+r.fact,0);
   // ── ДОХОДЫ по кодам (симметрично расходам) ──
@@ -5129,12 +5137,13 @@ function renderPlanFact(f){
   const bodyRows=rowsArr.map(r=>dRow(r.code,r.plan,r.fact,false,false)).join('');
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumPlan||null,sumFact,false,true);
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netPlanV,netFactV,true,true);
+  const vyvodRows=vyvodArr.length?(secRow('Распределение прибыли (вывод)')+vyvodArr.map(r=>dRow(r.code,r.plan,r.fact,false,false)).join('')+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodPlan||null,sumVyvodFact,false,true)):'';
   const periodLbl=period==='monthly'?('все месяцы '+year):isYear?('Весь год '+year):(MON[+period-1]+' '+year);
   // ── Матрица «все месяцы (план/факт)»: строки статьи/подстатьи, колонки месяцы, в ячейке факт (цвет по отклонению) + план мелким ──
   let monthlyHtml='';
   if(isMonthly){
     const MS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
-    const monthsOn=[];for(let m=1;m<=12;m++){let any=false;for(const c in factByCode){if(factByCode[c][m]){any=true;break;}}if(!any)for(const c in incByCode){if(incByCode[c][m]){any=true;break;}}if(!any&&plans.some(p=>p.month===m))any=true;if(any)monthsOn.push(m);}
+    const monthsOn=[];for(let m=1;m<=12;m++){let any=false;for(const c in factByCode){if(factByCode[c][m]){any=true;break;}}if(!any)for(const c in incByCode){if(incByCode[c][m]){any=true;break;}}if(!any)for(const c in vyvodByCode){if(vyvodByCode[c][m]){any=true;break;}}if(!any&&plans.some(p=>p.month===m))any=true;if(any)monthsOn.push(m);}
     if(!monthsOn.length)for(let m=1;m<=12;m++)monthsOn.push(m);
     const mth=`text-align:right;padding:6px 7px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:2px solid var(--border);color:var(--label);text-transform:uppercase;white-space:nowrap`;
     const cellHtml=(plan,fact,kind)=>{
@@ -5160,6 +5169,11 @@ function renderPlanFact(f){
     rowsArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factExpM(r.code,m),'exp',false);});
     rh+=mrow('ИТОГО РАСХОДЫ',m=>sumP(rowsArr,planExpM,m),m=>{let s=0;rowsArr.forEach(r=>{s+=factExpM(r.code,m);});return s;},'exp',true);
     rh+=mrow('ЧИСТАЯ ПРИБЫЛЬ',m=>{const ip=sumP(incRowsArr,planIncM,m),ep=sumP(rowsArr,planExpM,m);return (ip==null&&ep==null)?null:((ip||0)-(ep||0));},m=>{let ef=0;rowsArr.forEach(r=>{ef+=factExpM(r.code,m);});return (revByMonth[m]||0)-ef;},'net',true);
+    if(vyvodArr.length){
+      rh+=secR('Распределение прибыли (вывод)');
+      vyvodArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factVyvodM(r.code,m),'exp',false);});
+      rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'exp',true);
+    }
     const ths=monthsOn.map(m=>`<th style="${mth}">${MS[m-1]}</th>`).join('');
     monthlyHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">ПФХД · ${isAll?'Свод (все направления)':esc(dir)} · все месяцы ${year}</span><span class="table-count">факт + план по месяцам</span></div>
       <div class="table-scroll" style="overflow-x:auto"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
@@ -5169,7 +5183,7 @@ function renderPlanFact(f){
   const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">ПФХД · ${isAll?'Свод (все направления)':esc(dir)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.</span></div>
     <div class="table-scroll" style="overflow-x:auto"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
       <thead><tr><th style="text-align:left;${th}">${level==='article'?'Статья':'Подстатья'}</th><th style="${th}">План</th><th style="${th}">Факт</th><th style="${th}">Δ</th><th style="${th}">Δ %</th><th style="text-align:left;${th}">Статус</th></tr></thead>
-      <tbody>${secRow('Доходы')}${incBodyRows}${incTotalRow}${secRow('Расходы')}${bodyRows}${totalRow}${netRow}</tbody></table></div></div>`;
+      <tbody>${secRow('Доходы')}${incBodyRows}${incTotalRow}${secRow('Расходы')}${bodyRows}${totalRow}${netRow}${vyvodRows}</tbody></table></div></div>`;
 
   // график План vs Факт по месяцам (расходы)
   const chartHtml=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:14px">
@@ -6775,6 +6789,10 @@ function _planIncomeCodes(dir,level){
   return Object.keys(set).sort((a,b)=>a.localeCompare(b,'ru'));
 }
 function _planModeDisp(mode){return mode==='pct'?['%выр','#e8f5ee','var(--income)']:mode==='pct_profit'?['%ЧП','#fdf6e3','#9a6700']:['₽','var(--accent-light)','var(--accent)'];}
+// Формат значения плана с разделителем тысяч (10000 → «10 000»); '' для пустого
+function _planFmtNum(v){if(v===''||v==null)return'';const n=typeof v==='number'?v:parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?'':n.toLocaleString('ru-RU',{maximumFractionDigits:2}).replace(/ /g,' ');}
+// Переформатировать инпут плана с разделителем (на blur). Пустое/нечисловое не трогаем
+window.planFmtInput=function(inp){const s=String(inp.value||'').replace(/\s/g,'');if(s===''){inp.value='';return;}const n=parseFloat(s.replace(',','.'));if(isNaN(n))return;inp.value=_planFmtNum(n);};
 window.planSetMode=function(btn){
   const allowP=btn.getAttribute('data-allow-profit')==='1';
   const cur=btn.getAttribute('data-mode');
@@ -6789,7 +6807,7 @@ window.planFillRow=function(btn){
   if(!months.length)return;
   let val=''; for(const inp of months){if(String(inp.value).trim()!==''){val=inp.value;break;}}
   if(String(val).trim()===''){val=prompt('Значение для всех 12 месяцев:',''); if(val==null)return;}
-  months.forEach(i=>{i.value=val;});
+  months.forEach(i=>{i.value=val;if(window.planFmtInput)window.planFmtInput(i);});
   if(months[0])window.planRowYear(months[0]); // пересчитать авто-«Год»
 };
 // Пересчёт авто-«Год» (сумма месяцев) - только если поле «Год» в авто-режиме (₽, не переопределено вручную)
@@ -6797,7 +6815,7 @@ window.planRowYear=function(inp){
   const tr=inp.closest('tr'); if(!tr)return;
   const yr=tr.querySelector('input.plan-val[data-month="0"]'); if(!yr||yr.dataset.auto!=='1')return;
   let s=0;tr.querySelectorAll('input.plan-val').forEach(i=>{if(i.getAttribute('data-month')==='0')return;const v=parseFloat(String(i.value||'').replace(/\s/g,'').replace(',','.'));if(!isNaN(v))s+=v;});
-  yr.value=s?(+s.toFixed(2)):'';
+  yr.value=s?_planFmtNum(+s.toFixed(2)):'';
 };
 function _planStage(){
   const wrap=document.getElementById('plan-matrix'); if(!wrap||!wrap.dataset.dir)return;
@@ -6835,12 +6853,12 @@ function _planRenderMatrix(){
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rl,code,i+1));
-    const cells=moVals.map((mv,i)=>`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" value="${mv}" oninput="planRowYear(this)" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`).join('');
+    const cells=moVals.map((mv,i)=>`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" value="${_planFmtNum(mv)}" oninput="planRowYear(this)" onblur="planFmtInput(this)" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`).join('');
     const yrExpl=cellVal(rl,code,0); // явный годовой план (если задан)
     const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
     const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
     const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" value="${yrShown}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" title="${yrIsAuto?'Авто: сумма месяцев. Введите своё значение, чтобы переопределить':'Годовой план (переопределяет сумму месяцев)'}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" onblur="planFmtInput(this)" title="${yrIsAuto?'Авто: сумма месяцев. Введите своё значение, чтобы переопределить':'Годовой план (переопределяет сумму месяцев)'}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     return `<tr data-code="${esc(code)}" data-level="${rl}">
       <td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${esc(label)}</td>
       <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button></td>${cells}${yr}</tr>`;
