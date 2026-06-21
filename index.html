@@ -6925,10 +6925,14 @@ function _planStage(){
   if(!rows.length)return; // форма не отрисована (данные ещё грузятся) - ничего не трогаем, чтобы не стереть планы
   // чистим ТОЛЬКО те (направление+уровень+код), что реально присутствуют в форме (в т.ч. развёрнутые по направлениям) - планы других направлений/кодов не трогаем
   const presentKeys=new Set();
-  rows.forEach(tr=>{if(tr.classList.contains('plan-dirtotal'))return;const rdir=tr.getAttribute('data-dir')||selDir;presentKeys.add(rdir+''+tr.getAttribute('data-level')+''+tr.getAttribute('data-code'));});
+  // 111-ФОТ: направления со снятым чекбоксом «планировать» - исключаются (их план чистится даже свёрнутыми)
+  const offDirs=new Set();
+  rows.forEach(tr=>{if(tr.classList.contains('plan-dirtotal')){const c=tr.querySelector('input.plan-onoff');if(c&&!c.checked)offDirs.add(tr.getAttribute('data-key')+'|'+(tr.getAttribute('data-dir')||selDir));}});
+  rows.forEach(tr=>{if(tr.classList.contains('plan-dirtotal')){if(!offDirs.has(tr.getAttribute('data-key')+'|'+(tr.getAttribute('data-dir')||selDir)))return;}const rdir=tr.getAttribute('data-dir')||selDir;presentKeys.add(rdir+''+tr.getAttribute('data-level')+''+tr.getAttribute('data-code'));});
   _planRecords=_planRecords.filter(p=>!(p.year===year&&presentKeys.has(String(p.dir)+''+p.level+''+p.code)));
   rows.forEach(tr=>{
     const cb=tr.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return; // строка исключена из плана (галочка снята) - не сохраняем; прежний план уже вычищен по presentKeys
+    if(offDirs.has((tr.getAttribute('data-key')||'')+'|'+(tr.getAttribute('data-dir')||selDir)))return; // сотрудник в выключенном направлении 111-ФОТ
     const rdir=tr.getAttribute('data-dir')||selDir,code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level'),side=tr.getAttribute('data-side')||'';
     const mb=tr.querySelector('.plan-mode');const mode=rlevel==='revenue'?'money':(mb?mb.getAttribute('data-mode'):'money');
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
@@ -7056,7 +7060,7 @@ function _planRenderMatrix(){
       <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">👤</span>${esc(label)}</td>
       <td style="padding:2px 4px;text-align:center;white-space:nowrap"><span style="font-size:11px;color:var(--text3)">₽</span><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом по сотруднику" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}<td></td><td></td></tr>`;};
   // строка направления для 111-ФОТ: read-only ИТОГО по сотрудникам (plan-dirtotal, ▸ разворот) + ответственный/примечание (по направлению+коду)
-  const dirHeaderFot=(rl,code,d,key)=>{const dkey=key+'|'+d;const dopen=EXP.has(dkey);
+  const dirHeaderFot=(rl,code,d,key)=>{const dkey=key+'|'+d;const dopen=EXP.has(dkey);const hasPlan=_planRecords.some(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code);
     const mc=[...Array(12)].map((_,i)=>`<td style="padding:2px 3px"><input class="plan-dttl" data-m="${i+1}" readonly tabindex="-1" value="" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`).join('');
     const yrCell=`<td style="padding:2px 3px"><input class="plan-dttl" data-m="0" readonly tabindex="-1" value="" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface2);color:var(--text);font-weight:700;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;
     const owner=_planOwners[_ownerKey(d,code)]||'',note=_planNotes[_ownerKey(d,code)]||'';
@@ -7064,7 +7068,7 @@ function _planRenderMatrix(){
     if(owner&&!(_cfoList||[]).includes(owner))ownOpts.push(`<option value="${esc(owner)}" selected>${esc(owner)} (вне ЦФО)</option>`);
     const ownerCell=`<td style="padding:2px 3px"><select class="plan-owner" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`;
     const noteCell=`<td style="padding:2px 3px;width:100%"><input class="plan-note" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`;
-    const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface2);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><button type="button" onclick="planToggleExpand('${jesc(dkey)}')" title="Развернуть сотрудников" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface);color:var(--text2)">${dopen?'▾':'▸'}</button>${esc(d)} <span style="color:var(--text3);font-size:10px">· ИТОГО направления</span></td>`;
+    const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface2);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer"><button type="button" onclick="planToggleExpand('${jesc(dkey)}')" title="Развернуть сотрудников" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface);color:var(--text2)">${dopen?'▾':'▸'}</button>${esc(d)} <span style="color:var(--text3);font-size:10px">· ИТОГО направления</span></td>`;
     return `<tr class="plan-dirtotal" data-key="${esc(key)}" data-dir="${esc(d)}" data-code="${esc(code)}" data-level="${rl}" style="background:var(--surface2)">${lab}<td></td>${mc}${yrCell}${ownerCell}${noteCell}</tr>`;};
   const empAddRow=(d,code,key)=>`<tr><td colspan="17" style="padding:3px 8px 6px 40px;position:sticky;left:0;background:var(--surface)"><button type="button" onclick="planAddEmp('${jesc(d)}','${jesc(code)}','${jesc(key)}')" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">+ добавить сотрудника</button></td></tr>`;
   const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label);
@@ -7098,9 +7102,11 @@ function _planRenderMatrix(){
 window.planSumBlock=function(key){
   const wrap=document.getElementById('plan-matrix'); if(!wrap)return;
   const tot=new Array(13).fill(0);
+  const off=new Set(); wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){if(t.getAttribute('data-key')!==key)return;const c=t.querySelector('input.plan-onoff');if(c&&!c.checked)off.add(t.getAttribute('data-dir'));}); // выключенные направления 111-ФОТ
   wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
     if(tr.getAttribute('data-key')!==key||tr.classList.contains('plan-total'))return;
     const cb=tr.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return;
+    if(off.has(tr.getAttribute('data-dir')))return; // сотрудник выключенного направления - не в итоге кода
     const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
     tr.querySelectorAll('input.plan-val').forEach(function(inp){
       const m=+inp.getAttribute('data-month'); const v=parseFloat(String(inp.value||'').replace(/\s/g,'').replace(',','.')); if(isNaN(v))return;
@@ -7116,7 +7122,8 @@ window.planSumBlock=function(key){
 window.planSumDir=function(key,dir){
   const wrap=document.getElementById('plan-matrix'); if(!wrap)return;
   const tot=new Array(13).fill(0);
-  wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
+  let isOff=false; wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){if(t.getAttribute('data-key')===key&&t.getAttribute('data-dir')===dir){const c=t.querySelector('input.plan-onoff');if(c&&!c.checked)isOff=true;}}); // направление выключено - итог пустой
+  if(!isOff)wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
     if(tr.getAttribute('data-key')!==key||tr.getAttribute('data-dir')!==dir)return;
     if(tr.classList.contains('plan-total')||tr.classList.contains('plan-dirtotal'))return;
     tr.querySelectorAll('input.plan-val').forEach(function(inp){
@@ -7130,6 +7137,12 @@ window.planSumFromEl=function(el){const tr=el&&el.closest?el.closest('tr'):null;
 // Чекбокс «планировать это направление»: снят - поля строки отключены и план не сохраняется (исключено из плана)
 window.planToggleRow=function(cb){
   const tr=cb.closest('tr'); if(!tr)return; const on=cb.checked;
+  if(tr.classList.contains('plan-dirtotal')){ // 111-ФОТ: чекбокс направления управляет всеми строками сотрудников этого направления
+    const key=tr.getAttribute('data-key'),dir=tr.getAttribute('data-dir'),wr=document.getElementById('plan-matrix');
+    if(wr)wr.querySelectorAll('tr[data-key]').forEach(function(r){if(r.getAttribute('data-key')!==key||r.getAttribute('data-dir')!==dir||r.classList.contains('plan-dirtotal'))return;r.querySelectorAll('input.plan-val,button').forEach(function(el){el.disabled=!on;el.style.opacity=on?'':'0.4';});});
+    if(window.planSumDir)window.planSumDir(key,dir); if(window.planSumBlock)window.planSumBlock(key);
+    return;
+  }
   tr.querySelectorAll('input.plan-val,.plan-owner,input.plan-note,button').forEach(function(el){el.disabled=!on;el.style.opacity=on?'':'0.4';});
   if(window.planSumFromEl)window.planSumFromEl(cb);
 };
