@@ -6881,7 +6881,8 @@ function _planStage(){
 }
 function _planRenderMatrix(){
   const wrap=document.getElementById('plan-matrix'); if(!wrap)return;
-  const dir=document.getElementById('plan-dir').value,year=+document.getElementById('plan-year').value,level=document.getElementById('plan-level').value;
+  const year=+document.getElementById('plan-year').value,level=(document.getElementById('plan-level')||{}).value||'subarticle';
+  const dir=''; // выбор направления убран - заполнение через разворот подстатьи по направлениям
   wrap.dataset.dir=dir;wrap.dataset.year=year;wrap.dataset.level=level;
   const esc=s=>String(s||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const MON=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
@@ -6927,14 +6928,16 @@ function _planRenderMatrix(){
       ${labCell}
       <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}${ownerCell}</tr>`;
   };
-  const incCodes=_planIncomeCodes(dir,level);
-  const codes=_planCodes(dir,level);
-  const secRow=t=>`<tr><td colspan="16" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const unionCodes=fn=>{const s={};allDirs.forEach(d=>fn(d,level).forEach(c=>s[c]=1));return Object.keys(s).sort((a,b)=>String(a).localeCompare(String(b),'ru'));};
+  const incCodes=unionCodes(_planIncomeCodes);
+  const codes=unionCodes(_planCodes);
+  const secRow=t=>`<tr><td colspan="16" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
   const EXP=window._planExpanded||(window._planExpanded=new Set());
-  const expHeader=(key,label)=>`<tr><td colspan="16" style="padding:4px 8px;font-size:11px;font-weight:700;background:var(--accent-light);position:sticky;left:0"><button type="button" onclick="planToggleExpand('${jesc(key)}')" title="Свернуть" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface);color:var(--text2);vertical-align:middle">▾</button>${esc(label)} <span style="font-weight:400;color:var(--text3);font-size:10px">- заполните по направлениям (★ - текущее)</span></td></tr>`;
-  const codeBlock=(rl,code,label)=>{const key=rl+'|'+code; if(!EXP.has(key))return rowHtml(dir,rl,code,label,false,false,key); return expHeader(key,label)+allDirs.map(d=>rowHtml(d,rl,code,(d===dir?'★ ':'')+d,false,true,key)).join('');};
-  const body=secRow('Доходы')+rowHtml(dir,'revenue','__rev__','Выручка - всего (план)',true,false,null)
+  // свёрнутая/развёрнутая шапка подстатьи (клик по строке - развернуть/свернуть по направлениям)
+  const colHeader=(key,label,open)=>`<tr><td colspan="16" onclick="planToggleExpand('${jesc(key)}')" style="padding:5px 8px;font-size:11px;font-weight:${open?700:500};background:${open?'var(--accent-light)':'var(--surface)'};border-bottom:1px solid var(--divider);position:sticky;left:0;cursor:pointer"><span style="display:inline-block;width:16px;color:var(--text2)">${open?'▾':'▸'}</span>${esc(label)}${open?' <span style="font-weight:400;color:var(--text3);font-size:10px">- заполните по направлениям</span>':''}</td></tr>`;
+  const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(key,label,false);return colHeader(key,label,true)+allDirs.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
+  const body=secRow('Доходы')+codeBlock('revenue','__rev__','Выручка - всего (план)')
     +incCodes.map(c=>codeBlock('income',c,c)).join('')
     +secRow('Расходы')+codes.map(c=>codeBlock(level,c,c)).join('');
   const ths=MON.map(m=>`<th style="padding:6px 4px;font-size:10px;color:var(--text3);font-weight:600">${m}</th>`).join('');
@@ -6952,40 +6955,46 @@ window.planOnControlChange=function(){_planStage();if(window._planExpanded)windo
 window._planExpanded=window._planExpanded||new Set();
 window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window._planExpanded||(window._planExpanded=new Set());if(S.has(key))S.delete(key);else S.add(key);_planRenderMatrix();};
 window.planSave=function(btn){_planStage();if(btn){btn.disabled=true;btn.textContent='Сохранение…';}try{_plansSave();}catch(e){}try{_ownersSave();}catch(e){}const ov=document.getElementById('plansPanelOverlay');if(ov)ov.remove();if(activeTab==='planfact')try{renderActiveTab();}catch(e){}};
-// Печать: расходы с планом (год), фактом (год) и ответственными ФИО - для выбранного направления+года
+// Печать: расходы с планом (год), фактом (год) и ответственными ФИО - по ВСЕМ направлениям (секция на каждое)
 window.planPrintOwners=function(){
   try{_planStage();}catch(e){}
-  const wrap=document.getElementById('plan-matrix'); if(!wrap||!wrap.dataset.dir){alert('Откройте редактор планов');return;}
-  const dir=wrap.dataset.dir, year=+wrap.dataset.year, level=wrap.dataset.level;
+  const wrap=document.getElementById('plan-matrix'); if(!wrap){alert('Откройте редактор планов');return;}
+  const year=+wrap.dataset.year, level=wrap.dataset.level||'subarticle';
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
-  const rev=new Array(13).fill(0), npExp=new Array(13).fill(0), exp={};
-  (RAW||[]).forEach(r=>{
-    if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
-    const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
-    const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
-    const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=parseNum(r[COL.OUTCOME]);
-    const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(), key=level==='article'?ac:an;
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc;
-    if(t==='списание'&&out<0){const av=Math.abs(out); if(key)(exp[key]=exp[key]||new Array(13).fill(0))[m]+=av; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=av;}
-  });
-  const revYr=rev.reduce((a,b)=>a+b,0); let netYr=0; for(let m=1;m<=12;m++)netYr+=Math.max(0,rev[m]-npExp[m]);
-  const cvt=(r,m)=>r.mode==='pct'?r.value*(m?rev[m]:revYr):r.mode==='pct_profit'?r.value*(m?Math.max(0,rev[m]-npExp[m]):netYr):r.value;
-  const planYr=code=>{const y0=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===level&&p.code===code&&p.month===0); if(y0)return cvt(y0,0); let v=null; for(let m=1;m<=12;m++){const r=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===level&&p.code===code&&p.month===m); if(r)v=(v||0)+cvt(r,m);} return v;};
-  const codes={}; _planRecords.forEach(p=>{if(p.dir===dir&&p.year===year&&p.level===level&&c3(p.code)!=='120')codes[p.code]=1;}); Object.keys(exp).forEach(c=>{if(c3(c)!=='120')codes[c]=1;});
-  const rows=Object.keys(codes).sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(code=>({code, plan:planYr(code), fact:(exp[code]||[]).reduce((a,b)=>a+(b||0),0), owner:_planOwners[_ownerKey(dir,code)]||''}));
-  let tp=0,tf=0; rows.forEach(r=>{tp+=(r.plan||0);tf+=r.fact;});
+  const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const f=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
   const today=new Date().toLocaleDateString('ru-RU');
   const factStyle=(plan,fact)=>{if(plan==null)return'';const over=fact>Math.abs(plan)+0.0001;return over?'color:#c0392f;font-weight:bold':'color:#198754';};
-  const trs=rows.map(r=>`<tr><td>${esc(r.code)}</td><td class="r">${r.plan!=null?f(r.plan):'-'}</td><td class="r" style="${factStyle(r.plan,r.fact)}">${f(r.fact)}</td><td>${esc(r.owner)||'<span class=mut>—</span>'}</td></tr>`).join('');
-  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Ответственные за расходы — ${esc(dir)} ${year}</title>`
-    +`<style>body{font-family:Arial,sans-serif;color:#222;margin:24px;font-size:12px}h1{font-size:16px;margin:0 0 4px}.sub{color:#666;font-size:12px;margin:0 0 16px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:6px 8px;text-align:left;vertical-align:top}th{background:#eef1f6;font-size:11px;text-transform:uppercase;letter-spacing:.04em}td.r,th.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}tfoot td{font-weight:700;background:#f3f5f8}.mut{color:#999}.sign{margin-top:36px;display:flex;justify-content:space-between;font-size:12px;color:#444}@media print{body{margin:0}.sign{margin-top:48px}}</style></head>`
-    +`<body><h1>Ответственные за расходы — ${esc(dir)}</h1>`
-    +`<p class="sub">ПФХД, ${year} г. (уровень: ${level==='article'?'статья':'подстатья'}). Сформировано ${today}. Суммы — в рублях за год.</p>`
-    +`<table><thead><tr><th>${level==='article'?'Статья':'Подстатья'} расходов</th><th class="r">План (год)</th><th class="r">Факт (год)</th><th>Ответственный (ФИО)</th></tr></thead>`
-    +`<tbody>${trs||'<tr><td colspan="4" class="mut">Нет расходных строк</td></tr>'}</tbody>`
-    +`<tfoot><tr><td>ИТОГО РАСХОДЫ</td><td class="r">${f(tp)}</td><td class="r" style="${tf>tp+0.0001?'color:#c0392f':'color:#198754'}">${f(tf)}</td><td></td></tr></tfoot></table>`
+  const sectionFor=dir=>{
+    const rev=new Array(13).fill(0), npExp=new Array(13).fill(0), exp={};
+    (RAW||[]).forEach(r=>{
+      if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
+      const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
+      const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
+      const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=parseNum(r[COL.OUTCOME]);
+      const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(), key=level==='article'?ac:an;
+      if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc;
+      if(t==='списание'&&out<0){const av=Math.abs(out); if(key)(exp[key]=exp[key]||new Array(13).fill(0))[m]+=av; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=av;}
+    });
+    const revYr=rev.reduce((a,b)=>a+b,0); let netYr=0; for(let m=1;m<=12;m++)netYr+=Math.max(0,rev[m]-npExp[m]);
+    const cvt=(r,m)=>r.mode==='pct'?r.value*(m?rev[m]:revYr):r.mode==='pct_profit'?r.value*(m?Math.max(0,rev[m]-npExp[m]):netYr):r.value;
+    const planYr=code=>{const y0=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===level&&p.code===code&&p.month===0); if(y0)return cvt(y0,0); let v=null; for(let m=1;m<=12;m++){const r=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===level&&p.code===code&&p.month===m); if(r)v=(v||0)+cvt(r,m);} return v;};
+    const codes={}; _planRecords.forEach(p=>{if(p.dir===dir&&p.year===year&&p.level===level&&c3(p.code)!=='120')codes[p.code]=1;}); Object.keys(exp).forEach(c=>{if(c3(c)!=='120')codes[c]=1;});
+    const rows=Object.keys(codes).sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(code=>({code, plan:planYr(code), fact:(exp[code]||[]).reduce((a,b)=>a+(b||0),0), owner:_planOwners[_ownerKey(dir,code)]||''}));
+    if(!rows.length)return '';
+    let tp=0,tf=0; rows.forEach(r=>{tp+=(r.plan||0);tf+=r.fact;});
+    const trs=rows.map(r=>`<tr><td>${esc(r.code)}</td><td class="r">${r.plan!=null?f(r.plan):'-'}</td><td class="r" style="${factStyle(r.plan,r.fact)}">${f(r.fact)}</td><td>${esc(r.owner)||'<span class=mut>—</span>'}</td></tr>`).join('');
+    return `<h2>${esc(dir)}</h2><table><thead><tr><th>${level==='article'?'Статья':'Подстатья'} расходов</th><th class="r">План (год)</th><th class="r">Факт (год)</th><th>Ответственный (ФИО)</th></tr></thead>`
+      +`<tbody>${trs}</tbody>`
+      +`<tfoot><tr><td>ИТОГО</td><td class="r">${f(tp)}</td><td class="r" style="${tf>tp+0.0001?'color:#c0392f':'color:#198754'}">${f(tf)}</td><td></td></tr></tfoot></table>`;
+  };
+  const sections=allDirs.map(sectionFor).filter(Boolean).join('');
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>Ответственные за расходы — ПФХД ${year}</title>`
+    +`<style>body{font-family:Arial,sans-serif;color:#222;margin:24px;font-size:12px}h1{font-size:16px;margin:0 0 4px}h2{font-size:13px;margin:18px 0 6px;color:#2b3145}.sub{color:#666;font-size:12px;margin:0 0 12px}table{border-collapse:collapse;width:100%;margin-bottom:6px;page-break-inside:auto}h2,table{page-break-inside:avoid}th,td{border:1px solid #bbb;padding:6px 8px;text-align:left;vertical-align:top}th{background:#eef1f6;font-size:11px;text-transform:uppercase;letter-spacing:.04em}td.r,th.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}tfoot td{font-weight:700;background:#f3f5f8}.mut{color:#999}.sign{margin-top:36px;display:flex;justify-content:space-between;font-size:12px;color:#444}@media print{body{margin:0}.sign{margin-top:48px}}</style></head>`
+    +`<body><h1>Ответственные за расходы — все направления</h1>`
+    +`<p class="sub">ПФХД, ${year} г. (уровень: ${level==='article'?'статья':'подстатья'}). Сформировано ${today}. Суммы — в рублях за год. Красным — перерасход (факт > плана).</p>`
+    +(sections||'<p class="mut">Нет расходных строк</p>')
     +`<div class="sign"><span>Руководитель ____________________ / ____________</span><span>Дата ____________</span></div>`
     +`</body></html>`;
   const w=window.open('','_blank'); if(!w){alert('Разрешите всплывающие окна для печати');return;}
@@ -7005,7 +7014,7 @@ window.showPlansPanel=async function(){
     <div class="txn-card-head"><h3>Планы (ПФХД)</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:14px 18px 18px">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-        <select id="plan-dir" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);min-width:200px">${dirs.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>
+        <span style="font-size:12px;color:var(--text2);font-weight:600;align-self:center">Все направления</span>
         <select id="plan-year" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${years.map(y=>`<option value="${y}"${y===cy?' selected':''}>${y}</option>`).join('')}</select>
         <input type="hidden" id="plan-level" value="subarticle">
         <span style="font-size:11px;color:var(--text3);align-self:center">Уровень: Подстатья · статьи собираются автоматически по первым 3 цифрам</span>
