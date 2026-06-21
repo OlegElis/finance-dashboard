@@ -6132,7 +6132,8 @@ function renderAnomaly(f){
   const norm=s=>S(s).toLowerCase().replace(/[^a-zа-яё0-9]/gi,'');
   const code3=r=>{const a=S(r[COL.ARTICLE_CODE]).match(/^(\d{3})/);if(a)return a[1];const b=S(r[COL.ARTICLE_NAME]).match(/^(\d{3})/);return b?b[1]:'';};
   const isMove=r=>S(r[COL.TYPE]).toLowerCase()==='перемещение';
-  const is127div=r=>norm(r[COL.ARTICLE_NAME]).includes('дивиденд');
+  const is127=r=>code3(r)==='127'||norm(r[COL.ARTICLE_NAME]).includes('дивиденд'); // код статьи 127 (или подстатья «дивиденд»)
+  const okFin002=a=>{const n=norm(a);return n.includes('002')&&n.includes('финанс');}; // 002_Финансовая деятельность
   // Классификация счёта как в БАНКе: ООО/ИП = денежные средства (требуют ФНС)
   const isOOO=n=>/^(ООО|ОАО|ЗАО|ПАО|АО)[\s\-«"]/i.test(n)||/^(ООО|ОАО|ЗАО|ПАО|АО)$/i.test(n);
   const isIP=n=>/^ИП[\s\-«"]/i.test(n)||/^ИП$/i.test(n);
@@ -6166,9 +6167,10 @@ function renderAnomaly(f){
     {id:'a300',label:'Статья 300 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='300',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
     {id:'a112',label:'Статья 112 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='112',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
     {id:'sro',label:'112_Платежи в СРО → направление АУ/САУ',where:r=>!isMove(r)&&norm(r[COL.ARTICLE_NAME]).includes('сро'),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}}]},
-    {id:'div',label:'127 Дивиденды → Вывод прибыли · Финансовая · контрагент',where:is127div,checks:[
+    {id:'outsign',label:'Списание → только со знаком «−»',where:r=>!isMove(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
+    {id:'div',label:'Статья 127 → Вывод чистой прибыли · 002_Финансовая деятельность · контрагент',where:is127,checks:[
       {field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Вывод чистой прибыли'},
-      {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Финансовая'},
+      {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'002_Финансовая деятельность',ok:okFin002},
       {field:COL.SECOND_SIDE,fieldName:'Контрагент (ID_SecondSide)',requireFilled:true}
     ]},
     {id:'fns',label:'Счёт ООО/ИП → ФНС «да»',where:r=>!isMove(r)&&isOfficialAcc(r),checks:[{field:COL.FNS,fieldName:'ФНС',expect:'да',ok:fnsYes}]},
