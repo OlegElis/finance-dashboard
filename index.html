@@ -6682,8 +6682,9 @@ window.appLoginGoogle=function(){
 window._accessRowHtml=function(email,sheet,name){
   const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const titles=window._accessTitles||[];
-  const sel=sheet||'__full__';
-  let opts='<option value="__full__"'+(sel==='__full__'?' selected':'')+'>- Полный доступ (RawData) -</option>';
+  const sel=sheet||'';
+  let opts='<option value=""'+(sel===''?' selected':'')+'>- без доступа -</option>';
+  opts+='<option value="__full__"'+(sel==='__full__'?' selected':'')+'>- Полный доступ (RawData) -</option>';
   const all=(sel&&sel!=='__full__'&&titles.indexOf(sel)<0)?[sel].concat(titles):titles;
   all.forEach(t=>{opts+='<option value="'+esc(t)+'"'+(t===sel?' selected':'')+'>'+esc(t)+'</option>';});
   const inp='width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)';
@@ -6709,7 +6710,7 @@ window.accessSavePanel=function(btn){
     if(!em)return;
     if(seen[em]){dup=true;return;} seen[em]=1;
     if(sh==='__full__')allowed.push(em); else if(sh)sheetAcc.push({email:em,sheet:sh});
-    if(nm)names.push({email:em,name:nm});
+    if(nm||!sh)names.push({email:em,name:nm}); // контакт без доступа/вкладки тоже сохраняем в реестр имён, чтобы он не пропадал при сохранении
   });
   if(dup&&!confirm('Есть повторяющиеся email - будут учтены только первые. Сохранить?'))return;
   if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
@@ -6739,9 +6740,11 @@ window.showAccessPanel=async function(){
     }
   }catch(e){}
   window._accessTitles=titles;
-  const entries=[];
-  sheetAcc.forEach(x=>{if(x&&x.email)entries.push({email:String(x.email),sheet:String(x.sheet||''),name:nameOf(x.email)});});
-  allowed.forEach(em=>{if(em)entries.push({email:String(em),sheet:'__full__',name:nameOf(em)});});
+  const entries=[],seenE={};
+  const addE=(email,sheet)=>{const k=String(email||'').trim().toLowerCase();if(!k||seenE[k])return;seenE[k]=1;entries.push({email:String(email),sheet:sheet,name:nameOf(email)});};
+  sheetAcc.forEach(x=>{if(x&&x.email)addE(x.email,String(x.sheet||''));});
+  allowed.forEach(em=>{if(em)addE(em,'__full__');});
+  names.forEach(x=>{if(x&&x.email)addE(x.email,'');}); // контакты из реестра имён без доступа/вкладки - тоже показываем (вкладка не обязательна)
   entries.sort((a,b)=>String(b.name||'').localeCompare(String(a.name||''),'ru')); // по ФИО по убыванию (без ФИО - в конце)
   const rows=entries.map(e=>window._accessRowHtml(e.email,e.sheet,e.name));
   const body=rows.length?rows.join(''):'';
