@@ -1061,8 +1061,8 @@ async function connectAndLoad(){
     localStorage.setItem('fin_sheetId',sheetId);
     localStorage.setItem('fin_apiKey',apiKey);
     try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/sheets').set({sheetId,apiKey}); } }catch(e){} // реквизиты - в облако (общие для устройств)
-    if(sheet==='RawData')await loadBflDeals(sheetId,apiKey); // лист сделок БФЛ - только при полном доступе
-    else RAW_BFL=null;
+    if(sheet==='RawData'){await loadBflDeals(sheetId,apiKey); await loadOfferRef(sheetId,apiKey);} // БФЛ-сделки + справочник сделок ВСЕХ направлений (RawData_ID_Offer)
+    else {RAW_BFL=null;RAW_OFFERS=null;}
     onDataLoaded();
   }catch(e){setStatus('error','Ошибка: '+e.message);alert('Ошибка:\n'+e.message);}
 }
@@ -1071,6 +1071,30 @@ async function connectAndLoad(){
 //   «Дата создания Лида» → лиды (CPL), «Дата входа в стадию "Полная/частичная оплата"» → сделки (CPO),
 //   «Дата завершения сделки» → исполнено (CPF)
 let RAW_BFL=null; // {leads:[Date], paid:[Date], done:[Date]} или null если лист недоступен
+// Справочник сделок по ВСЕМ направлениям (лист RawData_ID_Offer) - для сверки ID_Offer в Аномалиях (RawData_BFL = только БФЛ)
+let RAW_OFFERS=null; // {deals:[{offer,fio,contract,created,dateContract}]} или null
+async function loadOfferRef(sheetId,apiKey){
+  RAW_OFFERS=null;
+  try{
+    const url=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/RawData_ID_Offer?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`;
+    const resp=await fetch(url); if(!resp.ok)return; // листа нет - работаем по RawData_BFL
+    const json=await resp.json(); const rows=json.values||[]; if(rows.length<2)return;
+    const hdr=rows[0].map(h=>String(h||'').toLowerCase().trim());
+    let iOffer=hdr.findIndex(h=>h==='id_offer'); if(iOffer<0)iOffer=hdr.findIndex(h=>h.indexOf('id_offer')>=0||h.indexOf('id offer')>=0);
+    const iFio=hdr.findIndex(h=>h.startsWith('фио'));
+    const iNum=hdr.findIndex(h=>h.startsWith('№ договора'));
+    const iCreated=hdr.findIndex(h=>h==='дата создания сделки');
+    const iDateContract=hdr.findIndex(h=>h==='дата договора');
+    if(iOffer<0)return;
+    const deals=[];
+    rows.slice(1).forEach(r=>{
+      const offer=String(r[iOffer]||'').trim(); if(!offer)return;
+      deals.push({offer, fio:iFio>=0?String(r[iFio]||'').trim():'', contract:iNum>=0?String(r[iNum]||'').trim():'', created:iCreated>=0?parseDate(r[iCreated]):null, dateContract:iDateContract>=0?parseDate(r[iDateContract]):null});
+    });
+    RAW_OFFERS={deals};
+    console.log(`[RawData_ID_Offer] справочник всех направлений: ${deals.length} сделок`);
+  }catch(e){console.warn('[RawData_ID_Offer] не загружен:',e.message);}
+}
 async function loadBflDeals(sheetId,apiKey){
   RAW_BFL=null;
   try{
@@ -6118,7 +6142,9 @@ function renderAnomaly(f){
   const BFL_DIR='БФЛ - Банкротство физических лиц';
   const refOffer=new Set(),refLead={},refContract=new Set(),refName=new Set();
   const cNorm=s=>String(s||'').toUpperCase().replace(/[\s«»"']/g,'').trim(); // нормализация № договора
-  if(RAW_BFL&&RAW_BFL.deals)RAW_BFL.deals.forEach(d=>{
+  // справочник: ВСЕ направления (RawData_ID_Offer); откат на RawData_BFL, если общий лист недоступен
+  const REFDEALS=(RAW_OFFERS&&RAW_OFFERS.deals&&RAW_OFFERS.deals.length)?RAW_OFFERS.deals:((RAW_BFL&&RAW_BFL.deals)||[]);
+  REFDEALS.forEach(d=>{
     const off=String(d.offer||'').trim();const k=_arNormId(off);if(k)refOffer.add(k);
     const cN=cNorm(d.contract)||cNorm(off.split('|')[1]||'');if(cN.length>=4)refContract.add(cN); // № договора (из поля или среднего сегмента ID)
     [cNorm(d.fio),cNorm(off.split('|')[2]||'')].forEach(nm=>{if(nm.length>=6)refName.add(nm);}); // ФИО (из поля или 3-го сегмента ID)
