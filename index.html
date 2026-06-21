@@ -993,7 +993,6 @@ window.showSettingsMenu=function(){
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showSetup()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><path d="M9 15l6-6"/><path d="M11.5 6.5l1-1a3.5 3.5 0 0 1 5 5l-1 1"/><path d="M12.5 17.5l-1 1a3.5 3.5 0 0 1-5-5l1-1"/></svg>Подключение к Google</button>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showAccessPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16.5 6.4a3 3 0 0 1 0 5.2M20.5 19c0-2.1-1.2-3.7-3-4.4"/></svg>Управление доступом</button>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showPlansPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>Планы (ПФХД)</button>
-    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showCfoPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16 4l1.5 1.5L20 3"/></svg>ЦФО (ответственные)</button>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showPresetsPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg>Пресеты отчётов</button>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();downloadBackup(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><path d="M12 4v10M8 11l4 4 4-4"/><path d="M5 19h14"/></svg>Бэкап (данные + настройки)</button>`;
   document.body.appendChild(menu);
@@ -6748,7 +6747,7 @@ window.showAccessPanel=async function(){
     <div style="padding:16px 20px 20px">
       <p style="font-size:12px;color:var(--text2);margin:0 0 12px;line-height:1.6">
         Кто и что видит. <b>Полный доступ</b> = весь <code>RawData</code>; иначе - только выбранная персональная вкладка.
-        Вы (<b>${ADMIN_EMAIL}</b>) всегда админ с полным доступом. <span style="color:var(--text3)">${titleNote}</span>
+        Вы (<b>${ADMIN_EMAIL}</b>) всегда админ с полным доступом. <b>ФИО</b> используются как ответственные (ЦФО) в планах ПФХД. <span style="color:var(--text3)">${titleNote}</span>
       </p>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:50vh;overflow-y:auto">
         <table style="width:100%;border-collapse:collapse">
@@ -6829,50 +6828,18 @@ function startNotesSync(){
       try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}});
   }catch(e){console.warn('[notes] sync',e&&e.message);}
 }
-// ЦФО - ручной список ответственных (ФИО) для подсказок в планах - config/cfo
+// ЦФО / ответственные = люди с доступом (их ФИО из config/names, задаются в «Управление доступом»). Список идёт в подсказки поля «Ответственный» планов.
 let _cfoList=(()=>{try{const a=JSON.parse(localStorage.getItem('finCfo')||'[]');return Array.isArray(a)?a:[]}catch(e){return[]}})();
-function _cfoSave(){
-  try{localStorage.setItem('finCfo',JSON.stringify(_cfoList));}catch(e){}
-  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/cfo').set(_cfoList); } }catch(e){}
-}
 function startCfoSync(){
   if(window._cfoSyncStarted)return; window._cfoSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
-    firebase.database().ref('config/cfo').on('value',s=>{const v=s.val();
-      _cfoList=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
+    firebase.database().ref('config/names').on('value',s=>{const v=s.val();
+      const arr=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
+      _cfoList=[...new Set(arr.map(x=>x&&String(x.name||'').trim()).filter(Boolean))];
       try{localStorage.setItem('finCfo',JSON.stringify(_cfoList));}catch(e){}});
-  }catch(e){console.warn('[cfo] sync',e&&e.message);}
+  }catch(e){console.warn('[cfo/names] sync',e&&e.message);}
 }
-window.showCfoPanel=function(){
-  if(document.getElementById('cfoOverlay'))return;
-  const esc=s=>String(s==null?'':s).replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  const ov=document.createElement('div'); ov.id='cfoOverlay';
-  ov.style.cssText='position:fixed;inset:0;z-index:99997;background:rgba(20,24,33,.45);display:flex;align-items:center;justify-content:center;padding:20px';
-  ov.innerHTML=`<div style="background:var(--surface);border-radius:12px;width:520px;max-width:96vw;max-height:88vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.4);font-family:var(--sans)">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border)"><h3 style="margin:0;font-size:15px;color:var(--text)">ЦФО - ответственные</h3><button onclick="document.getElementById('cfoOverlay').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--text3)">✕</button></div>
-    <div style="padding:16px 18px">
-      <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Список ответственных (ФИО) - по одному в строке. Они появятся подсказками в поле «Ответственный» планов ПФХД.</div>
-      <textarea id="cfoText" style="width:100%;box-sizing:border-box;min-height:280px;font-size:13px;font-family:var(--sans);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);background:var(--surface);resize:vertical" placeholder="Иванов Иван Иванович&#10;Петров Пётр Петрович">${esc((_cfoList||[]).join('\n'))}</textarea>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-top:1px solid var(--border)">
-      <span style="font-size:10px;color:var(--text3)">Хранится в облаке (Firebase), запись только админу</span>
-      <div style="display:flex;gap:8px">
-        <button onclick="document.getElementById('cfoOverlay').remove()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Отмена</button>
-        <button onclick="cfoSavePanel(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>
-      </div>
-    </div></div>`;
-  document.body.appendChild(ov);
-};
-window.cfoSavePanel=function(btn){
-  const ta=document.getElementById('cfoText'); if(!ta)return;
-  _cfoList=String(ta.value||'').split('\n').map(s=>s.trim()).filter(Boolean);
-  // дедуп с сохранением порядка
-  _cfoList=[...new Set(_cfoList)];
-  if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
-  try{_cfoSave();}catch(e){}
-  const ov=document.getElementById('cfoOverlay'); if(ov)ov.remove();
-};
 function _planCodes(dir,level){
   const set={};
   RAW.forEach(r=>{
