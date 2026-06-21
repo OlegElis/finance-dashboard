@@ -6906,6 +6906,7 @@ window.planSetMode=function(btn){
   let nx; if(cur==='money')nx='pct'; else if(cur==='pct')nx=allowP?'pct_profit':'money'; else nx='money';
   btn.setAttribute('data-mode',nx);
   const d=_planModeDisp(nx);btn.textContent=d[0];btn.style.background=d[1];btn.style.color=d[2];
+  if(window.planSumFromEl)planSumFromEl(btn);
 };
 // Заполнить все 12 месяцев строки одним значением (значение первого заполненного месяца; если пусто - спросить)
 window.planFillRow=function(btn){
@@ -6916,6 +6917,7 @@ window.planFillRow=function(btn){
   if(String(val).trim()===''){val=prompt('Значение для всех 12 месяцев:',''); if(val==null)return;}
   months.forEach(i=>{i.value=val;if(window.planFmtInput)window.planFmtInput(i);});
   if(months[0])window.planRowYear(months[0]); // пересчитать авто-«Год»
+  if(window.planSumFromEl)planSumFromEl(btn);
 };
 // «План = факт»: вставить в ячейку фактическую сумму (data-fact). Только в режиме ₽ (факт - в рублях)
 window.planFillCellFact=function(inp){
@@ -6926,6 +6928,7 @@ window.planFillCellFact=function(inp){
   inp.value=(!isNaN(n)&&n)?_planFmtNum(n):'0';
   if(inp.getAttribute('data-month')==='0'){inp.dataset.auto='0';inp.style.color='var(--text)';}
   else if(window.planRowYear)window.planRowYear(inp);
+  if(window.planSumFromEl)planSumFromEl(inp);
 };
 // Заполнить все 12 месяцев строки фактом (по data-fact). Месяцы без факта остаются пустыми
 window.planFillRowFact=function(btn){
@@ -6934,6 +6937,7 @@ window.planFillRowFact=function(btn){
   if(mode!=='money'){alert('Заполнение фактом доступно только в режиме ₽ (переключите режим строки)');return;}
   tr.querySelectorAll('input.plan-val').forEach(i=>{if(i.getAttribute('data-month')==='0')return;const n=parseFloat(i.getAttribute('data-fact'));i.value=(!isNaN(n)&&n)?_planFmtNum(n):'';});
   const m1=tr.querySelector('input.plan-val[data-month="1"]'); if(m1&&window.planRowYear)window.planRowYear(m1);
+  if(window.planSumFromEl)planSumFromEl(btn);
 };
 // Пересчёт авто-«Год» (сумма месяцев) - только если поле «Год» в авто-режиме (₽, не переопределено вручную)
 window.planRowYear=function(inp){
@@ -6998,6 +7002,8 @@ function _planRenderMatrix(){
   // ── суммы по группе (подстатья по всем направлениям) для свёрнутого вида: год план (с разрешением %/%ЧП) + год факт ──
   const revYrD=d=>{const F=FAD[d];if(!F)return 0;let s=0;for(let m=1;m<=12;m++)s+=F.rev[m];return s;};
   const netYrD=d=>{const F=FAD[d];if(!F)return 0;let s=0;for(let m=1;m<=12;m++)s+=Math.max(0,F.rev[m]-F.npExp[m]);return s;};
+  const revM=(d,m)=>{const F=FAD[d];return F?(F.rev[m]||0):0;};
+  const netM=(d,m)=>{const F=FAD[d];return F?Math.max(0,(F.rev[m]||0)-(F.npExp[m]||0)):0;};
   const dirYearPlan=(rl,code,d)=>{const recs=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code);if(!recs.length)return null;const F=FAD[d];const cvt=(r,m)=>r.mode==='pct'?r.value*(m?((F&&F.rev[m])||0):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):netYrD(d)):r.value;const y0=recs.find(p=>p.month===0);if(y0)return cvt(y0,0);let v=0,has=false;for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r){v+=cvt(r,m);has=true;}}return has?v:null;};
   const subYearPlan=(rl,code)=>{let s=null;allDirs.forEach(d=>{const v=dirYearPlan(rl,code,d);if(v!=null)s=(s||0)+v;});return s;};
   const subYearFact=(rl,code)=>{let s=0;allDirs.forEach(d=>{s+=factYr(d,rl,code);});return s;};
@@ -7008,13 +7014,13 @@ function _planRenderMatrix(){
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,rl,code,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=factOf(rdir,rl,code,i+1);return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this)" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="Двойной клик - вставить факт: ${fmt(fv)}" style="width:72px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const cells=moVals.map((mv,i)=>{const fv=factOf(rdir,rl,code,i+1);return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" data-rb="${revM(rdir,i+1)}" data-nb="${netM(rdir,i+1)}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="Двойной клик - вставить факт: ${fmt(fv)}" style="width:72px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
     const yrExpl=cellVal(rdir,rl,code,0); // явный годовой план (если задан)
     const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
     const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
     const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
     const yrFact=factYr(rdir,rl,code);
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="${yrIsAuto?'Авто: сумма месяцев. Двойной клик - вставить факт за год: '+fmt(yrFact):'Годовой план. Двойной клик - вставить факт за год: '+fmt(yrFact)}" style="width:72px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" data-rb="${revYrD(rdir)}" data-nb="${netYrD(rdir)}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="${yrIsAuto?'Авто: сумма месяцев. Двойной клик - вставить факт за год: '+fmt(yrFact):'Годовой план. Двойной клик - вставить факт за год: '+fmt(yrFact)}" style="width:72px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     const isExp=rl!=='revenue'; // ответственный/примечание - за расходами И доходами; не для строки «Выручка всего»
     const owner=isExp?(_planOwners[_ownerKey(rdir,code)]||''):'';
     const note=isExp?(_planNotes[_ownerKey(rdir,code)]||''):'';
@@ -7025,7 +7031,7 @@ function _planRenderMatrix(){
     const labCell=sub
       ?`<td style="padding:4px 8px 4px 22px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:var(--surface);color:var(--text2)"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять галочку - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer">${esc(label)}</td>`
       :`<td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${expBtn}${esc(label)}</td>`;
-    return `<tr data-code="${esc(code)}" data-level="${rl}" data-dir="${esc(rdir)}">
+    return `<tr data-code="${esc(code)}" data-level="${rl}" data-dir="${esc(rdir)}" data-key="${esc(rl+'|'+code)}">
       ${labCell}
       <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}${ownerCell}${noteCell}</tr>`;
   };
@@ -7035,31 +7041,59 @@ function _planRenderMatrix(){
   const codes=unionCodes(_planCodes);
   const secRow=t=>`<tr><td colspan="17" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
   const EXP=window._planExpanded||(window._planExpanded=new Set());
-  // свёрнутая/развёрнутая шапка подстатьи (клик по строке - развернуть/свернуть по направлениям)
-  const colHeader=(rl,code,label,open)=>{const key=rl+'|'+code;
-    let sums='';
-    if(!open){const yp=subYearPlan(rl,code),yf=subYearFact(rl,code);const parts=[];if(yp!=null)parts.push('план '+fmt(yp));if(yf)parts.push('факт '+fmt(yf));if(parts.length)sums=` <span style="font-weight:400;color:var(--text3);font-size:10px;font-family:var(--mono)">· ${parts.join(' · ')} <span style="color:var(--text3)">(за год, все напр.)</span></span>`;}
-    return `<tr><td colspan="17" onclick="planToggleExpand('${jesc(key)}')" style="padding:5px 8px;font-size:11px;font-weight:${open?700:500};background:${open?'var(--accent-light)':'var(--surface)'};border-bottom:1px solid var(--divider);position:sticky;left:0;cursor:pointer"><span style="display:inline-block;width:16px;color:var(--text2)">${open?'▾':'▸'}</span>${esc(label)}${open?' <span style="font-weight:400;color:var(--text3);font-size:10px">- заполните по направлениям</span>':sums}</td></tr>`;};
-  const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label,false);return colHeader(rl,code,label,true)+allDirs.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
+  // свёрнутая шапка подстатьи: название + год план/факт по группе
+  const colHeader=(rl,code,label)=>{const key=rl+'|'+code;
+    const yp=subYearPlan(rl,code),yf=subYearFact(rl,code);const parts=[];if(yp!=null)parts.push('план '+fmt(yp));if(yf)parts.push('факт '+fmt(yf));
+    const sums=parts.length?` <span style="font-weight:400;color:var(--text3);font-size:10px;font-family:var(--mono)">· ${parts.join(' · ')} <span style="color:var(--text3)">(за год, все напр.)</span></span>`:'';
+    return `<tr><td colspan="17" onclick="planToggleExpand('${jesc(key)}')" style="padding:5px 8px;font-size:11px;font-weight:500;background:var(--surface);border-bottom:1px solid var(--divider);position:sticky;left:0;cursor:pointer"><span style="display:inline-block;width:16px;color:var(--text2)">▸</span>${esc(label)}${sums}</td></tr>`;};
+  // развёрнутая шапка: название + ИТОГО по месяцам/году (план, все направления; пересчёт %/%ЧП). Заполняется planSumBlock после рендера и при правках
+  const openHeader=(rl,code,label,key)=>{
+    const mc=[...Array(12)].map((_,i)=>`<td class="plan-ttl" data-m="${i+1}" style="text-align:right;padding:4px 6px;font-family:var(--mono);font-size:11px;color:var(--text2)"></td>`).join('');
+    return `<tr class="plan-total" data-key="${esc(key)}" style="background:var(--accent-light)">
+      <td onclick="planToggleExpand('${jesc(key)}')" style="padding:5px 8px;font-size:11px;font-weight:700;position:sticky;left:0;background:var(--accent-light);cursor:pointer;white-space:nowrap"><span style="display:inline-block;width:16px;color:var(--text2)">▾</span>${esc(label)} <span style="font-weight:400;color:var(--text3);font-size:10px">· ИТОГО (план)</span></td>
+      <td></td>${mc}<td class="plan-ttl" data-m="0" style="text-align:right;padding:4px 6px;font-family:var(--mono);font-size:11px;font-weight:700;border-left:2px solid var(--border);color:var(--text)"></td><td></td><td></td>
+    </tr>`;};
+  const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label);return openHeader(rl,code,label,key)+allDirs.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
   const body=secRow('Доходы')+codeBlock('revenue','__rev__','Выручка - всего (план)')
     +incCodes.map(c=>codeBlock('income',c,c)).join('')
     +secRow('Расходы')+codes.map(c=>codeBlock(level,c,c)).join('');
-  const ths=MON.map(m=>`<th style="padding:6px 4px;font-size:10px;color:var(--text3);font-weight:600">${m}</th>`).join('');
+  const ths=MON.map(m=>`<th style="padding:6px 4px;font-size:10px;color:var(--text3);font-weight:600;position:sticky;top:0;background:var(--surface2);z-index:1">${m}</th>`).join('');
   const ownerOpts=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{}).filter(Boolean)])].sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(n=>`<option value="${esc(n)}">`).join('');
   wrap.innerHTML=`<datalist id="planOwnerList">${ownerOpts}</datalist><table style="border-collapse:collapse;white-space:nowrap;width:100%">
     <thead><tr>
-      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;position:sticky;left:0;background:var(--surface2);z-index:2">${level==='article'?'Статья':'Подстатья'}</th>
-      <th style="padding:6px 4px;font-size:10px;color:var(--text3)">₽/%</th>${ths}
-      <th style="padding:6px 4px;font-size:10px;color:var(--accent)">Год</th>
-      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left">Ответственный</th>
-      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;width:100%">Примечание</th>
+      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;position:sticky;left:0;top:0;background:var(--surface2);z-index:3">${level==='article'?'Статья':'Подстатья'}</th>
+      <th style="padding:6px 4px;font-size:10px;color:var(--text3);position:sticky;top:0;background:var(--surface2);z-index:1">₽/%</th>${ths}
+      <th style="padding:6px 4px;font-size:10px;color:var(--accent);position:sticky;top:0;background:var(--surface2);z-index:1">Год</th>
+      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;position:sticky;top:0;background:var(--surface2);z-index:1">Ответственный</th>
+      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;width:100%;position:sticky;top:0;background:var(--surface2);z-index:1">Примечание</th>
     </tr></thead><tbody>${body}</tbody></table>`;
   wrap.querySelectorAll('input.plan-onoff').forEach(function(cb){if(window.planToggleRow)window.planToggleRow(cb);}); // отключить поля у строк со снятой галочкой
+  wrap.querySelectorAll('tr.plan-total').forEach(function(t){const k=t.getAttribute('data-key');if(window.planSumBlock)window.planSumBlock(k);}); // заполнить строки ИТОГО
 }
+// Пересчёт строки ИТОГО блока (сумма по месяцам/году всех включённых направлений; %/%ЧП - в рубли по базам data-rb/nb)
+window.planSumBlock=function(key){
+  const wrap=document.getElementById('plan-matrix'); if(!wrap)return;
+  const tot=new Array(13).fill(0);
+  wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
+    if(tr.getAttribute('data-key')!==key||tr.classList.contains('plan-total'))return;
+    const cb=tr.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return;
+    const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
+    tr.querySelectorAll('input.plan-val').forEach(function(inp){
+      const m=+inp.getAttribute('data-month'); const v=parseFloat(String(inp.value||'').replace(/\s/g,'').replace(',','.')); if(isNaN(v))return;
+      let rub=v; if(mode==='pct')rub=v/100*(parseFloat(inp.getAttribute('data-rb'))||0); else if(mode==='pct_profit')rub=v/100*(parseFloat(inp.getAttribute('data-nb'))||0);
+      tot[m]+=rub;
+    });
+  });
+  let totRow=null; wrap.querySelectorAll('tr.plan-total').forEach(function(t){if(t.getAttribute('data-key')===key)totRow=t;});
+  if(!totRow)return;
+  totRow.querySelectorAll('td.plan-ttl').forEach(function(td){const m=+td.getAttribute('data-m'); td.textContent=tot[m]?_planFmtNum(+tot[m].toFixed(2)):'';});
+};
+window.planSumFromEl=function(el){const tr=el&&el.closest?el.closest('tr'):null; if(!tr)return; const k=tr.getAttribute('data-key'); if(k&&window.planSumBlock)window.planSumBlock(k);};
 // Чекбокс «планировать это направление»: снят - поля строки отключены и план не сохраняется (исключено из плана)
 window.planToggleRow=function(cb){
   const tr=cb.closest('tr'); if(!tr)return; const on=cb.checked;
   tr.querySelectorAll('input.plan-val,input.plan-owner,input.plan-note,button').forEach(function(el){el.disabled=!on;el.style.opacity=on?'':'0.4';});
+  if(window.planSumFromEl)window.planSumFromEl(cb);
 };
 window.planOnControlChange=function(){_planStage();if(window._planExpanded)window._planExpanded.clear();_planRenderMatrix();};
 // Развернуть/свернуть подстатью по направлениям (заполнение плана в разрезе направлений)
