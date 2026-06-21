@@ -6974,6 +6974,9 @@ function _planRenderMatrix(){
   const dirYearPlan=(rl,code,d)=>{const recs=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code);if(!recs.length)return null;const F=FAD[d];const cvt=(r,m)=>r.mode==='pct'?r.value*(m?((F&&F.rev[m])||0):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):netYrD(d)):r.value;const y0=recs.find(p=>p.month===0);if(y0)return cvt(y0,0);let v=0,has=false;for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r){v+=cvt(r,m);has=true;}}return has?v:null;};
   const subYearPlan=(rl,code)=>{let s=null;allDirs.forEach(d=>{const v=dirYearPlan(rl,code,d);if(v!=null)s=(s||0)+v;});return s;};
   const subYearFact=(rl,code)=>{let s=0;allDirs.forEach(d=>{s+=factYr(d,rl,code);});return s;};
+  // помесячный план направления (из сохранённых записей, с разрешением %/%ЧП) и сумма по группе - для свёрнутой шапки
+  const dirMonthPlan=(rl,code,d,m)=>{const r=_planRecords.find(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code&&p.month===m);if(!r)return null;const F=FAD[d];return r.mode==='pct'?r.value*((F&&F.rev[m])||0):r.mode==='pct_profit'?r.value*Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):r.value;};
+  const subMonthPlan=(rl,code,m)=>{let s=null;allDirs.forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;};
   const rowHtml=(rdir,rl,code,label,rev,sub,key)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
     let mode='money'; if(!moneyOnly){const any=_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
@@ -7008,11 +7011,11 @@ function _planRenderMatrix(){
   const codes=unionCodes(_planCodes);
   const secRow=t=>`<tr><td colspan="17" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
   const EXP=window._planExpanded||(window._planExpanded=new Set());
-  // свёрнутая шапка подстатьи: название + год план/факт по группе
+  // свёрнутая шапка подстатьи: название + ИТОГО (план) по месяцам/году в ячейках (как в развёрнутом, из сохранённых планов)
   const colHeader=(rl,code,label)=>{const key=rl+'|'+code;
-    const yp=subYearPlan(rl,code),yf=subYearFact(rl,code);const parts=[];if(yp!=null)parts.push('план '+fmt(yp));if(yf)parts.push('факт '+fmt(yf));
-    const sums=parts.length?` <span style="font-weight:400;color:var(--text3);font-size:10px;font-family:var(--mono)">· ${parts.join(' · ')} <span style="color:var(--text3)">(за год, все напр.)</span></span>`:'';
-    return `<tr><td colspan="17" onclick="planToggleExpand('${jesc(key)}')" style="padding:5px 8px;font-size:11px;font-weight:500;background:var(--surface);border-bottom:1px solid var(--divider);position:sticky;left:0;cursor:pointer"><span style="display:inline-block;width:16px;color:var(--text2)">▸</span>${esc(label)}${sums}</td></tr>`;};
+    const mc=[...Array(12)].map((_,i)=>{const v=subMonthPlan(rl,code,i+1);return `<td style="text-align:right;padding:4px 6px;font-family:var(--mono);font-size:11px;color:var(--text3)">${v!=null?fmt(v):''}</td>`;}).join('');
+    const yp=subYearPlan(rl,code);
+    return `<tr onclick="planToggleExpand('${jesc(key)}')" style="cursor:pointer;border-bottom:1px solid var(--divider)"><td style="padding:5px 8px;font-size:11px;font-weight:500;position:sticky;left:0;background:var(--surface);white-space:nowrap"><span style="display:inline-block;width:16px;color:var(--text2)">▸</span>${esc(label)}</td><td></td>${mc}<td style="text-align:right;padding:4px 6px;font-family:var(--mono);font-size:11px;font-weight:600;border-left:2px solid var(--border);color:var(--text2)">${yp!=null?fmt(yp):''}</td><td></td><td></td></tr>`;};
   // развёрнутая шапка: название + ИТОГО по месяцам/году (план, все направления; пересчёт %/%ЧП). Заполняется planSumBlock после рендера и при правках
   const openHeader=(rl,code,label,key)=>{
     const mc=[...Array(12)].map((_,i)=>`<td class="plan-ttl" data-m="${i+1}" style="text-align:right;padding:4px 6px;font-family:var(--mono);font-size:11px;color:var(--text2)"></td>`).join('');
