@@ -6813,6 +6813,21 @@ function startOwnersSync(){
       try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){}});
   }catch(e){console.warn('[owners] sync',e&&e.message);}
 }
+// Примечания к планам (текст по подстатье+направлению) - config/planNotes; ключ = `${dir}||${code}` (тот же _ownerKey)
+let _planNotes=(()=>{try{return JSON.parse(localStorage.getItem('finPlanNotes')||'{}')}catch(e){return{}}})();
+function _notesSave(){
+  try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}
+  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/planNotes').set(_planNotes); } }catch(e){}
+}
+function startNotesSync(){
+  if(window._notesSyncStarted)return; window._notesSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
+    firebase.database().ref('config/planNotes').on('value',s=>{const v=s.val();
+      _planNotes=(v&&typeof v==='object')?v:{};
+      try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}});
+  }catch(e){console.warn('[notes] sync',e&&e.message);}
+}
 function _planCodes(dir,level){
   const set={};
   RAW.forEach(r=>{
@@ -6903,9 +6918,11 @@ function _planStage(){
       // явный 0 СОХРАНЯЕМ как план (план = 0, напр. 0 расходов/0 дивидендов); «нет плана» = пустая ячейка (отсечена выше по raw==='')
       _planRecords.push({dir:rdir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val});
     });
-    // ответственный за расход (ФИО) - по подстатье+направлению
+    // ответственный (ФИО) и примечание - по подстатье+направлению
     const ow=tr.querySelector('input.plan-owner');
     if(ow){const fio=String(ow.value||'').trim();const k=_ownerKey(rdir,code);if(fio)_planOwners[k]=fio;else delete _planOwners[k];}
+    const nt=tr.querySelector('input.plan-note');
+    if(nt){const txt=String(nt.value||'').trim();const k=_ownerKey(rdir,code);if(txt)_planNotes[k]=txt;else delete _planNotes[k];}
   });
 }
 function _planRenderMatrix(){
@@ -6946,9 +6963,11 @@ function _planRenderMatrix(){
     const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
     const yrFact=factYr(rdir,rl,code);
     const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="${yrIsAuto?'Авто: сумма месяцев. Двойной клик - вставить факт за год: '+fmt(yrFact):'Годовой план. Двойной клик - вставить факт за год: '+fmt(yrFact)}" style="width:72px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
-    const isExp=rl!=='revenue'; // ответственный - за расходами И доходами (поступлениями); не для строки «Выручка всего»
+    const isExp=rl!=='revenue'; // ответственный/примечание - за расходами И доходами; не для строки «Выручка всего»
     const owner=isExp?(_planOwners[_ownerKey(rdir,code)]||''):'';
-    const ownerCell=isExp?`<td style="padding:2px 3px;width:100%"><input class="plan-owner" value="${esc(owner)}" list="planOwnerList" placeholder="ФИО ответственного" style="width:100%;min-width:160px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`:'<td style="width:100%"></td>';
+    const note=isExp?(_planNotes[_ownerKey(rdir,code)]||''):'';
+    const ownerCell=isExp?`<td style="padding:2px 3px"><input class="plan-owner" value="${esc(owner)}" list="planOwnerList" placeholder="ФИО ответственного" style="width:180px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`:'<td></td>';
+    const noteCell=isExp?`<td style="padding:2px 3px;width:100%"><input class="plan-note" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`:'<td style="width:100%"></td>';
     const canExp=!!key&&!sub&&!rev; // разворачивать можно доходные/расходные коды (не «выручка всего»)
     const expBtn=canExp?`<button type="button" onclick="planToggleExpand('${jesc(key)}')" title="Развернуть и заполнить по направлениям" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">▸</button>`:'';
     const labCell=sub
@@ -6956,16 +6975,16 @@ function _planRenderMatrix(){
       :`<td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${expBtn}${esc(label)}</td>`;
     return `<tr data-code="${esc(code)}" data-level="${rl}" data-dir="${esc(rdir)}">
       ${labCell}
-      <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}${ownerCell}</tr>`;
+      <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}${ownerCell}${noteCell}</tr>`;
   };
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const unionCodes=fn=>{const s={};allDirs.forEach(d=>fn(d,level).forEach(c=>s[c]=1));return Object.keys(s).sort((a,b)=>String(a).localeCompare(String(b),'ru'));};
   const incCodes=unionCodes(_planIncomeCodes);
   const codes=unionCodes(_planCodes);
-  const secRow=t=>`<tr><td colspan="16" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
+  const secRow=t=>`<tr><td colspan="17" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
   const EXP=window._planExpanded||(window._planExpanded=new Set());
   // свёрнутая/развёрнутая шапка подстатьи (клик по строке - развернуть/свернуть по направлениям)
-  const colHeader=(key,label,open)=>`<tr><td colspan="16" onclick="planToggleExpand('${jesc(key)}')" style="padding:5px 8px;font-size:11px;font-weight:${open?700:500};background:${open?'var(--accent-light)':'var(--surface)'};border-bottom:1px solid var(--divider);position:sticky;left:0;cursor:pointer"><span style="display:inline-block;width:16px;color:var(--text2)">${open?'▾':'▸'}</span>${esc(label)}${open?' <span style="font-weight:400;color:var(--text3);font-size:10px">- заполните по направлениям</span>':''}</td></tr>`;
+  const colHeader=(key,label,open)=>`<tr><td colspan="17" onclick="planToggleExpand('${jesc(key)}')" style="padding:5px 8px;font-size:11px;font-weight:${open?700:500};background:${open?'var(--accent-light)':'var(--surface)'};border-bottom:1px solid var(--divider);position:sticky;left:0;cursor:pointer"><span style="display:inline-block;width:16px;color:var(--text2)">${open?'▾':'▸'}</span>${esc(label)}${open?' <span style="font-weight:400;color:var(--text3);font-size:10px">- заполните по направлениям</span>':''}</td></tr>`;
   const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(key,label,false);return colHeader(key,label,true)+allDirs.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
   const body=secRow('Доходы')+codeBlock('revenue','__rev__','Выручка - всего (план)')
     +incCodes.map(c=>codeBlock('income',c,c)).join('')
@@ -6977,20 +6996,21 @@ function _planRenderMatrix(){
       <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;position:sticky;left:0;background:var(--surface2);z-index:2">${level==='article'?'Статья':'Подстатья'}</th>
       <th style="padding:6px 4px;font-size:10px;color:var(--text3)">₽/%</th>${ths}
       <th style="padding:6px 4px;font-size:10px;color:var(--accent)">Год</th>
-      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;width:100%">Ответственный</th>
+      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left">Ответственный</th>
+      <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;width:100%">Примечание</th>
     </tr></thead><tbody>${body}</tbody></table>`;
   wrap.querySelectorAll('input.plan-onoff').forEach(function(cb){if(window.planToggleRow)window.planToggleRow(cb);}); // отключить поля у строк со снятой галочкой
 }
 // Чекбокс «планировать это направление»: снят - поля строки отключены и план не сохраняется (исключено из плана)
 window.planToggleRow=function(cb){
   const tr=cb.closest('tr'); if(!tr)return; const on=cb.checked;
-  tr.querySelectorAll('input.plan-val,input.plan-owner,button').forEach(function(el){el.disabled=!on;el.style.opacity=on?'':'0.4';});
+  tr.querySelectorAll('input.plan-val,input.plan-owner,input.plan-note,button').forEach(function(el){el.disabled=!on;el.style.opacity=on?'':'0.4';});
 };
 window.planOnControlChange=function(){_planStage();if(window._planExpanded)window._planExpanded.clear();_planRenderMatrix();};
 // Развернуть/свернуть подстатью по направлениям (заполнение плана в разрезе направлений)
 window._planExpanded=window._planExpanded||new Set();
 window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window._planExpanded||(window._planExpanded=new Set());if(S.has(key))S.delete(key);else S.add(key);_planRenderMatrix();};
-window.planSave=function(btn){_planStage();if(btn){btn.disabled=true;btn.textContent='Сохранение…';}try{_plansSave();}catch(e){}try{_ownersSave();}catch(e){}const ov=document.getElementById('plansPanelOverlay');if(ov)ov.remove();if(activeTab==='planfact')try{renderActiveTab();}catch(e){}};
+window.planSave=function(btn){_planStage();if(btn){btn.disabled=true;btn.textContent='Сохранение…';}try{_plansSave();}catch(e){}try{_ownersSave();}catch(e){}try{_notesSave();}catch(e){}const ov=document.getElementById('plansPanelOverlay');if(ov)ov.remove();if(activeTab==='planfact')try{renderActiveTab();}catch(e){}};
 // Печать: расходы с планом (год), фактом (год) и ответственными ФИО - по ВСЕМ направлениям (секция на каждое)
 window.planPrintOwners=function(){
   try{_planStage();}catch(e){}
@@ -7124,7 +7144,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -7178,7 +7198,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync();
       });
     }else{
       if(gate)gate.style.display='flex';
