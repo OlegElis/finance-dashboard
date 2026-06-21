@@ -6856,14 +6856,15 @@ window.planRowYear=function(inp){
 };
 function _planStage(){
   const wrap=document.getElementById('plan-matrix'); if(!wrap||!wrap.dataset.dir)return;
-  const dir=wrap.dataset.dir,year=+wrap.dataset.year,level=wrap.dataset.level;
+  const selDir=wrap.dataset.dir,year=+wrap.dataset.year;
   const rows=[...wrap.querySelectorAll('tr[data-code]')];
   if(!rows.length)return; // форма не отрисована (данные ещё грузятся) - ничего не трогаем, чтобы не стереть планы
-  // удаляем только те уровни, что РЕАЛЬНО присутствуют в форме (иначе можно стереть доходы/расходы, которых сейчас нет на экране)
-  const presentLevels=new Set(rows.map(tr=>tr.getAttribute('data-level')));
-  _planRecords=_planRecords.filter(p=>!(p.dir===dir&&p.year===year&&presentLevels.has(p.level)));
+  // чистим ТОЛЬКО те (направление+уровень+код), что реально присутствуют в форме (в т.ч. развёрнутые по направлениям) - планы других направлений/кодов не трогаем
+  const presentKeys=new Set();
+  rows.forEach(tr=>{const rdir=tr.getAttribute('data-dir')||selDir;presentKeys.add(rdir+''+tr.getAttribute('data-level')+''+tr.getAttribute('data-code'));});
+  _planRecords=_planRecords.filter(p=>!(p.year===year&&presentKeys.has(String(p.dir)+''+p.level+''+p.code)));
   rows.forEach(tr=>{
-    const code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level');
+    const rdir=tr.getAttribute('data-dir')||selDir,code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level');
     const mb=tr.querySelector('.plan-mode');const mode=rlevel==='revenue'?'money':(mb?mb.getAttribute('data-mode'):'money');
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
       if(inp.getAttribute('data-month')==='0'&&inp.dataset.auto==='1')return; // авто-«Год» (сумма месяцев) - не сохраняем как явный
@@ -6871,11 +6872,11 @@ function _planStage(){
       if(raw===''||isNaN(parseFloat(raw)))return;
       let val=parseFloat(raw); if(mode!=='money')val=val/100;
       // явный 0 СОХРАНЯЕМ как план (план = 0, напр. 0 расходов/0 дивидендов); «нет плана» = пустая ячейка (отсечена выше по raw==='')
-      _planRecords.push({dir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val});
+      _planRecords.push({dir:rdir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val});
     });
     // ответственный за расход (ФИО) - по подстатье+направлению
     const ow=tr.querySelector('input.plan-owner');
-    if(ow){const fio=String(ow.value||'').trim();const k=_ownerKey(dir,code);if(fio)_planOwners[k]=fio;else delete _planOwners[k];}
+    if(ow){const fio=String(ow.value||'').trim();const k=_ownerKey(rdir,code);if(fio)_planOwners[k]=fio;else delete _planOwners[k];}
   });
 }
 function _planRenderMatrix(){
@@ -6884,48 +6885,58 @@ function _planRenderMatrix(){
   wrap.dataset.dir=dir;wrap.dataset.year=year;wrap.dataset.level=level;
   const esc=s=>String(s||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const MON=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
-  const find=(rl,code,m)=>_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===rl&&p.code===code&&p.month===m);
-  const cellVal=(rl,code,m)=>{const r=find(rl,code,m);return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
+  const cellVal=(rdir,rl,code,m)=>{const r=_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code&&p.month===m);return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
-  // ── ФАКТ по подстатьям/месяцам (для вставки «план = факт» по двойному клику) - выбранное направление+год, по дате ОПиУ, перемещения исключены ──
-  const FA={inc:{},exp:{},rev:new Array(13).fill(0)};
+  const jesc=s=>String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  // ── ФАКТ по НАПРАВЛЕНИЯМ/подстатьям/месяцам (для «план = факт» и заполнения в разрезе направлений) - по дате ОПиУ, перемещения исключены ──
+  const FAD={}; const fad=d=>FAD[d]||(FAD[d]={inc:{},exp:{},rev:new Array(13).fill(0)});
   (RAW||[]).forEach(r=>{
-    if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
+    const rd=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!rd)return;
     const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
     const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
     const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(),key=level==='article'?ac:an;
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){FA.rev[m]+=inc;if(key)(FA.inc[key]=FA.inc[key]||new Array(13).fill(0))[m]+=inc;}
-    if(t==='списание'&&out<0&&key)(FA.exp[key]=FA.exp[key]||new Array(13).fill(0))[m]+=Math.abs(out);
+    const F=fad(rd);
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){F.rev[m]+=inc;if(key)(F.inc[key]=F.inc[key]||new Array(13).fill(0))[m]+=inc;}
+    if(t==='списание'&&out<0&&key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=Math.abs(out);
   });
-  const factOf=(rl,code,m)=>{if(rl==='revenue')return FA.rev[m]||0;const a=(rl==='income'?FA.inc:FA.exp)[code];return a?(a[m]||0):0;};
-  const factYr=(rl,code)=>{let s=0;for(let m=1;m<=12;m++)s+=factOf(rl,code,m);return s;};
-  const rowHtml=(rl,code,label,rev)=>{
+  const factOf=(rdir,rl,code,m)=>{const F=FAD[rdir];if(!F)return 0;if(rl==='revenue')return F.rev[m]||0;const a=(rl==='income'?F.inc:F.exp)[code];return a?(a[m]||0):0;};
+  const factYr=(rdir,rl,code)=>{let s=0;for(let m=1;m<=12;m++)s+=factOf(rdir,rl,code,m);return s;};
+  const rowHtml=(rdir,rl,code,label,rev,sub,key)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
-    let mode='money'; if(!moneyOnly){const any=_planRecords.find(p=>p.dir===dir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
+    let mode='money'; if(!moneyOnly){const any=_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
-    const moVals=[...Array(12)].map((_,i)=>cellVal(rl,code,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=factOf(rl,code,i+1);return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this)" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="Двойной клик - вставить факт: ${fmt(fv)}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
-    const yrExpl=cellVal(rl,code,0); // явный годовой план (если задан)
+    const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,rl,code,i+1));
+    const cells=moVals.map((mv,i)=>{const fv=factOf(rdir,rl,code,i+1);return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this)" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="Двойной клик - вставить факт: ${fmt(fv)}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const yrExpl=cellVal(rdir,rl,code,0); // явный годовой план (если задан)
     const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
     const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
     const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
-    const yrFact=factYr(rl,code);
+    const yrFact=factYr(rdir,rl,code);
     const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)'" onblur="planFmtInput(this)" ondblclick="planFillCellFact(this)" title="${yrIsAuto?'Авто: сумма месяцев. Двойной клик - вставить факт за год: '+fmt(yrFact):'Годовой план. Двойной клик - вставить факт за год: '+fmt(yrFact)}" style="width:60px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     const isExp=rl!=='revenue'&&rl!=='income'; // ответственный - только за расходами
-    const owner=isExp?(_planOwners[_ownerKey(dir,code)]||''):'';
-    const ownerCell=isExp?`<td style="padding:2px 3px"><input class="plan-owner" data-code="${esc(code)}" value="${esc(owner)}" list="planOwnerList" placeholder="ФИО" style="width:150px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px"></td>`:'<td></td>';
-    return `<tr data-code="${esc(code)}" data-level="${rl}">
-      <td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${esc(label)}</td>
+    const owner=isExp?(_planOwners[_ownerKey(rdir,code)]||''):'';
+    const ownerCell=isExp?`<td style="padding:2px 3px"><input class="plan-owner" value="${esc(owner)}" list="planOwnerList" placeholder="ФИО" style="width:150px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px"></td>`:'<td></td>';
+    const canExp=!!key&&!sub&&!rev; // разворачивать можно доходные/расходные коды (не «выручка всего»)
+    const expBtn=canExp?`<button type="button" onclick="planToggleExpand('${jesc(key)}')" title="Развернуть и заполнить по направлениям" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">▸</button>`:'';
+    const labCell=sub
+      ?`<td style="padding:4px 8px 4px 28px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:var(--surface);color:var(--text2)">${esc(label)}</td>`
+      :`<td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${expBtn}${esc(label)}</td>`;
+    return `<tr data-code="${esc(code)}" data-level="${rl}" data-dir="${esc(rdir)}">
+      ${labCell}
       <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}${ownerCell}</tr>`;
   };
   const incCodes=_planIncomeCodes(dir,level);
   const codes=_planCodes(dir,level);
   const secRow=t=>`<tr><td colspan="16" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
-  const body=secRow('Доходы')+rowHtml('revenue','__rev__','Выручка - всего (план)',true)
-    +incCodes.map(c=>rowHtml('income',c,c,false)).join('')
-    +secRow('Расходы')+codes.map(c=>rowHtml(level,c,c,false)).join('');
+  const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const EXP=window._planExpanded||(window._planExpanded=new Set());
+  const expHeader=(key,label)=>`<tr><td colspan="16" style="padding:4px 8px;font-size:11px;font-weight:700;background:var(--accent-light);position:sticky;left:0"><button type="button" onclick="planToggleExpand('${jesc(key)}')" title="Свернуть" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface);color:var(--text2);vertical-align:middle">▾</button>${esc(label)} <span style="font-weight:400;color:var(--text3);font-size:10px">- заполните по направлениям (★ - текущее)</span></td></tr>`;
+  const codeBlock=(rl,code,label)=>{const key=rl+'|'+code; if(!EXP.has(key))return rowHtml(dir,rl,code,label,false,false,key); return expHeader(key,label)+allDirs.map(d=>rowHtml(d,rl,code,(d===dir?'★ ':'')+d,false,true,key)).join('');};
+  const body=secRow('Доходы')+rowHtml(dir,'revenue','__rev__','Выручка - всего (план)',true,false,null)
+    +incCodes.map(c=>codeBlock('income',c,c)).join('')
+    +secRow('Расходы')+codes.map(c=>codeBlock(level,c,c)).join('');
   const ths=MON.map(m=>`<th style="padding:6px 4px;font-size:10px;color:var(--text3);font-weight:600">${m}</th>`).join('');
   const ownerOpts=[...new Set(Object.values(_planOwners||{}).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(n=>`<option value="${esc(n)}">`).join('');
   wrap.innerHTML=`<datalist id="planOwnerList">${ownerOpts}</datalist><table style="border-collapse:collapse;white-space:nowrap">
@@ -6936,7 +6947,10 @@ function _planRenderMatrix(){
       <th style="padding:6px 4px;font-size:10px;color:var(--text3)">Ответственный</th>
     </tr></thead><tbody>${body}</tbody></table>`;
 }
-window.planOnControlChange=function(){_planStage();_planRenderMatrix();};
+window.planOnControlChange=function(){_planStage();if(window._planExpanded)window._planExpanded.clear();_planRenderMatrix();};
+// Развернуть/свернуть подстатью по направлениям (заполнение плана в разрезе направлений)
+window._planExpanded=window._planExpanded||new Set();
+window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window._planExpanded||(window._planExpanded=new Set());if(S.has(key))S.delete(key);else S.add(key);_planRenderMatrix();};
 window.planSave=function(btn){_planStage();if(btn){btn.disabled=true;btn.textContent='Сохранение…';}try{_plansSave();}catch(e){}try{_ownersSave();}catch(e){}const ov=document.getElementById('plansPanelOverlay');if(ov)ov.remove();if(activeTab==='planfact')try{renderActiveTab();}catch(e){}};
 // Печать: расходы с планом (год), фактом (год) и ответственными ФИО - для выбранного направления+года
 window.planPrintOwners=function(){
