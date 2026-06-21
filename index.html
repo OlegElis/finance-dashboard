@@ -6892,6 +6892,7 @@ function _planStage(){
   rows.forEach(tr=>{const rdir=tr.getAttribute('data-dir')||selDir;presentKeys.add(rdir+''+tr.getAttribute('data-level')+''+tr.getAttribute('data-code'));});
   _planRecords=_planRecords.filter(p=>!(p.year===year&&presentKeys.has(String(p.dir)+''+p.level+''+p.code)));
   rows.forEach(tr=>{
+    const cb=tr.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return; // строка исключена из плана (галочка снята) - не сохраняем; прежний план уже вычищен по presentKeys
     const rdir=tr.getAttribute('data-dir')||selDir,code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level');
     const mb=tr.querySelector('.plan-mode');const mode=rlevel==='revenue'?'money':(mb?mb.getAttribute('data-mode'):'money');
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
@@ -6934,6 +6935,7 @@ function _planRenderMatrix(){
   const rowHtml=(rdir,rl,code,label,rev,sub,key)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
     let mode='money'; if(!moneyOnly){const any=_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
+    const hasPlan=!!_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code); // есть план по направлению - чекбокс «планировать» включён; иначе выключен (поля отключены)
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,rl,code,i+1));
@@ -6950,7 +6952,7 @@ function _planRenderMatrix(){
     const canExp=!!key&&!sub&&!rev; // разворачивать можно доходные/расходные коды (не «выручка всего»)
     const expBtn=canExp?`<button type="button" onclick="planToggleExpand('${jesc(key)}')" title="Развернуть и заполнить по направлениям" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">▸</button>`:'';
     const labCell=sub
-      ?`<td style="padding:4px 8px 4px 28px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:var(--surface);color:var(--text2)">${esc(label)}</td>`
+      ?`<td style="padding:4px 8px 4px 22px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:var(--surface);color:var(--text2)"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять галочку - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer">${esc(label)}</td>`
       :`<td style="padding:4px 8px;font-size:11px;white-space:nowrap;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${expBtn}${esc(label)}</td>`;
     return `<tr data-code="${esc(code)}" data-level="${rl}" data-dir="${esc(rdir)}">
       ${labCell}
@@ -6977,7 +6979,13 @@ function _planRenderMatrix(){
       <th style="padding:6px 4px;font-size:10px;color:var(--accent)">Год</th>
       <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;width:100%">Ответственный</th>
     </tr></thead><tbody>${body}</tbody></table>`;
+  wrap.querySelectorAll('input.plan-onoff').forEach(function(cb){if(window.planToggleRow)window.planToggleRow(cb);}); // отключить поля у строк со снятой галочкой
 }
+// Чекбокс «планировать это направление»: снят - поля строки отключены и план не сохраняется (исключено из плана)
+window.planToggleRow=function(cb){
+  const tr=cb.closest('tr'); if(!tr)return; const on=cb.checked;
+  tr.querySelectorAll('input.plan-val,input.plan-owner,button').forEach(function(el){el.disabled=!on;el.style.opacity=on?'':'0.4';});
+};
 window.planOnControlChange=function(){_planStage();if(window._planExpanded)window._planExpanded.clear();_planRenderMatrix();};
 // Развернуть/свернуть подстатью по направлениям (заполнение плана в разрезе направлений)
 window._planExpanded=window._planExpanded||new Set();
