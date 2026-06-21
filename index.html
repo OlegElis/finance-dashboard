@@ -6848,6 +6848,23 @@ function startCfoSync(){
       try{localStorage.setItem('finCfo',JSON.stringify(_cfoList));}catch(e){}});
   }catch(e){console.warn('[cfo/names] sync',e&&e.message);}
 }
+// Справочник объектов аренды (для 3-го уровня планирования подстатьи 223_Аренда) - хранится в Firebase config/rentObjects, общий для всех устройств
+window._rentObjects=(()=>{try{const a=JSON.parse(localStorage.getItem('finRentObjects')||'[]');return Array.isArray(a)?a:[]}catch(e){return[]}})();
+function _rentObjectsSave(){
+  try{localStorage.setItem('finRentObjects',JSON.stringify(window._rentObjects||[]));}catch(e){}
+  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/rentObjects').set(window._rentObjects||[]); } }catch(e){}
+}
+function startRentObjectsSync(){
+  if(window._rentObjSyncStarted)return; window._rentObjSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
+    firebase.database().ref('config/rentObjects').on('value',s=>{const v=s.val();
+      const arr=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
+      window._rentObjects=[...new Set(arr.map(x=>String(x||'').trim()).filter(Boolean))];
+      try{localStorage.setItem('finRentObjects',JSON.stringify(window._rentObjects));}catch(e){}
+      if(activeTab==='planfact'&&document.getElementById('plan-matrix'))try{_planRenderMatrix();}catch(e){}});
+  }catch(e){console.warn('[rentObjects] sync',e&&e.message);}
+}
 function _planCodes(dir,level){
   const set={};
   RAW.forEach(r=>{
@@ -6964,6 +6981,8 @@ function _planRenderMatrix(){
   const cellVal=(rdir,rl,code,m,side)=>{const sd=String(side||'');const r=_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code&&p.month===m&&String(p.side||'')===sd);return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const isFotCode=code=>c3(code)==='111'; // подстатьи ФОТ - доп. уровень планирования по сотрудникам (ID_SecondSide)
+  const isRentCode=code=>c3(code)==='223'; // подстатьи аренды - доп. уровень по объектам аренды (справочник config/rentObjects)
+  const isSubLevel=code=>isFotCode(code)||isRentCode(code); // подстатьи с 3-м уровнем разворота
   const jesc=s=>String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   // ── ФАКТ по НАПРАВЛЕНИЯМ/подстатьям/месяцам (для «план = факт» и заполнения в разрезе направлений) - по дате ОПиУ, перемещения исключены ──
   const FAD={}; const fad=d=>FAD[d]||(FAD[d]={inc:{},exp:{},rev:new Array(13).fill(0),npExp:new Array(13).fill(0)});
@@ -6976,7 +6995,7 @@ function _planRenderMatrix(){
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(),key=level==='article'?ac:an;
     const F=fad(rd);
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){F.rev[m]+=inc;if(key)(F.inc[key]=F.inc[key]||new Array(13).fill(0))[m]+=inc;}
-    if(t==='списание'&&out<0){const av=Math.abs(out);if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&c3(key)==='111'){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}const al=nrmA(r[COL.ANALYTICS]);if(!(al.includes('вывод')&&al.includes('прибыл')))F.npExp[m]+=av;}
+    if(t==='списание'&&out<0){const av=Math.abs(out);if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&(c3(key)==='111'||c3(key)==='223')){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}const al=nrmA(r[COL.ANALYTICS]);if(!(al.includes('вывод')&&al.includes('прибыл')))F.npExp[m]+=av;}
   });
   const factOf=(rdir,rl,code,m)=>{const F=FAD[rdir];if(!F)return 0;if(rl==='revenue')return F.rev[m]||0;const a=(rl==='income'?F.inc:F.exp)[code];return a?(a[m]||0):0;};
   const factYr=(rdir,rl,code)=>{let s=0;for(let m=1;m<=12;m++)s+=factOf(rdir,rl,code,m);return s;};
@@ -6988,6 +7007,7 @@ function _planRenderMatrix(){
     const F=FAD[d];if(F&&F.sideExp&&F.sideExp[code])Object.keys(F.sideExp[code]).forEach(sd=>{if(sd)named[sd]=1;else unalloc=true;});
     _planRecords.forEach(p=>{if(p.dir===d&&p.year===year&&p.level===level&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else unalloc=true;}});
     const ak=d+'||'+code;((window._planAddedSides||{})[ak]||[]).forEach(sd=>{if(sd)named[sd]=1;});
+    if(isRentCode(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;}); // справочник объектов аренды (config/rentObjects) - общий для всех направлений
     return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),unalloc};};
   // ── суммы по группе (подстатья по всем направлениям) для свёрнутого вида: год план (с разрешением %/%ЧП) + год факт ──
   const revYrD=d=>{const F=FAD[d];if(!F)return 0;let s=0;for(let m=1;m<=12;m++)s+=F.rev[m];return s;};
@@ -7060,8 +7080,8 @@ function _planRenderMatrix(){
     const yrIsAuto=(yrExpl===''); const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):''); const yrFact=factSideYr(rdir,code,side);
     const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" title="${yrIsAuto?'Авто: сумма месяцев. Факт за год:'+fmt(yrFact):'Годовой план. Факт за год:'+fmt(yrFact)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     return `<tr data-code="${esc(code)}" data-level="${level}" data-dir="${esc(rdir)}" data-side="${esc(side)}" data-key="${esc(level+'|'+code)}">
-      <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">👤</span>${esc(label)}</td>
-      <td style="padding:2px 4px;text-align:center;white-space:nowrap"><span style="font-size:11px;color:var(--text3)">₽</span><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом по сотруднику" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}<td></td><td></td></tr>`;};
+      <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">${isRentCode(code)?'🏢':'👤'}</span>${esc(label)}</td>
+      <td style="padding:2px 4px;text-align:center;white-space:nowrap"><span style="font-size:11px;color:var(--text3)">₽</span><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}<td></td><td></td></tr>`;};
   // строка направления для 111-ФОТ: read-only ИТОГО по сотрудникам (plan-dirtotal, ▸ разворот) + ответственный/примечание (по направлению+коду)
   const dirHeaderFot=(rl,code,d,key)=>{const dkey=key+'|'+d;const dopen=EXP.has(dkey);const hasPlan=_planRecords.some(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code);
     const mc=[...Array(12)].map((_,i)=>{const v=dirMonthPlan(rl,code,d,i+1);const vv=(v!=null)?_planFmtNum(+v.toFixed(2)):'';return`<td style="padding:2px 3px"><input class="plan-dttl" data-m="${i+1}" readonly tabindex="-1" value="${vv}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;}).join('');
@@ -7072,12 +7092,12 @@ function _planRenderMatrix(){
     if(owner&&!(_cfoList||[]).includes(owner))ownOpts.push(`<option value="${esc(owner)}" selected>${esc(owner)} (вне ЦФО)</option>`);
     const ownerCell=`<td style="padding:2px 3px"><select class="plan-owner" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`;
     const noteCell=`<td style="padding:2px 3px;width:100%"><input class="plan-note" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`;
-    const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer"><span onclick="planToggleExpand('${jesc(dkey)}')" title="Развернуть сотрудников" style="display:inline-block;width:16px;color:var(--text2);cursor:pointer">${dopen?'▾':'▸'}</span>${esc(d)}</td>`;
+    const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer"><span onclick="planToggleExpand('${jesc(dkey)}')" title="${isRentCode(code)?'Развернуть объекты аренды':'Развернуть сотрудников'}" style="display:inline-block;width:16px;color:var(--text2);cursor:pointer">${dopen?'▾':'▸'}</span>${esc(d)}</td>`;
     return `<tr class="plan-dirtotal" data-key="${esc(key)}" data-dir="${esc(d)}" data-code="${esc(code)}" data-level="${rl}">${lab}<td></td>${mc}${yrCell}${ownerCell}${noteCell}</tr>`;};
-  const empAddRow=(d,code,key)=>`<tr><td colspan="17" style="padding:3px 8px 6px 40px;position:sticky;left:0;background:var(--surface)"><button type="button" onclick="planAddEmp('${jesc(d)}','${jesc(code)}','${jesc(key)}')" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">+ добавить сотрудника</button></td></tr>`;
+  const empAddRow=(d,code,key)=>`<tr><td colspan="17" style="padding:3px 8px 6px 40px;position:sticky;left:0;background:var(--surface)"><button type="button" onclick="planAddEmp('${jesc(d)}','${jesc(code)}','${jesc(key)}')" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">${isRentCode(code)?'+ добавить объект аренды':'+ добавить сотрудника'}</button></td></tr>`;
   const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label);
     let html=openHeader(rl,code,label,key);
-    if(isFotCode(code)&&rl!=='revenue'){ // 111-ФОТ: направление → сотрудники (3 уровня)
+    if(isSubLevel(code)&&rl!=='revenue'){ // 111-ФОТ (сотрудники) / 223-аренда (объекты): направление → 3-й уровень
       allDirs.forEach(d=>{html+=dirHeaderFot(rl,code,d,key);
         if(EXP.has(key+'|'+d)){const sd=fotSides(d,code);sd.named.forEach(s=>{html+=empRowHtml(d,code,s,s,key);});if(sd.unalloc)html+=empRowHtml(d,code,'','(не распределено)',key);html+=empAddRow(d,code,key);}});
       return html;
@@ -7162,12 +7182,18 @@ window.planOnControlChange=function(){_planStage();if(window._planExpanded)windo
 // Развернуть/свернуть подстатью по направлениям (заполнение плана в разрезе направлений)
 window._planExpanded=window._planExpanded||new Set();
 window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window._planExpanded||(window._planExpanded=new Set());if(S.has(key))S.delete(key);else S.add(key);_planRenderMatrix();};
-// Добавить сотрудника (ID_SecondSide) в 111-ФОТ вручную (временный список до ввода значений; источник-справочник подключим позже)
+// Добавить элемент 3-го уровня: для 111-ФОТ - сотрудника (временный список); для 223-аренды - объект аренды (в Firebase-справочник config/rentObjects, общий для всех)
 window._planAddedSides=window._planAddedSides||{};
 window.planAddEmp=function(dir,code,key){
-  const name=prompt('ФИО сотрудника (ID_SecondSide):'); if(name==null)return; const nm=String(name).trim(); if(!nm)return;
+  const cc=(String(code).match(/\d{3}/)||[])[0]; const isRent=cc==='223';
+  const name=prompt(isRent?'Название объекта аренды:':'ФИО сотрудника (ID_SecondSide):'); if(name==null)return; const nm=String(name).trim(); if(!nm)return;
   try{_planStage();}catch(e){}
-  const k=dir+'||'+code; const arr=(window._planAddedSides[k]=window._planAddedSides[k]||[]); if(!arr.includes(nm))arr.push(nm);
+  if(isRent){ // справочник объектов аренды - в Firebase (общий, не привязан к направлению)
+    if(!window._rentObjects)window._rentObjects=[];
+    if(!window._rentObjects.includes(nm)){window._rentObjects.push(nm);try{_rentObjectsSave();}catch(e){}}
+  }else{
+    const k=dir+'||'+code; const arr=(window._planAddedSides[k]=window._planAddedSides[k]||[]); if(!arr.includes(nm))arr.push(nm);
+  }
   const S=window._planExpanded||(window._planExpanded=new Set()); S.add(key); S.add(key+'|'+dir);
   _planRenderMatrix();
 };
@@ -7307,7 +7333,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -7361,7 +7387,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync();
       });
     }else{
       if(gate)gate.style.display='flex';
