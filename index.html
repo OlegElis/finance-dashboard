@@ -7061,8 +7061,9 @@ function _planRenderMatrix(){
       <td style="padding:2px 4px;text-align:center;white-space:nowrap"><span style="font-size:11px;color:var(--text3)">₽</span><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом по сотруднику" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${cells}${yr}<td></td><td></td></tr>`;};
   // строка направления для 111-ФОТ: read-only ИТОГО по сотрудникам (plan-dirtotal, ▸ разворот) + ответственный/примечание (по направлению+коду)
   const dirHeaderFot=(rl,code,d,key)=>{const dkey=key+'|'+d;const dopen=EXP.has(dkey);const hasPlan=_planRecords.some(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code);
-    const mc=[...Array(12)].map((_,i)=>`<td style="padding:2px 3px"><input class="plan-dttl" data-m="${i+1}" readonly tabindex="-1" value="" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`).join('');
-    const yrCell=`<td style="padding:2px 3px"><input class="plan-dttl" data-m="0" readonly tabindex="-1" value="" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface2);color:var(--text);font-weight:700;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;
+    const mc=[...Array(12)].map((_,i)=>{const v=dirMonthPlan(rl,code,d,i+1);const vv=(v!=null)?_planFmtNum(+v.toFixed(2)):'';return`<td style="padding:2px 3px"><input class="plan-dttl" data-m="${i+1}" readonly tabindex="-1" value="${vv}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;}).join('');
+    const yV=dirYearPlan(rl,code,d);const yVV=(yV!=null)?_planFmtNum(+yV.toFixed(2)):'';
+    const yrCell=`<td style="padding:2px 3px"><input class="plan-dttl" data-m="0" readonly tabindex="-1" value="${yVV}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface2);color:var(--text);font-weight:700;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;
     const owner=_planOwners[_ownerKey(d,code)]||'',note=_planNotes[_ownerKey(d,code)]||'';
     const ownOpts=['<option value="">- не выбран -</option>'].concat((_cfoList||[]).map(n=>`<option value="${esc(n)}"${n===owner?' selected':''}>${esc(n)}</option>`));
     if(owner&&!(_cfoList||[]).includes(owner))ownOpts.push(`<option value="${esc(owner)}" selected>${esc(owner)} (вне ЦФО)</option>`);
@@ -7095,18 +7096,24 @@ function _planRenderMatrix(){
       <th style="padding:6px 8px;font-size:10px;color:var(--text3);text-align:left;width:100%;position:sticky;top:0;background:var(--surface2);z-index:1">Примечание</th>
     </tr></thead><tbody>${body}</tbody></table>`;
   wrap.querySelectorAll('input.plan-onoff').forEach(function(cb){if(window.planToggleRow)window.planToggleRow(cb);}); // отключить поля у строк со снятой галочкой
-  wrap.querySelectorAll('tr.plan-total').forEach(function(t){const k=t.getAttribute('data-key');if(window.planSumBlock)window.planSumBlock(k);}); // заполнить строки ИТОГО
-  wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){const k=t.getAttribute('data-key'),d=t.getAttribute('data-dir');if(window.planSumDir)window.planSumDir(k,d);}); // ИТОГО направления (ФОТ по сотрудникам)
+  wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){const k=t.getAttribute('data-key'),d=t.getAttribute('data-dir');if(window.planSumDir)window.planSumDir(k,d);}); // сначала ИТОГО направлений (ФОТ по сотрудникам)
+  wrap.querySelectorAll('tr.plan-total').forEach(function(t){const k=t.getAttribute('data-key');if(window.planSumBlock)window.planSumBlock(k);}); // затем ИТОГО кодов (для 111 - сумма итогов направлений)
 }
 // Пересчёт строки ИТОГО блока (сумма по месяцам/году всех включённых направлений; %/%ЧП - в рубли по базам data-rb/nb)
 window.planSumBlock=function(key){
   const wrap=document.getElementById('plan-matrix'); if(!wrap)return;
   const tot=new Array(13).fill(0);
-  const off=new Set(); wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){if(t.getAttribute('data-key')!==key)return;const c=t.querySelector('input.plan-onoff');if(c&&!c.checked)off.add(t.getAttribute('data-dir'));}); // выключенные направления 111-ФОТ
-  wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
+  // 111-ФОТ: код имеет строки-итоги направлений (plan-dirtotal) - суммируем ИХ (plan-dttl), чтобы свёрнутые направления учитывались по сохранённому плану
+  let isFot=false; wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){if(t.getAttribute('data-key')===key)isFot=true;});
+  if(isFot){
+    wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){
+      if(t.getAttribute('data-key')!==key)return;
+      const cb=t.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return; // выключенное направление - не в итоге кода
+      t.querySelectorAll('input.plan-dttl').forEach(function(inp){const m=+inp.getAttribute('data-m'); const v=parseFloat(String(inp.value||'').replace(/\s/g,'').replace(',','.')); if(!isNaN(v))tot[m]+=v;});
+    });
+  } else wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
     if(tr.getAttribute('data-key')!==key||tr.classList.contains('plan-total'))return;
     const cb=tr.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return;
-    if(off.has(tr.getAttribute('data-dir')))return; // сотрудник выключенного направления - не в итоге кода
     const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
     tr.querySelectorAll('input.plan-val').forEach(function(inp){
       const m=+inp.getAttribute('data-month'); const v=parseFloat(String(inp.value||'').replace(/\s/g,'').replace(',','.')); if(isNaN(v))return;
@@ -7123,6 +7130,8 @@ window.planSumDir=function(key,dir){
   const wrap=document.getElementById('plan-matrix'); if(!wrap)return;
   const tot=new Array(13).fill(0);
   let isOff=false; wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){if(t.getAttribute('data-key')===key&&t.getAttribute('data-dir')===dir){const c=t.querySelector('input.plan-onoff');if(c&&!c.checked)isOff=true;}}); // направление выключено - итог пустой
+  let hasEmp=false; wrap.querySelectorAll('tr[data-key]').forEach(function(tr){if(tr.getAttribute('data-key')===key&&tr.getAttribute('data-dir')===dir&&tr.hasAttribute('data-side'))hasEmp=true;});
+  if(!isOff&&!hasEmp)return; // направление свёрнуто и включено - сохранённый итог уже проставлен при рендере (dirMonthPlan), не затираем живым нулём
   if(!isOff)wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
     if(tr.getAttribute('data-key')!==key||tr.getAttribute('data-dir')!==dir)return;
     if(tr.classList.contains('plan-total')||tr.classList.contains('plan-dirtotal'))return;
@@ -7133,7 +7142,7 @@ window.planSumDir=function(key,dir){
   wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){if(t.getAttribute('data-key')!==key||t.getAttribute('data-dir')!==dir)return;
     t.querySelectorAll('input.plan-dttl').forEach(function(inp){const m=+inp.getAttribute('data-m'); inp.value=tot[m]?_planFmtNum(+tot[m].toFixed(2)):'';});});
 };
-window.planSumFromEl=function(el){const tr=el&&el.closest?el.closest('tr'):null; if(!tr)return; const k=tr.getAttribute('data-key'); if(k&&window.planSumBlock)window.planSumBlock(k); const d=tr.getAttribute('data-dir'); if(k&&d&&window.planSumDir)window.planSumDir(k,d);};
+window.planSumFromEl=function(el){const tr=el&&el.closest?el.closest('tr'):null; if(!tr)return; const k=tr.getAttribute('data-key'); const d=tr.getAttribute('data-dir'); if(k&&d&&window.planSumDir)window.planSumDir(k,d); if(k&&window.planSumBlock)window.planSumBlock(k);};
 // Чекбокс «планировать это направление»: снят - поля строки отключены и план не сохраняется (исключено из плана)
 window.planToggleRow=function(cb){
   const tr=cb.closest('tr'); if(!tr)return; const on=cb.checked;
