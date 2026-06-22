@@ -3603,8 +3603,8 @@ function renderExpenses(f){
   // Разбивка расходов по периодам (для диаграммы сравнения)
   const cmpMode=f.periodType||'year';
   const cmpPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(cmpMode==='year')return String(y);if(cmpMode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
-  const perCat={};const cmpPset=new Set();
-  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const out=parseNum(r[COL.OUTCOME]);if(type!=='списание'||out>=0)return;const pk=cmpPK(r);if(!pk)return;cmpPset.add(pk);const cat=l1key(r);(perCat[cat]=perCat[cat]||{});perCat[cat][pk]=(perCat[cat][pk]||0)+Math.abs(out);});
+  const perCat={},perSub={};const cmpPset=new Set();
+  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const out=parseNum(r[COL.OUTCOME]);if(type!=='списание'||out>=0)return;const pk=cmpPK(r);if(!pk)return;cmpPset.add(pk);const cat=l1key(r);(perCat[cat]=perCat[cat]||{});perCat[cat][pk]=(perCat[cat][pk]||0)+Math.abs(out);const sub=String(r[COL.ARTICLE_NAME]||'Без подстатьи').trim();(perSub[sub]=perSub[sub]||{});perSub[sub][pk]=(perSub[sub][pk]||0)+Math.abs(out);});
   const cmpPeriods=[...cmpPset].sort((a,b)=>periodSortKey(a,cmpMode).localeCompare(periodSortKey(b,cmpMode)));
 
   // Фильтр-бар + направление
@@ -3676,7 +3676,7 @@ function renderExpenses(f){
     </div>
   </div>
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:0 0 14px">
-    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Сравнение расходов по периодам (${cmpMode==='month'?'месяцы':cmpMode==='quarter'?'кварталы':'годы'})</div>
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">Сравнение расходов по периодам (${cmpMode==='month'?'месяцы':cmpMode==='quarter'?'кварталы':'годы'}) · по подстатьям</div>
     <div style="height:300px"><canvas id="expChartCmp"></canvas></div>
   </div>`;
 
@@ -3733,11 +3733,12 @@ function renderExpenses(f){
     data:{labels:topSubs.map(s=>s[0].length>28?s[0].slice(0,27)+'…':s[0]),datasets:[{data:topSubs.map(s=>s[1]),backgroundColor:topSubs.map((_,i)=>PAL[i%PAL.length]),borderRadius:3}]},
     options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,layout:{padding:{right:46}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(-c.raw)+(totalRev?' · '+fmtPct(c.raw/revAbs)+' от выручки':'')}}},
       scales:{x:{grid:{color:'#ebebeb'},ticks:{font:{size:9},callback:moneyTick}},y:{grid:{display:false},ticks:{font:{size:9}}}}}});
-  // Сравнение по периодам (накопительный бар по категориям)
-  const cmpTop=catArr.slice(0,6).map(c=>c.name);
-  const cmpRest=catArr.slice(6).map(c=>c.name);
-  const cmpDatasets=cmpTop.map((cat,i)=>({label:cat.length>20?cat.slice(0,19)+'…':cat,data:cmpPeriods.map(p=>(perCat[cat]&&perCat[cat][p])||0),backgroundColor:PAL[i%PAL.length],stack:'e',borderRadius:2}));
-  if(cmpRest.length)cmpDatasets.push({label:'Прочее',data:cmpPeriods.map(p=>{let s=0;cmpRest.forEach(c=>{s+=(perCat[c]&&perCat[c][p])||0;});return s;}),backgroundColor:'#cbd5e1',stack:'e',borderRadius:2});
+  // Сравнение по периодам - накопительный бар по ПОДСТАТЬЯМ (топ-8 по сумме за период + Прочее)
+  const _subTot=Object.keys(perSub).map(s=>[s,cmpPeriods.reduce((a,p)=>a+(perSub[s][p]||0),0)]).sort((a,b)=>b[1]-a[1]);
+  const cmpTop=_subTot.slice(0,8).map(x=>x[0]);
+  const cmpRest=_subTot.slice(8).map(x=>x[0]);
+  const cmpDatasets=cmpTop.map((sub,i)=>({label:sub.length>22?sub.slice(0,21)+'…':sub,data:cmpPeriods.map(p=>(perSub[sub]&&perSub[sub][p])||0),backgroundColor:PAL[i%PAL.length],stack:'e',borderRadius:2}));
+  if(cmpRest.length)cmpDatasets.push({label:'Прочее',data:cmpPeriods.map(p=>{let s=0;cmpRest.forEach(x=>{s+=(perSub[x]&&perSub[x][p])||0;});return s;}),backgroundColor:'#cbd5e1',stack:'e',borderRadius:2});
   const cmp=document.getElementById('expChartCmp');
   if(cmp&&window.Chart)window._expChartCmp=new Chart(cmp,{type:'bar',plugins:[cmpTotPlugin],
     data:{labels:cmpPeriods,datasets:cmpDatasets},
