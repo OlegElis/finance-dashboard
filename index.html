@@ -7103,9 +7103,17 @@ function _planRenderMatrix(){
       return html;
     }
     return html+allDirs.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
-  const body=secRow('Доходы')+codeBlock('revenue','__rev__','Выручка - всего (план)')
-    +incCodes.map(c=>codeBlock('income',c,c)).join('')
-    +secRow('Расходы')+codes.map(c=>codeBlock(level,c,c)).join('');
+  const subFilter=(document.getElementById('plan-subart')||{}).value||''; // фильтр по одной подстатье
+  let body;
+  if(subFilter){ // показываем только выбранную подстатью (авто-развёрнуто), доходную или расходную
+    if(incCodes.includes(subFilter)){EXP.add('income|'+subFilter);body=secRow('Доходы')+codeBlock('income',subFilter,subFilter);}
+    else if(codes.includes(subFilter)){EXP.add(level+'|'+subFilter);body=secRow('Расходы')+codeBlock(level,subFilter,subFilter);}
+    else body=`<tr><td colspan="17" style="padding:14px 12px;color:var(--text3);font-size:12px">Подстатья «${esc(subFilter)}» не найдена в данных/планах за ${year}</td></tr>`;
+  }else{
+    body=secRow('Доходы')+codeBlock('revenue','__rev__','Выручка - всего (план)')
+      +incCodes.map(c=>codeBlock('income',c,c)).join('')
+      +secRow('Расходы')+codes.map(c=>codeBlock(level,c,c)).join('');
+  }
   const ths=MON.map(m=>`<th style="padding:6px 4px;font-size:10px;color:var(--text3);font-weight:600;position:sticky;top:0;background:var(--surface2);z-index:1">${m}</th>`).join('');
   const ownerOpts=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{}).filter(Boolean)])].sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(n=>`<option value="${esc(n)}">`).join('');
   const colg=`<colgroup><col style="width:290px"><col style="width:118px">${'<col style="width:100px">'.repeat(12)}<col style="width:104px"><col style="width:210px"><col></colgroup>`;
@@ -7254,6 +7262,11 @@ window.showPlansPanel=async function(){
   const dirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const years=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))];
   const cy=new Date().getFullYear(); if(!years.includes(cy))years.push(cy); years.sort((a,b)=>b-a);
+  // список подстатей (доходные + расходные, по всем направлениям) для фильтра
+  const subSet={};
+  dirs.forEach(d=>{_planCodes(d,'subarticle').forEach(c=>subSet[c]=1);_planIncomeCodes(d,'subarticle').forEach(c=>subSet[c]=1);});
+  (_planRecords||[]).forEach(p=>{if(p&&(p.level==='subarticle'||p.level==='income')&&p.code)subSet[p.code]=1;});
+  const subCodes=Object.keys(subSet).sort((a,b)=>a.localeCompare(b,'ru'));
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='plansPanelOverlay';
   overlay.innerHTML=`<div class="txn-card" style="width:98vw;max-width:none">
     <div class="txn-card-head"><h3>Планы (ПФХД)</h3><button class="txn-card-close">✕</button></div>
@@ -7262,6 +7275,10 @@ window.showPlansPanel=async function(){
         <span style="font-size:12px;color:var(--text2);font-weight:600;align-self:center">Все направления</span>
         <select id="plan-year" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${years.map(y=>`<option value="${y}"${y===cy?' selected':''}>${y}</option>`).join('')}</select>
         <input type="hidden" id="plan-level" value="subarticle">
+        <select id="plan-subart" onchange="planOnControlChange()" title="Показать одну подстатью для планирования" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:360px">
+          <option value="">- Все подстатьи -</option>
+          ${subCodes.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+        </select>
         <span style="font-size:11px;color:var(--text3);align-self:center">Уровень: Подстатья · статьи собираются автоматически по первым 3 цифрам</span>
       </div>
       <div style="font-size:11px;color:var(--text3);margin-bottom:8px">План по месяцам и/или на год. Кнопка режима: ₽ → %выр (доля выручки) → %ЧП (доля чистой прибыли, только для статьи 127). Кнопка <b>⤓</b> - вставить ФАКТ (поступления/расходы по подстатье, режим ₽). Пусто = плана нет; «Год» пусто = сумма месяцев.</div>
