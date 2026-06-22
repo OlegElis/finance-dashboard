@@ -7103,15 +7103,14 @@ function _planRenderMatrix(){
       return html;
     }
     return html+allDirs.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
-  const subQuery=String((document.getElementById('plan-subart')||{}).value||'').trim(); // фильтр/поиск по подстатье
+  const subSel=window._planSubartSel; // мультивыбор подстатей (Set кодов); пусто = все
   let body;
-  if(subQuery){ // ищем подстатью: точное → без регистра → единственная подстрока
-    const allSub=incCodes.concat(codes); const ql=subQuery.toLowerCase();
-    let match=allSub.find(c=>c===subQuery)||allSub.find(c=>c.toLowerCase()===ql); let multi=0;
-    if(!match){const f=allSub.filter(c=>c.toLowerCase().includes(ql)); if(f.length===1)match=f[0]; else multi=f.length;}
-    if(match&&incCodes.includes(match)){EXP.add('income|'+match);body=secRow('Доходы')+codeBlock('income',match,match);}
-    else if(match&&codes.includes(match)){EXP.add(level+'|'+match);body=secRow('Расходы')+codeBlock(level,match,match);}
-    else body=`<tr><td colspan="17" style="padding:14px 12px;color:var(--text3);font-size:12px">${multi>1?('Найдено '+multi+' подстатей по «'+esc(subQuery)+'» - уточните запрос или выберите из списка'):('Подстатья «'+esc(subQuery)+'» не найдена')}</td></tr>`;
+  if(subSel&&subSel.size){ // показываем только выбранные подстатьи (авто-развёрнуто), доходные и расходные
+    const incSel=incCodes.filter(c=>subSel.has(c)), expSel=codes.filter(c=>subSel.has(c));
+    body='';
+    if(incSel.length){body+=secRow('Доходы');incSel.forEach(c=>{EXP.add('income|'+c);body+=codeBlock('income',c,c);});}
+    if(expSel.length){body+=secRow('Расходы');expSel.forEach(c=>{EXP.add(level+'|'+c);body+=codeBlock(level,c,c);});}
+    if(!body)body=`<tr><td colspan="17" style="padding:14px 12px;color:var(--text3);font-size:12px">Выбранные подстатьи не найдены в данных/планах за ${year}</td></tr>`;
   }else{
     body=secRow('Доходы')+codeBlock('revenue','__rev__','Выручка - всего (план)')
       +incCodes.map(c=>codeBlock('income',c,c)).join('')
@@ -7190,22 +7189,13 @@ window.planToggleRow=function(cb){
   if(window.planSumFromEl)window.planSumFromEl(cb);
 };
 window.planOnControlChange=function(){_planStage();if(window._planExpanded)window._planExpanded.clear();_planRenderMatrix();};
-// Кастомный выпадающий список «Подстатья» (вместо нативного datalist - тот рисуется по тёмной теме ОС). Поиск без ре-рендера матрицы; ре-рендер только при выборе/Enter
-window.planSubartFilter=function(){
-  const inp=document.getElementById('plan-subart'),list=document.getElementById('plan-subart-list'); if(!inp||!list)return;
-  const q=String(inp.value||'').trim().toLowerCase(); list.style.display='block';
-  list.querySelectorAll('.psub-opt').forEach(function(o){const code=o.getAttribute('data-code')||'';const l=o.getAttribute('data-l')||'';o.style.display=(code===''||!q||l.includes(q))?'':'none';});
-};
-window.planSubartPick=function(code){
-  const inp=document.getElementById('plan-subart'),list=document.getElementById('plan-subart-list');
-  if(inp)inp.value=code||''; if(list)list.style.display='none';
-  planOnControlChange();
-};
-window.planSubartKey=function(e){
-  const list=document.getElementById('plan-subart-list');
-  if(e.key==='Enter'){e.preventDefault();if(list)list.style.display='none';planOnControlChange();}
-  else if(e.key==='Escape'){if(list)list.style.display='none';}
-};
+// Мультивыбор подстатей «Подстатья» (свой выпадающий список на токенах приложения; нативный datalist рисуется по тёмной теме ОС). Выбор применяется сразу (живой ре-рендер матрицы)
+window._planSubartSel=window._planSubartSel||new Set();
+window.planSubartToggle=function(){const l=document.getElementById('plan-subart-list');if(!l)return;l.style.display=(l.style.display==='none'||!l.style.display)?'block':'none';if(l.style.display==='block'){const q=document.getElementById('plan-subart-q');if(q){planSubartFilter();q.focus();}}};
+window.planSubartFilter=function(){const q=String((document.getElementById('plan-subart-q')||{}).value||'').trim().toLowerCase();const l=document.getElementById('plan-subart-list');if(!l)return;l.querySelectorAll('label.psub-opt').forEach(function(o){const t=o.getAttribute('data-l')||'';o.style.display=(!q||t.includes(q))?'':'none';});};
+window.planSubartCb=function(cb){const s=window._planSubartSel||(window._planSubartSel=new Set());if(cb.checked)s.add(cb.value);else s.delete(cb.value);planSubartUpdateBtn();planOnControlChange();};
+window.planSubartAll=function(){const s=window._planSubartSel||(window._planSubartSel=new Set());s.clear();const l=document.getElementById('plan-subart-list');if(l)l.querySelectorAll('.psub-cb').forEach(function(c){c.checked=false;});planSubartUpdateBtn();planOnControlChange();};
+window.planSubartUpdateBtn=function(){const b=document.getElementById('plan-subart-btn');if(!b)return;const s=window._planSubartSel;b.textContent=(!s||!s.size)?'Все подстатьи ▾':('Выбрано '+s.size+': '+[...s].join(', ')+' ▾');};
 // Развернуть/свернуть подстатью по направлениям (заполнение плана в разрезе направлений)
 window._planExpanded=window._planExpanded||new Set();
 window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window._planExpanded||(window._planExpanded=new Set());if(S.has(key))S.delete(key);else S.add(key);_planRenderMatrix();};
@@ -7330,6 +7320,7 @@ window.showPlansPanel=async function(){
   dirs.forEach(d=>{_planCodes(d,'subarticle').forEach(c=>subSet[c]=1);_planIncomeCodes(d,'subarticle').forEach(c=>subSet[c]=1);});
   (_planRecords||[]).forEach(p=>{if(p&&(p.level==='subarticle'||p.level==='income')&&p.code)subSet[p.code]=1;});
   const subCodes=Object.keys(subSet).sort((a,b)=>a.localeCompare(b,'ru'));
+  window._planSubartSel=new Set(); // сброс мультивыбора подстатей при открытии (стартуем со «всех»)
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='plansPanelOverlay';
   overlay.innerHTML=`<div class="txn-card" style="width:98vw;max-width:none">
     <div class="txn-card-head"><h3>Планы (БДР)</h3><button class="txn-card-close">✕</button></div>
@@ -7338,13 +7329,17 @@ window.showPlansPanel=async function(){
         <span style="font-size:12px;color:var(--text2);font-weight:600;align-self:center">Все направления</span>
         <select id="plan-year" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${years.map(y=>`<option value="${y}"${y===cy?' selected':''}>${y}</option>`).join('')}</select>
         <input type="hidden" id="plan-level" value="subarticle">
-        <style>#plan-subart-list .psub-opt{padding:6px 10px;font-size:12px;border-radius:5px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#plan-subart-list .psub-opt:hover{background:var(--accent-light)}</style>
+        <style>#plan-subart-list .psub-opt{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:12px;border-radius:5px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#plan-subart-list .psub-opt:hover{background:var(--accent-light)}#plan-subart-list .psub-cb{margin:0;cursor:pointer}</style>
         <div id="plan-subart-wrap" style="position:relative">
-          <input id="plan-subart" type="text" autocomplete="off" placeholder="Все подстатьи (поиск…)" title="Поиск подстатьи: вводите название/код или выберите из списка; пусто = все" oninput="planSubartFilter()" onfocus="planSubartFilter()" onkeydown="planSubartKey(event)" style="font-size:12px;padding:5px 28px 5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:320px">
-          <button type="button" onclick="planSubartPick('')" title="Сбросить - показать все подстатьи" style="position:absolute;right:4px;top:4px;font-size:12px;width:22px;height:22px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--text3);cursor:pointer">✕</button>
-          <div id="plan-subart-list" style="display:none;position:absolute;top:34px;left:0;z-index:60;width:340px;max-height:320px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(20,25,40,.16);padding:4px">
-            <div class="psub-opt" data-code="" onclick="planSubartPick('')" style="color:var(--text2);font-weight:600">— Все подстатьи —</div>
-            ${subCodes.map(c=>`<div class="psub-opt" data-code="${esc(c)}" data-l="${esc(String(c).toLowerCase())}" onclick="planSubartPick(this.getAttribute('data-code'))">${esc(c)}</div>`).join('')}
+          <button type="button" id="plan-subart-btn" onclick="planSubartToggle()" title="Выбрать одну или несколько подстатей для планирования" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:320px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Все подстатьи ▾</button>
+          <div id="plan-subart-list" style="display:none;position:absolute;top:34px;left:0;z-index:60;width:360px;max-height:340px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(20,25,40,.16);padding:6px">
+            <input id="plan-subart-q" type="text" autocomplete="off" placeholder="Поиск…" oninput="planSubartFilter()" style="width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);margin-bottom:6px">
+            <div class="psub-opt" onclick="planSubartAll()" style="color:var(--text2);font-weight:600">— Все подстатьи (сбросить выбор) —</div>
+            ${subCodes.map(c=>`<label class="psub-opt" data-l="${esc(String(c).toLowerCase())}"><input type="checkbox" class="psub-cb" value="${esc(c)}" onchange="planSubartCb(this)"> ${esc(c)}</label>`).join('')}
+            <div style="display:flex;justify-content:space-between;gap:8px;padding:8px 4px 2px;position:sticky;bottom:-6px;background:var(--surface)">
+              <button type="button" onclick="planSubartAll()" style="font-size:11px;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Сбросить</button>
+              <button type="button" onclick="planSubartToggle()" style="font-size:11px;font-weight:600;padding:5px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">Готово</button>
+            </div>
           </div>
         </div>
         <span style="font-size:11px;color:var(--text3);align-self:center">Уровень: Подстатья · статьи собираются автоматически по первым 3 цифрам</span>
