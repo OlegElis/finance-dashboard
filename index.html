@@ -5432,7 +5432,7 @@ function renderMarketing(f){
     const inc=parseNum(row[COL.INCOME]);if(inc<=0)return;
     const type=String(row[COL.TYPE]||'').trim().toLowerCase();
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
-    if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an))revByP[pk]=(revByP[pk]||0)+inc;
+    if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)){revByP[pk]=(revByP[pk]||0)+inc;(window._mktTxn['rev|'+pk]=window._mktTxn['rev|'+pk]||[]).push(row);}
   });
 
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
@@ -5628,7 +5628,7 @@ function renderMarketing(f){
     </tr>
     <tr>
       ${tdL('Выручка (ОПиУ)','color:var(--text3);font-size:10px')}
-      ${periods.map(pk=>{const v=revByP[pk]||0;return`<td style="padding:3px 10px;font-size:10px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--income)">${v?n0(v):'-'}</td>`;}).join('')}
+      ${periods.map(pk=>{const v=revByP[pk]||0;return`<td onclick="${v?`mktShowCostModal('rev','${pk.replace(/'/g,"\\'")}')`:''}" title="${v?'Из чего сложилась выручка (поступления)':''}" style="padding:3px 10px;font-size:10px;text-align:right;border-right:1px solid var(--border);border-bottom:1px solid var(--border);color:var(--income);${v?'cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;':''}">${v?n0(v):'-'}</td>`;}).join('')}
       ${tdS(totRevAll?n0(totRevAll):'-',false,'var(--income)')}
     </tr>
     <tr>
@@ -5754,7 +5754,8 @@ function renderMarketing(f){
 // Расшифровка расходов метрики за период - в формате окна ДДС + сводка по подстатьям
 window.mktShowCostModal=function(metric,pk){
   if(metric==='meet')metric='cpo'; // СВ использует те же расходы, что и CPO
-  const METRIC_NAME={cpo:'CPO',cpf:'CPF',cpl:'CPL',cpoFot:'CPO·ФОТ',meetFot:'CPMT·ФОТ',mktShare:'Маркетинг (300_ + ЗП ОМ)'}[metric]||metric.toUpperCase();
+  const isRev=metric==='rev'; const COLV=isRev?COL.INCOME:COL.OUTCOME; const accent=isRev?'var(--income)':'var(--outcome)';
+  const METRIC_NAME={cpo:'CPO',cpf:'CPF',cpl:'CPL',cpoFot:'CPO·ФОТ',meetFot:'CPMT·ФОТ',mktShare:'Маркетинг (300_ + ЗП ОМ)',rev:'Выручка (ОПиУ)'}[metric]||metric.toUpperCase();
   const rows=(window._mktTxn||{})[metric+'|'+pk]||[];
   if(!rows.length)return;
   window._mktTxnCur=rows;
@@ -5762,12 +5763,12 @@ window.mktShowCostModal=function(metric,pk){
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const n0=v=>Math.round(Math.abs(v)).toLocaleString('ru-RU');
-  const total=rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
+  const total=rows.reduce((s,r)=>s+parseNum(r[COLV]),0);
   // Сводка по подстатьям
   const bySub={};
-  rows.forEach(r=>{const s=c(r[COL.ARTICLE_NAME])||'Без подстатьи';bySub[s]=(bySub[s]||0)+parseNum(r[COL.OUTCOME]);});
-  const subChips=Object.entries(bySub).sort((a,b)=>a[1]-b[1]).map(([s,v])=>
-    `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:10px;font-size:10px;background:var(--surface2);border:1px solid var(--border)"><b>${s}</b><span style="color:var(--outcome);font-weight:700">${n0(v)}</span><span style="color:var(--text3)">${fmtPct(Math.abs(v)/Math.abs(total))}</span></span>`).join(' ');
+  rows.forEach(r=>{const s=c(r[COL.ARTICLE_NAME])||'Без подстатьи';bySub[s]=(bySub[s]||0)+parseNum(r[COLV]);});
+  const subChips=Object.entries(bySub).sort((a,b)=>isRev?(b[1]-a[1]):(a[1]-b[1])).map(([s,v])=>
+    `<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:10px;font-size:10px;background:var(--surface2);border:1px solid var(--border)"><b>${s}</b><span style="color:${accent};font-weight:700">${n0(v)}</span><span style="color:var(--text3)">${total?fmtPct(Math.abs(v)/Math.abs(total)):''}</span></span>`).join(' ');
   const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
   const thead=`<tr style="position:sticky;top:0;z-index:1">
     ${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}
@@ -5801,11 +5802,11 @@ window.mktShowCostModal=function(metric,pk){
   overlay.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35)">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px 10px;border-bottom:1px solid var(--border);flex-shrink:0;gap:12px">
       <div style="min-width:0;flex:1">
-        <div style="font-size:13px;font-weight:700;color:var(--text)">Расходы ${METRIC_NAME} · ${pk}</div>
-        <div style="font-size:10px;color:var(--text3);margin-top:1px">Что бралось в расчёт метрики за период</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text)">${isRev?'Выручка (ОПиУ)':'Расходы '+METRIC_NAME} · ${pk}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px">${isRev?'Поступления, вошедшие в выручку за период':'Что бралось в расчёт метрики за период'}</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-        <span style="font-size:12px;color:var(--outcome);font-weight:800">ИТОГО ${n0(total)}</span>
+        <span style="font-size:12px;color:${accent};font-weight:800">ИТОГО ${n0(total)}</span>
         <span style="font-size:10px;color:var(--text3)">${rows.length} строк</span>
         <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button>
       </div>
