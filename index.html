@@ -7009,7 +7009,8 @@ function _planRenderMatrix(){
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const isFotCode=code=>c3(code)==='111'; // подстатьи ФОТ - доп. уровень планирования по сотрудникам (ID_SecondSide)
   const isRentCode=code=>c3(code)==='223'; // подстатьи аренды - доп. уровень по объектам аренды (справочник config/rentObjects)
-  const isSubLevel=code=>isFotCode(code)||isRentCode(code); // подстатьи с 3-м уровнем разворота
+  const isConsultCode=code=>/консалтинг/i.test(String(code)); // консалтинговые услуги - доп. уровень по контрагенту (ID_SecondSide)
+  const isSubLevel=code=>isFotCode(code)||isRentCode(code)||isConsultCode(code); // подстатьи с 3-м уровнем разворота
   const jesc=s=>String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   // ── ФАКТ по НАПРАВЛЕНИЯМ/подстатьям/месяцам (для «план = факт» и заполнения в разрезе направлений) - по дате ОПиУ, перемещения исключены ──
   const FAD={}; const fad=d=>FAD[d]||(FAD[d]={inc:{},exp:{},rev:new Array(13).fill(0),npExp:new Array(13).fill(0)});
@@ -7022,7 +7023,7 @@ function _planRenderMatrix(){
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(),key=level==='article'?ac:an;
     const F=fad(rd);
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){F.rev[m]+=inc;if(key)(F.inc[key]=F.inc[key]||new Array(13).fill(0))[m]+=inc;}
-    if(t==='списание'&&out<0){const av=Math.abs(out);if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&(c3(key)==='111'||c3(key)==='223')){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}const al=nrmA(r[COL.ANALYTICS]);if(!(al.includes('вывод')&&al.includes('прибыл')))F.npExp[m]+=av;}
+    if(t==='списание'&&out<0){const av=Math.abs(out);if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&isSubLevel(key)){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}const al=nrmA(r[COL.ANALYTICS]);if(!(al.includes('вывод')&&al.includes('прибыл')))F.npExp[m]+=av;}
   });
   const factOf=(rdir,rl,code,m)=>{const F=FAD[rdir];if(!F)return 0;if(rl==='revenue')return F.rev[m]||0;const a=(rl==='income'?F.inc:F.exp)[code];return a?(a[m]||0):0;};
   const factYr=(rdir,rl,code)=>{let s=0;for(let m=1;m<=12;m++)s+=factOf(rdir,rl,code,m);return s;};
@@ -7121,7 +7122,7 @@ function _planRenderMatrix(){
     const noteCell=`<td style="padding:2px 3px;width:100%"><input class="plan-note" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`;
     const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer"><span onclick="planToggleExpand('${jesc(dkey)}')" title="${isRentCode(code)?'Развернуть объекты аренды':'Развернуть сотрудников'}" style="display:inline-block;width:16px;color:var(--text2);cursor:pointer">${dopen?'▾':'▸'}</span>${esc(d)}</td>`;
     return `<tr class="plan-dirtotal" data-key="${esc(key)}" data-dir="${esc(d)}" data-code="${esc(code)}" data-level="${rl}">${lab}<td></td>${mc}${yrCell}${ownerCell}${noteCell}</tr>`;};
-  const empAddRow=(d,code,key)=>`<tr><td colspan="17" style="padding:3px 8px 6px 40px;position:sticky;left:0;background:var(--surface)"><button type="button" onclick="planAddEmp('${jesc(d)}','${jesc(code)}','${jesc(key)}')" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">${isRentCode(code)?'+ добавить объект аренды':'+ добавить сотрудника'}</button></td></tr>`;
+  const empAddRow=(d,code,key)=>`<tr><td colspan="17" style="padding:3px 8px 6px 40px;position:sticky;left:0;background:var(--surface)"><button type="button" onclick="planAddEmp('${jesc(d)}','${jesc(code)}','${jesc(key)}')" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">${isRentCode(code)?'+ добавить объект аренды':isConsultCode(code)?'+ добавить контрагента':'+ добавить сотрудника'}</button></td></tr>`;
   const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label);
     let html=openHeader(rl,code,label,key);
     if(isSubLevel(code)&&rl!=='revenue'){ // 111-ФОТ (сотрудники) / 223-аренда (объекты): направление → 3-й уровень
@@ -7240,8 +7241,8 @@ window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window
 // Добавить элемент 3-го уровня: для 111-ФОТ - сотрудника (временный список); для 223-аренды - объект аренды (в Firebase-справочник config/rentObjects, общий для всех)
 window._planAddedSides=window._planAddedSides||{};
 window.planAddEmp=function(dir,code,key){
-  const cc=(String(code).match(/\d{3}/)||[])[0]; const isRent=cc==='223';
-  const name=prompt(isRent?'Название объекта аренды:':'ФИО сотрудника (ID_SecondSide):'); if(name==null)return; const nm=String(name).trim(); if(!nm)return;
+  const cc=(String(code).match(/\d{3}/)||[])[0]; const isRent=cc==='223'; const isConsult=/консалтинг/i.test(String(code));
+  const name=prompt(isRent?'Название объекта аренды:':isConsult?'Контрагент (ID_SecondSide):':'ФИО сотрудника (ID_SecondSide):'); if(name==null)return; const nm=String(name).trim(); if(!nm)return;
   try{_planStage();}catch(e){}
   if(isRent){ // справочник объектов аренды - в Firebase (общий, не привязан к направлению)
     if(!window._rentObjects)window._rentObjects=[];
