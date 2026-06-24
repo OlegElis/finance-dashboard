@@ -3027,7 +3027,6 @@ function renderOPIU(f){
   const CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки','Вывод чистой прибыли'];
   const rev={perInc:{},arts:{}};
   const exp={};CATS.forEach(c=>exp[c]={perOut:{},arts:{}});
-  const expArt={perOut:{},arts:{}}; // расходы по Статья→Подстатья (без аналитики) - для режима «по статьям»; тот же набор, что и 6 категорий (кроме «Вывод прибыли»)
   const periodsSet=new Set();
 
   data.forEach(row=>{
@@ -3054,15 +3053,6 @@ function renderOPIU(f){
       if(!exp[analytics].arts[art].subs[sub])exp[analytics].arts[art].subs[sub]={perOut:{},rows:[]};
       exp[analytics].arts[art].subs[sub].perOut[pk]=(exp[analytics].arts[art].subs[sub].perOut[pk]||0)+out;
       exp[analytics].arts[art].subs[sub].rows.push(row);
-      // та же запись - в плоскую группировку по статье/подстатье (без «Вывод чистой прибыли», как и в РАСХОДЫ/ЧП)
-      if(analytics!=='Вывод чистой прибыли'){
-        expArt.perOut[pk]=(expArt.perOut[pk]||0)+out;
-        if(!expArt.arts[art])expArt.arts[art]={perOut:{},subs:{}};
-        expArt.arts[art].perOut[pk]=(expArt.arts[art].perOut[pk]||0)+out;
-        if(!expArt.arts[art].subs[sub])expArt.arts[art].subs[sub]={perOut:{},rows:[]};
-        expArt.arts[art].subs[sub].perOut[pk]=(expArt.arts[art].subs[sub].perOut[pk]||0)+out;
-        expArt.arts[art].subs[sub].rows.push(row);
-      }
     }
   });
 
@@ -3087,6 +3077,11 @@ function renderOPIU(f){
   const ebitdaMap=inclBelow?addMaps(grossMap,indVarMap,indFixMap,belowEbitdaMap):addMaps(grossMap,indVarMap,indFixMap);
   const netMap=inclBelow?addMaps(ebitdaMap,taxesMap):addMaps(ebitdaMap,taxesMap,belowEbitdaMap);
   const totalExpMap=addMaps(dirVarMap,dirFixMap,indVarMap,indFixMap,taxesMap,belowEbitdaMap);
+  // Для режима «по статьям»: расходы выше/ниже EBITDA, сгруппированные по Статья→Подстатья (объединяем arts нужных категорий аналитики; «EBITDA-корректировки» - выше или ниже по тумблеру inclBelow)
+  const mergeArts=cats=>{const out={perOut:{},arts:{}};cats.forEach(cat=>{const cd=exp[cat];if(!cd)return;Object.entries(cd.perOut).forEach(([p,v])=>out.perOut[p]=(out.perOut[p]||0)+v);Object.entries(cd.arts).forEach(([art,ad])=>{const oa=out.arts[art]||(out.arts[art]={perOut:{},subs:{}});Object.entries(ad.perOut).forEach(([p,v])=>oa.perOut[p]=(oa.perOut[p]||0)+v);Object.entries(ad.subs).forEach(([sub,sd])=>{const os=oa.subs[sub]||(oa.subs[sub]={perOut:{},rows:[]});Object.entries(sd.perOut).forEach(([p,v])=>os.perOut[p]=(os.perOut[p]||0)+v);os.rows.push.apply(os.rows,sd.rows);});});});return out;};
+  const aboveCats=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные'].concat(inclBelow?['EBITDA-корректировки']:[]);
+  const belowCats=['Налоги / проценты / амортизация'].concat(inclBelow?[]:['EBITDA-корректировки']);
+  const expAbove=mergeArts(aboveCats), expBelow=mergeArts(belowCats);
 
   // --- KPI ---
   const totRev=Object.values(rev.perInc).reduce((a,b)=>a+b,0);
@@ -3218,18 +3213,18 @@ function renderOPIU(f){
     return html;
   };
 
-  // плоские расходы по Статья→Подстатья (режим «по статьям»): статья (сворачивается) → подстатья (клик - модал)
-  const expArtRows=()=>{
+  // плоские расходы по Статья→Подстатья (режим «по статьям»): статья (сворачивается) → подстатья (клик - модал). artObj - набор (expAbove/expBelow), idPrefix - уникальный префикс узлов
+  const expArtRows=(artObj,idPrefix,secLabel)=>{
     let html='';
-    Object.keys(expArt.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
-      const artData=expArt.arts[art];const artNodeId='op-fa'+ai;
+    Object.keys(artObj.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
+      const artData=artObj.arts[art];const artNodeId=idPrefix+ai;
       html+=`<tr class="dds-group" data-node="${artNodeId}" onclick="opiuTgl('${artNodeId}')" style="cursor:pointer">
         <td style="padding:3px 8px 3px 10px;font-weight:600;font-size:10px;background:#f8f9fa;cursor:pointer;position:sticky;left:0;z-index:1;white-space:nowrap"><span class="dds-arrow">▶</span>${art}</td>
         ${periodCellsOPIU(artData.perOut,'#f8f9fa',true)}
       </tr>`;
       Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
         const subData=artData.subs[sub];const subNodeId=artNodeId+'-s'+subi;
-        window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:'РАСХОДЫ',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
+        window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:secLabel||'РАСХОДЫ',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
         html+=`<tr class="dds-sub dds-child-${artNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
           <td style="padding:3px 8px 3px 28px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
           ${periodCellsOPIU(subData.perOut,'',false,subNodeId)}
@@ -3284,11 +3279,15 @@ function renderOPIU(f){
   rows+=revSubRows(revNodeId);
 
   if(flat){
-    // РЕЖИМ «ПО СТАТЬЯМ»: расходы плоским списком Статья→Подстатья (без аналитики). Итоги/ЧП те же (netMap), EBITDA - в сводке сверху
-    rows+=sectionHead('РАСХОДЫ (Статья → Подстатья)');
-    rows+=expArtRows();
+    // РЕЖИМ «ПО СТАТЬЯМ»: расходы плоским списком Статья→Подстатья (без аналитики), но с делением выше/ниже EBITDA (тумблер действует). Итоги/EBITDA/ЧП те же.
+    rows+=sectionHead('РАСХОДЫ ДО EBITDA (Статья → Подстатья)');
+    rows+=expArtRows(expAbove,'op-fa','РАСХОДЫ до EBITDA');
     rows+=computedRow('─── ОПЕРАЦИОННАЯ ПРИБЫЛЬ (EBITDA) ───',ebitdaMap,'#e7eaf1');
     rows+=pctRow('─── Рентабельность EBITDA ───',ebitdaMap,rev.perInc);
+    if(Object.keys(expBelow.arts).length){
+      rows+=sectionHead('РАСХОДЫ НИЖЕ EBITDA (Статья → Подстатья)');
+      rows+=expArtRows(expBelow,'op-fb','РАСХОДЫ ниже EBITDA');
+    }
     rows+=computedRow('─── ЧИСТАЯ ПРИБЫЛЬ (УБЫТОК) ───',netMap,'#fff8e1');
     rows+=pctRow('─── Рентабельность ЧП ───',netMap,rev.perInc);
     // РАСПРЕДЕЛЕНИЕ (вывод прибыли) - ниже ЧП, как и в режиме по аналитике
