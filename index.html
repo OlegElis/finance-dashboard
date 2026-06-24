@@ -872,7 +872,7 @@ const _tabFilters={
   anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9'},
   depau:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyOpen:false},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
-  opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false},
+  opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'monthly'},
   registry:{q:''}
@@ -1246,7 +1246,7 @@ const _pesc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').r
 let _presets={bank:[],opiu:[],dds:[],osv:[],fot:[]};
 const _activePreset={bank:'',opiu:'',dds:'',osv:'',fot:''}; // какой пресет сейчас выбран в выпадашке (для отображения + снятия)
 const _activePresetSig={bank:'',opiu:'',dds:'',osv:'',fot:''}; // снимок фильтров в момент применения пресета
-function _filterSig(tab){const f=_tabFilters[tab]||{};const ks=['preset','periodType','rel','dateFrom','dateTo','years','months','activityDirs','accounts','articles','subarticles','counterparties','finOps','secondSides','offerIds','includeFuture','ebitdaInclBelow','noOpening','rowDim','fotDetail'];const o={};ks.forEach(k=>{if(k in f)o[k]=f[k];});return JSON.stringify(o);}
+function _filterSig(tab){const f=_tabFilters[tab]||{};const ks=['preset','periodType','rel','dateFrom','dateTo','years','months','activityDirs','accounts','articles','subarticles','counterparties','finOps','secondSides','offerIds','includeFuture','ebitdaInclBelow','expFlat','noOpening','rowDim','fotDetail'];const o={};ks.forEach(k=>{if(k in f)o[k]=f[k];});return JSON.stringify(o);}
 // активный пресет с авто-снятием: если фильтры разошлись со снимком - пресет считается снятым
 function _presetActive(tab){if(_activePreset[tab]&&_filterSig(tab)!==_activePresetSig[tab])_activePreset[tab]='';return _activePreset[tab]||'';}
 try{const _ls=JSON.parse(localStorage.getItem('reportPresets')||'null');if(_ls&&typeof _ls==='object')_presets=Object.assign({bank:[],opiu:[],dds:[],osv:[],fot:[]},_ls);}catch(e){}
@@ -1331,6 +1331,7 @@ function _filterSummaryInner(tab){
   if(tab==='osv')parts.push(fmtSel('Счёт',f.accounts));
   if(tab==='fot'){parts.push(fmtSel('Статья',f.articles));parts.push(fmtSel('Подстатья',f.subarticles));parts.push(fmtSel('Сотрудник',f.counterparties));}
   if(tab==='opiu'&&f.ebitdaInclBelow)parts.push('<b style="color:var(--text2);font-weight:600">EBITDA-корр.:</b> в составе EBITDA');
+  if(tab==='opiu'&&f.expFlat)parts.push('<b style="color:var(--text2);font-weight:600">Расходы:</b> по статьям');
   if(tab==='osv'&&f.noOpening)parts.push('<b style="color:var(--text2);font-weight:600">Без вход. сальдо</b>');
   const fSumm=parts.filter(Boolean);
   return `<b style="color:var(--text2);font-weight:600">Фильтры:</b> <span style="flex:1;min-width:160px">${fSumm.length?fSumm.join('&nbsp;·&nbsp;'):'не заданы'}</span>`+(fSumm.length?`<button onclick="_resetTabFilters('${tab}')" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сбросить всё</button>`:'');
@@ -1340,6 +1341,7 @@ window._resetTabFilters=function(tab){
   ['years','months','activityDirs','accounts','articles','subarticles','counterparties'].forEach(k=>{ if(k in f)f[k]=[]; });
   if('rel'in f)f.rel='';
   if('ebitdaInclBelow'in f)f.ebitdaInclBelow=false;
+  if('expFlat'in f)f.expFlat=false;
   if('noOpening'in f)f.noOpening=false;
   if(typeof _activePreset==='object'&&tab in _activePreset)_activePreset[tab]='';
   renderActiveTab();
@@ -3025,6 +3027,7 @@ function renderOPIU(f){
   const CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки','Вывод чистой прибыли'];
   const rev={perInc:{},arts:{}};
   const exp={};CATS.forEach(c=>exp[c]={perOut:{},arts:{}});
+  const expArt={perOut:{},arts:{}}; // расходы по Статья→Подстатья (без аналитики) - для режима «по статьям»; тот же набор, что и 6 категорий (кроме «Вывод прибыли»)
   const periodsSet=new Set();
 
   data.forEach(row=>{
@@ -3051,6 +3054,15 @@ function renderOPIU(f){
       if(!exp[analytics].arts[art].subs[sub])exp[analytics].arts[art].subs[sub]={perOut:{},rows:[]};
       exp[analytics].arts[art].subs[sub].perOut[pk]=(exp[analytics].arts[art].subs[sub].perOut[pk]||0)+out;
       exp[analytics].arts[art].subs[sub].rows.push(row);
+      // та же запись - в плоскую группировку по статье/подстатье (без «Вывод чистой прибыли», как и в РАСХОДЫ/ЧП)
+      if(analytics!=='Вывод чистой прибыли'){
+        expArt.perOut[pk]=(expArt.perOut[pk]||0)+out;
+        if(!expArt.arts[art])expArt.arts[art]={perOut:{},subs:{}};
+        expArt.arts[art].perOut[pk]=(expArt.arts[art].perOut[pk]||0)+out;
+        if(!expArt.arts[art].subs[sub])expArt.arts[art].subs[sub]={perOut:{},rows:[]};
+        expArt.arts[art].subs[sub].perOut[pk]=(expArt.arts[art].subs[sub].perOut[pk]||0)+out;
+        expArt.arts[art].subs[sub].rows.push(row);
+      }
     }
   });
 
@@ -3068,6 +3080,8 @@ function renderOPIU(f){
   const belowEbitdaMap=exp['EBITDA-корректировки'].perOut;
   // Тумблер: true → «EBITDA-корректировки» учитываются В EBITDA (строки выше линии); false → ниже EBITDA
   const inclBelow=!!f.ebitdaInclBelow;
+  // Тумблер представления расходов: false → по аналитике (категории); true → плоский список по Статья→Подстатья (цифры/итоги/ЧП те же)
+  const flat=!!f.expFlat;
   const marginalMap=addMaps(rev.perInc,dirVarMap);
   const grossMap=addMaps(marginalMap,dirFixMap);
   const ebitdaMap=inclBelow?addMaps(grossMap,indVarMap,indFixMap,belowEbitdaMap):addMaps(grossMap,indVarMap,indFixMap);
@@ -3129,6 +3143,11 @@ function renderOPIU(f){
       <input type="checkbox" ${inclBelow?'checked':''} onchange="_tabFilters['opiu'].ebitdaInclBelow=this.checked;renderOPIU(getFilters())" style="cursor:pointer;margin:0">
       Корректировка EBITDA
     </label>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Расходы:</label>
+    <select title="Представление расходов: по аналитике (категории) или плоским списком по статьям/подстатьям" onchange="_tabFilters['opiu'].expFlat=(this.value==='flat');renderOPIU(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">
+      <option value="cats"${!flat?' selected':''}>По аналитике</option>
+      <option value="flat"${flat?' selected':''}>По статьям</option>
+    </select>
   </div>`;
 
   // --- thead ---
@@ -3199,6 +3218,26 @@ function renderOPIU(f){
     return html;
   };
 
+  // плоские расходы по Статья→Подстатья (режим «по статьям»): статья (сворачивается) → подстатья (клик - модал)
+  const expArtRows=()=>{
+    let html='';
+    Object.keys(expArt.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
+      const artData=expArt.arts[art];const artNodeId='op-fa'+ai;
+      html+=`<tr class="dds-group" data-node="${artNodeId}" onclick="opiuTgl('${artNodeId}')" style="cursor:pointer">
+        <td style="padding:3px 8px 3px 10px;font-weight:600;font-size:10px;background:#f8f9fa;cursor:pointer;position:sticky;left:0;z-index:1;white-space:nowrap"><span class="dds-arrow">▶</span>${art}</td>
+        ${periodCellsOPIU(artData.perOut,'#f8f9fa',true)}
+      </tr>`;
+      Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
+        const subData=artData.subs[sub];const subNodeId=artNodeId+'-s'+subi;
+        window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:'РАСХОДЫ',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
+        html+=`<tr class="dds-sub dds-child-${artNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
+          <td style="padding:3px 8px 3px 28px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
+          ${periodCellsOPIU(subData.perOut,'',false,subNodeId)}
+        </tr>`;
+      });
+    });
+    return html;
+  };
   // revenue sub rows
   const revSubRows=parentNodeId=>{
     let html='';
@@ -3244,6 +3283,16 @@ function renderOPIU(f){
   </tr>`;
   rows+=revSubRows(revNodeId);
 
+  if(flat){
+    // РЕЖИМ «ПО СТАТЬЯМ»: расходы плоским списком Статья→Подстатья (без аналитики). Итоги/ЧП те же (netMap), EBITDA - в сводке сверху
+    rows+=sectionHead('РАСХОДЫ (Статья → Подстатья)');
+    rows+=expArtRows();
+    rows+=computedRow('─── ЧИСТАЯ ПРИБЫЛЬ (УБЫТОК) ───',netMap,'#fff8e1');
+    rows+=pctRow('─── Рентабельность ЧП ───',netMap,rev.perInc);
+    // РАСПРЕДЕЛЕНИЕ (вывод прибыли) - ниже ЧП, как и в режиме по аналитике
+    rows+=sectionHead('РАСПРЕДЕЛЕНИЕ');
+    rows+=expCatRows('Вывод чистой прибыли','op-wd');
+  }else{
   // ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ
   rows+=sectionHead('ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ');
   rows+=expCatRows('Прямые / Переменные','op-dv');
@@ -3270,6 +3319,7 @@ function renderOPIU(f){
   // РАСПРЕДЕЛЕНИЕ
   rows+=sectionHead('РАСПРЕДЕЛЕНИЕ');
   rows+=expCatRows('Вывод чистой прибыли','op-wd');
+  }
 
   el.innerHTML=extraFiltersOPIU+kpiHtml+`<div class="table-wrap">
     <div class="table-header"><span class="table-title">Отчёт о прибылях и убытках</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div>
