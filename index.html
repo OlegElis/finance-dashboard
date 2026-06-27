@@ -872,7 +872,7 @@ const _tabFilters={
   anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9'},
   depau:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyOpen:false},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
-  opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false},
+  opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'monthly'},
   registry:{q:''}
@@ -1246,7 +1246,7 @@ const _pesc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').r
 let _presets={bank:[],opiu:[],dds:[],osv:[],fot:[]};
 const _activePreset={bank:'',opiu:'',dds:'',osv:'',fot:''}; // какой пресет сейчас выбран в выпадашке (для отображения + снятия)
 const _activePresetSig={bank:'',opiu:'',dds:'',osv:'',fot:''}; // снимок фильтров в момент применения пресета
-function _filterSig(tab){const f=_tabFilters[tab]||{};const ks=['preset','periodType','rel','dateFrom','dateTo','years','months','activityDirs','accounts','articles','subarticles','counterparties','finOps','secondSides','offerIds','includeFuture','ebitdaInclBelow','expFlat','noOpening','rowDim','fotDetail'];const o={};ks.forEach(k=>{if(k in f)o[k]=f[k];});return JSON.stringify(o);}
+function _filterSig(tab){const f=_tabFilters[tab]||{};const ks=['preset','periodType','rel','dateFrom','dateTo','years','months','activityDirs','accounts','articles','subarticles','counterparties','finOps','secondSides','offerIds','includeFuture','ebitdaInclBelow','expFlat','postSplit','noOpening','rowDim','fotDetail'];const o={};ks.forEach(k=>{if(k in f)o[k]=f[k];});return JSON.stringify(o);}
 // активный пресет с авто-снятием: если фильтры разошлись со снимком - пресет считается снятым
 function _presetActive(tab){if(_activePreset[tab]&&_filterSig(tab)!==_activePresetSig[tab])_activePreset[tab]='';return _activePreset[tab]||'';}
 try{const _ls=JSON.parse(localStorage.getItem('reportPresets')||'null');if(_ls&&typeof _ls==='object')_presets=Object.assign({bank:[],opiu:[],dds:[],osv:[],fot:[]},_ls);}catch(e){}
@@ -1332,6 +1332,7 @@ function _filterSummaryInner(tab){
   if(tab==='fot'){parts.push(fmtSel('Статья',f.articles));parts.push(fmtSel('Подстатья',f.subarticles));parts.push(fmtSel('Сотрудник',f.counterparties));}
   if(tab==='opiu'&&f.ebitdaInclBelow)parts.push('<b style="color:var(--text2);font-weight:600">EBITDA-корр.:</b> в составе EBITDA');
   if(tab==='opiu'&&f.expFlat)parts.push('<b style="color:var(--text2);font-weight:600">Расходы:</b> по статьям');
+  if(tab==='opiu'&&f.postSplit)parts.push('<b style="color:var(--text2);font-weight:600">Транзит почты:</b> БФЛ↔АУ вкл.');
   if(tab==='osv'&&f.noOpening)parts.push('<b style="color:var(--text2);font-weight:600">Без вход. сальдо</b>');
   const fSumm=parts.filter(Boolean);
   return `<b style="color:var(--text2);font-weight:600">Фильтры:</b> <span style="flex:1;min-width:160px">${fSumm.length?fSumm.join('&nbsp;·&nbsp;'):'не заданы'}</span>`+(fSumm.length?`<button onclick="_resetTabFilters('${tab}')" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сбросить всё</button>`:'');
@@ -1342,6 +1343,7 @@ window._resetTabFilters=function(tab){
   if('rel'in f)f.rel='';
   if('ebitdaInclBelow'in f)f.ebitdaInclBelow=false;
   if('expFlat'in f)f.expFlat=false;
+  if('postSplit'in f)f.postSplit=false;
   if('noOpening'in f)f.noOpening=false;
   if(typeof _activePreset==='object'&&tab in _activePreset)_activePreset[tab]='';
   renderActiveTab();
@@ -2997,6 +2999,15 @@ function renderOPIU(f){
   if(opiuSelMonths.length) data=data.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&opiuSelMonths.includes(d.getMonth()+1);});
   if(f.activityDirs&&f.activityDirs.length) data=data.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
 
+  // --- Расчётный транзит почтовых расходов БФЛ↔АУ (только для одиночного контура БФЛ или АУ; виртуальные строки, в RAW не пишем) ---
+  const BFL_DIR='БФЛ - Банкротство физических лиц', AU_DIR='АУ - Арбитражный управляющий';
+  const POST_TRIGGER_SUB='112_Депозиты и госпошлины', POST_AMTS=[25000,50000], POST_TRANSFER=20000;
+  const POST_EXP_SUB='112_Расходы на публикации (справочно)', POST_INC_SUB='120_Поступление на публикации (справочно)';
+  const _opiuDirsSel=f.activityDirs||[]; const _opiuSingleDir=_opiuDirsSel.length===1?_opiuDirsSel[0]:'';
+  const postIsBFL=_opiuSingleDir===BFL_DIR, postIsAU=_opiuSingleDir===AU_DIR;
+  const postEligible=postIsBFL||postIsAU; // чекбокс только для одиночного БФЛ или АУ (не агрегат, не др. направления, не САУ)
+  const postOn=postEligible&&!!f.postSplit;
+
   if(!data.length){el.innerHTML=renderFilterBar('opiu')+emptyState();return;}
 
   // --- period key using DATE_OPIU ---
@@ -3055,6 +3066,36 @@ function renderOPIU(f){
       exp[analytics].arts[art].subs[sub].rows.push(row);
     }
   });
+
+  // --- Инъекция расчётного транзита почты (после агрегации, ДО расчёта карт/периодов - чтобы вошло в EBITDA/ЧП) ---
+  if(postOn){
+    // квалифицирующие БФЛ-кейсы: подстатья «112_Депозиты и госпошлины», |списание| 25000/50000, ID_Offer непустой; те же фильтры периода; дедуп по ID → период по DATE_OPIU
+    const qual={};
+    applyBaseFilters(RAW,f).forEach(row=>{
+      if(String(row[COL.TYPE]||'').trim().toLowerCase()==='перемещение')return;
+      if(String(row[COL.ACTIVITY_DIR]||'').trim()!==BFL_DIR)return;
+      const d=parseDate(row[COL.DATE_OPIU]); if(!d)return;
+      if(opiuSelYears.length&&!opiuSelYears.includes(d.getFullYear()))return;
+      if(opiuSelMonths.length&&!opiuSelMonths.includes(d.getMonth()+1))return;
+      if(String(row[COL.ARTICLE_NAME]||'').trim()!==POST_TRIGGER_SUB)return;
+      if(!POST_AMTS.includes(Math.abs(parseNum(row[COL.OUTCOME]))))return;
+      const offer=String(row[COL.OFFER_ID]||'').trim(); if(!offer)return;
+      if(!(offer in qual))qual[offer]=getOPIUPeriodKey(row);
+    });
+    if(postIsBFL){ // расход −20000 в «Прямые / Переменные» → подстатья 112_Расходы на публикации (справочно)
+      const cat=exp['Прямые / Переменные'], artKey='112';
+      Object.values(qual).forEach(pk=>{ if(!pk)return; periodsSet.add(pk);
+        cat.perOut[pk]=(cat.perOut[pk]||0)-POST_TRANSFER;
+        const a=cat.arts[artKey]||(cat.arts[artKey]={perOut:{},subs:{}}); a.perOut[pk]=(a.perOut[pk]||0)-POST_TRANSFER;
+        const s=a.subs[POST_EXP_SUB]||(a.subs[POST_EXP_SUB]={perOut:{},rows:[]}); s.perOut[pk]=(s.perOut[pk]||0)-POST_TRANSFER;
+      });
+    }else if(postIsAU){ // доход +20000 в ВЫРУЧКУ → подстатья 120_Поступление на публикации (справочно)
+      Object.values(qual).forEach(pk=>{ if(!pk)return; periodsSet.add(pk);
+        rev.perInc[pk]=(rev.perInc[pk]||0)+POST_TRANSFER;
+        const s=rev.arts[POST_INC_SUB]||(rev.arts[POST_INC_SUB]={perInc:{},rows:[]}); s.perInc[pk]=(s.perInc[pk]||0)+POST_TRANSFER;
+      });
+    }
+  }
 
   const periods=[...periodsSet].sort((a,b)=>opiuSortKey(a).localeCompare(opiuSortKey(b)));
   const nPeriods=periods.length;
@@ -3143,6 +3184,10 @@ function renderOPIU(f){
       <option value="cats"${!flat?' selected':''}>По аналитике</option>
       <option value="flat"${flat?' selected':''}>По статьям</option>
     </select>
+    ${postEligible?`<label title="Расчётный транзит почтовых расходов 20 000 ₽/ID между БФЛ и АУ (только этот контур; виртуальные строки)" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${postOn?'var(--accent)':'var(--surface)'};color:${postOn?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
+      <input type="checkbox" ${postOn?'checked':''} onchange="_tabFilters['opiu'].postSplit=this.checked;renderOPIU(getFilters())" style="cursor:pointer;margin:0">
+      Разделение БФЛ / АУ (почта)
+    </label>`:''}
   </div>`;
 
   // --- thead ---
