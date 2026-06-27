@@ -3461,6 +3461,7 @@ function renderTarget(f){
     <input type="number" step="1000" value="${Math.round(V)}" onchange="_tabFilters.target.revManual=(this.value===''?null:parseNum(this.value));renderTarget(getFilters())" style="width:130px;font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);text-align:right">
     <button onclick="_tabFilters.target.revManual=null;renderTarget(getFilters())" title="Вернуть выручку из факта" style="font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:${manual?'var(--surface)':'var(--accent-light)'};color:var(--text2);cursor:pointer">↺ факт</button>
     <span style="font-size:10px;color:var(--text3)">${manual?'выручка задана вручную':'выручка из факта · '+periodLabel}</span>
+    <button onclick="showTargetLockPanel()" title="Зафиксированные подстатьи (не меняются; настройка сохраняется в облаке)" style="font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:5px;background:${lockedSet.size?'var(--accent-light)':'var(--surface)'};color:var(--text2);cursor:pointer;margin-left:auto">🔒 Фиксации${lockedSet.size?' ('+lockedSet.size+')':''}</button>
   </div>`;
   // --- KPI ---
   const kpi=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
@@ -3503,8 +3504,29 @@ window.targetToggleLock=function(cb){
   const F=_tabFilters.target; const set=new Set(F.locked||[]);
   if(cb.checked)set.add(key); else set.delete(key);
   F.locked=[...set];
+  try{_targetLockedSave();}catch(e){} // сохраняем настройку (Firebase + localStorage)
   renderTarget(getFilters());
 };
+// Панель управления зафиксированными подстатьями (настройка, сохраняется в облаке)
+window.showTargetLockPanel=function(){
+  if(document.getElementById('targetLockOverlay'))return;
+  const ov=document.createElement('div');ov.className='txn-card-overlay';ov.id='targetLockOverlay';
+  ov.innerHTML='<div class="txn-card" style="max-width:560px;width:94vw"><div class="txn-card-head"><h3>Зафиксированные подстатьи (не менять)</h3><button class="txn-card-close">✕</button></div><div style="padding:14px 18px 18px" id="targetLockBody"></div></div>';
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  ov.querySelector('.txn-card-close').addEventListener('click',()=>ov.remove());
+  document.body.appendChild(ov);
+  _targetLockRenderPanel();
+};
+function _targetLockRenderPanel(){
+  const b=document.getElementById('targetLockBody'); if(!b)return;
+  const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const locked=(_tabFilters.target.locked||[]);
+  if(!locked.length){b.innerHTML='<div style="font-size:12px;color:var(--text3);padding:6px 0 2px">Нет зафиксированных строк. Отметьте галочкой 🔒 подстатьи в таблице - они сохранятся в облаке и не сбросятся при обновлении.</div><div style="text-align:right;margin-top:12px"><button onclick="document.getElementById(\'targetLockOverlay\').remove()" style="font-size:12px;padding:6px 14px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">Готово</button></div>';return;}
+  const rows=locked.slice().sort().map(k=>{const p=String(k).split('||');const art=p[0]||'',sub=p[1]||k;return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--divider)"><div style="font-size:12px;min-width:0"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(sub)}</div><div style="font-size:10px;color:var(--text3)">${esc(art)}</div></div><button data-key="${esc(k)}" onclick="targetLockRemove(this)" title="Убрать фиксацию" style="border:none;background:none;color:#d35450;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0">✕</button></div>`;}).join('');
+  b.innerHTML='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Эти подстатьи не меняются при расчёте целевого бюджета (остаются на факте). Настройка сохраняется в облаке (Firebase) и не сбрасывается при обновлении.</div>'+rows+`<div style="display:flex;justify-content:space-between;margin-top:14px"><button onclick="targetLockClear()" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--outcome);cursor:pointer">Очистить все (${locked.length})</button><button onclick="document.getElementById('targetLockOverlay').remove()" style="font-size:12px;padding:6px 14px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">Готово</button></div>`;
+}
+window.targetLockRemove=function(el){const key=el.getAttribute('data-key');const F=_tabFilters.target;F.locked=(F.locked||[]).filter(k=>k!==key);try{_targetLockedSave();}catch(e){}_targetLockRenderPanel();if(activeTab==='target')renderTarget(getFilters());};
+window.targetLockClear=function(){if(!confirm('Убрать все фиксации?'))return;_tabFilters.target.locked=[];try{_targetLockedSave();}catch(e){}_targetLockRenderPanel();if(activeTab==='target')renderTarget(getFilters());};
 // Целевой ОПиУ: мультивыбор направлений (строковые значения - своя логика, без multiSel*; применение по закрытию)
 window.targetDirToggle=function(){const dd=document.getElementById('target-dir-dd');if(dd)dd.style.display=dd.style.display==='block'?'none':'block';};
 window.targetDirChange=function(){const dd=document.getElementById('target-dir-dd');if(!dd)return;const vals=[...dd.querySelectorAll('input.target-dir-cb:checked')].map(c=>c.value);_tabFilters.target.dirs=vals;_tabFilters.target.months=[];const btn=document.getElementById('target-dir-btn');if(btn)btn.textContent=(vals.length?vals.length+' выбрано':'Все направления')+' ▾';};
@@ -7130,6 +7152,23 @@ function startRentObjectsSync(){
       if(activeTab==='planfact'&&document.getElementById('plan-matrix'))try{_planRenderMatrix();}catch(e){}});
   }catch(e){console.warn('[rentObjects] sync',e&&e.message);}
 }
+// Целевой ОПиУ: зафиксированные подстатьи («не менять») - сохраняются в Firebase config/targetLocked + localStorage (не сбрасываются при обновлении)
+function _targetLockedSave(){
+  const v=(_tabFilters.target&&_tabFilters.target.locked)||[];
+  try{localStorage.setItem('finTargetLocked',JSON.stringify(v));}catch(e){}
+  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/targetLocked').set(v); } }catch(e){}
+}
+function startTargetLockedSync(){
+  try{const a=JSON.parse(localStorage.getItem('finTargetLocked')||'[]');if(Array.isArray(a))_tabFilters.target.locked=a;}catch(e){} // localStorage сразу
+  if(window._targetLockedSyncStarted)return; window._targetLockedSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
+    firebase.database().ref('config/targetLocked').on('value',s=>{const v=s.val();
+      _tabFilters.target.locked=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
+      try{localStorage.setItem('finTargetLocked',JSON.stringify(_tabFilters.target.locked));}catch(e){}
+      if(activeTab==='target')try{renderActiveTab();}catch(e){}});
+  }catch(e){console.warn('[targetLocked] sync',e&&e.message);}
+}
 function _planCodes(dir,level){
   const set={};
   RAW.forEach(r=>{
@@ -7737,7 +7776,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -7791,7 +7830,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync();
       });
     }else{
       if(gate)gate.style.display='flex';
