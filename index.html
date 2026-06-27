@@ -879,7 +879,7 @@ const _tabFilters={
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'monthly'},
-  target:{dir:'',year:0,targetPct:10,revManual:null},
+  target:{dir:'',years:[],months:[],targetPct:10,revManual:null},
   registry:{q:''}
 };
 
@@ -2216,15 +2216,16 @@ window.multiSelApply=function(tab,rerender){
   else if(tab==='marketing')renderMarketing(getFilters());
   else if(tab==='fot')renderFOT(getFilters());
   else if(tab==='expenses')renderExpenses(getFilters());
+  else if(tab==='target')renderTarget(getFilters());
 };
 // Close on outside click
 document.addEventListener('click',function(e){
-  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd','fot-year-dd','fot-month-dd','exp-year-dd','exp-month-dd'].forEach(ddId=>{
+  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd','fot-year-dd','fot-month-dd','exp-year-dd','exp-month-dd','target-year-dd','target-month-dd'].forEach(ddId=>{
     const dd=document.getElementById(ddId);
     const btn=document.getElementById(ddId.replace('-dd','-btn'));
     if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){
       dd.style.display='none';
-      const tab=ddId.startsWith('dds')?'dds':ddId.startsWith('opiu')?'opiu':ddId.startsWith('fot')?'fot':ddId.startsWith('exp')?'expenses':'marketing';
+      const tab=ddId.startsWith('dds')?'dds':ddId.startsWith('opiu')?'opiu':ddId.startsWith('fot')?'fot':ddId.startsWith('exp')?'expenses':ddId.startsWith('target')?'target':'marketing';
       multiSelApply(tab);
     }
   });
@@ -3394,8 +3395,13 @@ function renderTarget(f){
   const years=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>b-a);
   const cy=new Date().getFullYear(); if(!years.includes(cy))years.unshift(cy);
   if(!F.dir||!dirs.includes(F.dir))F.dir=dirs.find(d=>/^бфл/i.test(d))||dirs[0]||'';
-  if(!F.year||!years.includes(F.year))F.year=years[0];
-  const dir=F.dir, year=+F.year;
+  const dir=F.dir;
+  const selYears=(F.years||[]).map(Number), selMonths=(F.months||[]).map(Number);
+  const MONTHS_SHORT_T=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const periodLabel=(selYears.length?selYears.slice().sort((a,b)=>a-b).join(', '):'все годы')+(selMonths.length?(' · '+selMonths.slice().sort((a,b)=>a-b).map(m=>MONTHS_SHORT_T[m-1]).join(',')):'');
+  // доступные месяцы по направлению (с учётом выбранных годов) - для дропдауна «Месяц»
+  const dirDated=RAW.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===dir&&parseDate(r[COL.DATE_OPIU]));
+  const allMonths=[...new Set((selYears.length?dirDated.filter(r=>selYears.includes(parseDate(r[COL.DATE_OPIU]).getFullYear())):dirDated).map(r=>parseDate(r[COL.DATE_OPIU]).getMonth()+1))].sort((a,b)=>a-b);
   let pctNum=parseFloat(F.targetPct); if(isNaN(pctNum))pctNum=10; pctNum=Math.max(0,Math.min(95,pctNum)); const pct=pctNum/100;
   // Расходы как в ОПиУ: списания с аналитикой 6 категорий (без «Вывод чистой прибыли»). Выручка как в ОПиУ.
   const EXP_CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки'];
@@ -3403,7 +3409,9 @@ function renderTarget(f){
   RAW.forEach(row=>{
     if(String(row[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
     const t=String(row[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
-    const d=parseDate(row[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
+    const d=parseDate(row[COL.DATE_OPIU]); if(!d)return;
+    if(selYears.length&&!selYears.includes(d.getFullYear()))return;
+    if(selMonths.length&&!selMonths.includes(d.getMonth()+1))return;
     const inc=parseNum(row[COL.INCOME]), out=parseNum(row[COL.OUTCOME]);
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(), an=String(row[COL.ARTICLE_NAME]||'').trim();
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))revFact+=inc;
@@ -3420,23 +3428,31 @@ function renderTarget(f){
   const scale=expFact>0?expAllowed/expFact:0, deltaTot=expAllowed-expFact;
   // --- controls ---
   const dirOpts=dirs.map(d=>`<option value="${esc(d)}"${d===dir?' selected':''}>${esc(d)}</option>`).join('');
-  const yrOpts=years.map(y=>`<option value="${y}"${y===year?' selected':''}>${y}</option>`).join('');
+  const ddBtnS='font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)';
+  const ddBtn='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left';
+  const ddBox='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px';
+  const tYearChecks=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('target','years','target-year-dd','target-year-btn',true)" style="${ddBtnS}">Все</button><button onclick="multiSelAll('target','years','target-year-dd','target-year-btn',false)" style="${ddBtnS}">Снять</button></div>`+years.map(y=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${y}" ${selYears.includes(y)?'checked':''} onchange="multiSelChange('target','years','target-year-dd','target-year-btn')"> <span>${y}</span></label>`).join('');
+  const tMonthChecks=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('target','months','target-month-dd','target-month-btn',true)" style="${ddBtnS}">Все</button><button onclick="multiSelAll('target','months','target-month-dd','target-month-btn',false)" style="${ddBtnS}">Снять</button></div>`+(allMonths.length?allMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${selMonths.includes(m)?'checked':''} onchange="multiSelChange('target','months','target-month-dd','target-month-btn')"> <span>${MONTHS_SHORT_T[m-1]}</span></label>`).join(''):'<div style="padding:6px 10px;font-size:10px;color:var(--text3)">нет данных</div>');
+  const tYearBtnLabel=(selYears.length?selYears.length+' выбрано':'Все')+' ▾';
+  const tMonthBtnLabel=(selMonths.length?selMonths.length+' выбрано':'Все')+' ▾';
   const controls=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:10px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
-    <select onchange="_tabFilters.target.dir=this.value;renderTarget(getFilters())" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:320px">${dirOpts}</select>
+    <select onchange="_tabFilters.target.dir=this.value;_tabFilters.target.months=[];renderTarget(getFilters())" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:320px">${dirOpts}</select>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
-    <select onchange="_tabFilters.target.year=+this.value;renderTarget(getFilters())" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${yrOpts}</select>
+    <div style="position:relative;display:inline-block"><button id="target-year-btn" onclick="multiSelToggle('target-year-dd')" style="${ddBtn}">${tYearBtnLabel}</button><div id="target-year-dd" style="${ddBox}">${tYearChecks}</div></div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
+    <div style="position:relative;display:inline-block"><button id="target-month-btn" onclick="multiSelToggle('target-month-dd')" style="${ddBtn}">${tMonthBtnLabel}</button><div id="target-month-dd" style="${ddBox}">${tMonthChecks}</div></div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Целевая ЧП %:</label>
     <input type="number" min="0" max="95" step="0.5" value="${pctNum}" onchange="_tabFilters.target.targetPct=parseFloat(this.value)||0;renderTarget(getFilters())" style="width:64px;font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);text-align:right">
     <input type="range" min="0" max="50" step="0.5" value="${pctNum}" onchange="_tabFilters.target.targetPct=parseFloat(this.value)||0;renderTarget(getFilters())" style="width:170px;vertical-align:middle">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Выручка (база):</label>
     <input type="number" step="1000" value="${Math.round(V)}" onchange="_tabFilters.target.revManual=(this.value===''?null:parseNum(this.value));renderTarget(getFilters())" style="width:130px;font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);text-align:right">
     <button onclick="_tabFilters.target.revManual=null;renderTarget(getFilters())" title="Вернуть выручку из факта" style="font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:${manual?'var(--surface)':'var(--accent-light)'};color:var(--text2);cursor:pointer">↺ факт</button>
-    <span style="font-size:10px;color:var(--text3)">${manual?'выручка задана вручную':'выручка из факта '+year}</span>
+    <span style="font-size:10px;color:var(--text3)">${manual?'выручка задана вручную':'выручка из факта · '+periodLabel}</span>
   </div>`;
   // --- KPI ---
   const kpi=`<div class="kpi-grid" style="margin:0;padding:10px 24px;border-bottom:1px solid var(--border)">
-    <div class="kpi-card"><div class="kpi-label">Выручка (база)</div><div class="kpi-value">${fmt(V)}</div><div class="kpi-sub">${manual?'ручной ввод':'факт '+year}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Выручка (база)</div><div class="kpi-value">${fmt(V)}</div><div class="kpi-sub">${manual?'ручной ввод':'факт · '+periodLabel}</div></div>
     <div class="kpi-card green"><div class="kpi-label">Целевая ЧП (${pctNum}%)</div><div class="kpi-value positive">${fmt(npTarget)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Допустимые расходы всего</div><div class="kpi-value">${fmt(expAllowed)}</div><div class="kpi-sub">${fmtPct(1-pct)} выручки</div></div>
     <div class="kpi-card"><div class="kpi-label">Текущие расходы (факт)</div><div class="kpi-value negative">${fmt(expFact)}</div><div class="kpi-sub">факт ЧП ${fmtPct(npFactPct)}</div></div>
@@ -3448,7 +3464,7 @@ function renderTarget(f){
   const dColor=v=>v>=0?'var(--income)':'var(--outcome)';
   const arts=Object.keys(artMap).sort((a,b)=>artMap[b].total-artMap[a].total);
   let body='';
-  if(!arts.length){body=`<tr><td colspan="5" style="padding:16px;color:var(--text3);font-size:12px">Нет расходов с аналитикой за ${year} по направлению «${esc(dir)}».</td></tr>`;}
+  if(!arts.length){body=`<tr><td colspan="5" style="padding:16px;color:var(--text3);font-size:12px">Нет расходов с аналитикой за ${periodLabel} по направлению «${esc(dir)}».</td></tr>`;}
   else arts.forEach(art=>{
     const a=artMap[art], aB=a.total*scale, aD=aB-a.total;
     body+=`<tr style="background:var(--section-bg);font-weight:700"><td style="padding:5px 10px;font-size:11px">${esc(art)}</td>${numTd(fmt(a.total))}${numTd(expFact>0?fmtPct(a.total/expFact):'')}${numTd(fmt(aB),'background:#eef4ff')}${numTd((aD>=0?'+':'')+fmt(aD),'color:'+dColor(aD))}</tr>`;
@@ -3460,7 +3476,7 @@ function renderTarget(f){
   const totalRow=`<tr style="background:var(--total-bg);font-weight:700;border-top:2px solid var(--border-strong)"><td style="padding:6px 10px;font-size:12px">ИТОГО РАСХОДЫ</td>${numTd(fmt(expFact))}${numTd('100%')}${numTd(fmt(expAllowed),'background:#e3edff')}${numTd((deltaTot>=0?'+':'')+fmt(deltaTot),'color:'+dColor(deltaTot))}</tr>`;
   const note=`<div style="font-size:11px;color:var(--text3);padding:8px 24px;line-height:1.5">Допустимые расходы = Выручка × (1 − Целевая ЧП%). «Целевой бюджет» по строкам = факт × коэффициент (доли статей сохраняются). <b>Δ к факту</b>: <span style="color:var(--income)">+ запас</span> / <span style="color:var(--outcome)">− нужно сократить</span>. Расходы берутся как в ОПиУ (по аналитике, без вывода прибыли); депозиты/строки без аналитики не учитываются.</div>`;
   el.innerHTML=controls+kpi+note+`<div class="table-wrap" style="margin:0 24px 24px">
-    <div class="table-header"><span class="table-title">Целевой бюджет расходов · ${esc(dir)} · ${year}</span><span class="table-count">ЧП ${pctNum}%</span></div>
+    <div class="table-header"><span class="table-title">Целевой бюджет расходов · ${esc(dir)} · ${periodLabel}</span><span class="table-count">ЧП ${pctNum}%</span></div>
     <div class="table-scroll" style="overflow:auto;max-height:62vh"><table style="width:100%;border-collapse:collapse">
       <thead><tr><th style="text-align:left;${th};position:sticky;top:0;z-index:1">Статья / Подстатья</th><th style="${th};position:sticky;top:0;z-index:1">Факт, ₽</th><th style="${th};position:sticky;top:0;z-index:1">Доля</th><th style="${th};position:sticky;top:0;z-index:1;background:#e3edff">Целевой бюджет, ₽</th><th style="${th};position:sticky;top:0;z-index:1">Δ к факту</th></tr></thead>
       <tbody>${body}${arts.length?totalRow:''}</tbody>
