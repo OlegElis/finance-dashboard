@@ -879,7 +879,7 @@ const _tabFilters={
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'monthly'},
-  target:{dir:'',years:[],months:[],targetPct:10,revManual:null,locked:[]},
+  target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
   registry:{q:''}
 };
 
@@ -2220,7 +2220,7 @@ window.multiSelApply=function(tab,rerender){
 };
 // Close on outside click
 document.addEventListener('click',function(e){
-  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd','fot-year-dd','fot-month-dd','exp-year-dd','exp-month-dd','target-year-dd','target-month-dd'].forEach(ddId=>{
+  ['dds-year-dd','dds-month-dd','opiu-year-dd','opiu-month-dd','mkt-year-dd','mkt-month-dd','fot-year-dd','fot-month-dd','exp-year-dd','exp-month-dd','target-year-dd','target-month-dd','target-dir-dd'].forEach(ddId=>{
     const dd=document.getElementById(ddId);
     const btn=document.getElementById(ddId.replace('-dd','-btn'));
     if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){
@@ -3394,20 +3394,22 @@ function renderTarget(f){
   const dirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const years=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>b-a);
   const cy=new Date().getFullYear(); if(!years.includes(cy))years.unshift(cy);
-  if(!F.dir||!dirs.includes(F.dir))F.dir=dirs.find(d=>/^бфл/i.test(d))||dirs[0]||'';
-  const dir=F.dir;
+  // направления - мультивыбор (пусто = все/свод); чистим невалидные
+  let selDirs=(F.dirs||[]).filter(d=>dirs.includes(d)); F.dirs=selDirs;
+  const dirIn=d=>!selDirs.length||selDirs.includes(d); // пусто = все
+  const dirLabel=!selDirs.length?'Свод (все направления)':(selDirs.length===1?selDirs[0]:'Свод: '+selDirs.length+' направл.');
   const selYears=(F.years||[]).map(Number), selMonths=(F.months||[]).map(Number);
   const MONTHS_SHORT_T=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   const periodLabel=(selYears.length?selYears.slice().sort((a,b)=>a-b).join(', '):'все годы')+(selMonths.length?(' · '+selMonths.slice().sort((a,b)=>a-b).map(m=>MONTHS_SHORT_T[m-1]).join(',')):'');
-  // доступные месяцы по направлению (с учётом выбранных годов) - для дропдауна «Месяц»
-  const dirDated=RAW.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===dir&&parseDate(r[COL.DATE_OPIU]));
+  // доступные месяцы по выбранным направлениям (с учётом выбранных годов) - для дропдауна «Месяц»
+  const dirDated=RAW.filter(r=>dirIn(String(r[COL.ACTIVITY_DIR]||'').trim())&&parseDate(r[COL.DATE_OPIU]));
   const allMonths=[...new Set((selYears.length?dirDated.filter(r=>selYears.includes(parseDate(r[COL.DATE_OPIU]).getFullYear())):dirDated).map(r=>parseDate(r[COL.DATE_OPIU]).getMonth()+1))].sort((a,b)=>a-b);
   let pctNum=parseFloat(F.targetPct); if(isNaN(pctNum))pctNum=10; pctNum=Math.max(0,Math.min(95,pctNum)); const pct=pctNum/100;
   // Расходы как в ОПиУ: списания с аналитикой 6 категорий (без «Вывод чистой прибыли»). Выручка как в ОПиУ.
   const EXP_CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки'];
   let revFact=0; const artMap={};
   RAW.forEach(row=>{
-    if(String(row[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
+    if(!dirIn(String(row[COL.ACTIVITY_DIR]||'').trim()))return;
     const t=String(row[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
     const d=parseDate(row[COL.DATE_OPIU]); if(!d)return;
     if(selYears.length&&!selYears.includes(d.getFullYear()))return;
@@ -3436,9 +3438,10 @@ function renderTarget(f){
   const totalBudget=lockedFact+unlockedFact*scaleU; // факт. целевой бюджет с учётом фиксаций (=expAllowed если выполнимо)
   const lockOverflow=lockedFact>expAllowed+0.5; // зафиксированного уже больше, чем допустимо
   // --- controls ---
-  const dirOpts=dirs.map(d=>`<option value="${esc(d)}"${d===dir?' selected':''}>${esc(d)}</option>`).join('');
   const ddBtnS='font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)';
   const ddBtn='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left';
+  const tDirChecks=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="targetDirAll(true)" style="${ddBtnS}">Все</button><button onclick="targetDirAll(false)" style="${ddBtnS}">Снять</button></div>`+dirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" class="target-dir-cb" value="${esc(d)}" ${selDirs.includes(d)?'checked':''} onchange="targetDirChange()"> <span>${esc(d)}</span></label>`).join('');
+  const tDirBtnLabel=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
   const ddBox='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px';
   const tYearChecks=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('target','years','target-year-dd','target-year-btn',true)" style="${ddBtnS}">Все</button><button onclick="multiSelAll('target','years','target-year-dd','target-year-btn',false)" style="${ddBtnS}">Снять</button></div>`+years.map(y=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${y}" ${selYears.includes(y)?'checked':''} onchange="multiSelChange('target','years','target-year-dd','target-year-btn')"> <span>${y}</span></label>`).join('');
   const tMonthChecks=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('target','months','target-month-dd','target-month-btn',true)" style="${ddBtnS}">Все</button><button onclick="multiSelAll('target','months','target-month-dd','target-month-btn',false)" style="${ddBtnS}">Снять</button></div>`+(allMonths.length?allMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${selMonths.includes(m)?'checked':''} onchange="multiSelChange('target','months','target-month-dd','target-month-btn')"> <span>${MONTHS_SHORT_T[m-1]}</span></label>`).join(''):'<div style="padding:6px 10px;font-size:10px;color:var(--text3)">нет данных</div>');
@@ -3446,7 +3449,7 @@ function renderTarget(f){
   const tMonthBtnLabel=(selMonths.length?selMonths.length+' выбрано':'Все')+' ▾';
   const controls=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:10px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
-    <select onchange="_tabFilters.target.dir=this.value;_tabFilters.target.months=[];renderTarget(getFilters())" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:320px">${dirOpts}</select>
+    <div style="position:relative;display:inline-block"><button id="target-dir-btn" onclick="targetDirToggle()" style="${ddBtn};min-width:200px;max-width:340px">${tDirBtnLabel}</button><div id="target-dir-dd" style="${ddBox};min-width:280px">${tDirChecks}</div></div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
     <div style="position:relative;display:inline-block"><button id="target-year-btn" onclick="multiSelToggle('target-year-dd')" style="${ddBtn}">${tYearBtnLabel}</button><div id="target-year-dd" style="${ddBox}">${tYearChecks}</div></div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
@@ -3473,7 +3476,7 @@ function renderTarget(f){
   const dColor=v=>v>=0?'var(--income)':'var(--outcome)';
   const arts=Object.keys(artMap).sort((a,b)=>artMap[b].total-artMap[a].total);
   let body='';
-  if(!arts.length){body=`<tr><td colspan="6" style="padding:16px;color:var(--text3);font-size:12px">Нет расходов с аналитикой за ${periodLabel} по направлению «${esc(dir)}».</td></tr>`;}
+  if(!arts.length){body=`<tr><td colspan="6" style="padding:16px;color:var(--text3);font-size:12px">Нет расходов с аналитикой за ${periodLabel} · ${esc(dirLabel)}.</td></tr>`;}
   else arts.forEach(art=>{
     const a=artMap[art]; let aB=0; Object.keys(a.subs).forEach(sub=>{aB+=subBudget(art,sub,a.subs[sub]);}); const aD=aB-a.total;
     body+=`<tr style="background:var(--section-bg);font-weight:700"><td></td><td style="padding:5px 10px;font-size:11px">${esc(art)}</td>${numTd(fmt(a.total))}${numTd(expFact>0?fmtPct(a.total/expFact):'')}${numTd(fmt(aB),'background:#eef4ff')}${numTd((aD>=0?'+':'')+fmt(aD),'color:'+dColor(aD))}</tr>`;
@@ -3487,7 +3490,7 @@ function renderTarget(f){
   const lockInfo=lockedSet.size?`<div style="font-size:11px;color:var(--text3);padding:2px 24px">Зафиксировано подстатей: <b>${[...lockedSet].length}</b> на <b>${fmt(lockedFact)}</b>; гибких: <b>${fmt(unlockedFact)}</b> (коэффициент ${unlockedFact>0?(scaleU).toFixed(2):'-'}).</div>`:'';
   const note=`<div style="font-size:11px;color:var(--text3);padding:8px 24px 2px;line-height:1.5">Допустимые расходы = Выручка × (1 − Целевая ЧП%). Поставьте <b>галочку</b> у подстатьи, чтобы <b>не менять</b> её (она остаётся на факте), - остаток бюджета перераспределяется между остальными. <b>Δ к факту</b>: <span style="color:var(--income)">+ запас</span> / <span style="color:var(--outcome)">− нужно сократить</span>. Расходы - как в ОПиУ (по аналитике, без вывода прибыли).</div>`;
   el.innerHTML=controls+kpi+warn+note+lockInfo+`<div class="table-wrap" style="margin:6px 24px 24px">
-    <div class="table-header"><span class="table-title">Целевой бюджет расходов · ${esc(dir)} · ${periodLabel}</span><span class="table-count">ЧП ${pctNum}%</span></div>
+    <div class="table-header"><span class="table-title">Целевой бюджет расходов · ${esc(dirLabel)} · ${periodLabel}</span><span class="table-count">ЧП ${pctNum}%</span></div>
     <div class="table-scroll" style="overflow:auto;max-height:62vh"><table style="width:100%;border-collapse:collapse">
       <thead><tr><th style="${th};position:sticky;top:0;z-index:1;width:34px;text-align:center" title="Зафиксировать подстатью (не менять)">🔒</th><th style="text-align:left;${th};position:sticky;top:0;z-index:1">Статья / Подстатья</th><th style="${th};position:sticky;top:0;z-index:1">Факт, ₽</th><th style="${th};position:sticky;top:0;z-index:1">Доля</th><th style="${th};position:sticky;top:0;z-index:1;background:#e3edff">Целевой бюджет, ₽</th><th style="${th};position:sticky;top:0;z-index:1">Δ к факту</th></tr></thead>
       <tbody>${body}${arts.length?totalRow:''}</tbody>
@@ -3502,6 +3505,10 @@ window.targetToggleLock=function(cb){
   F.locked=[...set];
   renderTarget(getFilters());
 };
+// Целевой ОПиУ: мультивыбор направлений (строковые значения - своя логика, без multiSel*; применение по закрытию)
+window.targetDirToggle=function(){const dd=document.getElementById('target-dir-dd');if(dd)dd.style.display=dd.style.display==='block'?'none':'block';};
+window.targetDirChange=function(){const dd=document.getElementById('target-dir-dd');if(!dd)return;const vals=[...dd.querySelectorAll('input.target-dir-cb:checked')].map(c=>c.value);_tabFilters.target.dirs=vals;_tabFilters.target.months=[];const btn=document.getElementById('target-dir-btn');if(btn)btn.textContent=(vals.length?vals.length+' выбрано':'Все направления')+' ▾';};
+window.targetDirAll=function(sel){const dd=document.getElementById('target-dir-dd');if(!dd)return;dd.querySelectorAll('input.target-dir-cb').forEach(c=>c.checked=sel);targetDirChange();};
 
 // Разбивка ЗП сотрудника по направлениям (с удельным весом) - по клику на ФИО в таблице ФОТ
 // Расшифровка ячейки ФОТ (группа × период) - переиспользует модал операций ОПиУ
