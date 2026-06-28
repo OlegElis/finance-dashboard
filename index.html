@@ -7911,12 +7911,19 @@ function bflModelDefault(){
     // Слой B+C - отделы сквозного конвейера (эталонный датасет §5). ЦКП = расходы_gross / tskpBase.
     // depositExcluded (контрол) переключает расходы ОПИУ gross↔net. По умолчанию депозит ВКЛЮЧЁН (как в эталоне §6).
     departments:[
-      {id:'leadgen_ko',group:'attract',name:'Лидогенераторы (KO)',roles:[],
-        costs:[{name:'Лидогенерация (1380 лидов × 1350)',amount:1863000}],incassation:0,tskpBase:690,tskpLabel:'квал. лиды (выход)',
-        capacity:{base:1380,norm:null,driver:'лиды, брак 50% → 690'}},
-      {id:'agent_s1',group:'attract',name:'Агентская сеть, этап 1 (AC)',roles:[],
-        costs:[{name:'Комиссия агента (уходит ниже по воронке)',amount:0}],incassation:0,tskpBase:180,tskpLabel:'квал. лиды (выход)',
-        capacity:{base:600,norm:null,driver:'600 агентов, 30% активны → 180'}},
+      {id:'marketing',group:'attract',name:'Маркетинг (ОМ) - внутренний и внешний лидогенератор',
+        leadgen:[
+          {dir:'ofbfl', name:'#1 Маркетинг',  owner:'Тертюк Александр',leads:1380,brak:0.5,costRaw:1350},
+          {dir:'Agbfl', name:'#2 Агентская сеть',owner:'',           leads:0,   brak:0,  costRaw:0},
+          {dir:'R-bfl', name:'#3 Рекомендации',owner:'Шарагин Д.',   leads:0,   brak:0,  costRaw:0},
+          {dir:'OP-bfl',name:'#4 Рекомендации+ (АИ / сотрудники / прочее)',owner:'',leads:0,brak:0,costRaw:0}
+        ],
+        roles:[
+          {name:'Руководитель ОМ',fte:1,rate:0},
+          {name:'Сотрудник ОМ',fte:1,rate:0},
+          {name:'Сотрудник ОМ',fte:1,rate:0}
+        ],
+        costs:[],incassation:0,tskpLabel:'стоимость квал-лида',capacity:{base:null,norm:null,driver:'лидогенерация'}},
       {id:'client_ko',group:'sales',name:'Клиентский отдел (KO)',
         roles:[{name:'Руководитель',fte:1,rate:120000},{name:'Менеджер',fte:6,rate:90000},{name:'Стажёр',fte:1.5,rate:50000}],
         costs:[{name:'Аренда (38м² × 1000)',amount:38000},{name:'Коммунальные (38м² × 100)',amount:3800}],incassation:0,tskpBase:310,tskpLabel:'состоявшиеся встречи',
@@ -7978,7 +7985,9 @@ let _bflAuto={}; // авто-факт из RawData_BFL: {monthKey:{d1:{leads,mee
 function bflEnsureModel(m){
   const d=bflModelDefault();
   if(!m||typeof m!=='object')return d;
-  if(!Array.isArray(m.departments)||!m.departments.length)m.departments=d.departments;
+  // миграция: старая структура отделов (без отдела маркетинга с лидогенерацией) → новый дефолт
+  const hasMkt=Array.isArray(m.departments)&&m.departments.some(x=>x&&Array.isArray(x.leadgen));
+  if(!Array.isArray(m.departments)||!m.departments.length||!hasMkt)m.departments=d.departments;
   if(!Array.isArray(m.periods)||!m.periods.length)m.periods=d.periods;
   if(!Array.isArray(m.directions)||!m.directions.length)m.directions=d.directions;
   if(!m.global)m.global=d.global;
@@ -8242,16 +8251,26 @@ function bflDeptCalc(d,g){
   const nach=fot*((g.ndfl||0)+(g.fss||0));            // начисления = ФОТ × (НДФЛ+ФСС)
   const other=costs.reduce((a,c)=>a+(c.amount||0),0);
   const pass=costs.filter(c=>c.passThrough).reduce((a,c)=>a+(c.amount||0),0); // депозит (pass-through)
-  const gross=fot+nach+other, net=gross-pass;
-  const tskp=bflSafeDiv(gross,d.tskpBase);            // ЦКП = расходы_gross / база
+  // лидогенерация (отдел маркетинга): по направлениям лиды → % отбраковки → квал-лиды; закупка лидов
+  let leadSpend=0,qualTotal=0,leadRows=null;
+  if(Array.isArray(d.leadgen)){
+    leadRows=d.leadgen.map(L=>{const leads=L.leads||0,brak=L.brak||0,costRaw=L.costRaw||0;
+      const qual=leads*(1-brak),spend=leads*costRaw,costQual=bflSafeDiv(spend,qual);
+      leadSpend+=spend;qualTotal+=qual;
+      return {name:L.name,owner:L.owner,dir:L.dir,leads:leads,brak:brak,costRaw:costRaw,qual:qual,spend:spend,costQual:costQual};});
+  }
+  const gross=fot+nach+other+leadSpend, net=gross-pass;
+  const base=Array.isArray(d.leadgen)?qualTotal:d.tskpBase; // у маркетинга база ЦКП = квал-лиды (вычисл.)
+  const tskp=bflSafeDiv(gross,base);                  // ЦКП = расходы_gross / база
   const fteActual=roles.reduce((a,r)=>a+(r.fte||0),0);
   let required=null,loadFte=null,load=null;
   const cap=d.capacity;
   if(cap&&cap.base&&cap.norm){required=cap.base/cap.norm; // необходимая ШЕ роли-драйвера
     loadFte=(cap.roleIdx!=null&&roles[cap.roleIdx])?roles[cap.roleIdx].fte:fteActual;
     load=loadFte?required/loadFte:null;}
-  return {fot:fot,nach:nach,other:other,pass:pass,gross:gross,net:net,tskp:tskp,
-    fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:d.incassation||0};
+  return {fot:fot,nach:nach,other:other,pass:pass,gross:gross,net:net,tskp:tskp,base:base,
+    fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:d.incassation||0,
+    leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows};
 }
 function bflOPIU(){
   const g=_bflModel.global,depts=_bflModel.departments||[];
@@ -8274,7 +8293,8 @@ window.bflToggleDeposit=function(cb){_tabFilters.bflmodel.depositExcluded=cb.che
 window.bflToggleDept=function(id){window._bflOpen=window._bflOpen||{};window._bflOpen[id]=!window._bflOpen[id];renderBflModel();};
 window.bflDeptEdit=function(el){
   const id=el.dataset.dept,path=el.dataset.path,d=_bflModel.departments.find(x=>x.id===id);if(!d)return;
-  const raw=el.value.trim();const num=raw===''?0:parseNum(raw);
+  const raw=el.value.trim();let num=raw===''?0:parseNum(raw);
+  if(el.dataset.pct)num=num/100; // поле в %, хранится дробью
   try{_bflSetPath(d,path,num);}catch(e){return;}
   _bflModelSave();renderBflModel();
 };
@@ -8295,8 +8315,45 @@ function bflRenderDepts(host){
   const GROUPS=[['attract','Привлечение'],['sales','Продажи'],['production','Производство'],['overhead','Менеджмент']];
   const loadColor=l=>l==null?'var(--text3)':l>1?'var(--outcome)':l>0.8?'var(--orange)':'var(--income)';
 
+  // Спецкарточка отдела маркетинга (ОМ): 4 направления лидогенерации + штатное расписание
+  const leadgenCard=(d,c)=>{
+    const inp=(path,val,w,pct)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-dept="${d.id}" data-path="${path}"${pct?' data-pct="1"':''} onchange="bflDeptEdit(this)" style="width:${w||70}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
+    const cell='padding:4px 7px;text-align:right;font-family:var(--mono);font-size:12px';
+    const th=t=>`<th style="text-align:right;padding:4px 7px;font-size:10px;color:var(--label)">${t}</th>`;
+    const rows=(c.leadRows||[]).map((L,i)=>`<tr style="border-bottom:1px solid var(--divider)">
+      <td style="padding:4px 7px;font-size:12px">${esc(L.name)}${L.owner?` <span style="color:var(--text3);font-size:10.5px">${esc(L.owner)}</span>`:''}</td>
+      <td style="${cell}">${inp('leadgen.'+i+'.leads',L.leads,66)}</td>
+      <td style="${cell}">${inp('leadgen.'+i+'.brak',+(L.brak*100).toFixed(2),52,true)} %</td>
+      <td style="${cell};color:var(--text2)">${bflI(L.qual)}</td>
+      <td style="${cell}">${inp('leadgen.'+i+'.costRaw',L.costRaw,80)}</td>
+      <td style="${cell};color:var(--accent)">${bflM(L.costQual)}</td>
+      <td style="${cell};color:var(--outcome)">${bflM(L.spend)}</td></tr>`).join('');
+    const totLeads=(c.leadRows||[]).reduce((a,L)=>a+L.leads,0);
+    const leadTbl=`<table style="width:100%;border-collapse:collapse;min-width:640px">
+      <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 7px;font-size:10px;color:var(--label)">Направление</th>${th('Лиды')}${th('% отбраковки')}${th('Квал-лиды')}${th('Стоим. грязного лида')}${th('Стоим. квал-лида')}${th('Расходы')}</tr></thead>
+      <tbody>${rows}
+      <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:5px 7px;font-size:12px">ИТОГО</td><td style="${cell}">${bflI(totLeads)}</td><td></td><td style="${cell}">${bflI(c.qualTotal)}</td><td></td><td style="${cell};color:var(--accent)">${bflM(bflSafeDiv(c.leadSpend,c.qualTotal))}</td><td style="${cell};color:var(--outcome)">${bflM(c.leadSpend)}</td></tr></tbody></table>`;
+    const roleRows=(d.roles||[]).map((r,i)=>`<tr><td style="padding:3px 7px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 7px;text-align:right">${inp('roles.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 7px;text-align:right">${inp('roles.'+i+'.rate',r.rate,90)}</td><td style="${cell};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
+    const staffTbl=`<table style="width:100%;border-collapse:collapse;margin-top:6px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 7px;font-size:10px;color:var(--label)">Штатное расписание ОМ</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}${th('ФОТ')}</tr></thead><tbody>${roleRows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 7px;font-size:12px">ФОТ ОМ + начисления (${Math.round((g.ndfl+g.fss)*100)}%)</td><td></td><td></td><td style="${cell}">${bflM(c.fot+c.nach)}</td></tr></tbody></table>`;
+    const head=`<div style="display:flex;align-items:center;gap:12px;padding:11px 13px">
+      <div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(d.name)}</div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:1px">квал-лиды: ${bflI(c.qualTotal)} · ЦКП = расходы / квал-лиды</div></div>
+      <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Стоимость квал-лида</div><div style="font-size:16px;font-weight:600;font-family:var(--mono);color:var(--accent)">${bflM(c.tskp)}</div></div>
+      <div style="text-align:right;min-width:62px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">ШЕ</div><div style="font-size:14px;font-weight:600;font-family:var(--mono)">${c.fteActual.toLocaleString('ru-RU',{maximumFractionDigits:2})}</div></div>
+      <div style="text-align:right;min-width:96px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Расходы</div><div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(c.gross)}</div></div></div>`;
+    return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}
+      <div style="padding:0 13px 13px;border-top:1px dashed var(--border)">
+        <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 4px">Лидогенерация по направлениям (квал-лид = лиды × (1 − % отбраковки); стоимость квал-лида = стоимость грязного / (1 − % отбраковки))</div>
+        <div style="overflow-x:auto">${leadTbl}</div>
+        ${staffTbl}
+        <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы = закупка лидов ${bflM(c.leadSpend)} + ФОТ ОМ с начислениями ${bflM(c.fot+c.nach)} = <b style="color:var(--outcome)">${bflM(c.gross)}</b> · ЦКП = ${bflM(c.gross)} / ${bflI(c.qualTotal)} квал-лидов = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
+      </div></div>`;
+  };
+
   const card=d=>{
-    const c=bflDeptCalc(d,g);const open=!!window._bflOpen[d.id];
+    const c=bflDeptCalc(d,g);
+    if(Array.isArray(d.leadgen))return leadgenCard(d,c);
+    const open=!!window._bflOpen[d.id];
     const loadPct=c.load!=null?Math.round(c.load*100):null;
     const head=`<div onclick="bflToggleDept('${d.id}')" style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:11px 13px">
       <div style="flex:1">
@@ -8427,11 +8484,15 @@ function bflRunTests(){
     ok('AC7 Май c4=null (нет К.Встречи)',fm.c4===null,fm.c4);ok('AC7 Май Лид→Сделка считается',fm.lead_deal!=null,fm.lead_deal);
     ok('AC8 safeDiv(5,0)=null',bflSafeDiv(5,0)===null,bflSafeDiv(5,0));
     // AC10 - ЦКП по отделам (±0,5%)
-    const refTskp={leadgen_ko:2700,agent_s1:0,client_ko:3530,agent_s2:4481,sales_ko:15577,sales_ac:22931,os:20241,oi:1497,opau:58354,management:46333};
+    const refTskp={marketing:2700,client_ko:3530,agent_s2:4481,sales_ko:15577,sales_ac:22931,os:20241,oi:1497,opau:58354,management:46333};
     const g=_bflModel.global;
-    _bflModel.departments.forEach(d=>{const c=bflDeptCalc(d,g);const ref=refTskp[d.id];
+    _bflModel.departments.forEach(d=>{const ref=refTskp[d.id];if(ref===undefined)return;const c=bflDeptCalc(d,g);
       const pass=ref===0?(c.tskp===0):(c.tskp!=null&&Math.abs(c.tskp-ref)/ref<=0.005);
       ok('AC10 ЦКП '+d.id+'≈'+ref,pass,c.tskp==null?null:Math.round(c.tskp));});
+    // Маркетинг: квал-лиды и стоимость квал-лида
+    const mk=bflDeptCalc(_bflModel.departments.find(x=>x.id==='marketing'),g);
+    ok('Маркетинг квал-лиды=690',mk.qualTotal===690,mk.qualTotal);
+    ok('Маркетинг стоим. квал-лида #1=2700',mk.leadRows[0].costQual===2700,mk.leadRows[0].costQual);
     // AC5 - ОПИУ-эталон (±0,5%)
     const o=bflOPIU();
     ok('AC5 Выручка≈34 103 040',Math.abs(o.revenue-34103040)/34103040<=0.005,Math.round(o.revenue));
