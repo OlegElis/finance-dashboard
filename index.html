@@ -7974,6 +7974,18 @@ function bflModelDefault(){
 }
 let _bflModel=bflModelDefault();
 let _bflAuto={}; // авто-факт из RawData_BFL: {monthKey:{d1:{leads,meeting,deal,done},...}}
+// Дозаполнение модели недостающими ключами из дефолта (миграция старых сохранённых моделей без departments/periods)
+function bflEnsureModel(m){
+  const d=bflModelDefault();
+  if(!m||typeof m!=='object')return d;
+  if(!Array.isArray(m.departments)||!m.departments.length)m.departments=d.departments;
+  if(!Array.isArray(m.periods)||!m.periods.length)m.periods=d.periods;
+  if(!Array.isArray(m.directions)||!m.directions.length)m.directions=d.directions;
+  if(!m.global)m.global=d.global;
+  if(m.checkDefault==null)m.checkDefault=d.checkDefault;
+  if(!m.meta)m.meta=d.meta;
+  return m;
+}
 
 function bflPeriod(month){return _bflModel.periods.find(p=>p.month===month)||_bflModel.periods[0];}
 function bflDir(id){return _bflModel.directions.find(d=>d.id===id)||BFL_DIRS_DEFAULT.find(d=>d.id===id);}
@@ -8023,12 +8035,12 @@ function _bflModelSave(){
   try{if(window.firebase&&FIREBASE_CONFIG.databaseURL){fbApp();firebase.database().ref('config/bflModel').set(_bflModel);}}catch(e){}
 }
 function startBflModelSync(){
-  try{const s=localStorage.getItem('finBflModel');if(s){const m=JSON.parse(s);if(m&&m.periods&&m.periods.length)_bflModel=m;}}catch(e){}
+  try{const s=localStorage.getItem('finBflModel');if(s){const m=JSON.parse(s);if(m&&typeof m==='object')_bflModel=bflEnsureModel(m);}}catch(e){}
   if(window._bflModelSyncStarted)return;window._bflModelSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;fbApp();
     firebase.database().ref('config/bflModel').on('value',sn=>{const v=sn.val();
-      if(v&&v.periods&&v.periods.length){_bflModel=v;try{localStorage.setItem('finBflModel',JSON.stringify(v));}catch(e){}
+      if(v&&typeof v==='object'){_bflModel=bflEnsureModel(v);try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
         if(activeTab==='bflmodel')try{renderBflModel(getFilters());}catch(e){}}});
   }catch(e){console.warn('[bflModel] sync',e&&e.message);}
 }
@@ -8069,8 +8081,8 @@ window.bflExport=function(){
 window.bflImport=function(){
   const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
   inp.onchange=()=>{const f=inp.files[0];if(!f)return;const rd=new FileReader();
-    rd.onload=()=>{try{const m=JSON.parse(rd.result);if(!m||!m.periods||!m.periods.length)throw new Error('нет periods');
-      _bflModel=m;_bflModelSave();renderBflModel();alert('Модель импортирована');}catch(e){alert('Ошибка импорта: '+e.message);}};
+    rd.onload=()=>{try{const m=JSON.parse(rd.result);if(!m||typeof m!=='object')throw new Error('неверный JSON');
+      _bflModel=bflEnsureModel(m);_bflModelSave();renderBflModel();alert('Модель импортирована');}catch(e){alert('Ошибка импорта: '+e.message);}};
     rd.readAsText(f);};
   inp.click();
 };
@@ -8079,6 +8091,7 @@ window.bflReset=function(){if(!confirm('Сбросить модель к эта�
 // ── Рендер вкладки «Модель БФЛ» ───────────────────────────────────────────────
 function renderBflModel(){
   const host=document.getElementById('tabBflmodel');if(!host)return;
+  _bflModel=bflEnsureModel(_bflModel);
   _bflAuto=bflAutoFact();
   const F=_tabFilters.bflmodel;
   const view=F.view||'depts';
@@ -8329,7 +8342,7 @@ function bflRenderDepts(host){
   let html=`<div style="padding:4px 2px">${bflViewBar()}${bflPrintControls()}
     <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px">Слой B · Юнит-экономика отделов сквозного конвейера (Привлечение → Продажи → Производство → Менеджмент). ЦКП каждого отдела, штатная численность (ШЕ) и узкие места по мощности. Клик по отделу - редактируемые параметры (живой пересчёт). Эталонный датасет §5; всё редактируемое.</div>`;
   GROUPS.forEach(gr=>{
-    const list=_bflModel.departments.filter(d=>d.group===gr[0]);if(!list.length)return;
+    const list=(_bflModel.departments||[]).filter(d=>d.group===gr[0]);if(!list.length)return;
     html+=`<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin:14px 0 7px">${gr[1]}</div>`;
     html+=list.map(card).join('');
   });
