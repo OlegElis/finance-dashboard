@@ -506,6 +506,9 @@
     <div class="nav-item" id="nav-marketing" onclick="switchTab('marketing')">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><rect x="8" y="6" width="8" height="3" rx="0.5"/><path d="M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01M16 17h.01"/></svg> Юнит-экономика
     </div>
+    <div class="nav-item" id="nav-bflmodel" onclick="switchTab('bflmodel')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16"/><path d="M8 16l3-4 3 2 4-6"/><circle cx="8" cy="16" r="1" fill="currentColor" stroke="none"/><circle cx="11" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="14" cy="14" r="1" fill="currentColor" stroke="none"/></svg> Модель БФЛ
+    </div>
     <div class="nav-item" id="nav-debtbfl" onclick="switchTab('debtbfl')">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6.5 9.5v5M17.5 9.5v5"/></svg> Дебиторка БФЛ
     </div>
@@ -607,6 +610,7 @@
       <div id="tabDepau" class="hidden"></div>
       <div id="tabPlanfact" class="hidden"></div>
       <div id="tabTarget" class="hidden"></div>
+      <div id="tabBflmodel" class="hidden"></div>
       <div id="tabRegistry" class="hidden"></div>
     </div>
   </div>
@@ -625,7 +629,7 @@ const isOpeningBalance=name=>{const x=String(name||'').toLowerCase();return x.in
 let RAW=[];
 let activeTab='bank';
 
-const TAB_TITLES={bank:'Реестр банковских и кассовых операций (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ - план от обратного (сколько тратить под целевую прибыль)',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Контроль - Дубли записей',incomplete:'Контроль - Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ - задолженность по договорам',registry:'Реестр операций - поиск по любому полю'};
+const TAB_TITLES={bank:'Реестр банковских и кассовых операций (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ - план от обратного (сколько тратить под целевую прибыль)',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Контроль - Дубли записей',incomplete:'Контроль - Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ - задолженность по договорам',bflmodel:'Модель БФЛ - юнит-экономика и сценарии',registry:'Реестр операций - поиск по любому полю'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -880,6 +884,7 @@ const _tabFilters={
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'monthly'},
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
+  bflmodel:{month:'2026-06',scenario:'plan',compare:false,dir:'d1'},
   registry:{q:''}
 };
 
@@ -1123,6 +1128,8 @@ async function loadBflDeals(sheetId,apiKey){
     const iCreatedDeal=hdr.findIndex(h=>h==='дата создания сделки');
     const iCreatedBy=hdr.findIndex(h=>h.startsWith('кем создана сделка')); // «Кем создана сделка (текст)»
     const iUrl=hdr.findIndex(h=>h.startsWith('ссылка'));
+    let iMktDir=hdr.findIndex(h=>h.startsWith('направление маркетинг')); // канал привлечения (ofbfl/Agbfl/R-bfl/OP-bfl) - колонка P; для раздела «Модель БФЛ»
+    if(iMktDir<0)iMktDir=15; // запасной вариант - колонка P (0-based 15), если заголовок не распознан
     if(iLead<0&&iPaid<0&&iDone<0&&iOffer<0)return;
     // Завершённым (для CPF) считается дело в этих стадиях ИЛИ любой стадии, содержащей «работы завершены»
     const DONE_STAGES=['производство. акты подписаны, работы завершены','отдел сопровождения. акты подписаны'];
@@ -1144,6 +1151,7 @@ async function loadBflDeals(sheetId,apiKey){
       contract:iNum>=0?String(r[iNum]||'').trim():'',
       stage:iStage>=0?String(r[iStage]||'').trim():'',
       responsible:iResp>=0?String(r[iResp]||'').trim():'',
+      mktDir:iMktDir>=0?String(r[iMktDir]||'').trim():'',
       url:iUrl>=0?String(r[iUrl]||'').trim():''});
     rows.slice(1).forEach(r=>{
       const excl=isExclResp(r); // тех. специалист - не учитываем в статистике количеств (но в дебиторку deals[] попадает)
@@ -1201,11 +1209,11 @@ function switchTab(name){
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
   document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
-  ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv','debtbfl','loans','anomaly','depau','planfact','target','registry'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
+  ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv','debtbfl','loans','anomaly','depau','planfact','target','bflmodel','registry'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   if(window.innerWidth<=820)toggleSidebar(false); // на мобильном закрываем меню после выбора
   renderActiveTab();
 }
-function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);else if(activeTab==='loans')renderLoans(f);else if(activeTab==='anomaly')renderAnomaly(f);else if(activeTab==='depau')renderDepAU(f);else if(activeTab==='planfact')renderPlanFact(f);else if(activeTab==='target')renderTarget(f);else if(activeTab==='registry')renderRegistry(f);try{_injectPresetBar();}catch(e){}}
+function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);else if(activeTab==='loans')renderLoans(f);else if(activeTab==='anomaly')renderAnomaly(f);else if(activeTab==='depau')renderDepAU(f);else if(activeTab==='planfact')renderPlanFact(f);else if(activeTab==='target')renderTarget(f);else if(activeTab==='bflmodel')renderBflModel(f);else if(activeTab==='registry')renderRegistry(f);try{_injectPresetBar();}catch(e){}}
 
 // ───────────────────────── Пресеты отчётов (config/presets) ─────────────────────────
 // Пресет = именованный частичный снимок фильтров вкладки. Хранится в Firebase config/presets + localStorage-кэш.
@@ -7788,7 +7796,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -7842,7 +7850,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
       });
     }else{
       if(gate)gate.style.display='flex';
@@ -7852,6 +7860,355 @@ function watchForceLogout(authMs){
     }
   });
 })();
+
+// ═══════════════════════ МОДЕЛЬ БФЛ (юнит-экономика, сценарная модель) ═══════════════════════
+// ТЗ: ТЗ_Юнит-экономика_БФЛ / ТЗ_ClaudeCode_БФЛ. Phase 1 - слой A (продажи план/факт по 4 направлениям).
+// Чистое ядро (§6) отделено от UI; покрыто тестами bflRunTests() (AC1-AC4, AC7-AC8).
+
+// ── Чистое ядро расчётов ─────────────────────────────────────────────────────
+function bflSafeDiv(a,b){return (typeof a==='number'&&typeof b==='number'&&b!==0&&isFinite(a/b))?a/b:null;}
+function bflFunnel(inp){ // inp={leads,kLead,meeting,kMeeting,deal} (любое поле может быть null)
+  const leads=inp.leads,kLead=inp.kLead,meeting=inp.meeting,kMeeting=inp.kMeeting,deal=inp.deal;
+  return {
+    c1:bflSafeDiv(kLead,leads),       // Лид→К.Лид
+    c2:bflSafeDiv(meeting,kLead),     // К.Лид→Встреча
+    c3:bflSafeDiv(kMeeting,meeting),  // Встреча→К.Встреча
+    c4:bflSafeDiv(deal,kMeeting),     // К.Встреча→Сделка
+    meeting_deal:bflSafeDiv(deal,meeting), // = c3*c4
+    klead_deal:bflSafeDiv(deal,kLead),     // = c2*c3*c4
+    lead_deal:bflSafeDiv(deal,leads)       // сквозная = c1*c2*c3*c4
+  };
+}
+function bflAcqSpend(fee,vol){ // fee={kind,feePerLead,feePerMeeting,feePerDeal}; vol={leads,meeting,deal}
+  if(fee.kind==='paid')return (vol.leads||0)*(fee.feePerLead||0);
+  if(fee.kind==='agent')return (vol.meeting||0)*(fee.feePerMeeting||0)+(vol.deal||0)*(fee.feePerDeal||0);
+  return (vol.deal||0)*(fee.feePerDeal||0); // referral (дефолт 0)
+}
+function bflDirEcon(fee,vol,check,salesFot){
+  const spend=bflAcqSpend(fee,vol);
+  return {spend:spend,
+    cpl:bflSafeDiv(spend,vol.leads),
+    cpo_mkt:bflSafeDiv(spend,vol.deal),
+    cpo_full:bflSafeDiv(spend+(salesFot||0),vol.deal),
+    suma:(vol.deal||0)*(check||0)};
+}
+function bflSumN(vals){const n=vals.filter(v=>typeof v==='number');return n.length?n.reduce((a,b)=>a+b,0):null;}
+
+// ── Направления и глобальные параметры ───────────────────────────────────────
+const BFL_DIRS_DEFAULT=[
+  {id:'d1',code:'ofbfl', name:'Маркетинг',    owner:'Тертюк А.',  kind:'paid',     feePerLead:1360,feePerMeeting:0,   feePerDeal:0},
+  {id:'d2',code:'Agbfl', name:'Агентская сеть',owner:'',          kind:'agent',    feePerLead:0,   feePerMeeting:500, feePerDeal:9500},
+  {id:'d3',code:'R-bfl', name:'Рекомендации', owner:'Шарагин Д.', kind:'referral', feePerLead:0,   feePerMeeting:0,   feePerDeal:0},
+  {id:'d4',code:'OP-bfl',name:'Рекомендации+',owner:'ОП/АИ/сотр.',kind:'referral', feePerLead:0,   feePerMeeting:0,   feePerDeal:0}
+];
+function bflModelDefault(){
+  return {
+    meta:{version:'1.1',currency:'RUB',locale:'ru-RU'},
+    global:{ndfl:0.13,fss:0.302,vat:0.05,profitTax:0.01,
+      collectionProfile:{opFirstPaymentCap:70000,opWindowMonths:2,osCollectionRate:0.95,rassrochkaMonths:10}},
+    directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
+    checkDefault:245991,
+    periods:[
+      {month:'2026-05',label:'Май 2026',check:224000,
+        plan:{ d1:{leads:3700,stages:{kLead:null,meeting:null,kMeeting:null,deal:90}},
+               d2:{leads:146, stages:{kLead:null,meeting:null,kMeeting:null,deal:10}},
+               d3:{leads:70,  stages:{kLead:null,meeting:null,kMeeting:null,deal:20}},
+               d4:{leads:200, stages:{kLead:null,meeting:null,kMeeting:null,deal:5}} },
+        fact:{ d1:{leads:3194,stages:{kLead:null,meeting:null,kMeeting:null,deal:76}},
+               d2:{leads:104, stages:{kLead:null,meeting:null,kMeeting:null,deal:11}},
+               d3:{leads:93,  stages:{kLead:null,meeting:null,kMeeting:null,deal:24}},
+               d4:{leads:175, stages:{kLead:null,meeting:null,kMeeting:null,deal:7}} } },
+      {month:'2026-06',label:'Июнь 2026',check:245991,
+        plan:{ d1:{leads:3700,stages:{kLead:900,meeting:360,kMeeting:222,deal:83}},
+               d2:{leads:146, stages:{kLead:49, meeting:30, kMeeting:25, deal:16}},
+               d3:{leads:100, stages:{kLead:75, meeting:45, kMeeting:39, deal:27}},
+               d4:{leads:200, stages:{kLead:15, meeting:7,  kMeeting:6,  deal:6}} },
+        fact:{ d1:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}},
+               d2:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}},
+               d3:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}},
+               d4:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}} } }
+    ]
+  };
+}
+let _bflModel=bflModelDefault();
+let _bflAuto={}; // авто-факт из RawData_BFL: {monthKey:{d1:{leads,meeting,deal,done},...}}
+
+function bflPeriod(month){return _bflModel.periods.find(p=>p.month===month)||_bflModel.periods[0];}
+function bflDir(id){return _bflModel.directions.find(d=>d.id===id)||BFL_DIRS_DEFAULT.find(d=>d.id===id);}
+function bflFee(per,scenario,dirId){const dd=bflDir(dirId);const ov=(per[scenario]&&per[scenario][dirId])||{};
+  return {kind:dd.kind,
+    feePerLead:ov.feePerLead!=null?ov.feePerLead:dd.feePerLead,
+    feePerMeeting:ov.feePerMeeting!=null?ov.feePerMeeting:dd.feePerMeeting,
+    feePerDeal:ov.feePerDeal!=null?ov.feePerDeal:dd.feePerDeal};}
+
+// Значение стадии: ручной ввод/эталон, иначе авто из RawData_BFL (для факта), иначе null
+function bflCell(per,scenario,dirId,stage){
+  const d=(per[scenario]&&per[scenario][dirId])||{};
+  let v = stage==='leads' ? d.leads : (d.stages?d.stages[stage]:undefined);
+  if(v!==null&&v!==undefined)return v;
+  if(scenario==='fact'){const af=_bflAuto[per.month]&&_bflAuto[per.month][dirId];
+    if(af){ if(stage==='leads')return af.leads; if(stage==='meeting')return af.meeting; if(stage==='deal')return af.deal; }}
+  return null;
+}
+function bflVol(per,scenario,dirId){return {
+  leads:bflCell(per,scenario,dirId,'leads'),kLead:bflCell(per,scenario,dirId,'kLead'),
+  meeting:bflCell(per,scenario,dirId,'meeting'),kMeeting:bflCell(per,scenario,dirId,'kMeeting'),
+  deal:bflCell(per,scenario,dirId,'deal')};}
+
+// ── Авто-факт из RawData_BFL (разрез по колонке «Направление маркетинга») ─────
+function bflMonthKey(d){if(!(d instanceof Date)||isNaN(d))return null;return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function bflMapDir(val){
+  const s=String(val||'').toLowerCase().replace(/\s+/g,'');
+  if(!s)return null;
+  if(s.includes('ofbfl')||s.includes('маркетинг'))return 'd1';
+  if(s.includes('agbfl')||s.includes('агент'))return 'd2';
+  if(s.includes('op-bfl')||s.includes('opbfl')||(s.includes('рекоменд')&&s.includes('+')))return 'd4';
+  if(s.includes('r-bfl')||s.includes('rbfl')||s.includes('рекоменд'))return 'd3';
+  return null;
+}
+function bflAutoFact(){
+  const out={};
+  if(typeof RAW_BFL==='undefined'||!RAW_BFL)return out;
+  const add=(rows,field)=>{(rows||[]).forEach(r=>{const mk=bflMonthKey(r.date);if(!mk)return;const dir=bflMapDir(r.mktDir)||'__other__';
+    out[mk]=out[mk]||{};out[mk][dir]=out[mk][dir]||{leads:0,meeting:0,deal:0,done:0};out[mk][dir][field]++;});};
+  add(RAW_BFL.leadsRows,'leads');add(RAW_BFL.meetingsRows,'meeting');add(RAW_BFL.paidRows,'deal');add(RAW_BFL.doneRows,'done');
+  return out;
+}
+
+// ── Персист (Firebase config/bflModel + localStorage) ────────────────────────
+function _bflModelSave(){
+  try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
+  try{if(window.firebase&&FIREBASE_CONFIG.databaseURL){fbApp();firebase.database().ref('config/bflModel').set(_bflModel);}}catch(e){}
+}
+function startBflModelSync(){
+  try{const s=localStorage.getItem('finBflModel');if(s){const m=JSON.parse(s);if(m&&m.periods&&m.periods.length)_bflModel=m;}}catch(e){}
+  if(window._bflModelSyncStarted)return;window._bflModelSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;fbApp();
+    firebase.database().ref('config/bflModel').on('value',sn=>{const v=sn.val();
+      if(v&&v.periods&&v.periods.length){_bflModel=v;try{localStorage.setItem('finBflModel',JSON.stringify(v));}catch(e){}
+        if(activeTab==='bflmodel')try{renderBflModel(getFilters());}catch(e){}}});
+  }catch(e){console.warn('[bflModel] sync',e&&e.message);}
+}
+
+// ── Форматирование ru-RU ──────────────────────────────────────────────────────
+function bflI(v){return (v==null||isNaN(v))?'-':Math.round(v).toLocaleString('ru-RU');}
+function bflP(v){return (v==null||isNaN(v))?'-':(v*100).toFixed(1).replace('.',',')+' %';}
+function bflM(v){return (v==null||isNaN(v))?'-':Math.round(v).toLocaleString('ru-RU')+' ₽';}
+
+// ── Обработчики ───────────────────────────────────────────────────────────────
+window.bflSetMonth=function(v){_tabFilters.bflmodel.month=v;renderBflModel();};
+window.bflSetScenario=function(v){_tabFilters.bflmodel.scenario=v;renderBflModel();};
+window.bflToggleCompare=function(cb){_tabFilters.bflmodel.compare=cb.checked;renderBflModel();};
+window.bflSetDir=function(v){_tabFilters.bflmodel.dir=v;renderBflModel();};
+window.bflEditVol=function(el){
+  const F=_tabFilters.bflmodel,per=bflPeriod(F.month),dir=el.dataset.dir,st=el.dataset.st;
+  const sc=per[F.scenario]=per[F.scenario]||{};sc[dir]=sc[dir]||{stages:{}};sc[dir].stages=sc[dir].stages||{};
+  const raw=el.value.trim();const num=raw===''?null:parseNum(raw);
+  if(st==='leads')sc[dir].leads=num;else sc[dir].stages[st]=num;
+  _bflModelSave();renderBflModel();
+};
+window.bflAddMonth=function(){
+  const m=prompt('Месяц в формате ГГГГ-ММ (например 2026-07):','');if(!m)return;
+  if(!/^\d{4}-\d{2}$/.test(m)){alert('Формат ГГГГ-ММ');return;}
+  if(_bflModel.periods.some(p=>p.month===m)){alert('Такой месяц уже есть');return;}
+  const MN=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const mm=+m.slice(5,7);const label=MN[mm-1]+' '+m.slice(0,4);
+  const empty=()=>({d1:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}},d2:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}},d3:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}},d4:{leads:null,stages:{kLead:null,meeting:null,kMeeting:null,deal:null}}});
+  _bflModel.periods.push({month:m,label:label,check:_bflModel.checkDefault,plan:empty(),fact:empty()});
+  _bflModel.periods.sort((a,b)=>a.month<b.month?-1:1);
+  _tabFilters.bflmodel.month=m;_bflModelSave();renderBflModel();
+};
+window.bflExport=function(){
+  try{const blob=new Blob([JSON.stringify(_bflModel,null,2)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='bfl-model.json';a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000);}catch(e){alert('Не удалось экспортировать: '+e.message);}
+};
+window.bflImport=function(){
+  const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+  inp.onchange=()=>{const f=inp.files[0];if(!f)return;const rd=new FileReader();
+    rd.onload=()=>{try{const m=JSON.parse(rd.result);if(!m||!m.periods||!m.periods.length)throw new Error('нет periods');
+      _bflModel=m;_bflModelSave();renderBflModel();alert('Модель импортирована');}catch(e){alert('Ошибка импорта: '+e.message);}};
+    rd.readAsText(f);};
+  inp.click();
+};
+window.bflReset=function(){if(!confirm('Сбросить модель к эталону? Текущие правки будут потеряны.'))return;_bflModel=bflModelDefault();_bflModelSave();renderBflModel();};
+
+// ── Рендер вкладки «Модель БФЛ» ───────────────────────────────────────────────
+function renderBflModel(){
+  const host=document.getElementById('tabBflmodel');if(!host)return;
+  _bflAuto=bflAutoFact();
+  const F=_tabFilters.bflmodel;
+  if(!_bflModel.periods.some(p=>p.month===F.month))F.month=(_bflModel.periods[0]||{}).month;
+  const per=bflPeriod(F.month);
+  const dirs=_bflModel.directions;const cols=dirs.map(d=>d.id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const sc=F.scenario,cmp=F.compare;
+  const hasAutoFact=Object.keys(_bflAuto).length>0;
+
+  // Δ-ячейка (compare): план / факт / отклонение
+  const cmpCell=(pV,fV,fmtFn,lowerBetter)=>{
+    const dv=bflSafeDiv(fV,pV);let col='var(--text3)';
+    if(dv!=null){const good=lowerBetter?dv<=1:dv>=1;col=good?'var(--income)':'var(--outcome)';}
+    return `<div style="line-height:1.35"><span>${fmtFn(pV)}</span>`+
+      `<span style="color:var(--text2);margin-left:6px">${fmtFn(fV)}</span>`+
+      `<span style="font-size:10px;color:${col};margin-left:6px">${dv==null?'-':Math.round(dv*100)+'%'}</span></div>`;
+  };
+
+  // ── Глобальные контролы ──
+  const monthOpts=_bflModel.periods.map(p=>`<option value="${p.month}"${p.month===F.month?' selected':''}>${esc(p.label)}</option>`).join('');
+  const controls=`<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">
+    <label style="font-size:11px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Месяц
+      <select onchange="bflSetMonth(this.value)" style="margin-left:6px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--sans)">${monthOpts}</select></label>
+    <button onclick="bflAddMonth()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">+ месяц</button>
+    <div style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+      <button onclick="bflSetScenario('plan')" style="padding:5px 12px;border:0;cursor:pointer;background:${sc==='plan'&&!cmp?'var(--header-dark)':'var(--surface)'};color:${sc==='plan'&&!cmp?'#fff':'var(--text)'}">План</button>
+      <button onclick="bflSetScenario('fact')" style="padding:5px 12px;border:0;border-left:1px solid var(--border);cursor:pointer;background:${sc==='fact'&&!cmp?'var(--header-dark)':'var(--surface)'};color:${sc==='fact'&&!cmp?'#fff':'var(--text)'}">Факт</button>
+    </div>
+    <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${cmp?'checked':''} onchange="bflToggleCompare(this)"> Сравнить (План/Факт/Δ)</label>
+    <span style="margin-left:auto"></span>
+    <button onclick="bflExport()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">Экспорт JSON</button>
+    <button onclick="bflImport()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">Импорт JSON</button>
+    <button onclick="bflReset()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">Сброс к эталону</button>
+  </div>`;
+
+  // ── Таблица план/факт ──
+  const thDir=dirs.map((d,i)=>`<th style="text-align:right;padding:7px 9px;font-size:11px;color:var(--text2)">#${i+1} ${esc(d.name)}</th>`).join('');
+  const numTd='padding:5px 9px;text-align:right;font-family:var(--mono);font-size:12.5px';
+  const secTr=(t)=>`<tr><td colspan="${cols.length+2}" style="background:var(--section-bg);color:var(--text2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:6px 9px">${t}</td></tr>`;
+
+  // строка объёма (редактируемая в одиночном режиме)
+  const volRow=(label,stage)=>{
+    const tds=cols.map(id=>{
+      if(cmp){const pV=bflCell(per,'plan',id,stage),fV=bflCell(per,'fact',id,stage);return `<td style="${numTd}">${cmpCell(pV,fV,bflI,false)}</td>`;}
+      const v=bflCell(per,sc,id,stage);
+      return `<td style="${numTd}"><input type="text" inputmode="numeric" value="${v==null?'':v}" data-dir="${id}" data-st="${stage}" onchange="bflEditVol(this)" style="width:64px;text-align:right;font-family:var(--mono);font-size:12.5px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"></td>`;
+    }).join('');
+    const tot=cmp
+      ? `<td style="${numTd};font-weight:700">${cmpCell(bflSumN(cols.map(id=>bflCell(per,'plan',id,stage))),bflSumN(cols.map(id=>bflCell(per,'fact',id,stage))),bflI,false)}</td>`
+      : `<td style="${numTd};font-weight:700">${bflI(bflSumN(cols.map(id=>bflCell(per,sc,id,stage))))}</td>`;
+    return `<tr><td style="padding:5px 9px;font-size:12.5px">${label}</td>${tds}${tot}</tr>`;
+  };
+  // строка конверсии (вычисляемая)
+  const convRow=(label,fn)=>{
+    const cell=(id,scn)=>fn(bflFunnel(bflVol(per,scn,id)));
+    const tot=(scn)=>{const t={leads:bflSumN(cols.map(id=>bflCell(per,scn,id,'leads'))),kLead:bflSumN(cols.map(id=>bflCell(per,scn,id,'kLead'))),meeting:bflSumN(cols.map(id=>bflCell(per,scn,id,'meeting'))),kMeeting:bflSumN(cols.map(id=>bflCell(per,scn,id,'kMeeting'))),deal:bflSumN(cols.map(id=>bflCell(per,scn,id,'deal')))};return fn(bflFunnel(t));};
+    const tds=cols.map(id=>cmp?`<td style="${numTd};color:var(--text2)">${cmpCell(cell(id,'plan'),cell(id,'fact'),bflP,false)}</td>`:`<td style="${numTd};color:var(--text2)">${bflP(cell(id,sc))}</td>`).join('');
+    const totTd=cmp?`<td style="${numTd};font-weight:700;color:var(--text2)">${cmpCell(tot('plan'),tot('fact'),bflP,false)}</td>`:`<td style="${numTd};font-weight:700;color:var(--text2)">${bflP(tot(sc))}</td>`;
+    return `<tr><td style="padding:5px 9px;font-size:12px;color:var(--text2)">${label}</td>${tds}${totTd}</tr>`;
+  };
+  // строка экономики
+  const econOf=(id,scn)=>bflDirEcon(bflFee(per,scn,id),bflVol(per,scn,id),per.check||_bflModel.checkDefault,0);
+  const econTot=(scn)=>{let spend=0,leads=0,deal=0,suma=0;cols.forEach(id=>{const e=econOf(id,scn);const v=bflVol(per,scn,id);spend+=e.spend||0;leads+=v.leads||0;deal+=v.deal||0;suma+=e.suma||0;});return {spend:spend,cpl:bflSafeDiv(spend,leads),cpo_mkt:bflSafeDiv(spend,deal),cpo_full:bflSafeDiv(spend,deal),suma:suma};};
+  const econRow=(label,key,fmtFn,lowerBetter)=>{
+    const tds=cols.map(id=>cmp?`<td style="${numTd}">${cmpCell(econOf(id,'plan')[key],econOf(id,'fact')[key],fmtFn,lowerBetter)}</td>`:`<td style="${numTd}">${fmtFn(econOf(id,sc)[key])}</td>`).join('');
+    const totTd=cmp?`<td style="${numTd};font-weight:700">${cmpCell(econTot('plan')[key],econTot('fact')[key],fmtFn,lowerBetter)}</td>`:`<td style="${numTd};font-weight:700">${fmtFn(econTot(sc)[key])}</td>`;
+    return `<tr><td style="padding:5px 9px;font-size:12.5px">${label}</td>${tds}${totTd}</tr>`;
+  };
+
+  const table=`<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
+    <table style="width:100%;border-collapse:collapse;min-width:720px">
+      <thead><tr style="border-bottom:2px solid var(--border)">
+        <th style="text-align:left;padding:7px 9px;font-size:11px;color:var(--text2)">Показатель</th>${thDir}
+        <th style="text-align:right;padding:7px 9px;font-size:11px;color:var(--text2)">Итого</th></tr></thead>
+      <tbody>
+        ${secTr('Объёмы воронки'+(cmp?'':' (жёлтые - редактируемые)'))}
+        ${volRow('Лид','leads')}${volRow('К.Лид','kLead')}${volRow('Встреча','meeting')}${volRow('К.Встреча','kMeeting')}${volRow('Сделка','deal')}
+        ${secTr('Конверсии (вычисляются)')}
+        ${convRow('Лид → К.Лид',f=>f.c1)}${convRow('К.Лид → Встреча',f=>f.c2)}${convRow('Встреча → К.Встреча',f=>f.c3)}${convRow('К.Встреча → Сделка',f=>f.c4)}
+        ${convRow('Встреча → Сделка',f=>f.meeting_deal)}${convRow('К.Лид → Сделка',f=>f.klead_deal)}${convRow('Лид → Сделка (сквозная)',f=>f.lead_deal)}
+        ${secTr('Экономика')}
+        ${econRow('CPL (стоимость лида)','cpl',bflM,true)}
+        ${econRow('CPO без ФОТ (CAC)','cpo_mkt',bflM,true)}
+        ${econRow('CPO с ФОТ *','cpo_full',bflM,true)}
+        ${econRow('Сумма сделок (договорная)','suma',bflM,false)}
+      </tbody>
+    </table></div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px">Средний чек периода: <b>${bflM(per.check||_bflModel.checkDefault)}</b> · «Сумма сделок» = сделки × чек (договорная, НЕ инкассация). * аллокация ФОТ продаж появится в Phase 2 (пока CPO с ФОТ = без ФОТ). ${hasAutoFact?'Факт по направлениям подтягивается из RawData_BFL (колонка «Направление маркетинга»); ручной ввод перекрывает авто.':'<span style="color:var(--outcome)">RawData_BFL не загружен - факт вводится вручную.</span>'}</div>`;
+
+  // ── Воронка выбранного направления ──
+  if(!cols.includes(F.dir))F.dir=cols[0];
+  const fScn=cmp?'plan':sc;
+  const fv=bflVol(per,fScn,F.dir);const ff=bflFunnel(fv);
+  const dirSel=dirs.map((d,i)=>`<option value="${d.id}"${d.id===F.dir?' selected':''}>#${i+1} ${esc(d.name)}</option>`).join('');
+  const steps=[['Лид',fv.leads,null],['К.Лид',fv.kLead,ff.c1],['Встреча',fv.meeting,ff.c2],['К.Встреча',fv.kMeeting,ff.c3],['Сделка',fv.deal,ff.c4]];
+  const maxV=Math.max(1,...steps.map(s=>typeof s[1]==='number'?s[1]:0));
+  const funnelBars=steps.map(s=>{const v=s[1];const w=typeof v==='number'?Math.max(2,Math.round(v/maxV*100)):2;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+      <div style="width:78px;font-size:11.5px;color:var(--text2)">${s[0]}</div>
+      <div style="flex:1;background:var(--surface2);border-radius:5px;overflow:hidden"><div style="width:${w}%;background:var(--accent);height:20px;border-radius:5px"></div></div>
+      <div style="width:64px;text-align:right;font-family:var(--mono);font-size:12.5px">${bflI(v)}</div>
+      <div style="width:64px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--text3)">${s[2]==null?'':bflP(s[2])}</div>
+    </div>`;}).join('');
+  const funnelCard=`<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:14px;margin-top:16px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div style="font-size:13.5px;font-weight:600">Воронка направления</div>
+      <select onchange="bflSetDir(this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px">${dirSel}</select>
+      <div style="font-size:11px;color:var(--text3)">${cmp?'(показан План)':sc==='plan'?'План':'Факт'} · ${esc(per.label)}</div>
+    </div>
+    ${funnelBars}
+    <div style="font-size:12px;color:var(--text2);margin-top:8px">Сквозная конверсия Лид → Сделка: <b>${bflP(ff.lead_deal)}</b></div>
+  </div>`;
+
+  // ── Аналитика направлений ──
+  const totDeal=bflSumN(cols.map(id=>bflVol(per,fScn,id).deal))||0;
+  const totSuma=cols.reduce((a,id)=>a+(econOf(id,fScn).suma||0),0);
+  const cards=dirs.map((d,i)=>{
+    const e=econOf(d.id,fScn);const v=bflVol(per,fScn,d.id);const fn=bflFunnel(v);
+    const cac=e.cpo_mkt;const cacCol=cac==null?'var(--text3)':cac<=55000?'var(--income)':cac<=90000?'var(--orange)':'var(--outcome)';
+    const conv=fn.lead_deal;const convCol=conv==null?'var(--text3)':conv>=0.34?'var(--income)':'var(--outcome)';
+    const dealShare=bflSafeDiv(v.deal,totDeal),revShare=bflSafeDiv(e.suma,totSuma);
+    return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:12px">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:8px">#${i+1} ${esc(d.name)}</div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--text2)">CAC (цель 55к / ориентир 90к)</span><b style="color:${cacCol}">${bflM(cac)}</b></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--text2)">Сквозная конв. (цель 34-42%)</span><b style="color:${convCol}">${bflP(conv)}</b></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--text2)">Доля сделок</span><b>${bflP(dealShare)}</b></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--text2)">Доля выручки (договорная)</span><b>${bflP(revShare)}</b></div>
+    </div>`;}).join('');
+  const analytics=`<div style="margin-top:16px">
+    <div style="font-size:13.5px;font-weight:600;margin-bottom:10px">Аналитика направлений ${cmp?'(План)':sc==='plan'?'(План)':'(Факт)'}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${cards}</div>
+  </div>`;
+
+  host.innerHTML=`<div style="padding:4px 2px">
+    <div style="font-size:11.5px;color:var(--text3);margin-bottom:12px">Параметрическая модель БФЛ · слой A (Продажи: план/факт по 4 направлениям). Объёмы - источник истины, конверсии вычисляются. Производство и ОПИУ - Phase 2.</div>
+    ${controls}${table}${funnelCard}${analytics}
+  </div>`;
+}
+
+// ── Тесты ядра (Phase 1: AC1-AC4, AC7-AC8) ───────────────────────────────────
+function bflRunTests(){
+  const R=[];const ok=(n,cond,got)=>R.push({n:n,pass:!!cond,got:got});
+  const ap=(a,b,t)=>a!=null&&Math.abs(a-b)<=(t||0.005);
+  const save=_bflModel;_bflModel=bflModelDefault();const savedAuto=_bflAuto;_bflAuto={};
+  try{
+    const jun=bflPeriod('2026-06'),may=bflPeriod('2026-05');
+    const f1=bflFunnel(bflVol(jun,'plan','d1'));
+    ok('AC1 c1≈24,3%',ap(f1.c1,0.243),f1.c1);ok('AC1 c2≈40%',ap(f1.c2,0.40),f1.c2);
+    ok('AC1 c3≈61,7%',ap(f1.c3,0.617),f1.c3);ok('AC1 c4≈37,4%',ap(f1.c4,0.374),f1.c4);
+    ok('AC1 Лид→Сделка≈2,2%',ap(f1.lead_deal,0.0224,0.001),f1.lead_deal);
+    let tl=0,td=0;['d1','d2','d3','d4'].forEach(d=>{tl+=bflCell(jun,'plan',d,'leads')||0;td+=bflCell(jun,'plan',d,'deal')||0;});
+    ok('AC2 Лиды=4146',tl===4146,tl);ok('AC2 Сделки=132',td===132,td);
+    ok('AC2 Сумма=32 470 812',td*(jun.check)===32470812,td*jun.check);
+    let mlp=0,mlf=0,mdp=0,mdf=0;['d1','d2','d3','d4'].forEach(d=>{mlp+=bflCell(may,'plan',d,'leads')||0;mlf+=bflCell(may,'fact',d,'leads')||0;mdp+=bflCell(may,'plan',d,'deal')||0;mdf+=bflCell(may,'fact',d,'deal')||0;});
+    ok('AC3 Лиды Δ≈86,6%',ap(bflSafeDiv(mlf,mlp),0.866,0.005),bflSafeDiv(mlf,mlp));
+    ok('AC3 Сделки Δ≈94,4%',ap(bflSafeDiv(mdf,mdp),0.944,0.005),bflSafeDiv(mdf,mdp));
+    const f2=bflFunnel(bflVol(jun,'plan','d2'));
+    ok('AC4 #2 Лид→Сделка≈11%',ap(f2.lead_deal,0.11,0.005),f2.lead_deal);
+    ok('AC4 #2 c1·c2·c3·c4=сквозная',ap(f2.c1*f2.c2*f2.c3*f2.c4,f2.lead_deal,0.005),f2.c1*f2.c2*f2.c3*f2.c4);
+    const f3=bflFunnel(bflVol(jun,'plan','d3'));
+    ok('AC4 #3 Лид→Сделка≈27%',ap(f3.lead_deal,0.27,0.005),f3.lead_deal);
+    const fm=bflFunnel(bflVol(may,'plan','d1'));
+    ok('AC7 Май c4=null (нет К.Встречи)',fm.c4===null,fm.c4);ok('AC7 Май Лид→Сделка считается',fm.lead_deal!=null,fm.lead_deal);
+    ok('AC8 safeDiv(5,0)=null',bflSafeDiv(5,0)===null,bflSafeDiv(5,0));
+  }finally{_bflModel=save;_bflAuto=savedAuto;}
+  const passed=R.filter(r=>r.pass).length;
+  console.log('[BFL tests] '+passed+'/'+R.length+' прошли');
+  R.forEach(r=>console.log((r.pass?'✓':'✗')+' '+r.n+' = '+r.got));
+  return {passed:passed,total:R.length,results:R};
+}
+window.bflRunTests=bflRunTests;
+window.renderBflModel=renderBflModel;
 </script>
 </body>
 </html>
