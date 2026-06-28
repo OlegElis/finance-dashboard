@@ -7905,7 +7905,7 @@ function bflModelDefault(){
   return {
     meta:{version:'1.1',currency:'RUB',locale:'ru-RU'},
     global:{ndfl:0.13,fss:0.302,vat:0.05,profitTax:0.01,
-      collectionProfile:{firstPct:0.30,minFirst:10000,cap:70000,rassrochkaMonths:10,collectionRate:0.95}},
+      collectionProfile:{firstPay:10000,rassrochkaMonths:10,collectionRate:0.95}},
     directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
     checkDefault:245991,
     // Слой B+C - отделы сквозного конвейера (эталонный датасет §5). ЦКП = расходы_gross / tskpBase.
@@ -8022,7 +8022,7 @@ function bflEnsureModel(m){
   if(!Array.isArray(m.periods)||!m.periods.length)m.periods=d.periods;
   if(!Array.isArray(m.directions)||!m.directions.length)m.directions=d.directions;
   if(!m.global)m.global=d.global;
-  if(!m.global.collectionProfile||m.global.collectionProfile.firstPct===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // новый профиль сбора
+  if(!m.global.collectionProfile||m.global.collectionProfile.firstPay===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // профиль сбора: фикс первый платёж ₽
   const osDep=(m.departments||[]).find(x=>x&&x.id==='os');if(osDep&&osDep.collectsRassrochka===undefined){osDep.collectsRassrochka=true;osDep.incassation=0;} // ОС собирает рассрочку
   if(m.checkDefault==null)m.checkDefault=d.checkDefault;
   if(!m.meta)m.meta=d.meta;
@@ -8327,12 +8327,12 @@ function bflDeptCalc(d,g){
   if(d.funnel){
     if(Array.isArray(d.funnel.byDir)){
       const upByDir = d.funnel.inflowFrom ? bflUpstreamOutputByDir(d.funnel.inflowFrom) : {};
-      const prof=g.collectionProfile||{},firstPct=prof.firstPct!=null?prof.firstPct:0.3,minFirst=prof.minFirst!=null?prof.minFirst:0,cap=prof.cap!=null?prof.cap:Infinity;
+      const prof=g.collectionProfile||{},fpAmt=prof.firstPay!=null?prof.firstPay:0;
       inflow=0;assigned=0;output=0;
       funnelRows=d.funnel.byDir.map(B=>{
         const inflowDir=upByDir[B.dir]||0,assignedDir=inflowDir*(B.conv||0),outputDir=assignedDir*(1-(B.otval||0));
         const check=B.check||0,suma=outputDir*check;
-        const firstPay=d.funnel.money?Math.min(Math.max(check*firstPct,minFirst),cap):0; // первый платёж с клиента (X% чека, в рамках мин/cap)
+        const firstPay=d.funnel.money?Math.min(fpAmt,check):0; // первый платёж с клиента (фикс ₽, не больше чека)
         inflow+=inflowDir;assigned+=assignedDir;output+=outputDir;sumaTotal+=suma;firstPayTotal+=outputDir*firstPay;
         return {dir:B.dir,name:B.name,conv:B.conv||0,otval:B.otval||0,check:check,firstPay:firstPay,inflow:inflowDir,assigned:assignedDir,output:outputDir,suma:suma};});
     }else{
@@ -8628,11 +8628,11 @@ function bflRenderDepts(host){
             <span style="font-size:17px;font-weight:700;font-family:var(--mono);color:var(--accent)">${bflM(com.tskpDeal)}</span></div>
           <div style="display:flex;flex-wrap:wrap;gap:13px;align-items:center;margin-top:7px;font-size:11.5px;color:var(--text2)">
             <span style="color:var(--text3)">Профиль сбора:</span>
-            <span>Первый платёж ${gi('global.collectionProfile.firstPct',+((prof.firstPct||0)*100).toFixed(1),48,true)} %</span>
-            <span>не более ${gi('global.collectionProfile.cap',prof.cap,66)} ₽</span>
+            <span>Первый платёж ${gi('global.collectionProfile.firstPay',prof.firstPay,66)} ₽ с клиента</span>
             <span>рассрочка ${gi('global.collectionProfile.rassrochkaMonths',prof.rassrochkaMonths,42)} мес</span>
             <span>собираемость ${gi('global.collectionProfile.collectionRate',+((prof.collectionRate||0)*100).toFixed(0),42,true)} %</span>
-            <span style="color:var(--text3)">→ ОП первый платёж <b style="color:var(--income)">${bflM(com.firstPay)}</b> · ОС рассрочка <b style="color:var(--income)">${bflM(com.rass)}</b> · договорная ${bflM(com.suma)}</span></div>
+            <span style="color:var(--text3)">после первого платежа клиент → ОИ/ОС</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:13px;align-items:center;margin-top:5px;font-size:11.5px;color:var(--text3)">→ ОП первый платёж <b style="color:var(--income)">${bflM(com.firstPay)}</b> · ОС рассрочка <b style="color:var(--income)">${bflM(com.rass)}</b> · договорная ${bflM(com.suma)}</div>
         </div><div style="border-left:2px solid var(--accent-light);padding-left:10px;margin-bottom:6px">`;superOpen=true;}
       lastSuper=sup;
     }
