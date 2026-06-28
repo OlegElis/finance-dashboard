@@ -7913,18 +7913,14 @@ function bflModelDefault(){
     departments:[
       {id:'marketing',group:'attract',name:'Маркетинг (ОМ) - внутренний и внешний лидогенератор',
         leadgen:[
-          {dir:'ofbfl', name:'#1 Маркетинг',  owner:'Тертюк Александр',leads:1380,brak:0.5,costRaw:1350},
+          {dir:'ofbfl', name:'#1 Маркетинг',  owner:'Тертюк Александр',leads:1380,brak:0.5,costRaw:1350,
+            staff:[{name:'Руководитель ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0}]},
           {dir:'Agbfl', name:'#2 Агентская сеть',owner:'',leads:0,brak:0,costRaw:0,deals:0,feePerQual:500,feePerDeal:10000,
             staff:[{name:'Руководитель АС',fte:1,rate:0},{name:'Сотрудник АС',fte:1,rate:0}]},
           {dir:'R-bfl', name:'#3 Рекомендации',owner:'Шарагин Д.',   leads:0,   brak:0,  costRaw:0},
           {dir:'OP-bfl',name:'#4 Рекомендации+ (АИ / сотрудники / прочее)',owner:'',leads:0,brak:0,costRaw:0}
         ],
-        roles:[
-          {name:'Руководитель ОМ',fte:1,rate:0},
-          {name:'Сотрудник ОМ',fte:1,rate:0},
-          {name:'Сотрудник ОМ',fte:1,rate:0}
-        ],
-        costs:[],incassation:0,tskpLabel:'стоимость квал-лида',capacity:{base:null,norm:null,driver:'лидогенерация'}},
+        roles:[],costs:[],incassation:0,tskpLabel:'стоимость квал-лида',capacity:{base:null,norm:null,driver:'лидогенерация'}},
       {id:'client_ko',group:'sales',name:'Клиентский отдел (КО)',
         funnel:{inflowFrom:'marketing',inLabel:'Квал-лиды (от ОМ)',convLabel:'Квал-лид → Встреча',outLabel:'Состоявшиеся встречи',norm:115,normLabel:'квал-лидов на 1 МКО',roleIdx:1,
           byDir:[
@@ -8005,7 +8001,10 @@ function bflEnsureModel(m){
     // отделы, которых нет в дефолте (напр. устаревшие leadgen_ko/agent_s1), НЕ переносим - они заменены
     // домерж полей направлений лидогенерации (агентские комиссии/штат добавлены позже) - не затирая введённых лидов
     const defMkt=d.departments.find(x=>Array.isArray(x.leadgen));
-    out.forEach(dep=>{if(dep&&Array.isArray(dep.leadgen)&&defMkt){dep.leadgen.forEach(L=>{const def=defMkt.leadgen.find(x=>x.dir===L.dir);if(!def)return;
+    out.forEach(dep=>{if(dep&&Array.isArray(dep.leadgen)&&defMkt){
+      // ОМ-штат теперь относится к направлению #1: переносим бывший общий roles[] в #1.staff
+      if(Array.isArray(dep.roles)&&dep.roles.length){const d1=dep.leadgen[0];if(d1&&(!Array.isArray(d1.staff)||!d1.staff.length))d1.staff=dep.roles;dep.roles=[];}
+      dep.leadgen.forEach(L=>{const def=defMkt.leadgen.find(x=>x.dir===L.dir);if(!def)return;
       ['deals','feePerQual','feePerDeal'].forEach(k=>{if(L[k]===undefined&&def[k]!==undefined)L[k]=def[k];});
       if(L.staff===undefined&&def.staff!==undefined)L.staff=JSON.parse(JSON.stringify(def.staff));});}});
     m.departments=out;
@@ -8409,7 +8408,7 @@ function bflRenderDepts(host){
       <tbody>${rows}
       <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:5px 7px;font-size:12px">ИТОГО</td><td style="${cell}">${bflI(totLeads)}</td><td></td><td style="${cell}">${bflI(c.qualTotal)}</td><td></td><td style="${cell};color:var(--accent)">${bflM(bflSafeDiv(c.leadTotalCost,c.qualTotal))}</td><td style="${cell};color:var(--outcome)">${bflM(c.leadTotalCost)}</td></tr></tbody></table>`;
     const roleRows=(d.roles||[]).map((r,i)=>`<tr><td style="padding:3px 7px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 7px;text-align:right">${inp('roles.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 7px;text-align:right">${inp('roles.'+i+'.rate',r.rate,90)}</td><td style="${cell};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
-    const staffTbl=`<table style="width:100%;border-collapse:collapse;margin-top:6px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 7px;font-size:10px;color:var(--label)">Штатное расписание ОМ</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}${th('ФОТ')}</tr></thead><tbody>${roleRows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 7px;font-size:12px">ФОТ ОМ + начисления (${Math.round((g.ndfl+g.fss)*100)}%)</td><td></td><td></td><td style="${cell}">${bflM(c.fot+c.nach)}</td></tr></tbody></table>`;
+    const staffTbl=(d.roles&&d.roles.length)?`<table style="width:100%;border-collapse:collapse;margin-top:6px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 7px;font-size:10px;color:var(--label)">Штатное расписание ОМ (общий)</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}${th('ФОТ')}</tr></thead><tbody>${roleRows}</tbody></table>`:'';
     // детализация направлений с агентскими комиссиями / своим штатом (напр. #2 Агентская сеть)
     const dirDetails=(c.leadRows||[]).map((L,i)=>{
       if(!(L.staff&&L.staff.length)&&!L.feePerQual&&!L.feePerDeal)return '';
@@ -8419,8 +8418,9 @@ function bflRenderDepts(host){
         <span style="color:var(--text2)">Итого агентам: <b style="color:var(--outcome)">${bflM(L.agentFee)}</b></span></div>`:'';
       const staffRows=(L.staff||[]).map((r,j)=>`<tr><td style="padding:3px 7px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 7px;text-align:right">${inp('leadgen.'+i+'.staff.'+j+'.fte',r.fte,52)}</td><td style="padding:3px 7px;text-align:right">${inp('leadgen.'+i+'.staff.'+j+'.rate',r.rate,90)}</td><td style="${cell};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
       const staffBlock=(L.staff&&L.staff.length)?`<table style="width:100%;border-collapse:collapse;max-width:520px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 7px;font-size:10px;color:var(--label)">Штатное расписание направления</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}${th('ФОТ')}</tr></thead><tbody>${staffRows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 7px;font-size:12px">ФОТ + начисления</td><td></td><td></td><td style="${cell}">${bflM(L.dFot+L.dNach)}</td></tr></tbody></table>`:'';
+      const dtitle=(L.feePerQual||L.feePerDeal)?'агентское вознаграждение и штат':'штатное расписание';
       return `<div style="border:1px solid var(--divider);border-radius:8px;padding:9px 11px;margin-top:8px;background:var(--surface2)">
-        <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">${esc(L.name)} - агентское вознаграждение и штат</div>
+        <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">${esc(L.name)} - ${dtitle}</div>
         ${agentBlock}${staffBlock}</div>`;
     }).join('');
     const head=`<div style="display:flex;align-items:center;gap:12px;padding:11px 13px">
