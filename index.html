@@ -8413,11 +8413,13 @@ function bflRenderDepts(host){
   const g=_bflModel.global;
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   window._bflOpen=window._bflOpen||{};
+  (_bflModel.departments||[]).forEach(d=>{if((Array.isArray(d.leadgen)||d.funnel)&&window._bflOpen[d.id]===undefined)window._bflOpen[d.id]=true;}); // спецкарточки открыты по умолчанию
   const GROUPS=[['attract','Привлечение'],['sales','Продажи'],['production','Производство'],['overhead','Менеджмент']];
   const loadColor=l=>l==null?'var(--text3)':l>1?'var(--outcome)':l>0.8?'var(--orange)':'var(--income)';
 
   // Спецкарточка отдела маркетинга (ОМ): 4 направления лидогенерации + штатное расписание
   const leadgenCard=(d,c)=>{
+    const open=!!window._bflOpen[d.id];
     const inp=(path,val,w,pct)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-dept="${d.id}" data-path="${path}"${pct?' data-pct="1"':''} onchange="bflDeptEdit(this)" style="width:${w||70}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
     const cell='padding:4px 7px;text-align:right;font-family:var(--mono);font-size:12px';
     const th=t=>`<th style="text-align:right;padding:4px 7px;font-size:10px;color:var(--label)">${t}</th>`;
@@ -8450,24 +8452,25 @@ function bflRenderDepts(host){
         <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">${esc(L.name)} - ${dtitle}</div>
         ${agentBlock}${staffBlock}</div>`;
     }).join('');
-    const head=`<div style="display:flex;align-items:center;gap:16px;padding:11px 13px">
+    const head=`<div onclick="bflToggleDept('${d.id}')" style="display:flex;align-items:center;gap:16px;padding:11px 13px;cursor:pointer">
       <div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(d.name)}</div>
-        <div style="font-size:10.5px;color:var(--text3);margin-top:1px">лиды: ${bflI(totLeads)} · квал-лиды: ${bflI(c.qualTotal)}</div></div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:1px">${open?'▾':'▸'} лиды: ${bflI(totLeads)} · квал-лиды: ${bflI(c.qualTotal)}</div></div>
       <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Стоимость лида</div><div style="font-size:15px;font-weight:600;font-family:var(--mono);color:var(--text2)">${bflM(bflSafeDiv(c.gross,totLeads))}</div></div>
       <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">ЦКП · стоимость квал-лида</div><div style="font-size:16px;font-weight:600;font-family:var(--mono);color:var(--accent)">${bflM(c.tskp)}</div></div></div>`;
     return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}
-      <div style="padding:0 13px 13px;border-top:1px dashed var(--border)">
+      ${open?`<div style="padding:0 13px 13px;border-top:1px dashed var(--border)">
         <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 4px">Лидогенерация по направлениям (квал-лид = лиды × (1 − % отбраковки); стоимость квал-лида = стоимость грязного / (1 − % отбраковки))</div>
         <div style="overflow-x:auto">${leadTbl}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:3px">«Расходы» по направлению = закупка лидов + агентские комиссии + штат направления с начислениями</div>
         ${dirDetails}
         ${staffTbl}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы маркетинга = переменные (закупка + агентам) ${bflM(c.leadSpend)} + ФОТ с начислениями ${bflM(c.fot+c.nach)} + прочее ${bflM(c.other)} = <b style="color:var(--outcome)">${bflM(c.gross)}</b> · ЦКП = ${bflM(c.gross)} / ${bflI(c.qualTotal)} квал-лидов = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
-      </div></div>`;
+      </div>`:''}</div>`;
   };
 
   // Спецкарточка воронки-стадии (КО и т.п.): вход наследуется → конверсия → отвал → выход + штат
   const funnelCard=(d,c)=>{
+    const open=!!window._bflOpen[d.id];
     const inp=(path,val,w,pct)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-dept="${d.id}" data-path="${path}"${pct?' data-pct="1"':''} onchange="bflDeptEdit(this)" style="width:${w||66}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
     const fl=d.funnel||{};
     const up=fl.inflowFrom?_bflModel.departments.find(x=>x.id===fl.inflowFrom):null;
@@ -8504,18 +8507,18 @@ function bflRenderDepts(host){
       <div style="background:var(--surface2);border-radius:5px;overflow:hidden;height:8px"><div style="width:${Math.min(100,loadPct||0)}%;height:8px;background:${loadColor(c.load)}"></div></div></div>`:'';
     const roleRows=(d.roles||[]).map((r,i)=>`<tr><td style="padding:3px 7px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 7px;text-align:right">${inp('roles.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 7px;text-align:right">${inp('roles.'+i+'.rate',r.rate,90)}</td><td style="padding:3px 7px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
     const staffTbl=`<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:540px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 7px;font-size:10px;color:var(--label)">Штатное расписание</th><th style="text-align:right;padding:3px 7px;font-size:10px;color:var(--label)">Кол-во ед</th><th style="text-align:right;padding:3px 7px;font-size:10px;color:var(--label)">Ставка ₽/мес</th><th style="text-align:right;padding:3px 7px;font-size:10px;color:var(--label)">ФОТ</th></tr></thead><tbody>${roleRows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 7px;font-size:12px">ФОТ + начисления (${Math.round((g.ndfl+g.fss)*100)}%)</td><td></td><td></td><td style="padding:3px 7px;text-align:right;font-family:var(--mono);font-size:12px">${bflM(c.fot+c.nach)}</td></tr></tbody></table>`;
-    const head=`<div style="display:flex;align-items:center;gap:12px;padding:11px 13px">
-      <div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(d.name)}</div><div style="font-size:10.5px;color:var(--text3);margin-top:1px">вход ${bflI(c.inflow)} → выход ${bflI(c.output)} · ЦКП = расходы / выход</div></div>
+    const head=`<div onclick="bflToggleDept('${d.id}')" style="display:flex;align-items:center;gap:12px;padding:11px 13px;cursor:pointer">
+      <div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(d.name)}</div><div style="font-size:10.5px;color:var(--text3);margin-top:1px">${open?'▾':'▸'} вход ${bflI(c.inflow)} → выход ${bflI(c.output)} · ЦКП = расходы / выход</div></div>
       <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">ЦКП</div><div style="font-size:16px;font-weight:600;font-family:var(--mono);color:var(--accent)">${bflM(c.tskp)}</div></div>
       <div style="text-align:right;min-width:62px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">ШЕ</div><div style="font-size:14px;font-weight:600;font-family:var(--mono)">${c.fteActual.toLocaleString('ru-RU',{maximumFractionDigits:2})}</div></div>
       <div style="text-align:right;min-width:96px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Расходы</div><div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(c.gross)}</div></div>
       ${c.incassation>0?`<div style="text-align:right;min-width:104px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Инкассация</div><div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--income)">${bflM(c.incassation)}</div></div>`:''}</div>`;
     return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}
-      <div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">
+      ${open?`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">
         <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 6px">Воронка по направлениям: ${esc(fl.inLabel||'вход')} (наследуется от ${esc(upName||'предыдущего отдела')}) → конверсия и % отвала РАЗНЫЕ по направлениям → ${esc(fl.outLabel||'выход')}</div>
         ${funnelBox}${loadBar}${staffTbl}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">ЦКП = ${bflM(c.gross)} / ${bflI(c.output)} ${esc(fl.outLabel||'')} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
-      </div></div>`;
+      </div>`:''}</div>`;
   };
 
   const card=d=>{
