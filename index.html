@@ -7926,7 +7926,13 @@ function bflModelDefault(){
         ],
         costs:[],incassation:0,tskpLabel:'стоимость квал-лида',capacity:{base:null,norm:null,driver:'лидогенерация'}},
       {id:'client_ko',group:'sales',name:'Клиентский отдел (КО)',
-        funnel:{inflowFrom:'marketing',inLabel:'Квал-лиды (от ОМ)',conv:0.749,convLabel:'Квал-лид → Встреча (назначенная)',otval:0.40,outLabel:'Состоявшиеся встречи',norm:115,normLabel:'квал-лидов на 1 МКО',roleIdx:1},
+        funnel:{inflowFrom:'marketing',inLabel:'Квал-лиды (от ОМ)',convLabel:'Квал-лид → Встреча',outLabel:'Состоявшиеся встречи',norm:115,normLabel:'квал-лидов на 1 МКО',roleIdx:1,
+          byDir:[
+            {dir:'ofbfl', name:'#1 Маркетинг',     conv:0.749,otval:0.40},
+            {dir:'Agbfl', name:'#2 Агентская сеть',conv:0.83, otval:0.30},
+            {dir:'R-bfl', name:'#3 Рекомендации',  conv:0.85, otval:0.20},
+            {dir:'OP-bfl',name:'#4 Рекомендации+', conv:0.85, otval:0.20}
+          ]},
         roles:[{name:'Руководитель КО',fte:1,rate:120000},{name:'Менеджер КО',fte:6,rate:90000},{name:'Стажёр КО',fte:1.5,rate:50000}],
         costs:[{name:'Аренда (38м² × 1000)',amount:38000},{name:'Коммунальные (38м² × 100)',amount:3800}],incassation:0,tskpLabel:'состоявшиеся встречи'},
       {id:'agent_s2',group:'sales',name:'Агентская сеть, этап 2 (AC)',
@@ -7993,9 +7999,10 @@ function bflEnsureModel(m){
     const out=[];
     d.departments.forEach(def=>{const cur=byId[def.id];
       if(!cur){out.push(def);return;}
-      const stale=(!!def.leadgen!==!!cur.leadgen)||(!!def.funnel!==!!cur.funnel); // тип отдела изменился
+      const bNew=!!(def.funnel&&def.funnel.byDir),bOld=!!(cur.funnel&&cur.funnel.byDir);
+      const stale=(!!def.leadgen!==!!cur.leadgen)||(!!def.funnel!==!!cur.funnel)||(bNew!==bOld); // тип/структура отдела изменились
       out.push(stale?def:cur);});
-    m.departments.forEach(x=>{if(x&&x.id&&!d.departments.some(def=>def.id===x.id))out.push(x);}); // прочие, которых нет в дефолте
+    // отделы, которых нет в дефолте (напр. устаревшие leadgen_ko/agent_s1), НЕ переносим - они заменены
     // домерж полей направлений лидогенерации (агентские комиссии/штат добавлены позже) - не затирая введённых лидов
     const defMkt=d.departments.find(x=>Array.isArray(x.leadgen));
     out.forEach(dep=>{if(dep&&Array.isArray(dep.leadgen)&&defMkt){dep.leadgen.forEach(L=>{const def=defMkt.leadgen.find(x=>x.dir===L.dir);if(!def)return;
@@ -8293,11 +8300,21 @@ function bflDeptCalc(d,g){
   }
   const nach=fot*_rate;                                // начисления на весь ФОТ (общий + штат направлений)
   // воронка-стадия (КО и т.п.): вход наследуется от выхода предыдущего отдела → конверсия → отвал → выход
-  let inflow=null,assigned=null,output=null;
+  // byDir: конверсия и отвал РАЗНЫЕ по направлениям (квал-лиды направления наследуются раздельно)
+  let inflow=null,assigned=null,output=null,funnelRows=null;
   if(d.funnel){
-    inflow = d.funnel.inflowFrom ? bflUpstreamOutput(d.funnel.inflowFrom) : (d.funnel.inflow||0);
-    assigned = inflow*(d.funnel.conv||0);
-    output = assigned*(1-(d.funnel.otval||0));
+    if(Array.isArray(d.funnel.byDir)){
+      const upByDir = d.funnel.inflowFrom ? bflUpstreamOutputByDir(d.funnel.inflowFrom) : {};
+      inflow=0;assigned=0;output=0;
+      funnelRows=d.funnel.byDir.map(B=>{
+        const inflowDir=upByDir[B.dir]||0,assignedDir=inflowDir*(B.conv||0),outputDir=assignedDir*(1-(B.otval||0));
+        inflow+=inflowDir;assigned+=assignedDir;output+=outputDir;
+        return {dir:B.dir,name:B.name,conv:B.conv||0,otval:B.otval||0,inflow:inflowDir,assigned:assignedDir,output:outputDir};});
+    }else{
+      inflow = d.funnel.inflowFrom ? bflUpstreamOutput(d.funnel.inflowFrom) : (d.funnel.inflow||0);
+      assigned = inflow*(d.funnel.conv||0);
+      output = assigned*(1-(d.funnel.otval||0));
+    }
   }
   const gross=fot+nach+other+leadSpend, net=gross-pass;
   const base = d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:d.tskpBase); // маркетинг: квал-лиды; воронка: выход
@@ -8312,7 +8329,7 @@ function bflDeptCalc(d,g){
   return {fot:fot,nach:nach,other:other,pass:pass,gross:gross,net:net,tskp:tskp,base:base,
     fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:d.incassation||0,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
-    inflow:inflow,assigned:assigned,output:output};
+    inflow:inflow,assigned:assigned,output:output,funnelRows:funnelRows};
 }
 // Выход отдела (для наследования потока): маркетинг → квал-лиды; воронка → состоявшиеся встречи; иначе → база ЦКП
 function bflUpstreamOutput(id){
@@ -8321,6 +8338,14 @@ function bflUpstreamOutput(id){
   if(Array.isArray(u.leadgen))return c.qualTotal;
   if(u.funnel)return c.output;
   return u.tskpBase||0;
+}
+// Выход отдела ПО НАПРАВЛЕНИЯМ (для наследования раздельно по 4 направлениям)
+function bflUpstreamOutputByDir(id){
+  const u=_bflModel.departments.find(x=>x.id===id);if(!u)return {};
+  const c=bflDeptCalc(u,_bflModel.global);const map={};
+  if(Array.isArray(u.leadgen)&&c.leadRows)c.leadRows.forEach(L=>{map[L.dir]=(map[L.dir]||0)+L.qual;});
+  else if(u.funnel&&c.funnelRows)c.funnelRows.forEach(R=>{map[R.dir]=(map[R.dir]||0)+R.output;});
+  return map;
 }
 function bflOPIU(){
   const g=_bflModel.global,depts=_bflModel.departments||[];
@@ -8423,13 +8448,31 @@ function bflRenderDepts(host){
     const upName=up?String(up.name||'').split(' - ')[0]:'';
     const loadPct=c.load!=null?Math.round(c.load*100):null;
     const rowL=(lbl,right)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--divider)"><span style="font-size:12px;color:var(--text2)">${lbl}</span><span style="font-family:var(--mono);font-size:12.5px">${right}</span></div>`;
-    const funnelBox=`<div style="max-width:540px">
-      ${rowL('Вход: '+esc(fl.inLabel||'')+(up?` <span style="color:var(--text3);font-size:10.5px">(наследуется от ${esc(upName)})</span>`:''),`<b>${bflI(c.inflow)}</b>`)}
-      ${rowL(esc(fl.convLabel||'Конверсия'),inp('funnel.conv',+((fl.conv||0)*100).toFixed(2),54,true)+' %')}
-      ${rowL('Назначенные встречи',`<span style="color:var(--text2)">${bflI(c.assigned)}</span>`)}
-      ${rowL('% отвала',inp('funnel.otval',+((fl.otval||0)*100).toFixed(2),54,true)+' %')}
-      ${rowL(esc(fl.outLabel||'Выход')+' (выход)',`<b style="color:var(--accent)">${bflI(c.output)}</b>`)}
-    </div>`;
+    const cell2='padding:4px 7px;text-align:right;font-family:var(--mono);font-size:12px';
+    const th2=t=>`<th style="text-align:right;padding:4px 7px;font-size:10px;color:var(--label)">${t}</th>`;
+    let funnelBox;
+    if(Array.isArray(c.funnelRows)){
+      const frows=c.funnelRows.map((R,i)=>`<tr style="border-bottom:1px solid var(--divider)">
+        <td style="padding:4px 7px;font-size:12px">${esc(R.name)}</td>
+        <td style="${cell2};color:var(--text2)">${bflI(R.inflow)}</td>
+        <td style="${cell2}">${inp('funnel.byDir.'+i+'.conv',+((R.conv||0)*100).toFixed(2),52,true)} %</td>
+        <td style="${cell2}">${inp('funnel.byDir.'+i+'.otval',+((R.otval||0)*100).toFixed(2),52,true)} %</td>
+        <td style="${cell2};color:var(--text2)">${bflI(R.assigned)}</td>
+        <td style="${cell2};color:var(--accent)">${bflI(R.output)}</td></tr>`).join('');
+      funnelBox=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:560px">
+        <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 7px;font-size:10px;color:var(--label)">Направление</th>${th2('Квал-лиды (вход)')}${th2(esc(fl.convLabel||'Квал-лид→Встреча'))}${th2('% отвала')}${th2('Назначенные')}${th2(esc(fl.outLabel||'Выход'))}</tr></thead>
+        <tbody>${frows}
+        <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:5px 7px;font-size:12px">ИТОГО</td><td style="${cell2}">${bflI(c.inflow)}</td><td></td><td></td><td style="${cell2}">${bflI(c.assigned)}</td><td style="${cell2};color:var(--accent)">${bflI(c.output)}</td></tr>
+        </tbody></table></div>`;
+    }else{
+      funnelBox=`<div style="max-width:540px">
+        ${rowL('Вход: '+esc(fl.inLabel||'')+(up?` <span style="color:var(--text3);font-size:10.5px">(наследуется от ${esc(upName)})</span>`:''),`<b>${bflI(c.inflow)}</b>`)}
+        ${rowL(esc(fl.convLabel||'Конверсия'),inp('funnel.conv',+((fl.conv||0)*100).toFixed(2),54,true)+' %')}
+        ${rowL('Назначенные встречи',`<span style="color:var(--text2)">${bflI(c.assigned)}</span>`)}
+        ${rowL('% отвала',inp('funnel.otval',+((fl.otval||0)*100).toFixed(2),54,true)+' %')}
+        ${rowL(esc(fl.outLabel||'Выход')+' (выход)',`<b style="color:var(--accent)">${bflI(c.output)}</b>`)}
+      </div>`;
+    }
     const loadBar=c.required!=null?`<div style="max-width:540px;margin-top:9px">
       <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:3px"><span>Норма: ${esc(fl.normLabel||'')} ${inp('funnel.norm',fl.norm,56)}</span><span>Нужно ШЕ <b>${c.required.toLocaleString('ru-RU',{maximumFractionDigits:2})}</b> / факт <b>${(c.loadFte||0).toLocaleString('ru-RU',{maximumFractionDigits:2})}</b> · загрузка <b style="color:${loadColor(c.load)}">${loadPct}%</b></span></div>
       <div style="background:var(--surface2);border-radius:5px;overflow:hidden;height:8px"><div style="width:${Math.min(100,loadPct||0)}%;height:8px;background:${loadColor(c.load)}"></div></div></div>`:'';
@@ -8442,7 +8485,7 @@ function bflRenderDepts(host){
       <div style="text-align:right;min-width:96px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Расходы</div><div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(c.gross)}</div></div></div>`;
     return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}
       <div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">
-        <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 6px">Воронка: вход (наследуется) → конверсия → отвал → выход</div>
+        <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 6px">Воронка по направлениям: квал-лиды (наследуются от ${esc(upName||'маркетинга')}) → конверсия во встречу и % отвала РАЗНЫЕ по направлениям → состоявшиеся встречи</div>
         ${funnelBox}${loadBar}${staffTbl}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">ЦКП = ${bflM(c.gross)} / ${bflI(c.output)} ${esc(fl.outLabel||'')} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
       </div></div>`;
@@ -8596,6 +8639,14 @@ function bflRunTests(){
     const ko=bflDeptCalc(_bflModel.departments.find(x=>x.id==='client_ko'),g);
     ok('КО вход = квал-лиды маркетинга (690)',ko.inflow===690,ko.inflow);
     ok('КО выход ≈ 310 встреч',Math.abs(ko.output-310)<=2,+ko.output.toFixed(1));
+    // КО: конверсия во встречу РАЗНАЯ по направлениям
+    const koDept=_bflModel.departments.find(x=>x.id==='client_ko');
+    ok('КО конверсии по направлениям различаются',koDept.funnel.byDir.length===4&&koDept.funnel.byDir[1].conv!==koDept.funnel.byDir[0].conv,koDept.funnel.byDir.map(b=>b.conv).join(','));
+    const d2b=_bflModel.departments.find(x=>x.id==='marketing').leadgen.find(x=>x.dir==='Agbfl');
+    const svb={leads:d2b.leads,brak:d2b.brak};d2b.leads=100;d2b.brak=0; // 100 квал-лидов #2
+    const r2k=bflDeptCalc(koDept,g).funnelRows.find(x=>x.dir==='Agbfl');
+    ok('КО #2 выход = 100×0.83×0.7 = 58.1',Math.abs(r2k.output-58.1)<=0.5,+r2k.output.toFixed(1));
+    d2b.leads=svb.leads;d2b.brak=svb.brak;
     // #2 Агентская сеть: 500₽ за К-лид + до 10000₽ за сделку + свой штат
     const mkDept=_bflModel.departments.find(x=>x.id==='marketing');
     const d2=mkDept.leadgen.find(x=>x.dir==='Agbfl');
