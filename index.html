@@ -7915,7 +7915,7 @@ function bflModelDefault(){
         leadgen:[
           {dir:'ofbfl', name:'#1 Маркетинг',  owner:'Тертюк Александр',leads:1380,brak:0.5,costRaw:1350,
             staff:[{name:'Руководитель ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0}]},
-          {dir:'Agbfl', name:'#2 Агентская сеть',owner:'',leads:0,brak:0,costRaw:0,deals:0,feePerQual:500,feePerDeal:10000,
+          {dir:'Agbfl', name:'#2 Агентская сеть',owner:'',leads:0,brak:0,costRaw:0,rawCostMode:'fot',deals:0,feePerQual:500,feePerDeal:10000,
             staff:[{name:'Руководитель АС',fte:1,rate:0},{name:'Сотрудник АС',fte:1,rate:0}]},
           {dir:'R-bfl', name:'#3 Рекомендации',owner:'Шарагин Д.',   leads:0,   brak:0,  costRaw:0},
           {dir:'OP-bfl',name:'#4 Рекомендации+ (АИ / сотрудники / прочее)',owner:'',leads:0,brak:0,costRaw:0}
@@ -8009,7 +8009,7 @@ function bflEnsureModel(m){
       // ОМ-штат теперь относится к направлению #1: переносим бывший общий roles[] в #1.staff
       if(Array.isArray(dep.roles)&&dep.roles.length){const d1=dep.leadgen[0];if(d1&&(!Array.isArray(d1.staff)||!d1.staff.length))d1.staff=dep.roles;dep.roles=[];}
       dep.leadgen.forEach(L=>{const def=defMkt.leadgen.find(x=>x.dir===L.dir);if(!def)return;
-      ['deals','feePerQual','feePerDeal'].forEach(k=>{if(L[k]===undefined&&def[k]!==undefined)L[k]=def[k];});
+      ['deals','feePerQual','feePerDeal','rawCostMode'].forEach(k=>{if(L[k]===undefined&&def[k]!==undefined)L[k]=def[k];});
       if(L.staff===undefined&&def.staff!==undefined)L.staff=JSON.parse(JSON.stringify(def.staff));});}});
     m.departments=out;
   }
@@ -8065,8 +8065,10 @@ function bflAutoFact(){
 
 // ── Персист (Firebase config/bflModel + localStorage) ────────────────────────
 function _bflModelSave(){
+  _bflModel.savedAt=Date.now(); // метка времени - чтобы старое облако не затирало свежие локальные правки
   try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
   try{if(window.firebase&&FIREBASE_CONFIG.databaseURL){fbApp();firebase.database().ref('config/bflModel').set(_bflModel);}}catch(e){}
+  try{const s=document.getElementById('bfl-save-status');if(s){const d=new Date();const p=n=>String(n).padStart(2,'0');s.textContent='✓ Сохранено '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());s.style.color='var(--income)';}}catch(e){}
 }
 function startBflModelSync(){
   try{const s=localStorage.getItem('finBflModel');if(s){const m=JSON.parse(s);if(m&&typeof m==='object')_bflModel=bflEnsureModel(m);}}catch(e){}
@@ -8074,7 +8076,8 @@ function startBflModelSync(){
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;fbApp();
     firebase.database().ref('config/bflModel').on('value',sn=>{const v=sn.val();
-      if(v&&typeof v==='object'){_bflModel=bflEnsureModel(v);try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
+      // применяем облако ТОЛЬКО если оно не старше локального (иначе старое облако затрёт свежие правки)
+      if(v&&typeof v==='object'&&(v.savedAt||0)>=(_bflModel.savedAt||0)){_bflModel=bflEnsureModel(v);try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
         if(activeTab==='bflmodel')try{renderBflModel(getFilters());}catch(e){}}});
   }catch(e){console.warn('[bflModel] sync',e&&e.message);}
 }
@@ -8121,6 +8124,7 @@ window.bflImport=function(){
   inp.click();
 };
 window.bflReset=function(){if(!confirm('Сбросить модель к эталону? Текущие правки будут потеряны.'))return;_bflModel=bflModelDefault();_bflModelSave();renderBflModel();};
+window.bflSaveNow=function(btn){try{_bflModelSave();}catch(e){}if(btn){const t=btn.textContent;btn.textContent='✓ Сохранено';btn.disabled=true;setTimeout(()=>{btn.textContent=t;btn.disabled=false;},1300);}};
 
 // ── Рендер вкладки «Модель БФЛ» ───────────────────────────────────────────────
 function renderBflModel(){
@@ -8295,11 +8299,13 @@ function bflDeptCalc(d,g){
       const dFot=staff.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);
       const dFte=staff.reduce((a,r)=>a+(r.fte||0),0);
       const dNach=dFot*_rate;
+      // стоимость грязного лида: для агентских направлений (rawCostMode='fot') = ФОТ направления / лиды; иначе закупка (costRaw)
+      const rawCost = (L.rawCostMode==='fot') ? bflSafeDiv(dFot,leads) : costRaw;
       const variable=media+agentFee;                    // переменные затраты направления
       const dirCost=variable+dFot+dNach;                // полная стоимость направления
       const costQual=bflSafeDiv(dirCost,qual);
       leadSpend+=variable;qualTotal+=qual;dirFotTotal+=dFot;dirFteTotal+=dFte;leadTotalCost+=dirCost;
-      return {name:L.name,owner:L.owner,dir:L.dir,leads:leads,brak:brak,costRaw:costRaw,deals:deals,dealsInherited:dealsInherited,
+      return {name:L.name,owner:L.owner,dir:L.dir,leads:leads,brak:brak,costRaw:costRaw,rawCost:rawCost,rawCostMode:L.rawCostMode||'media',deals:deals,dealsInherited:dealsInherited,
         feePerQual:L.feePerQual||0,feePerDeal:L.feePerDeal||0,qual:qual,media:media,
         agentQual:agentQual,agentDeal:agentDeal,agentFee:agentFee,dFot:dFot,dFte:dFte,dNach:dNach,
         variable:variable,dirCost:dirCost,costQual:costQual,staff:staff};});
@@ -8391,8 +8397,12 @@ window.bflDeptEdit=function(el){
   _bflModelSave();renderBflModel();
 };
 window.bflPrintControls=function(){
+  let st='Изменения сохраняются автоматически',stc='var(--text3)';
+  if(_bflModel.savedAt){const d=new Date(_bflModel.savedAt);const p=n=>String(n).padStart(2,'0');st='✓ Сохранено '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());stc='var(--income)';}
   return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
+    <span id="bfl-save-status" style="font-size:11.5px;color:${stc}">${st}</span>
     <span style="margin-left:auto"></span>
+    <button onclick="bflSaveNow(this)" style="padding:5px 12px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-weight:600">💾 Сохранить</button>
     <button onclick="bflExport()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">Экспорт JSON</button>
     <button onclick="bflImport()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">Импорт JSON</button>
     <button onclick="bflReset()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">Сброс к эталону</button>
@@ -8417,7 +8427,7 @@ function bflRenderDepts(host){
       <td style="${cell}">${inp('leadgen.'+i+'.leads',L.leads,66)}</td>
       <td style="${cell}">${inp('leadgen.'+i+'.brak',+(L.brak*100).toFixed(2),52,true)} %</td>
       <td style="${cell};color:var(--text2)">${bflI(L.qual)}</td>
-      <td style="${cell}">${inp('leadgen.'+i+'.costRaw',L.costRaw,80)}</td>
+      <td style="${cell}">${L.rawCostMode==='fot'?`<span style="color:var(--text2)">${bflM(L.rawCost)}</span><div style="font-size:9px;color:var(--text3)">ФОТ/лиды</div>`:inp('leadgen.'+i+'.costRaw',L.costRaw,80)}</td>
       <td style="${cell};color:var(--accent)">${bflM(L.costQual)}</td>
       <td style="${cell};color:var(--outcome)">${bflM(L.dirCost)}</td></tr>`).join('');
     const totLeads=(c.leadRows||[]).reduce((a,L)=>a+L.leads,0);
