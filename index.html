@@ -7941,9 +7941,9 @@ function bflModelDefault(){
           ]},
         roles:[{name:'Руководитель ОП',fte:1,rate:200000},{name:'Менеджер ОП',fte:6,rate:150000},{name:'Стажёр ОП',fte:1.5,rate:70000}],
         costs:[],incassation:0,tskpLabel:'переданные дела (сделки)'},
-      {id:'os',group:'production',name:'ОС - Отдел сопровождения',collectsRassrochka:true,
+      {id:'os',group:'production',name:'ОС - Отдел сопровождения',collectsRassrochka:true,tskpFromOp:true,
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Зам',fte:0.10,rate:100000},{name:'Менеджер',fte:11.74,rate:90000},{name:'Стажёр',fte:2.94,rate:70000}],
-        costs:[],incassation:0,tskpBase:150,tskpLabel:'завершённые/переданные дела',
+        costs:[],incassation:0,tskpBase:150,tskpLabel:'сделки от ОП',
         capacity:{base:1526,norm:130,roleIdx:2,driver:'дел в работе на 1 менеджера'}},
       {id:'oi',group:'production',name:'ОИ - Отдел исполнения',
         roles:[{name:'Руководитель',fte:1,rate:110000},{name:'Юрист: подача заявлений',fte:2,rate:90000},{name:'Юрист: сохранение имущества',fte:1,rate:90000},{name:'Юрист: ипотека',fte:1,rate:90000},{name:'Юрист: работа с КМ',fte:1,rate:90000}],
@@ -8024,6 +8024,7 @@ function bflEnsureModel(m){
   if(!m.global)m.global=d.global;
   if(!m.global.collectionProfile||m.global.collectionProfile.firstPay===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // профиль сбора: фикс первый платёж ₽
   const osDep=(m.departments||[]).find(x=>x&&x.id==='os');if(osDep&&osDep.collectsRassrochka===undefined){osDep.collectsRassrochka=true;osDep.incassation=0;} // ОС собирает рассрочку
+  if(osDep&&osDep.tskpFromOp===undefined)osDep.tskpFromOp=true; // ОС: база ЦКП = сделки от ОП
   if(m.checkDefault==null)m.checkDefault=d.checkDefault;
   if(!m.meta)m.meta=d.meta;
   return m;
@@ -8342,7 +8343,7 @@ function bflDeptCalc(d,g){
     }
   }
   const gross=fot+nach+other+leadSpend, net=gross-pass;
-  const base = d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:d.tskpBase); // маркетинг: квал-лиды; воронка: выход
+  const base = d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:(d.tskpFromOp?bflOpDeals():d.tskpBase)); // маркетинг: квал-лиды; воронка: выход; tskpFromOp: сделки от ОП
   const tskp=bflSafeDiv(gross,base);                  // ЦКП = расходы_gross / база
   const fteActual=fteRoles+dirFteTotal;
   let required=null,loadFte=null,load=null;
@@ -8394,6 +8395,8 @@ function bflOPIU(){
   const saldo=revenue-expenses,rent=bflSafeDiv(saldo,revenue),vat=revenue*(g.vat||0);
   return {revenue:revenue,expenses:expenses,saldo:saldo,rent:rent,vat:vat,deposit:deposit};
 }
+// Все сделки от ОП (выход отдела продаж) - база ЦКП для производственных отделов
+function bflOpDeals(){const op=_bflModel.departments.find(x=>x.dealStage);return op?(bflDeptCalc(op,_bflModel.global).output||0):0;}
 // Коммерческий блок (Привлечение + Продажи): расходы, сделки, договорная сумма, первый платёж (ОП), рассрочка (ОС), Стоимость сделки (ЦКП блока)
 function bflCommercial(){
   const g=_bflModel.global,prof=g.collectionProfile||{},collRate=prof.collectionRate!=null?prof.collectionRate:1;
@@ -8598,13 +8601,13 @@ function bflRenderDepts(host){
       const rolesTbl=staffTbl(d.id,d.roles,'roles','Штатное расписание');
       const costTbl=costsTbl(d.id,d.costs);
       const flow=`<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;align-items:center;margin-top:10px">
-        <label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>
+        ${d.tskpFromOp?`<label style="color:var(--text2)">База ЦКП (= сделки от ОП): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
         ${d.collectsRassrochka?`<label style="color:var(--text2)">Инкассация (рассрочка, расчёт): <b style="color:var(--income)">${bflM(c.incassation)}</b></label>`:('incassation' in d)?`<label style="color:var(--text2)">Инкассация ${inp('incassation',d.incassation,110)}</label>`:''}
         ${(d.capacity&&d.capacity.base!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
       </div>`;
       body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${costTbl}${flow}
-        <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы (gross): <b style="color:var(--outcome)">${bflM(c.gross)}</b>${c.pass>0?` · из них pass-through: ${bflM(c.pass)} · net (P&L): <b>${bflM(c.net)}</b>`:''} · ЦКП = ${bflM(c.gross)} / ${d.tskpBase} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
+        <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы (gross): <b style="color:var(--outcome)">${bflM(c.gross)}</b>${c.pass>0?` · из них pass-through: ${bflM(c.pass)} · net (P&L): <b>${bflM(c.net)}</b>`:''} · ЦКП = ${bflM(c.gross)} / ${bflI(c.base)}${d.tskpFromOp?' сделок от ОП':''} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
       </div>`;
     }
     return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}${loadBar}${body}</div>`;
