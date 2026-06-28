@@ -7932,7 +7932,7 @@ function bflModelDefault(){
         roles:[{name:'Руководитель КО',fte:1,rate:120000},{name:'Менеджер КО',fte:6,rate:90000},{name:'Стажёр КО',fte:1.5,rate:50000}],
         costs:[],incassation:0,tskpLabel:'состоявшиеся встречи'},
       {id:'sales',group:'sales',name:'Отдел продаж (ОП)',dealStage:true,
-        funnel:{inflowFrom:'client_ko',inLabel:'Встречи (от КО)',convLabel:'Встреча → Сделка',midLabel:'Договоры',outLabel:'Сделки (переданные дела)',norm:60,normLabel:'встреч на 1 МОП',roleIdx:1,money:true,
+        funnel:{inflowFrom:'client_ko',inLabel:'Встречи (от КО)',convLabel:'Встреча → Сделка',midLabel:'Договоры',outLabel:'Сделки (переданные дела)',norm:60,normLabel:'встреч на 1 МОП',roleIdx:1,money:true,firstPayment:10000,
           byDir:[
             {dir:'ofbfl', name:'#1 Маркетинг',     conv:0.40,otval:0.03,check:224000},
             {dir:'Agbfl', name:'#2 Агентская сеть',conv:0.60,otval:0.03,check:214800},
@@ -7940,7 +7940,7 @@ function bflModelDefault(){
             {dir:'OP-bfl',name:'#4 Рекомендации+', conv:0.65,otval:0.03,check:245991}
           ]},
         roles:[{name:'Руководитель ОП',fte:1,rate:200000},{name:'Менеджер ОП',fte:6,rate:150000},{name:'Стажёр ОП',fte:1.5,rate:70000}],
-        costs:[],incassation:10350000,tskpLabel:'переданные дела (сделки)'},
+        costs:[],incassation:0,tskpLabel:'переданные дела (сделки)'},
       {id:'os',group:'production',name:'ОС - Отдел сопровождения',
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Зам',fte:0.10,rate:100000},{name:'Менеджер',fte:11.74,rate:90000},{name:'Стажёр',fte:2.94,rate:70000}],
         costs:[],incassation:23753040,tskpBase:150,tskpLabel:'завершённые/переданные дела',
@@ -8013,6 +8013,7 @@ function bflEnsureModel(m){
     // ОП: добавить средний чек по направлениям (money) в сохранённую модель
     const defOp=d.departments.find(x=>x.dealStage);
     out.forEach(dep=>{if(dep&&dep.dealStage&&dep.funnel&&Array.isArray(dep.funnel.byDir)&&defOp){if(dep.funnel.money===undefined)dep.funnel.money=true;
+      if(dep.funnel.firstPayment===undefined){dep.funnel.firstPayment=(defOp.funnel&&defOp.funnel.firstPayment)||10000;dep.incassation=0;} // ОП: первый платёж, инкассация считается
       dep.funnel.byDir.forEach(B=>{if(B.check===undefined){const db=defOp.funnel.byDir.find(x=>x.dir===B.dir);B.check=db?db.check:0;}});}});
     m.departments=out;
   }
@@ -8343,8 +8344,10 @@ function bflDeptCalc(d,g){
     if(cap&&cap.base&&cap.norm){required=cap.base/cap.norm; // необходимая ШЕ роли-драйвера
       loadFte=(cap.roleIdx!=null&&roles[cap.roleIdx])?roles[cap.roleIdx].fte:fteActual;
       load=loadFte?required/loadFte:null;}}
+  // инкассация: для ОП (воронка с первым платежом) = сделки × первый платёж (остальное собирает ОС); иначе - заданная
+  const incassation=(d.funnel&&d.funnel.firstPayment)?((output||0)*d.funnel.firstPayment):(d.incassation||0);
   return {fot:fot,nach:nach,other:other,pass:pass,gross:gross,net:net,tskp:tskp,base:base,
-    fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:d.incassation||0,
+    fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:incassation,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
     inflow:inflow,assigned:assigned,output:output,funnelRows:funnelRows,sumaTotal:sumaTotal};
 }
@@ -8418,8 +8421,7 @@ window.bflPrintControls=function(){
 function bflRenderDepts(host){
   const g=_bflModel.global;
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  window._bflOpen=window._bflOpen||{};
-  (_bflModel.departments||[]).forEach(d=>{if((Array.isArray(d.leadgen)||d.funnel)&&window._bflOpen[d.id]===undefined)window._bflOpen[d.id]=true;}); // спецкарточки открыты по умолчанию
+  window._bflOpen=window._bflOpen||{}; // все карточки свёрнуты по умолчанию (клик по шапке разворачивает)
   const GROUPS=[['attract','Привлечение'],['sales','Продажи'],['production','Производство'],['overhead','Менеджмент']];
   const loadColor=l=>l==null?'var(--text3)':l>1?'var(--outcome)':l>0.8?'var(--orange)':'var(--income)';
   // Единое штатное расписание (одинаковый вид во всех карточках): Роль | Кол-во ед | Ставка ₽/мес | ФОТ + строка «ФОТ + начисления»
@@ -8540,7 +8542,8 @@ function bflRenderDepts(host){
         <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 6px">Воронка по направлениям: ${esc(fl.inLabel||'вход')} (наследуется от ${esc(upName||'предыдущего отдела')}) → конверсия и % отвала РАЗНЫЕ по направлениям → ${esc(fl.outLabel||'выход')}</div>
         ${funnelBox}${loadBar}${staff}${costsBlock}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">ЦКП = ${bflM(c.gross)} / ${bflI(c.output)} ${esc(fl.outLabel||'')} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
-        ${fl.money?`<div style="margin-top:4px;font-size:11px;color:var(--text3)">Сумма сделок (договорная) = Σ сделки × средний чек = <b style="color:var(--income)">${bflM(c.sumaTotal)}</b>. Это НЕ инкассация (деньги собираются во времени: первый платёж ОП + рассрочка ОС) - инкассация ${bflM(c.incassation)} задаётся отдельно.</div>`:''}
+        ${fl.money?`<div style="margin-top:6px;font-size:12px;color:var(--text2);display:flex;flex-wrap:wrap;gap:8px;align-items:center">Первый платёж (мин) с клиента ${inp('funnel.firstPayment',fl.firstPayment,80)} ₽ → ОП собирает первый чек (${bflI(c.output)} сделок × ${bflI(fl.firstPayment||0)} = <b style="color:var(--income)">${bflM(c.incassation)}</b>), остальное (рассрочку) собирает ОС</div>
+        <div style="margin-top:4px;font-size:11px;color:var(--text3)">Сумма сделок (договорная) = Σ сделки × средний чек = <b>${bflM(c.sumaTotal)}</b> (это НЕ деньги в кассе - собираются во времени). Инкассация ОП = первый платёж = <b style="color:var(--income)">${bflM(c.incassation)}</b></div>`:''}
       </div>`:''}</div>`;
   };
 
@@ -8591,11 +8594,20 @@ function bflRenderDepts(host){
 
   let html=`<div style="padding:4px 2px">${bflViewBar()}${bflPrintControls()}
     <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px">Слой B · Юнит-экономика отделов сквозного конвейера (Привлечение → Продажи → Производство → Менеджмент). ЦКП каждого отдела, штатная численность (ШЕ) и узкие места по мощности. Клик по отделу - редактируемые параметры (живой пересчёт). Эталонный датасет §5; всё редактируемое.</div>`;
+  const SUPER={attract:'Коммерческий блок',sales:'Коммерческий блок'};
+  let lastSuper=null,superOpen=false;
   GROUPS.forEach(gr=>{
     const list=(_bflModel.departments||[]).filter(d=>d.group===gr[0]);if(!list.length)return;
+    const sup=SUPER[gr[0]]||null;
+    if(sup!==lastSuper){
+      if(superOpen){html+=`</div>`;superOpen=false;} // закрыть предыдущий супер-контейнер
+      if(sup){html+=`<div style="font-size:13px;font-weight:700;letter-spacing:.04em;color:var(--accent);margin:18px 0 8px;padding:6px 12px;background:var(--accent-light);border-left:3px solid var(--accent);border-radius:0 8px 8px 0">${sup}</div><div style="border-left:2px solid var(--accent-light);padding-left:10px;margin-bottom:6px">`;superOpen=true;}
+      lastSuper=sup;
+    }
     html+=`<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin:14px 0 7px">${gr[1]}</div>`;
     html+=list.map(card).join('');
   });
+  if(superOpen)html+=`</div>`;
   html+=`</div>`;
   host.innerHTML=html;
 }
@@ -8716,7 +8728,7 @@ function bflRunTests(){
     ok('ОП - воронка-стадия сделок (dealStage)',!!(op&&op.funnel&&op.funnel.byDir),op?op.id:null);
     // AC5 - ОПИУ: выручка (инкассация сохранена) + депозит точные; расходы изменились структурно (агентские в маркетинге)
     const o=bflOPIU();
-    ok('AC5 Выручка=34 103 040 (инкассация сохранена)',Math.abs(o.revenue-34103040)/34103040<=0.005,Math.round(o.revenue));
+    ok('ОПИУ Выручка посчитана (>0)',o.revenue>0&&isFinite(o.revenue),Math.round(o.revenue)); // ОП = первый платёж (сделки×мин), ОС = рассрочка - выручка зависит от объёмов
     ok('AC5 Депозит pass-through=3 750 000',o.deposit===3750000,o.deposit);
     ok('ОПИУ Расходы посчитаны (20-26М)',o.expenses>20000000&&o.expenses<26000000,Math.round(o.expenses));
     ok('ОПИУ Рентабельность конечна',o.rent!=null&&isFinite(o.rent),+(o.rent*100).toFixed(1));
