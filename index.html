@@ -7963,7 +7963,7 @@ function bflModelDefault(){
         revPerCase:[{name:'Возврат депозита суда',rate:25000},{name:'Компенсация почтовых расходов',rate:20000},{name:'Возмещение из конкурсной массы',rate:0}],
         perCase:[{name:'Почтовые расходы (факт)',rate:15000}],
         costs:[],incassation:0,tskpLabel:'завершённые дела',
-        capacity:{base:1350,norm:null,driver:'дел в работе (портфель)'}},
+        capacity:{base:null,norm:50,wipAuto:true,driver:'дел в работе на 1 ШЕ (портфель = вход × срок, Литтл)'}},
       {id:'management',group:'overhead',name:'Административно-управленческий персонал (АУП)',
         roles:[{name:'Генеральный директор',fte:1,rate:700000},{name:'Коммерческий директор',fte:1,rate:500000},{name:'Финансовый директор',fte:1,rate:350000},{name:'Технический директор',fte:1,rate:300000},{name:'Директор по маркетингу',fte:1,rate:250000},{name:'Руководитель отдела банкротства',fte:1,rate:250000},{name:'HR бизнес-партнёр',fte:1,rate:200000},{name:'Главный бухгалтер',fte:1,rate:150000},{name:'Бизнес-ассистент',fte:1,rate:100000}],
         costs:[{name:'Аутсорсинг (финансы/HR/бухг/КК/консалтинг)',amount:900000},{name:'Прочие расходы',amount:500000},{name:'Налог на прибыль (1% УСН + 1% свыше 300к)',profitTaxAuto:true},{name:'НДС 5% от выручки',vatOfRevenue:true}],incassation:0,tskpBase:150,tskpLabel:'завершённые в успех',
@@ -8068,6 +8068,7 @@ function bflEnsureModel(m){
    if(op2){op2.selfFunded=true;
      if(Array.isArray(op2.roles)&&!op2.roles.some(r=>r&&r.name==='Заместитель')){const ri=op2.roles.findIndex(r=>r&&r.name==='Руководитель');op2.roles.splice(ri>=0?ri+1:0,0,{name:'Заместитель',fte:1,rate:100000});}
      if(!Array.isArray(op2.revPerCase))op2.revPerCase=[{name:'Возврат депозита суда',rate:25000},{name:'Компенсация почтовых расходов',rate:20000},{name:'Возмещение из конкурсной массы',rate:0}];
+     if(op2.capacity&&!op2.capacity.wipAuto){op2.capacity.wipAuto=true;op2.capacity.base=null;if(!op2.capacity.norm)op2.capacity.norm=50;op2.capacity.driver='дел в работе на 1 ШЕ (портфель = вход × срок, Литтл)';}
      if(Array.isArray(op2.perCase)&&op2.perCase.length){const pc=op2.perCase.find(p=>p&&/почтов|публикаци/i.test(p.name||''));if(pc){pc.name='Почтовые расходы (факт)';if(pc.rate===20000)pc.rate=15000;}}
      else op2.perCase=[{name:'Почтовые расходы (факт)',rate:15000}];}}
   {const mg=(m.departments||[]).find(x=>x&&x.id==='management');if(mg&&/^Менеджмент/.test(mg.name||''))mg.name='Административно-управленческий персонал (АУП)';
@@ -8417,7 +8418,8 @@ function bflDeptCalc(d,g){
   let required=null,loadFte=null,load=null;
   if(d.funnel&&d.funnel.norm){required=inflow/d.funnel.norm;loadFte=(d.funnel.roleIdx!=null&&roles[d.funnel.roleIdx])?roles[d.funnel.roleIdx].fte:fteActual;load=loadFte?required/loadFte:null;}
   else{const cap=d.capacity;
-    if(cap&&cap.base&&cap.norm){required=cap.base/cap.norm; // необходимая ШЕ роли-драйвера
+    const capBase=cap?(cap.wipAuto?bflCasesProd()*bflAvgTerm():cap.base):null; // wipAuto: портфель = вход × средний срок (Литтл)
+    if(cap&&capBase&&cap.norm){required=capBase/cap.norm; // необходимая ШЕ
       loadFte=(cap.roleIdx!=null&&roles[cap.roleIdx])?roles[cap.roleIdx].fte:fteActual;
       load=loadFte?required/loadFte:null;}}
   // инкассация: ОП (money) = первый платёж (Σ сделки × первый платёж); ОС (collectsRassrochka) = рассрочка коммерческого блока; иначе - заданная
@@ -8472,6 +8474,27 @@ function bflPreCourtOtval(){const os=_bflModel.departments.find(x=>x.id==='os');
 function bflCasesProd(){return bflOpDeals()*(1-bflPreCourtOtval());}
 // Ставка начислений на ФОТ (НДФЛ+ФСС); 0 если включена галочка «убрать налоги на ФОТ»
 function bflNachRate(){const g=_bflModel.global;return _tabFilters.bflmodel.exclPayrollTax?0:((g.ndfl||0)+(g.fss||0));}
+// Средний срок процедуры (мес) = доля простых × срок простых + доля сложных × срок сложных
+function bflAvgTerm(){const cp=_bflModel.clientPath||{};return (cp.simpleShare||0)*(cp.simpleDuration||0)+(1-(cp.simpleShare||0))*(cp.complexDuration||0);}
+// Разгон ОПАУ (ramp-up): портфель копится, завершения/доход приходят через 6/12 мес → кассовый разрыв
+function bflRampOpau(){
+  const op=(_bflModel.departments||[]).find(d=>d.id==='opau');if(!op)return null;
+  const g=_bflModel.global,c=bflDeptCalc(op,g),cp=_bflModel.clientPath||{};
+  const s=cp.simpleShare||0,sd=Math.max(1,Math.round(cp.simpleDuration||6)),cd=Math.max(1,Math.round(cp.complexDuration||12));
+  const I=bflCasesProd(),Is=s*I,Ic=(1-s)*I;                 // вход/мес: простые / сложные
+  const wipSteady=Is*sd+Ic*cd;                              // портфель в установившемся режиме (Литтл)
+  const revPerCase=c.caseCount?c.selfRev/c.caseCount:0;     // доход контура на 1 завершённое дело
+  const grossSteady=c.gross;                                // месячный ФОТ+прочее в установившемся
+  const N=Math.max(sd,cd);const rows=[];let cum=0,trough=0;
+  for(let m=1;m<=N;m++){
+    const wip=Math.min(m,sd)*Is+Math.min(m,cd)*Ic;          // портфель в работе на месяц m
+    const comp=(m>=sd?Is:0)+(m>=cd?Ic:0);                   // завершено за месяц (простые с мес sd, сложные с мес cd)
+    const cost=wipSteady?grossSteady*wip/wipSteady:0;       // ФОТ масштабируется по портфелю
+    const rev=comp*revPerCase;const net=rev-cost;cum+=net;if(cum<trough)trough=cum;
+    rows.push({m:m,wip:wip,comp:comp,cost:cost,rev:rev,net:net,cum:cum});
+  }
+  return {rows:rows,workingCapital:-trough,approxWC:grossSteady*sd,I:I,sd:sd,cd:cd,wipSteady:wipSteady,revPerCase:revPerCase,grossSteady:grossSteady};
+}
 // Выручка (поступления) = Σ инкассаций. Без вызова bflDeptCalc для management (иначе цикл через НДС)
 function bflRevenue(){const g=_bflModel.global;let rev=0;(_bflModel.departments||[]).forEach(d=>{
   if(d.funnel&&d.funnel.money)rev+=bflDeptCalc(d,g).incassation; // ОП - первый платёж
@@ -8730,14 +8753,30 @@ function bflRenderDepts(host){
           <span>= Сальдо <b style="color:${c.selfNet>=0?'var(--income)':'var(--outcome)'};font-family:var(--mono)">${bflM(c.selfNet)}</b></span>
           <span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;color:#fff;background:${c.selfNet>=0?'var(--income)':'var(--outcome)'}">${c.selfNet>=0?'✓ самоокупается':'✗ дефицит'}</span>
         </div></div>`:'';
+      // разгон (ramp-up): портфель копится, доход приходит через 6/12 мес → кассовый разрыв
+      const rp=d.selfFunded?bflRampOpau():null;
+      const rtL='padding:3px 7px;text-align:left;font-size:10px;color:var(--label);font-weight:600',rtR='padding:3px 7px;text-align:right;font-size:10px;color:var(--label);font-weight:600';
+      const rcL='padding:3px 7px;font-size:11.5px',rcR='padding:3px 7px;text-align:right;font-family:var(--mono);font-size:11.5px';
+      const rampTbl=rp?`<div style="margin-top:10px;padding:11px 13px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)">
+        <div style="font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Разгон (ramp-up): портфель копится, завершения и доход приходят через ${bflI(rp.sd)}/${bflI(rp.cd)} мес</div>
+        <div style="display:flex;flex-wrap:wrap;gap:20px;font-size:12px;margin-bottom:8px">
+          <span>Потребность в оборотном капитале <b style="color:var(--outcome);font-family:var(--mono)">${bflM(rp.workingCapital)}</b> <span style="color:var(--text3)">(макс. накопл. дефицит, штат растёт по портфелю)</span></span>
+          <span style="color:var(--text3)">верх. оценка (полный штат с мес 1): ФОТ × ${bflI(rp.sd)} мес = ${bflM(rp.approxWC)}</span>
+        </div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:560px">
+          <thead><tr style="border-bottom:1px solid var(--border)"><th style="${rtL}">Мес</th><th style="${rtR}">Портфель</th><th style="${rtR}">Завершено</th><th style="${rtR}">Доход</th><th style="${rtR}">Расход (ФОТ)</th><th style="${rtR}">Сальдо мес</th><th style="${rtR}">Накопл.</th></tr></thead>
+          <tbody>${rp.rows.map(r=>`<tr style="border-bottom:1px solid var(--divider)"><td style="${rcL}">${r.m}</td><td style="${rcR};color:var(--text2)">${bflI(r.wip)}</td><td style="${rcR};color:var(--text2)">${bflI(r.comp)}</td><td style="${rcR};color:var(--income)">${r.rev>0?bflM(r.rev):'-'}</td><td style="${rcR};color:var(--outcome)">${bflM(r.cost)}</td><td style="${rcR};color:${r.net>=0?'var(--income)':'var(--outcome)'}">${bflM(r.net)}</td><td style="${rcR};font-weight:700;color:${r.cum>=0?'var(--income)':'var(--outcome)'}">${bflM(r.cum)}</td></tr>`).join('')}</tbody>
+        </table></div>
+        <div style="font-size:9.5px;color:var(--text3);margin-top:5px">Вход ${bflI(rp.I)} дел/мес; простые завершаются через ${bflI(rp.sd)} мес, сложные через ${bflI(rp.cd)} мес. ФОТ масштабируется по портфелю; доход на завершённое дело = ${bflM(rp.revPerCase)}. К мес ${bflI(rp.cd)} - установившийся режим.</div>
+      </div>`:'';
       const flow=`<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;align-items:center;margin-top:10px">
         ${(d.tskpFromOp||d.tskpFromProd)?`<label style="color:var(--text2)">База ЦКП (= ${d.tskpFromProd?'завершённые дела, после отвала':'сделки от ОП'}): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
         ${d.preCourtOtval!=null?`<label style="color:var(--text2)">Отвал досудебный <input type="text" inputmode="decimal" value="${+((d.preCourtOtval||0)*100).toFixed(1)}" data-dept="${d.id}" data-path="preCourtOtval" data-pct="1" onchange="bflDeptEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> % → до суда ${bflI(bflCasesProd())} дел · отвалившимся возврат первого платежа</label>`:''}
         ${d.collectsRassrochka?`<label style="color:var(--text2)">Собираемость рассрочки <input type="text" inputmode="decimal" value="${+(((g.collectionProfile&&g.collectionProfile.collectionRate)||0)*100).toFixed(0)}" data-path="global.collectionProfile.collectionRate" data-pct="1" onchange="bflGlobalEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> %</label><label style="color:var(--text2)">Инкассация (рассрочка, расчёт): <b style="color:var(--income)">${bflM(c.incassation)}</b></label>`:(d.incassation>0)?`<label style="color:var(--text2)">Инкассация ${inp('incassation',d.incassation,110)}</label>`:''}
-        ${(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
+        ${(d.capacity&&d.capacity.wipAuto)?`<label style="color:var(--text2)">Портфель в работе (Литтл): <b>${bflI(bflCasesProd()*bflAvgTerm())}</b> <span style="color:var(--text3)">= ${bflI(bflCasesProd())}/мес × ${bflAvgTerm().toFixed(1).replace('.',',')} мес</span></label>`:(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
       </div>`;
-      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${revTbl}${costTbl}${perCaseTbl}${selfBlock}${flow}
+      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${revTbl}${costTbl}${perCaseTbl}${selfBlock}${rampTbl}${flow}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы (gross): <b style="color:var(--outcome)">${bflM(c.gross)}</b>${c.pass>0?` · из них pass-through: ${bflM(c.pass)} · net (P&L): <b>${bflM(c.net)}</b>`:''} · ЦКП = ${bflM(c.gross)} / ${bflI(c.base)}${d.tskpFromOp?' сделок от ОП':''} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
       </div>`;
     }
