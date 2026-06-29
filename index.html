@@ -884,7 +884,7 @@ const _tabFilters={
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'monthly'},
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
-  bflmodel:{view:'depts',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false},
+  bflmodel:{view:'depts',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
   registry:{q:''}
 };
 
@@ -8328,7 +8328,7 @@ function renderBflModel(){
 // ── Слой B+C: расчёт отдела и сборка ОПИУ (§4-§6 ТЗ) ──────────────────────────
 function bflDeptCalc(d,g){
   const roles=d.roles||[],costs=d.costs||[];
-  const _rate=(g.ndfl||0)+(g.fss||0);                 // ставка начислений
+  const _rate=bflNachRate();                          // ставка начислений (0 при включённой галочке «убрать налоги на ФОТ»)
   let fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);      // общий ФОТ отдела
   const fteRoles=roles.reduce((a,r)=>a+(r.fte||0),0);
   const ca=c=>{ // расчётные затраты: НДС и налог на прибыль от выручки
@@ -8453,6 +8453,8 @@ function bflOPIU(){
 function bflOpDeals(){const op=_bflModel.departments.find(x=>x.dealStage);return op?(bflDeptCalc(op,_bflModel.global).output||0):0;}
 // Дела, доходящие до суда/производства = сделки от ОП × (1 − отвал досудебный в ОКС)
 function bflCasesProd(){const os=_bflModel.departments.find(x=>x.id==='os');const ot=(os&&os.preCourtOtval)||0;return bflOpDeals()*(1-ot);}
+// Ставка начислений на ФОТ (НДФЛ+ФСС); 0 если включена галочка «убрать налоги на ФОТ»
+function bflNachRate(){const g=_bflModel.global;return _tabFilters.bflmodel.exclPayrollTax?0:((g.ndfl||0)+(g.fss||0));}
 // Выручка (поступления) = Σ инкассаций. Без вызова bflDeptCalc для management (иначе цикл через НДС)
 function bflRevenue(){const g=_bflModel.global;let rev=0;(_bflModel.departments||[]).forEach(d=>{
   if(d.funnel&&d.funnel.money)rev+=bflDeptCalc(d,g).incassation; // ОП - первый платёж
@@ -8482,6 +8484,7 @@ function bflViewBar(){
 }
 window.bflSetView=function(v){_tabFilters.bflmodel.view=v;renderBflModel();};
 window.bflToggleDeposit=function(cb){_tabFilters.bflmodel.depositExcluded=cb.checked;renderBflModel();};
+window.bflToggleExclTax=function(cb){_tabFilters.bflmodel.exclPayrollTax=cb.checked;renderBflModel();};
 window.bflToggleDept=function(id){window._bflOpen=window._bflOpen||{};window._bflOpen[id]=!window._bflOpen[id];renderBflModel();};
 window.bflDeptEdit=function(el){
   const id=el.dataset.dept,path=el.dataset.path,d=_bflModel.departments.find(x=>x.id===id);if(!d)return;
@@ -8496,6 +8499,7 @@ window.bflPrintControls=function(){
   if(_bflModel.savedAt){const d=new Date(_bflModel.savedAt);const p=n=>String(n).padStart(2,'0');st='✓ Сохранено '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());stc='var(--income)';}
   return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px">
     <span id="bfl-save-status" style="font-size:11.5px;color:${stc}">${st}</span>
+    <label style="font-size:12px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;margin-left:14px"><input type="checkbox" ${_tabFilters.bflmodel.exclPayrollTax?'checked':''} onchange="bflToggleExclTax(this)"> Убрать налоги на ФОТ (начисления)</label>
     <span style="margin-left:auto"></span>
     <button onclick="bflSaveNow(this)" style="padding:5px 12px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-weight:600">💾 Сохранить</button>
     <button onclick="bflExport()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">Экспорт JSON</button>
@@ -8514,12 +8518,12 @@ function bflRenderDepts(host){
   const staffTbl=(deptId,roles,prefix,title)=>{
     roles=roles||[];const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
     const in2=(p,v,w)=>`<input type="text" inputmode="decimal" value="${v==null?'':v}" data-dept="${deptId}" data-path="${p}" onchange="bflDeptEdit(this)" style="width:${w}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
-    const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=fot*((g.ndfl||0)+(g.fss||0));
+    const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=fot*bflNachRate();
     const th=t=>`<th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${t}</th>`;
     const rows=roles.map((r,i)=>`<tr><td style="padding:3px 8px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.rate',r.rate,92)}</td><td style="${cellR};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
     return `<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px">
       <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${esc(title||'Штатное расписание')}</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}${th('ФОТ')}</tr></thead>
-      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (${Math.round(((g.ndfl||0)+(g.fss||0))*100)}%)</td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td></tr></tbody></table>`;
+      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (${Math.round(bflNachRate()*100)}%)</td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td></tr></tbody></table>`;
   };
   // Единая таблица прямых затрат: Затрата | ₽/мес (редактируемое)
   const costsTbl=(deptId,costs)=>{
@@ -8718,7 +8722,7 @@ function bflRenderDepts(host){
         ${_titleBar('aup',`<div style="margin-left:auto;text-align:right"><div style="font-size:9.5px;opacity:.85;text-transform:uppercase;letter-spacing:.07em">Расходы блока</div><div style="font-size:23px;font-weight:700;font-family:var(--mono);line-height:1.1">${bflM(mc.gross)}</div></div>`)}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--border)">
           ${_chip('ФОТ (голый)',bflM(mc.fot),'var(--outcome)','штат АУП')}
-          ${_chip('Начисления на ФОТ',bflM(mc.nach),'var(--outcome)',Math.round(((g.ndfl||0)+(g.fss||0))*100)+'%')}
+          ${_chip('Начисления на ФОТ',bflM(mc.nach),'var(--outcome)',Math.round(bflNachRate()*100)+'%')}
           ${_chip('Налоги',bflM(nalogi),'var(--outcome)','НДС + налог на прибыль')}
           ${_chip('Аутсорсинг',bflM(autsource),'var(--outcome)')}
           ${_chip('Прочее',bflM(prochee),'var(--outcome)')}
