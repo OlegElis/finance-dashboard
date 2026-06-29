@@ -7910,7 +7910,7 @@ function bflModelDefault(){
   return {
     meta:{version:'1.1',currency:'RUB',locale:'ru-RU'},
     global:{ndfl:0.13,fss:0.302,vat:0.05,profitTaxRate:0.01,profitTaxExtra:0.01,profitTaxThreshold:300000,
-      collectionProfile:{firstPay:10000,rassrochkaMonths:10,collectionRate:0.95}},
+      collectionProfile:{firstPay:25000,rassrochkaMonths:10,collectionRate:0.95}},
     directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
     checkDefault:245991,
     blocks:{aup:{owner:'Болотов Артём'},commercial:{owner:'Черновский Антон'},production:{owner:'Васянина Елена'},opau:{owner:'Кольцова Марина'}}, // руководители блоков/контуров
@@ -8031,6 +8031,7 @@ function bflEnsureModel(m){
   if(!Array.isArray(m.directions)||!m.directions.length)m.directions=d.directions;
   if(!m.global)m.global=d.global;
   if(!m.global.collectionProfile||m.global.collectionProfile.firstPay===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // профиль сбора: фикс первый платёж ₽
+  if(m.global.collectionProfile&&m.global.collectionProfile.firstPay===10000)m.global.collectionProfile.firstPay=25000; // ОП собирает в среднем 25-30 тр (замена прежнего значения по умолчанию)
   const osDep=(m.departments||[]).find(x=>x&&x.id==='os');if(osDep&&osDep.collectsRassrochka===undefined){osDep.collectsRassrochka=true;osDep.incassation=0;} // ОС собирает рассрочку
   if(osDep&&osDep.tskpFromOp===undefined)osDep.tskpFromOp=true; // ОС: база ЦКП = сделки от ОП
   const opauDep=(m.departments||[]).find(x=>x&&x.id==='opau');if(opauDep&&!Array.isArray(opauDep.perCase)){ // ОПАУ: контур + per-case (депозит/публикации за дело)
@@ -8654,7 +8655,7 @@ function bflRenderDepts(host){
       const perCaseTbl=(c.perCaseRows&&c.perCaseRows.length)?`<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Затраты за процедуру</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">₽ за дело</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Дел</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Сумма</th></tr></thead><tbody>${c.perCaseRows.map((pc,i)=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(pc.name)}${pc.passThrough?' <span style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 3px">возвратный</span>':''}</td><td style="padding:3px 8px;text-align:right">${inp('perCase.'+i+'.rate',pc.rate,84)}</td><td style="${cellR};color:var(--text2)">${bflI(c.caseCount)}</td><td style="${cellR};color:${pc.passThrough?'var(--text2)':'var(--outcome)'}">${bflM(pc.amount)}</td></tr>`).join('')}</tbody></table>`:'';
       const flow=`<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;align-items:center;margin-top:10px">
         ${d.tskpFromOp?`<label style="color:var(--text2)">База ЦКП (= сделки от ОП): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
-        ${d.collectsRassrochka?`<label style="color:var(--text2)">Инкассация (рассрочка, расчёт): <b style="color:var(--income)">${bflM(c.incassation)}</b></label>`:(d.incassation>0)?`<label style="color:var(--text2)">Инкассация ${inp('incassation',d.incassation,110)}</label>`:''}
+        ${d.collectsRassrochka?`<label style="color:var(--text2)">Собираемость рассрочки <input type="text" inputmode="decimal" value="${+(((g.collectionProfile&&g.collectionProfile.collectionRate)||0)*100).toFixed(0)}" data-path="global.collectionProfile.collectionRate" data-pct="1" onchange="bflGlobalEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> %</label><label style="color:var(--text2)">Инкассация (рассрочка, расчёт): <b style="color:var(--income)">${bflM(c.incassation)}</b></label>`:(d.incassation>0)?`<label style="color:var(--text2)">Инкассация ${inp('incassation',d.incassation,110)}</label>`:''}
         ${(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
       </div>`;
@@ -8717,8 +8718,7 @@ function bflRenderDepts(host){
           <span style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Профиль сбора</span>
           <span>Первый платёж ${_gi('global.collectionProfile.firstPay',prof.firstPay,66)} ₽ с клиента</span>
           <span>рассрочка ${_gi('global.collectionProfile.rassrochkaMonths',prof.rassrochkaMonths,42)} мес</span>
-          <span>собираемость ${_gi('global.collectionProfile.collectionRate',+((prof.collectionRate||0)*100).toFixed(0),42,true)} %</span>
-          <span style="margin-left:auto;color:var(--text3)">после первого платежа клиент → ОИ/ОС</span>
+          <span style="margin-left:auto;color:var(--text3)">после первого платежа клиент → ОИ/ОКС (собираемость рассрочки - в карточке ОКС)</span>
         </div></div>`;
     }
     let pGross=0,pIncass=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'){const c=bflDeptCalc(x,g);pGross+=c.gross;pIncass+=c.incassation;}});
