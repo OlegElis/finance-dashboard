@@ -8444,8 +8444,12 @@ function bflCommercial(){
   let gross=0;(_bflModel.departments||[]).forEach(d=>{if(d.group==='attract'||d.group==='sales')gross+=bflDeptCalc(d,g).gross;});
   let deals=0,suma=0,firstPay=0;const op=_bflModel.departments.find(x=>x.dealStage);
   if(op){const oc=bflDeptCalc(op,g);deals=oc.output||0;suma=oc.sumaTotal||0;firstPay=oc.firstPayTotal||0;}
-  const rass=Math.max(0,suma-firstPay)*collRate; // рассрочка (собирает ОС)
-  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,rass:rass,tskpDeal:bflSafeDiv(gross,deals)};
+  const rassBase=Math.max(0,suma-firstPay); // остаток к рассрочке (договорная − первый платёж)
+  const rass=rassBase*collRate;             // рассрочка в МЕСЯЦ (установившийся режим: N когорт платят одновременно = полная месячная рассрочка)
+  const rassMonths=prof.rassrochkaMonths||10;
+  const rassPerClient=bflSafeDiv(rassBase,deals);            // рассрочка с 1 клиента (за весь срок)
+  const rassPerClientMonth=bflSafeDiv(rassPerClient,rassMonths); // платёж клиента в месяц
+  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,rass:rass,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,tskpDeal:bflSafeDiv(gross,deals)};
 }
 function _bflSetPath(obj,path,val){const p=path.split('.');let o=obj;for(let i=0;i<p.length-1;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i];o=o[k];}const last=/^\d+$/.test(p[p.length-1])?+p[p.length-1]:p[p.length-1];o[last]=val;}
 
@@ -8604,7 +8608,7 @@ function bflRenderDepts(host){
         <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 6px">Воронка по направлениям: ${esc(fl.inLabel||'вход')} (наследуется от ${esc(upName||'предыдущего отдела')}) → конверсия и % отвала РАЗНЫЕ по направлениям → ${esc(fl.outLabel||'выход')}</div>
         ${funnelBox}${loadBar}${staff}${costsBlock}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">ЦКП = ${bflM(c.gross)} / ${bflI(c.output)} ${esc(fl.outLabel||'')} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
-        ${fl.money?`<div style="margin-top:6px;font-size:11.5px;color:var(--text2)">Сумма сделок (договорная) = Σ сделки × средний чек = <b>${bflM(c.sumaTotal)}</b> (НЕ деньги в кассе). По профилю сбора (в шапке «Коммерческий блок») ОП собирает первый чек = <b style="color:var(--income)">${bflM(c.incassation)}</b>, остальное — рассрочка через ОС.</div>`:''}
+        ${fl.money?(()=>{const cm=bflCommercial();return `<div style="margin-top:6px;font-size:11.5px;color:var(--text2)">Сумма сделок (договорная) = Σ сделки × средний чек = <b>${bflM(c.sumaTotal)}</b> (НЕ деньги в кассе). ОП собирает первый чек = <b style="color:var(--income)">${bflM(c.incassation)}</b>; остаток клиент платит в рассрочку ${cm.rassMonths} мес через ОКС (≈ <b>${bflM(cm.rassPerClientMonth)}</b>/мес с клиента). В установившемся режиме (платят ${cm.rassMonths} когорт) ОКС собирает в месяц = <b style="color:var(--income)">${bflM(cm.rass)}</b>.</div>`;})():''}
       </div>`:''}</div>`;
   };
 
@@ -8702,7 +8706,7 @@ function bflRenderDepts(host){
           ${_chip('Сделок',bflI(com.deals),'var(--text)','выход ОП')}
           ${_chip('Договорная сумма',bflM(com.suma),'var(--text2)','сделки × чек')}
           ${_chip('Первый платёж · ОП',bflM(com.firstPay),'var(--income)')}
-          ${_chip('Рассрочка · ОС',bflM(com.rass),'var(--income)')}
+          ${_chip('Рассрочка · ОКС (в мес)',bflM(com.rass),'var(--income)','устан. режим, '+com.rassMonths+' когорт')}
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:11px 16px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text2)">
           <span style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Профиль сбора</span>
