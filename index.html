@@ -8417,7 +8417,7 @@ function bflDeptCalc(d,g){
       load=loadFte?required/loadFte:null;}}
   // инкассация: ОП (money) = первый платёж (Σ сделки × первый платёж); ОС (collectsRassrochka) = рассрочка коммерческого блока; иначе - заданная
   let incassation=d.incassation||0;
-  if(d.funnel&&d.funnel.money)incassation=firstPayTotal;
+  if(d.funnel&&d.funnel.money)incassation=firstPayTotal*(1-bflPreCourtOtval()); // первый платёж минус возврат отвалившимся (полный возврат)
   if(d.collectsRassrochka)incassation=bflCommercial().rass;
   return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,
     perCaseRows:perCaseRows,caseCount:caseCount,revPerCaseRows:revPerCaseRows,selfRev:selfRev,selfNet:selfRev-gross,
@@ -8461,8 +8461,10 @@ function bflOPIU(){
 }
 // Все сделки от ОП (выход отдела продаж) - база ЦКП для производственных отделов
 function bflOpDeals(){const op=_bflModel.departments.find(x=>x.dealStage);return op?(bflDeptCalc(op,_bflModel.global).output||0):0;}
+// Отвал досудебный (доля), хранится в ОКС
+function bflPreCourtOtval(){const os=_bflModel.departments.find(x=>x.id==='os');return (os&&os.preCourtOtval)||0;}
 // Дела, доходящие до суда/производства = сделки от ОП × (1 − отвал досудебный в ОКС)
-function bflCasesProd(){const os=_bflModel.departments.find(x=>x.id==='os');const ot=(os&&os.preCourtOtval)||0;return bflOpDeals()*(1-ot);}
+function bflCasesProd(){return bflOpDeals()*(1-bflPreCourtOtval());}
 // Ставка начислений на ФОТ (НДФЛ+ФСС); 0 если включена галочка «убрать налоги на ФОТ»
 function bflNachRate(){const g=_bflModel.global;return _tabFilters.bflmodel.exclPayrollTax?0:((g.ndfl||0)+(g.fss||0));}
 // Выручка (поступления) = Σ инкассаций. Без вызова bflDeptCalc для management (иначе цикл через НДС)
@@ -8475,14 +8477,18 @@ function bflRevenue(){const g=_bflModel.global;let rev=0;(_bflModel.departments|
 function bflCommercial(){
   const g=_bflModel.global,prof=g.collectionProfile||{},collRate=prof.collectionRate!=null?prof.collectionRate:1;
   let gross=0;(_bflModel.departments||[]).forEach(d=>{if(d.group==='attract'||d.group==='sales')gross+=bflDeptCalc(d,g).gross;});
-  let deals=0,suma=0,firstPay=0;const op=_bflModel.departments.find(x=>x.dealStage);
-  if(op){const oc=bflDeptCalc(op,g);deals=oc.output||0;suma=oc.sumaTotal||0;firstPay=oc.firstPayTotal||0;}
-  const rassBase=Math.max(0,suma-firstPay); // остаток к рассрочке (договорная − первый платёж)
-  const rass=rassBase*collRate;             // рассрочка в МЕСЯЦ (установившийся режим: N когорт платят одновременно = полная месячная рассрочка)
+  let deals=0,suma=0,firstPayGross=0;const op=_bflModel.departments.find(x=>x.dealStage);
+  if(op){const oc=bflDeptCalc(op,g);deals=oc.output||0;suma=oc.sumaTotal||0;firstPayGross=oc.firstPayTotal||0;}
+  const otval=bflPreCourtOtval();
+  const refund=firstPayGross*otval;          // возврат отвалившимся клиентам (полный первый платёж)
+  const firstPay=firstPayGross-refund;       // чистый собранный первый платёж ОП
+  const rassBase=Math.max(0,suma-firstPayGross); // остаток к рассрочке (договорная − первый платёж)
+  const rass=rassBase*(1-otval)*collRate;    // рассрочка в МЕСЯЦ - только с оставшихся (отвалившиеся её не платят)
   const rassMonths=prof.rassrochkaMonths||10;
-  const rassPerClient=bflSafeDiv(rassBase,deals);            // рассрочка с 1 клиента (за весь срок)
+  const dealsNet=deals*(1-otval);                            // клиентов на рассрочке (после отвала)
+  const rassPerClient=bflSafeDiv(rassBase*(1-otval),dealsNet); // рассрочка с 1 клиента (за весь срок)
   const rassPerClientMonth=bflSafeDiv(rassPerClient,rassMonths); // платёж клиента в месяц
-  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,rass:rass,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,tskpDeal:bflSafeDiv(gross,deals)};
+  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,firstPayGross:firstPayGross,refund:refund,rass:rass,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,tskpDeal:bflSafeDiv(gross,deals)};
 }
 function _bflSetPath(obj,path,val){const p=path.split('.');let o=obj;for(let i=0;i<p.length-1;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i];o=o[k];}const last=/^\d+$/.test(p[p.length-1])?+p[p.length-1]:p[p.length-1];o[last]=val;}
 
@@ -8695,7 +8701,7 @@ function bflRenderDepts(host){
         </div></div>`:'';
       const flow=`<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;align-items:center;margin-top:10px">
         ${(d.tskpFromOp||d.tskpFromProd)?`<label style="color:var(--text2)">База ЦКП (= ${d.tskpFromProd?'дела после отвала':'сделки от ОП'}): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
-        ${d.preCourtOtval!=null?`<label style="color:var(--text2)">Отвал досудебный <input type="text" inputmode="decimal" value="${+((d.preCourtOtval||0)*100).toFixed(1)}" data-dept="${d.id}" data-path="preCourtOtval" data-pct="1" onchange="bflDeptEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> % → до суда ${bflI(bflCasesProd())} дел</label>`:''}
+        ${d.preCourtOtval!=null?`<label style="color:var(--text2)">Отвал досудебный <input type="text" inputmode="decimal" value="${+((d.preCourtOtval||0)*100).toFixed(1)}" data-dept="${d.id}" data-path="preCourtOtval" data-pct="1" onchange="bflDeptEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> % → до суда ${bflI(bflCasesProd())} дел · отвалившимся возврат первого платежа</label>`:''}
         ${d.collectsRassrochka?`<label style="color:var(--text2)">Собираемость рассрочки <input type="text" inputmode="decimal" value="${+(((g.collectionProfile&&g.collectionProfile.collectionRate)||0)*100).toFixed(0)}" data-path="global.collectionProfile.collectionRate" data-pct="1" onchange="bflGlobalEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> %</label><label style="color:var(--text2)">Инкассация (рассрочка, расчёт): <b style="color:var(--income)">${bflM(c.incassation)}</b></label>`:(d.incassation>0)?`<label style="color:var(--text2)">Инкассация ${inp('incassation',d.incassation,110)}</label>`:''}
         ${(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
@@ -8769,7 +8775,8 @@ function bflRenderDepts(host){
           ${_chip('Расходы блока',bflM(com.gross),'var(--outcome)','Маркетинг + КО + ОП')}
           ${_chip('Сделок',bflI(com.deals),'var(--text)','выход ОП')}
           ${_chip('Договорная сумма',bflM(com.suma),'var(--text2)','сделки × чек')}
-          ${_chip('Первый платёж · ОП',bflM(com.firstPay),'var(--income)')}
+          ${_chip('Первый платёж · ОП',bflM(com.firstPay),'var(--income)','чистый, после возврата')}
+          ${com.refund>0?_chip('Возврат клиентам (отвал)','−'+bflM(com.refund),'var(--outcome)',Math.round(bflPreCourtOtval()*100)+'% × первый платёж'):''}
           ${_chip('Рассрочка · ОКС (в мес)',bflM(com.rass),'var(--income)','устан. режим, '+com.rassMonths+' когорт')}
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:11px 16px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text2)">
