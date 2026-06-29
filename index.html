@@ -7958,7 +7958,7 @@ function bflModelDefault(){
         capacity:{base:1350,norm:null,driver:'дел в работе (портфель)'}},
       {id:'management',group:'overhead',name:'Административно-управленческий персонал (АУП)',
         roles:[{name:'Генеральный директор',fte:1,rate:700000},{name:'Коммерческий директор',fte:1,rate:500000},{name:'Директор по маркетингу',fte:1,rate:250000},{name:'Руководитель отдела банкротства',fte:1,rate:250000},{name:'HR бизнес-партнёр',fte:1,rate:200000},{name:'Главный бухгалтер',fte:1,rate:150000},{name:'Бизнес-ассистент',fte:1,rate:100000}],
-        costs:[{name:'Аутсорсинг (финансы/HR/бухг/КК/консалтинг)',amount:900000},{name:'Прочие расходы',amount:500000},{name:'Налог на прибыль (параметр)',amount:682961},{name:'НДС 5% от выручки',amount:1705152}],incassation:0,tskpBase:150,tskpLabel:'завершённые в успех',
+        costs:[{name:'Аутсорсинг (финансы/HR/бухг/КК/консалтинг)',amount:900000},{name:'Прочие расходы',amount:500000},{name:'Налог на прибыль (параметр)',amount:682961},{name:'НДС 5% от выручки',vatOfRevenue:true}],incassation:0,tskpBase:150,tskpLabel:'завершённые в успех',
         capacity:{base:null,norm:null,driver:'накладные'}}
     ],
     periods:[
@@ -8040,7 +8040,8 @@ function bflEnsureModel(m){
     if(dep.id==='opau'&&!/\(ОПАУ\)/.test(dep.name||''))dep.name='Отдел помощников АУ (ОПАУ)';});
   {const a=m.departments||[],iOi=a.findIndex(x=>x&&x.id==='oi'),iOs=a.findIndex(x=>x&&x.id==='os');if(iOi>-1&&iOs>-1&&iOi>iOs){const oi=a.splice(iOi,1)[0];a.splice(iOs,0,oi);}}
   if(!m.clientPath)m.clientPath=JSON.parse(JSON.stringify(d.clientPath));
-  {const mg=(m.departments||[]).find(x=>x&&x.id==='management');if(mg&&/^Менеджмент/.test(mg.name||''))mg.name='Административно-управленческий персонал (АУП)';}
+  {const mg=(m.departments||[]).find(x=>x&&x.id==='management');if(mg&&/^Менеджмент/.test(mg.name||''))mg.name='Административно-управленческий персонал (АУП)';
+    if(mg&&Array.isArray(mg.costs))mg.costs.forEach(c=>{if(c&&/НДС/i.test(c.name||'')&&!c.vatOfRevenue){c.vatOfRevenue=true;delete c.amount;}});} // НДС - расчётный от выручки
   if(m.blocks&&!m.blocks.aup)m.blocks.aup={owner:'Болотов Артём'};
   if(m.blocks&&m.blocks.aup&&m.blocks.aup.owner==='Генеральный директор')m.blocks.aup.owner='Болотов Артём'; // замена прежнего значения по умолчанию
   if(m.checkDefault==null)m.checkDefault=d.checkDefault;
@@ -8308,8 +8309,9 @@ function bflDeptCalc(d,g){
   const _rate=(g.ndfl||0)+(g.fss||0);                 // ставка начислений
   let fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);      // общий ФОТ отдела
   const fteRoles=roles.reduce((a,r)=>a+(r.fte||0),0);
-  const other=costs.reduce((a,c)=>a+(c.amount||0),0);
-  const pass=costs.filter(c=>c.passThrough).reduce((a,c)=>a+(c.amount||0),0); // депозит (pass-through)
+  const ca=c=>c.vatOfRevenue?((g.vat||0)*bflRevenue()):(c.amount||0); // НДС от выручки - расчётный
+  const other=costs.reduce((a,c)=>a+ca(c),0);
+  const pass=costs.filter(c=>c.passThrough).reduce((a,c)=>a+ca(c),0); // депозит (pass-through)
   // лидогенерация (отдел маркетинга): по направлениям лиды → % отбраковки → квал-лиды; закупка + агентские комиссии + штат направления
   let leadSpend=0,qualTotal=0,leadRows=null,dirFotTotal=0,dirFteTotal=0,leadTotalCost=0;
   if(Array.isArray(d.leadgen)){
@@ -8424,6 +8426,12 @@ function bflOPIU(){
 }
 // Все сделки от ОП (выход отдела продаж) - база ЦКП для производственных отделов
 function bflOpDeals(){const op=_bflModel.departments.find(x=>x.dealStage);return op?(bflDeptCalc(op,_bflModel.global).output||0):0;}
+// Выручка (поступления) = Σ инкассаций. Без вызова bflDeptCalc для management (иначе цикл через НДС)
+function bflRevenue(){const g=_bflModel.global;let rev=0;(_bflModel.departments||[]).forEach(d=>{
+  if(d.funnel&&d.funnel.money)rev+=bflDeptCalc(d,g).incassation; // ОП - первый платёж
+  else if(d.collectsRassrochka)rev+=bflCommercial().rass;        // ОС - рассрочка
+  else rev+=(d.incassation||0);});                               // прочие (management=0) - без пересчёта
+  return rev;}
 // Коммерческий блок (Привлечение + Продажи): расходы, сделки, договорная сумма, первый платёж (ОП), рассрочка (ОС), Стоимость сделки (ЦКП блока)
 function bflCommercial(){
   const g=_bflModel.global,prof=g.collectionProfile||{},collRate=prof.collectionRate!=null?prof.collectionRate:1;
@@ -8486,7 +8494,7 @@ function bflRenderDepts(host){
   // Единая таблица прямых затрат: Затрата | ₽/мес (редактируемое)
   const costsTbl=(deptId,costs)=>{
     costs=costs||[];if(!costs.length)return '';
-    const rows=costs.map((co,i)=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(co.name)}${co.passThrough?' <span style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 3px">pass-through</span>':''}</td><td style="padding:3px 8px;text-align:right"><input type="text" inputmode="numeric" value="${co.amount==null?'':co.amount}" data-dept="${deptId}" data-path="costs.${i}.amount" onchange="bflDeptEdit(this)" style="width:104px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"></td></tr>`).join('');
+    const rows=costs.map((co,i)=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(co.name)}${co.passThrough?' <span style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 3px">pass-through</span>':''}${co.vatOfRevenue?' <span style="font-size:9px;color:var(--text3)">(расчёт)</span>':''}</td><td style="padding:3px 8px;text-align:right">${co.vatOfRevenue?`<span style="font-family:var(--mono);font-size:12px;color:var(--text2)">${bflM((g.vat||0)*bflRevenue())}</span>`:`<input type="text" inputmode="numeric" value="${co.amount==null?'':co.amount}" data-dept="${deptId}" data-path="costs.${i}.amount" onchange="bflDeptEdit(this)" style="width:104px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`}</td></tr>`).join('');
     return `<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Прямые затраты</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">₽/мес</th></tr></thead><tbody>${rows}</tbody></table>`;
   };
 
