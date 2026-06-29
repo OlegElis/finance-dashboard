@@ -7908,7 +7908,7 @@ function bflModelDefault(){
       collectionProfile:{firstPay:10000,rassrochkaMonths:10,collectionRate:0.95}},
     directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
     checkDefault:245991,
-    blocks:{commercial:{owner:'Черновский Антон'},production:{owner:'Васянина Елена'}}, // руководители блоков
+    blocks:{commercial:{owner:'Черновский Антон'},production:{owner:'Васянина Елена'},opau:{owner:'Кольцова Марина'}}, // руководители блоков/контуров
     // Слой B+C - отделы сквозного конвейера (эталонный датасет §5). ЦКП = расходы_gross / tskpBase.
     // depositExcluded (контрол) переключает расходы ОПИУ gross↔net. По умолчанию депозит ВКЛЮЧЁН (как в эталоне §6).
     departments:[
@@ -7950,9 +7950,10 @@ function bflModelDefault(){
         roles:[{name:'Руководитель',fte:1,rate:110000},{name:'Юрист: подача заявлений',fte:2,rate:90000},{name:'Юрист: сохранение имущества',fte:1,rate:90000},{name:'Юрист: ипотека',fte:1,rate:90000},{name:'Юрист: работа с КМ',fte:1,rate:90000}],
         costs:[{name:'Адвокатский запрет (1000 × 49,6)',amount:49600}],incassation:0,tskpBase:588.66,tskpLabel:'база уточняется (§11)',
         capacity:{base:374,norm:null,driver:'задачи от ОС (176+88+66+44)'}},
-      {id:'opau',group:'production',name:'ОПАУ - Отдел помощников АУ',
+      {id:'opau',group:'production',name:'ОПАУ - Отдел помощников АУ',contour:'opau',tskpFromOp:true,casesFromOp:true,
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Зам руководителя',fte:1,rate:100000},{name:'Делопроизводство',fte:1,rate:50000},{name:'Выплаты (финансист)',fte:2,rate:70000},{name:'Проверка ответов госорганов',fte:1,rate:50000},{name:'Взаимодействие с ФССП',fte:1,rate:70000},{name:'Реализация имущества',fte:1,rate:70000},{name:'Взаимодействие с кредиторами',fte:1,rate:70000},{name:'Введение процедуры',fte:1,rate:70000},{name:'Контроль процедур',fte:7,rate:80000}],
-        costs:[{name:'Депозит (25000 × 150) - pass-through',amount:3750000,passThrough:true},{name:'Публикация Коммерсантъ',amount:1350000},{name:'Публикация ЕФРСБ',amount:300000},{name:'Публикация о торгах',amount:450000},{name:'Почтовые расходы',amount:450000},{name:'Прочие',amount:465000}],incassation:0,tskpBase:150,tskpLabel:'завершённые дела',
+        perCase:[{name:'Возвратный депозит (за процедуру)',rate:25000,passThrough:true},{name:'Публикации (за процедуру)',rate:20000}],
+        costs:[],incassation:0,tskpLabel:'дела от ОИ',
         capacity:{base:1350,norm:null,driver:'дел в работе (портфель)'}},
       {id:'management',group:'overhead',name:'Менеджмент (АУП)',
         roles:[{name:'Генеральный директор',fte:1,rate:700000},{name:'Коммерческий директор',fte:1,rate:500000},{name:'Директор по маркетингу',fte:1,rate:250000},{name:'Руководитель отдела банкротства',fte:1,rate:250000},{name:'HR бизнес-партнёр',fte:1,rate:200000},{name:'Главный бухгалтер',fte:1,rate:150000},{name:'Бизнес-ассистент',fte:1,rate:100000}],
@@ -8026,6 +8027,11 @@ function bflEnsureModel(m){
   if(!m.global.collectionProfile||m.global.collectionProfile.firstPay===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // профиль сбора: фикс первый платёж ₽
   const osDep=(m.departments||[]).find(x=>x&&x.id==='os');if(osDep&&osDep.collectsRassrochka===undefined){osDep.collectsRassrochka=true;osDep.incassation=0;} // ОС собирает рассрочку
   if(osDep&&osDep.tskpFromOp===undefined)osDep.tskpFromOp=true; // ОС: база ЦКП = сделки от ОП
+  const opauDep=(m.departments||[]).find(x=>x&&x.id==='opau');if(opauDep&&!Array.isArray(opauDep.perCase)){ // ОПАУ: контур + per-case (депозит/публикации за дело)
+    opauDep.contour='opau';opauDep.tskpFromOp=true;opauDep.casesFromOp=true;opauDep.tskpLabel='дела от ОИ';
+    opauDep.perCase=[{name:'Возвратный депозит (за процедуру)',rate:25000,passThrough:true},{name:'Публикации (за процедуру)',rate:20000}];
+    opauDep.costs=(opauDep.costs||[]).filter(c=>!/депозит|публикац|почтов|прочие/i.test((c&&c.name)||''));}
+  if(m.blocks&&!m.blocks.opau)m.blocks.opau={owner:'Кольцова Марина'};
   if(m.checkDefault==null)m.checkDefault=d.checkDefault;
   if(!m.blocks)m.blocks=JSON.parse(JSON.stringify(d.blocks)); // руководители блоков
   if(!m.meta)m.meta=d.meta;
@@ -8344,7 +8350,14 @@ function bflDeptCalc(d,g){
       output = assigned*(1-(d.funnel.otval||0));
     }
   }
-  const gross=fot+nach+other+leadSpend, net=gross-pass;
+  // per-case затраты (ОПАУ: депозит/публикации за дело; кол-во дел = от ОИ/ОП)
+  let perCaseRows=null,perCaseTotal=0,perCasePass=0,caseCount=0;
+  if(Array.isArray(d.perCase)){
+    caseCount=d.casesFromOp?bflOpDeals():(d.caseCount||0);
+    perCaseRows=d.perCase.map(pc=>{const amt=(pc.rate||0)*caseCount;perCaseTotal+=amt;if(pc.passThrough)perCasePass+=amt;return {name:pc.name,rate:pc.rate||0,amount:amt,passThrough:!!pc.passThrough};});
+  }
+  const passAll=pass+perCasePass;
+  const gross=fot+nach+other+leadSpend+perCaseTotal, net=gross-passAll;
   const base = d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:(d.tskpFromOp?bflOpDeals():d.tskpBase)); // маркетинг: квал-лиды; воронка: выход; tskpFromOp: сделки от ОП
   const tskp=bflSafeDiv(gross,base);                  // ЦКП = расходы_gross / база
   const fteActual=fteRoles+dirFteTotal;
@@ -8358,7 +8371,8 @@ function bflDeptCalc(d,g){
   let incassation=d.incassation||0;
   if(d.funnel&&d.funnel.money)incassation=firstPayTotal;
   if(d.collectsRassrochka)incassation=bflCommercial().rass;
-  return {fot:fot,nach:nach,other:other,pass:pass,gross:gross,net:net,tskp:tskp,base:base,
+  return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,
+    perCaseRows:perCaseRows,caseCount:caseCount,
     fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:incassation,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
     inflow:inflow,assigned:assigned,output:output,funnelRows:funnelRows,sumaTotal:sumaTotal,firstPayTotal:firstPayTotal};
@@ -8602,17 +8616,25 @@ function bflRenderDepts(host){
       const inp=(path,val,w)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-dept="${d.id}" data-path="${path}" onchange="bflDeptEdit(this)" style="width:${w||80}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
       const rolesTbl=staffTbl(d.id,d.roles,'roles','Штатное расписание');
       const costTbl=costsTbl(d.id,d.costs);
+      // per-case затраты (ОПАУ): Затрата | ₽/дело (ред.) | Дел | Сумма
+      const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
+      const perCaseTbl=(c.perCaseRows&&c.perCaseRows.length)?`<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Затраты за процедуру</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">₽ за дело</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Дел</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Сумма</th></tr></thead><tbody>${c.perCaseRows.map((pc,i)=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(pc.name)}${pc.passThrough?' <span style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 3px">возвратный</span>':''}</td><td style="padding:3px 8px;text-align:right">${inp('perCase.'+i+'.rate',pc.rate,84)}</td><td style="${cellR};color:var(--text2)">${bflI(c.caseCount)}</td><td style="${cellR};color:${pc.passThrough?'var(--text2)':'var(--outcome)'}">${bflM(pc.amount)}</td></tr>`).join('')}</tbody></table>`:'';
       const flow=`<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;align-items:center;margin-top:10px">
         ${d.tskpFromOp?`<label style="color:var(--text2)">База ЦКП (= сделки от ОП): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
         ${d.collectsRassrochka?`<label style="color:var(--text2)">Инкассация (рассрочка, расчёт): <b style="color:var(--income)">${bflM(c.incassation)}</b></label>`:('incassation' in d)?`<label style="color:var(--text2)">Инкассация ${inp('incassation',d.incassation,110)}</label>`:''}
         ${(d.capacity&&d.capacity.base!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
       </div>`;
-      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${costTbl}${flow}
+      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${costTbl}${perCaseTbl}${flow}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы (gross): <b style="color:var(--outcome)">${bflM(c.gross)}</b>${c.pass>0?` · из них pass-through: ${bflM(c.pass)} · net (P&L): <b>${bflM(c.net)}</b>`:''} · ЦКП = ${bflM(c.gross)} / ${bflI(c.base)}${d.tskpFromOp?' сделок от ОП':''} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
       </div>`;
     }
-    return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}${loadBar}${body}</div>`;
+    const subHead=d.contour?`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 6px;padding:8px 12px;background:var(--accent-light);border-radius:9px;border:1px dashed var(--accent)">
+      <span style="font-size:12px;font-weight:700;color:var(--accent)">Контур ${esc(String(d.name||'').split(' - ')[0])}</span>
+      <span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Руководитель</span>
+      <input type="text" value="${esc((_bflModel.blocks&&_bflModel.blocks[d.contour]&&_bflModel.blocks[d.contour].owner)||'')}" data-path="blocks.${d.contour}.owner" data-text="1" onchange="bflGlobalEdit(this)" placeholder="руководитель" style="width:160px;font-size:12px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fffdf0">
+      <span style="margin-left:auto;font-size:10.5px;color:var(--text3)">подотчётна ${esc((_bflModel.blocks&&_bflModel.blocks.production&&_bflModel.blocks.production.owner)||'')}</span></div>`:'';
+    return subHead+`<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}${loadBar}${body}</div>`;
   };
 
   let html=`<div style="padding:4px 2px">${bflViewBar()}${bflPrintControls()}
@@ -8788,7 +8810,7 @@ function bflRunTests(){
     // AC5 - ОПИУ: выручка (инкассация сохранена) + депозит точные; расходы изменились структурно (агентские в маркетинге)
     const o=bflOPIU();
     ok('ОПИУ Выручка посчитана (>0)',o.revenue>0&&isFinite(o.revenue),Math.round(o.revenue)); // ОП = первый платёж (сделки×мин), ОС = рассрочка - выручка зависит от объёмов
-    ok('AC5 Депозит pass-through=3 750 000',o.deposit===3750000,o.deposit);
+    ok('Депозит pass-through (ОПАУ 25000 × дела)',o.deposit>0&&isFinite(o.deposit),Math.round(o.deposit));
     ok('ОПИУ Расходы посчитаны (20-26М)',o.expenses>20000000&&o.expenses<26000000,Math.round(o.expenses));
     ok('ОПИУ Рентабельность конечна',o.rent!=null&&isFinite(o.rent),+(o.rent*100).toFixed(1));
   }finally{_bflModel=save;_bflAuto=savedAuto;_tabFilters.bflmodel.depositExcluded=savedDep;}
