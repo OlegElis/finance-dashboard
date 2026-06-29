@@ -7915,7 +7915,7 @@ function bflModelDefault(){
     directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
     checkDefault:245991,
     blocks:{aup:{owner:'Болотов Артём'},commercial:{owner:'Черновский Антон'},production:{owner:'Васянина Елена'},opau:{owner:'Кольцова Марина'}}, // руководители блоков/контуров
-    clientPath:{toOks:1,oksToOi:1,court:1,auAppoint:1,simpleShare:0.7,simpleMin:4,simpleMax:6,complexExtra:3}, // путь клиента (сроки, мес; портфель простые/сложные)
+    clientPath:{toOks:1,oksToOi:1,court:1,auAppoint:1,simpleShare:0.7,simpleDuration:6,complexDuration:12}, // путь клиента; срок процедуры (мес, после 1-го суд. заседания): простые 6 / сложные (с имуществом) 12
     // Слой B+C - отделы сквозного конвейера (эталонный датасет §5). ЦКП = расходы_gross / tskpBase.
     // depositExcluded (контрол) переключает расходы ОПИУ gross↔net. По умолчанию депозит ВКЛЮЧЁН (как в эталоне §6).
     departments:[
@@ -7962,7 +7962,7 @@ function bflModelDefault(){
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Помощник АУ (контроль и завершение процедур)',fte:6,rate:80000},{name:'Помощник АУ (введение процедур банкротства)',fte:2,rate:70000},{name:'Помощник АУ (реализация имущества)',fte:1,rate:70000},{name:'Помощник АУ (взаимодействие с кредиторами)',fte:2,rate:70000},{name:'Финансист (отдел выплат)',fte:2,rate:70000},{name:'Помощник АУ (взаимодействие с ФССП)',fte:1,rate:70000},{name:'Делопроизводитель',fte:2,rate:50000}],
         revPerCase:[{name:'Возврат депозита суда',rate:25000},{name:'Компенсация почтовых расходов',rate:20000},{name:'Возмещение из конкурсной массы',rate:0}],
         perCase:[{name:'Почтовые расходы (факт)',rate:15000}],
-        costs:[],incassation:0,tskpLabel:'дела от ОИ (после отвала)',
+        costs:[],incassation:0,tskpLabel:'завершённые дела',
         capacity:{base:1350,norm:null,driver:'дел в работе (портфель)'}},
       {id:'management',group:'overhead',name:'Административно-управленческий персонал (АУП)',
         roles:[{name:'Генеральный директор',fte:1,rate:700000},{name:'Коммерческий директор',fte:1,rate:500000},{name:'Финансовый директор',fte:1,rate:350000},{name:'Технический директор',fte:1,rate:300000},{name:'Директор по маркетингу',fte:1,rate:250000},{name:'Руководитель отдела банкротства',fte:1,rate:250000},{name:'HR бизнес-партнёр',fte:1,rate:200000},{name:'Главный бухгалтер',fte:1,rate:150000},{name:'Бизнес-ассистент',fte:1,rate:100000}],
@@ -8052,6 +8052,8 @@ function bflEnsureModel(m){
     if(dep.id==='oi'&&Array.isArray(dep.costs))dep.costs=dep.costs.filter(c=>!/адвокатск/i.test((c&&c.name)||''));}); // ОИ: убрать адвокатский запрет
   {const a=m.departments||[],iOi=a.findIndex(x=>x&&x.id==='oi'),iOs=a.findIndex(x=>x&&x.id==='os');if(iOi>-1&&iOs>-1&&iOi>iOs){const oi=a.splice(iOi,1)[0];a.splice(iOs,0,oi);}}
   if(!m.clientPath)m.clientPath=JSON.parse(JSON.stringify(d.clientPath));
+  // срок процедуры: простые 6 / сложные 12 мес (после первого судебного заседания) - замена прежних min/max/extra
+  if(m.clientPath&&m.clientPath.simpleDuration===undefined){m.clientPath.simpleDuration=6;m.clientPath.complexDuration=12;delete m.clientPath.simpleMin;delete m.clientPath.simpleMax;delete m.clientPath.complexExtra;}
   // депозит суда 25тр → ОИ (возвратный); почтовые 20тр → ОПАУ; отвал досудебный → ОКС; дела ОИ/ОПАУ = после отвала
   {const oiD=(m.departments||[]).find(x=>x&&x.id==='oi');
    if(oiD){oiD.casesFromProd=true;if(!Array.isArray(oiD.perCase)||!oiD.perCase.length)oiD.perCase=[{name:'Депозит суда (за дело, возвратный)',rate:25000,passThrough:true}];}
@@ -8719,7 +8721,7 @@ function bflRenderDepts(host){
           <span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;color:#fff;background:${c.selfNet>=0?'var(--income)':'var(--outcome)'}">${c.selfNet>=0?'✓ самоокупается':'✗ дефицит'}</span>
         </div></div>`:'';
       const flow=`<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;align-items:center;margin-top:10px">
-        ${(d.tskpFromOp||d.tskpFromProd)?`<label style="color:var(--text2)">База ЦКП (= ${d.tskpFromProd?'дела после отвала':'сделки от ОП'}): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
+        ${(d.tskpFromOp||d.tskpFromProd)?`<label style="color:var(--text2)">База ЦКП (= ${d.tskpFromProd?'завершённые дела, после отвала':'сделки от ОП'}): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
         ${d.preCourtOtval!=null?`<label style="color:var(--text2)">Отвал досудебный <input type="text" inputmode="decimal" value="${+((d.preCourtOtval||0)*100).toFixed(1)}" data-dept="${d.id}" data-path="preCourtOtval" data-pct="1" onchange="bflDeptEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> % → до суда ${bflI(bflCasesProd())} дел · отвалившимся возврат первого платежа</label>`:''}
         ${d.collectsRassrochka?`<label style="color:var(--text2)">Собираемость рассрочки <input type="text" inputmode="decimal" value="${+(((g.collectionProfile&&g.collectionProfile.collectionRate)||0)*100).toFixed(0)}" data-path="global.collectionProfile.collectionRate" data-pct="1" onchange="bflGlobalEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> %</label><label style="color:var(--text2)">Инкассация (рассрочка, расчёт): <b style="color:var(--income)">${bflM(c.incassation)}</b></label>`:(d.incassation>0)?`<label style="color:var(--text2)">Инкассация ${inp('incassation',d.incassation,110)}</label>`:''}
         ${(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
@@ -8819,8 +8821,8 @@ function bflRenderDepts(host){
     let pGross=0,pIncass=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'&&!x.selfFunded){const c=bflDeptCalc(x,g);pGross+=c.gross;pIncass+=c.incassation;}});
     const deals=bflOpDeals();
     const cp=_bflModel.clientPath||{};
-    const avgSimple=((cp.simpleMin||0)+(cp.simpleMax||0))/2;
-    const avgTerm=(cp.simpleShare||0)*avgSimple+(1-(cp.simpleShare||0))*(avgSimple+(cp.complexExtra||0));
+    const simpleDur=cp.simpleDuration||0,complexDur=cp.complexDuration||0;
+    const avgTerm=(cp.simpleShare||0)*simpleDur+(1-(cp.simpleShare||0))*complexDur;
     const step=(t)=>`<span style="font-weight:600;color:var(--text)">${t}</span>`;
     const arr=(t)=>`<span style="color:var(--text3)">→ ${t} →</span>`;
     return `<div style="margin:20px 0 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 2px 12px rgba(43,49,69,.06);overflow:hidden">
@@ -8836,7 +8838,7 @@ function bflRenderDepts(host){
         <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;line-height:2.1">
           ${step('Сделка (ОП)')} ${arr('≤'+_gi('clientPath.toOks',cp.toOks,34)+' мес')} ${step('ОКС')} ${arr('≤'+_gi('clientPath.oksToOi',cp.oksToOi,34)+' мес')} ${step('ОИ: подача в суд')} ${arr(_gi('clientPath.court',cp.court,34)+' мес суд')} ${arr(_gi('clientPath.auAppoint',cp.auAppoint,34)+' мес назначение АУ')} ${step('ОПАУ: ведение процедуры')}
         </div>
-        <div style="margin-top:7px">Портфель дел: <b>простые</b> (без имущества) ${_gi('clientPath.simpleShare',+(((cp.simpleShare||0)*100).toFixed(0)),36,true)} % — ${_gi('clientPath.simpleMin',cp.simpleMin,30)}–${_gi('clientPath.simpleMax',cp.simpleMax,30)} мес · <b>сложные</b> (с имуществом) +${_gi('clientPath.complexExtra',cp.complexExtra,30)} мес на торги · средний срок процедуры ≈ <b>${avgTerm.toFixed(1).replace('.',',')} мес</b></div>
+        <div style="margin-top:7px">Срок процедуры (после первого судебного заседания): <b>простые</b> (без имущества) ${_gi('clientPath.simpleShare',+(((cp.simpleShare||0)*100).toFixed(0)),36,true)} % — ${_gi('clientPath.simpleDuration',cp.simpleDuration,30)} мес · <b>сложные</b> (с имуществом) ${_gi('clientPath.complexDuration',cp.complexDuration,30)} мес · средний срок ≈ <b>${avgTerm.toFixed(1).replace('.',',')} мес</b></div>
       </div></div>`;
   };
   let lastSuper=null,superOpen=false;
