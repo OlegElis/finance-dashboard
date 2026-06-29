@@ -7958,9 +7958,10 @@ function bflModelDefault(){
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Зам',fte:0.10,rate:100000},{name:'Менеджер',fte:11.74,rate:90000},{name:'Стажёр',fte:2.94,rate:70000}],
         costs:[],incassation:0,tskpBase:150,tskpLabel:'сделки от ОП',
         capacity:{base:1526,norm:130,roleIdx:2,driver:'дел в работе на 1 менеджера'}},
-      {id:'opau',group:'production',name:'Отдел помощников АУ (ОПАУ)',contour:'opau',tskpFromProd:true,casesFromProd:true,
+      {id:'opau',group:'production',name:'Отдел помощников АУ (ОПАУ)',contour:'opau',tskpFromProd:true,casesFromProd:true,selfFunded:true,
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Помощник АУ (контроль и завершение процедур)',fte:6,rate:80000},{name:'Помощник АУ (введение процедур банкротства)',fte:2,rate:70000},{name:'Помощник АУ (реализация имущества)',fte:1,rate:70000},{name:'Помощник АУ (взаимодействие с кредиторами)',fte:2,rate:70000},{name:'Финансист (отдел выплат)',fte:2,rate:70000},{name:'Помощник АУ (взаимодействие с ФССП)',fte:1,rate:70000},{name:'Делопроизводитель',fte:2,rate:50000}],
-        perCase:[{name:'Почтовые/публикации (за дело)',rate:20000}],
+        revPerCase:[{name:'Возврат депозита суда',rate:25000},{name:'Компенсация почтовых расходов',rate:20000},{name:'Возмещение из конкурсной массы',rate:0}],
+        perCase:[{name:'Почтовые расходы (факт)',rate:15000}],
         costs:[],incassation:0,tskpLabel:'дела от ОИ (после отвала)',
         capacity:{base:1350,norm:null,driver:'дел в работе (портфель)'}},
       {id:'management',group:'overhead',name:'Административно-управленческий персонал (АУП)',
@@ -8058,6 +8059,12 @@ function bflEnsureModel(m){
    if(opD){if(Array.isArray(opD.perCase)&&opD.perCase.some(p=>p&&/депозит/i.test(p.name||'')))opD.perCase=[{name:'Почтовые/публикации (за дело)',rate:20000}];
      if(opD.casesFromOp){opD.casesFromProd=true;delete opD.casesFromOp;}if(opD.tskpFromOp){opD.tskpFromProd=true;delete opD.tskpFromOp;}}
    const oksD=(m.departments||[]).find(x=>x&&x.id==='os');if(oksD&&oksD.preCourtOtval===undefined)oksD.preCourtOtval=0.09;}
+  // ОПАУ - самоокупаемый контур со своим ОПИУ: доходы per-case (возврат депозита 25тр + компенсация почтовых 20тр + возмещение из КМ); расход - фактические почтовые ~15тр
+  {const op2=(m.departments||[]).find(x=>x&&x.id==='opau');
+   if(op2){op2.selfFunded=true;
+     if(!Array.isArray(op2.revPerCase))op2.revPerCase=[{name:'Возврат депозита суда',rate:25000},{name:'Компенсация почтовых расходов',rate:20000},{name:'Возмещение из конкурсной массы',rate:0}];
+     if(Array.isArray(op2.perCase)&&op2.perCase.length){const pc=op2.perCase.find(p=>p&&/почтов|публикаци/i.test(p.name||''));if(pc){pc.name='Почтовые расходы (факт)';if(pc.rate===20000)pc.rate=15000;}}
+     else op2.perCase=[{name:'Почтовые расходы (факт)',rate:15000}];}}
   {const mg=(m.departments||[]).find(x=>x&&x.id==='management');if(mg&&/^Менеджмент/.test(mg.name||''))mg.name='Административно-управленческий персонал (АУП)';
     if(mg&&Array.isArray(mg.roles)){const hasR=n=>mg.roles.some(r=>r&&r.name===n);let ins=mg.roles.findIndex(r=>r&&r.name==='Коммерческий директор')+1;if(ins<=0)ins=mg.roles.length;
       if(!hasR('Технический директор'))mg.roles.splice(ins,0,{name:'Технический директор',fte:1,rate:300000});
@@ -8388,11 +8395,14 @@ function bflDeptCalc(d,g){
       output = assigned*(1-(d.funnel.otval||0));
     }
   }
-  // per-case затраты (ОПАУ: депозит/публикации за дело; кол-во дел = от ОИ/ОП)
-  let perCaseRows=null,perCaseTotal=0,perCasePass=0,caseCount=0;
+  // per-case затраты/доходы (ОПАУ: почтовые факт за дело / возврат депозита + компенсация почтовых + возмещение из КМ; кол-во дел = от ОИ/ОП)
+  let perCaseRows=null,perCaseTotal=0,perCasePass=0,caseCount=0,revPerCaseRows=null,selfRev=0;
+  if(Array.isArray(d.perCase)||Array.isArray(d.revPerCase))caseCount=d.casesFromProd?bflCasesProd():d.casesFromOp?bflOpDeals():(d.caseCount||0);
   if(Array.isArray(d.perCase)){
-    caseCount=d.casesFromProd?bflCasesProd():d.casesFromOp?bflOpDeals():(d.caseCount||0);
     perCaseRows=d.perCase.map(pc=>{const amt=(pc.rate||0)*caseCount;perCaseTotal+=amt;if(pc.passThrough)perCasePass+=amt;return {name:pc.name,rate:pc.rate||0,amount:amt,passThrough:!!pc.passThrough};});
+  }
+  if(Array.isArray(d.revPerCase)){
+    revPerCaseRows=d.revPerCase.map(rc=>{const amt=(rc.rate||0)*caseCount;selfRev+=amt;return {name:rc.name,rate:rc.rate||0,amount:amt};});
   }
   const passAll=pass+perCasePass;
   const gross=fot+nach+other+leadSpend+perCaseTotal, net=gross-passAll;
@@ -8410,7 +8420,7 @@ function bflDeptCalc(d,g){
   if(d.funnel&&d.funnel.money)incassation=firstPayTotal;
   if(d.collectsRassrochka)incassation=bflCommercial().rass;
   return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,
-    perCaseRows:perCaseRows,caseCount:caseCount,
+    perCaseRows:perCaseRows,caseCount:caseCount,revPerCaseRows:revPerCaseRows,selfRev:selfRev,selfNet:selfRev-gross,
     fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:incassation,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
     inflow:inflow,assigned:assigned,output:output,funnelRows:funnelRows,sumaTotal:sumaTotal,firstPayTotal:firstPayTotal};
@@ -8445,7 +8455,7 @@ function bflOPIU(){
   const g=_bflModel.global,depts=_bflModel.departments||[];
   const ex=_tabFilters.bflmodel.depositExcluded;
   let revenue=0,expenses=0,deposit=0;
-  depts.forEach(d=>{const c=bflDeptCalc(d,g);revenue+=c.incassation;expenses+=ex?c.net:c.gross;deposit+=c.pass;});
+  depts.forEach(d=>{if(d.selfFunded)return;const c=bflDeptCalc(d,g);revenue+=c.incassation;expenses+=ex?c.net:c.gross;deposit+=c.pass;}); // самоокупаемые контуры (ОПАУ) - в своём ОПИУ
   const saldo=revenue-expenses,rent=bflSafeDiv(saldo,revenue),vat=revenue*(g.vat||0);
   return {revenue:revenue,expenses:expenses,saldo:saldo,rent:rent,vat:vat,deposit:deposit};
 }
@@ -8672,6 +8682,17 @@ function bflRenderDepts(host){
       // per-case затраты (ОПАУ): Затрата | ₽/дело (ред.) | Дел | Сумма
       const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
       const perCaseTbl=(c.perCaseRows&&c.perCaseRows.length)?`<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Затраты за процедуру</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">₽ за дело</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Дел</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Сумма</th></tr></thead><tbody>${c.perCaseRows.map((pc,i)=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(pc.name)}${pc.passThrough?' <span style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 3px">возвратный</span>':''}</td><td style="padding:3px 8px;text-align:right">${inp('perCase.'+i+'.rate',pc.rate,84)}</td><td style="${cellR};color:var(--text2)">${bflI(c.caseCount)}</td><td style="${cellR};color:${pc.passThrough?'var(--text2)':'var(--outcome)'}">${bflM(pc.amount)}</td></tr>`).join('')}</tbody></table>`:'';
+      // доходы per-case (самоокупаемый контур): возврат депозита + компенсация почтовых + возмещение из КМ
+      const revTbl=(c.revPerCaseRows&&c.revPerCaseRows.length)?`<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Доходы за процедуру</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">₽ за дело</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Дел</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Сумма</th></tr></thead><tbody>${c.revPerCaseRows.map((rc,i)=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(rc.name)}</td><td style="padding:3px 8px;text-align:right">${inp('revPerCase.'+i+'.rate',rc.rate,84)}</td><td style="${cellR};color:var(--text2)">${bflI(c.caseCount)}</td><td style="${cellR};color:var(--income)">${bflM(rc.amount)}</td></tr>`).join('')}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ИТОГО доходы</td><td></td><td></td><td style="${cellR};color:var(--income)">${bflM(c.selfRev)}</td></tr></tbody></table>`:'';
+      // отдельный ОПИУ контура: доходы − расходы = сальдо (самоокупаемость)
+      const selfBlock=d.selfFunded?`<div style="margin-top:10px;padding:11px 13px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)">
+        <div style="font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Отдельный ОПИУ контура · самоокупаемость</div>
+        <div style="display:flex;flex-wrap:wrap;gap:20px;font-size:12.5px;align-items:center">
+          <span>Доходы <b style="color:var(--income);font-family:var(--mono)">${bflM(c.selfRev)}</b></span>
+          <span>− Расходы <b style="color:var(--outcome);font-family:var(--mono)">${bflM(c.gross)}</b></span>
+          <span>= Сальдо <b style="color:${c.selfNet>=0?'var(--income)':'var(--outcome)'};font-family:var(--mono)">${bflM(c.selfNet)}</b></span>
+          <span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;color:#fff;background:${c.selfNet>=0?'var(--income)':'var(--outcome)'}">${c.selfNet>=0?'✓ самоокупается':'✗ дефицит'}</span>
+        </div></div>`:'';
       const flow=`<div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;align-items:center;margin-top:10px">
         ${(d.tskpFromOp||d.tskpFromProd)?`<label style="color:var(--text2)">База ЦКП (= ${d.tskpFromProd?'дела после отвала':'сделки от ОП'}): <b>${bflI(c.base)}</b></label>`:`<label style="color:var(--text2)">База ЦКП ${inp('tskpBase',d.tskpBase,80)}</label>`}
         ${d.preCourtOtval!=null?`<label style="color:var(--text2)">Отвал досудебный <input type="text" inputmode="decimal" value="${+((d.preCourtOtval||0)*100).toFixed(1)}" data-dept="${d.id}" data-path="preCourtOtval" data-pct="1" onchange="bflDeptEdit(this)" style="width:46px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> % → до суда ${bflI(bflCasesProd())} дел</label>`:''}
@@ -8679,7 +8700,7 @@ function bflRenderDepts(host){
         ${(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
       </div>`;
-      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${costTbl}${perCaseTbl}${flow}
+      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${revTbl}${costTbl}${perCaseTbl}${selfBlock}${flow}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы (gross): <b style="color:var(--outcome)">${bflM(c.gross)}</b>${c.pass>0?` · из них pass-through: ${bflM(c.pass)} · net (P&L): <b>${bflM(c.net)}</b>`:''} · ЦКП = ${bflM(c.gross)} / ${bflI(c.base)}${d.tskpFromOp?' сделок от ОП':''} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
       </div>`;
     }
@@ -8688,13 +8709,23 @@ function bflRenderDepts(host){
       const abbr=(String(d.name||'').match(/\(([^)]+)\)/)||[])[1]||d.name;
       const co=(_bflModel.blocks&&_bflModel.blocks[d.contour]&&_bflModel.blocks[d.contour].owner)||'';
       const parentOwner=(_bflModel.blocks&&_bflModel.blocks.production&&_bflModel.blocks.production.owner)||'';
+      const sc=(lbl,val,col)=>`<div style="background:var(--surface);padding:9px 13px"><div style="font-size:9px;color:var(--label);text-transform:uppercase;letter-spacing:.05em">${lbl}</div><div style="font-size:15px;font-weight:600;font-family:var(--mono);color:${col||'var(--text)'};margin-top:2px">${val}</div></div>`;
+      const selfStrip=d.selfFunded?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:1px;background:var(--border)">
+        ${sc('Доходы контура',bflM(c.selfRev),'var(--income)')}
+        ${sc('Расходы контура',bflM(c.gross),'var(--outcome)')}
+        ${sc('Сальдо (свой ОПИУ)',bflM(c.selfNet),c.selfNet>=0?'var(--income)':'var(--outcome)')}
+        ${sc('Дел в работе',bflI(c.caseCount),'var(--text)')}
+        <div style="background:var(--surface);padding:9px 13px;display:flex;align-items:center"><span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:11px;color:#fff;background:${c.selfNet>=0?'var(--income)':'var(--outcome)'}">${c.selfNet>=0?'✓ самоокупается':'✗ дефицит'}</span></div>
+      </div>`:'';
       return `<div style="margin:18px 0 12px;border:2px solid var(--accent);border-radius:14px;overflow:hidden;box-shadow:0 3px 14px rgba(63,85,117,.14)">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 15px;background:var(--accent);color:#fff">
           <span style="font-size:13px;font-weight:700;letter-spacing:.02em">Контур ${esc(abbr)}</span>
+          ${d.selfFunded?'<span style="font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:9px;background:rgba(255,255,255,.2)">САМООКУПАЕМОСТЬ · СВОЙ ОПИУ</span>':''}
           <span style="font-size:9.5px;opacity:.8;text-transform:uppercase;letter-spacing:.06em">Руководитель</span>
           <input type="text" value="${esc(co)}" data-path="blocks.${d.contour}.owner" data-text="1" onchange="bflGlobalEdit(this)" placeholder="руководитель" style="width:165px;font-size:12px;padding:3px 8px;border:1px solid rgba(255,255,255,.35);border-radius:6px;background:rgba(255,255,255,.16);color:#fff">
           <span style="margin-left:auto;font-size:10px;opacity:.8">подотчётна ${esc(parentOwner)}</span>
         </div>
+        ${selfStrip}
         <div style="padding:10px;background:var(--accent-light)">${cardInner}</div>
       </div>`;
     }
@@ -8748,7 +8779,7 @@ function bflRenderDepts(host){
           <span style="margin-left:auto;color:var(--text3)">после первого платежа клиент → ОИ/ОКС (собираемость рассрочки - в карточке ОКС)</span>
         </div></div>`;
     }
-    let pGross=0,pIncass=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'){const c=bflDeptCalc(x,g);pGross+=c.gross;pIncass+=c.incassation;}});
+    let pGross=0,pIncass=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'&&!x.selfFunded){const c=bflDeptCalc(x,g);pGross+=c.gross;pIncass+=c.incassation;}});
     const deals=bflOpDeals();
     const cp=_bflModel.clientPath||{};
     const avgSimple=((cp.simpleMin||0)+(cp.simpleMax||0))/2;
@@ -8758,7 +8789,7 @@ function bflRenderDepts(host){
     return `<div style="margin:20px 0 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 2px 12px rgba(43,49,69,.06);overflow:hidden">
       ${_titleBar('production',`<div style="margin-left:auto;text-align:right"><div style="font-size:9.5px;opacity:.85;text-transform:uppercase;letter-spacing:.07em">Инкассация блока</div><div style="font-size:23px;font-weight:700;font-family:var(--mono);line-height:1.1">${bflM(pIncass)}</div></div>`)}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--border)">
-        ${_chip('Расходы блока',bflM(pGross),'var(--outcome)','ОКС + ОИ + ОПАУ')}
+        ${_chip('Расходы блока',bflM(pGross),'var(--outcome)','ОКС + ОИ · ОПАУ - свой ОПИУ')}
         ${_chip('Инкассация',bflM(pIncass),'var(--income)','рассрочка ОКС')}
         ${_chip('Дел от ОП',bflI(deals),'var(--text)','входящий поток')}
         ${_chip('Средний срок процедуры',avgTerm.toFixed(1).replace('.',',')+' мес','var(--text2)','портфель '+Math.round((1-(cp.simpleShare||0))*100)+'/'+Math.round((cp.simpleShare||0)*100))}
@@ -8905,8 +8936,8 @@ function bflRunTests(){
     // AC5 - ОПИУ: выручка (инкассация сохранена) + депозит точные; расходы изменились структурно (агентские в маркетинге)
     const o=bflOPIU();
     ok('ОПИУ Выручка посчитана (>0)',o.revenue>0&&isFinite(o.revenue),Math.round(o.revenue)); // ОП = первый платёж (сделки×мин), ОС = рассрочка - выручка зависит от объёмов
-    ok('Депозит pass-through (ОПАУ 25000 × дела)',o.deposit>0&&isFinite(o.deposit),Math.round(o.deposit));
-    ok('ОПИУ Расходы посчитаны (20-26М)',o.expenses>20000000&&o.expenses<26000000,Math.round(o.expenses));
+    ok('Депозит pass-through (ОИ депозит суда 25000 × дела)',o.deposit>0&&isFinite(o.deposit),Math.round(o.deposit));
+    ok('ОПИУ Расходы посчитаны (14-24М, ОПАУ - свой ОПИУ)',o.expenses>14000000&&o.expenses<24000000,Math.round(o.expenses));
     ok('ОПИУ Рентабельность конечна',o.rent!=null&&isFinite(o.rent),+(o.rent*100).toFixed(1));
   }finally{_bflModel=save;_bflAuto=savedAuto;_tabFilters.bflmodel.depositExcluded=savedDep;}
   const passed=R.filter(r=>r.pass).length;
