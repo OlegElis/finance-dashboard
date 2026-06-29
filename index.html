@@ -7909,6 +7909,7 @@ function bflModelDefault(){
     directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
     checkDefault:245991,
     blocks:{commercial:{owner:'Черновский Антон'},production:{owner:'Васянина Елена'},opau:{owner:'Кольцова Марина'}}, // руководители блоков/контуров
+    clientPath:{toOks:1,oksToOi:1,court:1,auAppoint:1,simpleShare:0.7,simpleMin:4,simpleMax:6,complexExtra:3}, // путь клиента (сроки, мес; портфель простые/сложные)
     // Слой B+C - отделы сквозного конвейера (эталонный датасет §5). ЦКП = расходы_gross / tskpBase.
     // depositExcluded (контрол) переключает расходы ОПИУ gross↔net. По умолчанию депозит ВКЛЮЧЁН (как в эталоне §6).
     departments:[
@@ -7942,15 +7943,15 @@ function bflModelDefault(){
           ]},
         roles:[{name:'Руководитель ОП',fte:1,rate:200000},{name:'Менеджер ОП',fte:6,rate:150000},{name:'Стажёр ОП',fte:1.5,rate:70000}],
         costs:[],incassation:0,tskpLabel:'переданные дела (сделки)'},
-      {id:'os',group:'production',name:'ОС - Отдел сопровождения',collectsRassrochka:true,tskpFromOp:true,
+      {id:'oi',group:'production',name:'Отдел исполнения (ОИ)',
+        roles:[{name:'Руководитель',fte:1,rate:110000},{name:'Юрист: подача заявлений',fte:2,rate:90000},{name:'Юрист: сохранение имущества',fte:1,rate:90000},{name:'Юрист: ипотека',fte:1,rate:90000},{name:'Юрист: работа с КМ',fte:1,rate:90000}],
+        costs:[{name:'Адвокатский запрет (1000 × 49,6)',amount:49600}],incassation:0,tskpBase:588.66,tskpLabel:'база уточняется (§11)',
+        capacity:{base:374,norm:null,driver:'подача в суд (от ОКС)'}},
+      {id:'os',group:'production',name:'Отдел клиентского сопровождения (ОКС)',collectsRassrochka:true,tskpFromOp:true,
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Зам',fte:0.10,rate:100000},{name:'Менеджер',fte:11.74,rate:90000},{name:'Стажёр',fte:2.94,rate:70000}],
         costs:[],incassation:0,tskpBase:150,tskpLabel:'сделки от ОП',
         capacity:{base:1526,norm:130,roleIdx:2,driver:'дел в работе на 1 менеджера'}},
-      {id:'oi',group:'production',name:'ОИ - Отдел исполнения',
-        roles:[{name:'Руководитель',fte:1,rate:110000},{name:'Юрист: подача заявлений',fte:2,rate:90000},{name:'Юрист: сохранение имущества',fte:1,rate:90000},{name:'Юрист: ипотека',fte:1,rate:90000},{name:'Юрист: работа с КМ',fte:1,rate:90000}],
-        costs:[{name:'Адвокатский запрет (1000 × 49,6)',amount:49600}],incassation:0,tskpBase:588.66,tskpLabel:'база уточняется (§11)',
-        capacity:{base:374,norm:null,driver:'задачи от ОС (176+88+66+44)'}},
-      {id:'opau',group:'production',name:'ОПАУ - Отдел помощников АУ',contour:'opau',tskpFromOp:true,casesFromOp:true,
+      {id:'opau',group:'production',name:'Отдел помощников АУ (ОПАУ)',contour:'opau',tskpFromOp:true,casesFromOp:true,
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Зам руководителя',fte:1,rate:100000},{name:'Делопроизводство',fte:1,rate:50000},{name:'Выплаты (финансист)',fte:2,rate:70000},{name:'Проверка ответов госорганов',fte:1,rate:50000},{name:'Взаимодействие с ФССП',fte:1,rate:70000},{name:'Реализация имущества',fte:1,rate:70000},{name:'Взаимодействие с кредиторами',fte:1,rate:70000},{name:'Введение процедуры',fte:1,rate:70000},{name:'Контроль процедур',fte:7,rate:80000}],
         perCase:[{name:'Возвратный депозит (за процедуру)',rate:25000,passThrough:true},{name:'Публикации (за процедуру)',rate:20000}],
         costs:[],incassation:0,tskpLabel:'дела от ОИ',
@@ -8032,6 +8033,13 @@ function bflEnsureModel(m){
     opauDep.perCase=[{name:'Возвратный депозит (за процедуру)',rate:25000,passThrough:true},{name:'Публикации (за процедуру)',rate:20000}];
     opauDep.costs=(opauDep.costs||[]).filter(c=>!/депозит|публикац|почтов|прочие/i.test((c&&c.name)||''));}
   if(m.blocks&&!m.blocks.opau)m.blocks.opau={owner:'Кольцова Марина'};
+  // производство: переименование отделов + порядок (ОИ выше ОКС) + путь клиента
+  (m.departments||[]).forEach(dep=>{if(!dep)return;
+    if(dep.id==='os'&&!/\(ОКС\)/.test(dep.name||''))dep.name='Отдел клиентского сопровождения (ОКС)';
+    if(dep.id==='oi'&&!/\(ОИ\)/.test(dep.name||''))dep.name='Отдел исполнения (ОИ)';
+    if(dep.id==='opau'&&!/\(ОПАУ\)/.test(dep.name||''))dep.name='Отдел помощников АУ (ОПАУ)';});
+  {const a=m.departments||[],iOi=a.findIndex(x=>x&&x.id==='oi'),iOs=a.findIndex(x=>x&&x.id==='os');if(iOi>-1&&iOs>-1&&iOi>iOs){const oi=a.splice(iOi,1)[0];a.splice(iOs,0,oi);}}
+  if(!m.clientPath)m.clientPath=JSON.parse(JSON.stringify(d.clientPath));
   if(m.checkDefault==null)m.checkDefault=d.checkDefault;
   if(!m.blocks)m.blocks=JSON.parse(JSON.stringify(d.blocks)); // руководители блоков
   if(!m.meta)m.meta=d.meta;
@@ -8630,7 +8638,7 @@ function bflRenderDepts(host){
       </div>`;
     }
     const subHead=d.contour?`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 6px;padding:8px 12px;background:var(--accent-light);border-radius:9px;border:1px dashed var(--accent)">
-      <span style="font-size:12px;font-weight:700;color:var(--accent)">Контур ${esc(String(d.name||'').split(' - ')[0])}</span>
+      <span style="font-size:12px;font-weight:700;color:var(--accent)">Контур ${esc((String(d.name||'').match(/\(([^)]+)\)/)||[])[1]||d.name)}</span>
       <span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Руководитель</span>
       <input type="text" value="${esc((_bflModel.blocks&&_bflModel.blocks[d.contour]&&_bflModel.blocks[d.contour].owner)||'')}" data-path="blocks.${d.contour}.owner" data-text="1" onchange="bflGlobalEdit(this)" placeholder="руководитель" style="width:160px;font-size:12px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fffdf0">
       <span style="margin-left:auto;font-size:10.5px;color:var(--text3)">подотчётна ${esc((_bflModel.blocks&&_bflModel.blocks.production&&_bflModel.blocks.production.owner)||'')}</span></div>`:'';
@@ -8641,7 +8649,7 @@ function bflRenderDepts(host){
     <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px">Слой B · Юнит-экономика отделов сквозного конвейера (Привлечение → Продажи → Производство → Менеджмент). ЦКП каждого отдела, штатная численность (ШЕ) и узкие места по мощности. Клик по отделу - редактируемые параметры (живой пересчёт). Эталонный датасет §5; всё редактируемое.</div>`;
   const SUPER={attract:'commercial',sales:'commercial',production:'production'};
   const SUPTITLE={commercial:'Коммерческий блок',production:'Производственный блок'};
-  const SUPSUB={commercial:'Привлечение → Продажи · сквозная экономика',production:'ОС → ОИ → ОПАУ · производство и сопровождение'};
+  const SUPSUB={commercial:'Привлечение → Продажи · сквозная экономика',production:'ОКС → ОИ → ОПАУ · сопровождение, исполнение, процедуры'};
   const _chip=(lbl,val,col,sub)=>`<div style="background:var(--surface);padding:10px 14px"><div style="font-size:9px;color:var(--label);text-transform:uppercase;letter-spacing:.05em">${lbl}</div><div style="font-size:15px;font-weight:600;font-family:var(--mono);color:${col||'var(--text)'};margin-top:3px">${val}</div>${sub?`<div style="font-size:9.5px;color:var(--text3);margin-top:1px">${sub}</div>`:''}</div>`;
   const _gi=(path,val,w,pct)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-path="${path}"${pct?' data-pct="1"':''} onchange="bflGlobalEdit(this)" style="width:${w||50}px;text-align:right;font-family:var(--mono);font-size:11.5px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
   const _ownerInp=sk=>{const o=(_bflModel.blocks&&_bflModel.blocks[sk]&&_bflModel.blocks[sk].owner)||'';return `<input type="text" value="${esc(o)}" data-path="blocks.${sk}.owner" data-text="1" onchange="bflGlobalEdit(this)" placeholder="руководитель" style="width:170px;font-size:12px;padding:3px 8px;border:1px solid rgba(255,255,255,.35);border-radius:6px;background:rgba(255,255,255,.16);color:#fff">`;};
@@ -8668,12 +8676,25 @@ function bflRenderDepts(host){
     }
     let pGross=0,pIncass=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'){const c=bflDeptCalc(x,g);pGross+=c.gross;pIncass+=c.incassation;}});
     const deals=bflOpDeals();
+    const cp=_bflModel.clientPath||{};
+    const avgSimple=((cp.simpleMin||0)+(cp.simpleMax||0))/2;
+    const avgTerm=(cp.simpleShare||0)*avgSimple+(1-(cp.simpleShare||0))*(avgSimple+(cp.complexExtra||0));
+    const step=(t)=>`<span style="font-weight:600;color:var(--text)">${t}</span>`;
+    const arr=(t)=>`<span style="color:var(--text3)">→ ${t} →</span>`;
     return `<div style="margin:20px 0 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 2px 12px rgba(43,49,69,.06);overflow:hidden">
       ${_titleBar('production',`<div style="margin-left:auto;text-align:right"><div style="font-size:9.5px;opacity:.85;text-transform:uppercase;letter-spacing:.07em">Инкассация блока</div><div style="font-size:23px;font-weight:700;font-family:var(--mono);line-height:1.1">${bflM(pIncass)}</div></div>`)}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--border)">
-        ${_chip('Расходы блока',bflM(pGross),'var(--outcome)','ОС + ОИ + ОПАУ')}
-        ${_chip('Инкассация',bflM(pIncass),'var(--income)','рассрочка ОС')}
+        ${_chip('Расходы блока',bflM(pGross),'var(--outcome)','ОКС + ОИ + ОПАУ')}
+        ${_chip('Инкассация',bflM(pIncass),'var(--income)','рассрочка ОКС')}
         ${_chip('Дел от ОП',bflI(deals),'var(--text)','входящий поток')}
+        ${_chip('Средний срок процедуры',avgTerm.toFixed(1).replace('.',',')+' мес','var(--text2)','портфель '+Math.round((1-(cp.simpleShare||0))*100)+'/'+Math.round((cp.simpleShare||0)*100))}
+      </div>
+      <div style="padding:11px 16px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text2)">
+        <div style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Путь клиента</div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;line-height:2.1">
+          ${step('Сделка (ОП)')} ${arr('≤'+_gi('clientPath.toOks',cp.toOks,34)+' мес')} ${step('ОКС')} ${arr('≤'+_gi('clientPath.oksToOi',cp.oksToOi,34)+' мес')} ${step('ОИ: подача в суд')} ${arr(_gi('clientPath.court',cp.court,34)+' мес суд')} ${arr(_gi('clientPath.auAppoint',cp.auAppoint,34)+' мес назначение АУ')} ${step('ОПАУ: ведение процедуры')}
+        </div>
+        <div style="margin-top:7px">Портфель дел: <b>простые</b> (без имущества) ${_gi('clientPath.simpleShare',+(((cp.simpleShare||0)*100).toFixed(0)),36,true)} % — ${_gi('clientPath.simpleMin',cp.simpleMin,30)}–${_gi('clientPath.simpleMax',cp.simpleMax,30)} мес · <b>сложные</b> (с имуществом) +${_gi('clientPath.complexExtra',cp.complexExtra,30)} мес на торги · средний срок процедуры ≈ <b>${avgTerm.toFixed(1).replace('.',',')} мес</b></div>
       </div></div>`;
   };
   let lastSuper=null,superOpen=false;
