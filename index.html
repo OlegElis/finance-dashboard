@@ -6447,6 +6447,10 @@ function renderAnomaly(f){
   const isIP=n=>/^ИП[\s\-«"]/i.test(n)||/^ИП$/i.test(n);
   const isOfficialAcc=r=>{const n=S(r[COL.ACCOUNT]);return isOOO(n)||isIP(n);};
   const fnsYes=a=>['да','true','1','+'].includes(S(a).toLowerCase());
+  const isAuSauDir=a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}; // направление АУ или САУ
+  // Карты/касса, относящиеся только к АУ/САУ (матч по реквизитам счёта - банк+номер / «КМ-Касса»)
+  const AU_CARDS=['сбербанк1638','сбербанк8572','альфабанк6170','совкомбанк1673','тинькофф9930','кмкасса'];
+  const isAuCard=r=>{const a=norm(r[COL.ACCOUNT]);return AU_CARDS.some(k=>a.includes(k));};
   // Справочник сделок Bitrix24 (RawData_BFL) для сверки ID_Offer - логика как в Дебиторке БФЛ
   const BFL_DIR='БФЛ - Банкротство физических лиц';
   const refOffer=new Set(),refLead={},refContract=new Set(),refName=new Set();
@@ -6482,6 +6486,7 @@ function renderAnomaly(f){
       {field:COL.SECOND_SIDE,fieldName:'Контрагент (ID_SecondSide)',requireFilled:true}
     ]},
     {id:'fns',label:'Счёт ООО/ИП → ФНС «да»',where:r=>!isMove(r)&&isOfficialAcc(r),checks:[{field:COL.FNS,fieldName:'ФНС',expect:'да',ok:fnsYes}]},
+    {id:'aucard',label:'Карты/касса АУ → направление АУ/САУ',soft:true,where:r=>!isMove(r)&&isAuCard(r),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:isAuSauDir}]},
     {id:'movebal',label:'Перемещение → парность (+/− в Поступлении, сумма 0)',group:true}
   ];
   // ID_Offer - сверка со справочником Bitrix24 (считается отдельным блоком ниже; здесь только для фильтра/KPI)
@@ -6494,7 +6499,7 @@ function renderAnomaly(f){
       rl.checks.forEach(c=>{
         const actual=S(r[c.field]);
         const bad=c.ok?!c.ok(actual,r):c.requireFilled?actual==='':!norm(actual).includes(c.en);
-        if(bad)items.push({row:r,rule:rl.id,ruleLabel:rl.label,fieldName:c.fieldName,expect:c.requireFilled?'(обязательно заполнить)':c.expect,got:actual||'(пусто)'});
+        if(bad)items.push({row:r,rule:rl.id,ruleLabel:rl.label,soft:!!rl.soft,fieldName:c.fieldName,expect:c.requireFilled?'(обязательно заполнить)':c.expect,got:actual||'(пусто)'});
       });
     });
   });
@@ -6558,10 +6563,10 @@ function renderAnomaly(f){
   const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
   const LIMIT=2000;
   const rows=shown.slice(0,LIMIT).map((x,i)=>`<tr class="anom-row" style="cursor:pointer" onclick="anomShowCard(${i})" title="Карточка операции">
-    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)">${esc(x.ruleLabel)}</span></td>
+    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:${x.soft?'var(--orange)':'var(--accent)'};background:color-mix(in srgb,${x.soft?'var(--orange)':'var(--accent)'} 12%,transparent)">${esc(x.ruleLabel)}${x.soft?' · мягкое':''}</span></td>
     <td style="${td};font-size:10px;color:var(--text3)">${esc(x.fieldName)}</td>
     <td style="${td};color:var(--income);font-weight:600">${esc(x.expect)}</td>
-    <td style="${td};color:var(--outcome);font-weight:700;background:#fdecea">${esc(x.got)}${x.agg?` <span style="color:var(--text3);font-weight:400">· ${x.count} оп. ↗</span>`:''}</td>
+    <td style="${td};color:${x.soft?'var(--orange)':'var(--outcome)'};font-weight:700;background:${x.soft?'#fff4e6':'#fdecea'}">${esc(x.got)}${x.agg?` <span style="color:var(--text3);font-weight:400">· ${x.count} оп. ↗</span>`:''}</td>
     <td style="${td};text-align:center;font-size:10px;white-space:nowrap">${x.agg?'разные':dsF(x.row[COL.DATE_DDS])}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.SECOND_SIDE]))}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.ARTICLE_NAME]))}</td>
@@ -6572,7 +6577,7 @@ function renderAnomaly(f){
   const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
 
   el.innerHTML=`<style>#tabAnomaly .anom-row:hover{background:var(--surface2)}</style>`+filterBar+kpiHtml+`
-  <div style="padding:6px var(--secpx);font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">Жёсткие правила: ${RULES.map(rl=>'<b>'+esc(rl.label)+'</b>').join('; ')}. «Ожидается» - что должно быть в поле, «Указано» - фактическое значение. Read-only, правки - в Google Sheets.</div>
+  <div style="padding:6px var(--secpx);font-size:11px;color:var(--text3);background:var(--surface);border-bottom:1px solid var(--border)">Правила: ${RULES.map(rl=>'<b>'+esc(rl.label)+'</b>'+(rl.soft?' <span style="color:var(--orange)">(мягкое)</span>':'')).join('; ')}. «Ожидается» - что должно быть в поле, «Указано» - фактическое значение. Read-only, правки - в Google Sheets.</div>
   <div class="table-wrap" style="margin-top:10px">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border)">
       <span style="font-size:12px;font-weight:600;color:var(--text2)">Нарушения правил</span>
