@@ -531,6 +531,9 @@
     <div class="nav-item" id="nav-depau" onclick="switchTab('depau')">
       <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="3.6"/><path d="M12 12v-2.2"/></svg> Депозиты АУ
     </div>
+    <div class="nav-item" id="nav-audit" onclick="switchTab('audit')">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg> Аудит закупа
+    </div>
   </nav>
   <div class="sidebar-footer">
     <button class="status-pill" id="statusPill" onclick="refreshData()" title="Обновить данные из Google Sheets">
@@ -612,6 +615,7 @@
       <div id="tabTarget" class="hidden"></div>
       <div id="tabBflmodel" class="hidden"></div>
       <div id="tabRegistry" class="hidden"></div>
+      <div id="tabAudit" class="hidden"></div>
     </div>
   </div>
 
@@ -629,7 +633,7 @@ const isOpeningBalance=name=>{const x=String(name||'').toLowerCase();return x.in
 let RAW=[];
 let activeTab='bank';
 
-const TAB_TITLES={bank:'Реестр банковских и кассовых операций (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ - план от обратного (сколько тратить под целевую прибыль)',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Контроль - Дубли записей',incomplete:'Контроль - Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ - задолженность по договорам',bflmodel:'Модель БФЛ - юнит-экономика и сценарии',registry:'Реестр операций - поиск по любому полю'};
+const TAB_TITLES={bank:'Реестр банковских и кассовых операций (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ - план от обратного (сколько тратить под целевую прибыль)',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Контроль - Дубли записей',incomplete:'Контроль - Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ - задолженность по договорам',bflmodel:'Модель БФЛ - юнит-экономика и сценарии',registry:'Реестр операций - поиск по любому полю',audit:'Аудит закупа - контрагенты и кассы по подстатье'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -879,6 +883,7 @@ const _tabFilters={
   loans:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyDebt:false},
   anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9'},
   depau:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyOpen:false},
+  audit:{sub:'300_Лидогенарация',year:'',account:'',dir:'',dim:'cp'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
@@ -1209,11 +1214,137 @@ function switchTab(name){
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
   document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
-  ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv','debtbfl','loans','anomaly','depau','planfact','target','bflmodel','registry'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
+  ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv','debtbfl','loans','anomaly','depau','planfact','target','bflmodel','registry','audit'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   if(window.innerWidth<=820)toggleSidebar(false); // на мобильном закрываем меню после выбора
   renderActiveTab();
 }
-function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);else if(activeTab==='loans')renderLoans(f);else if(activeTab==='anomaly')renderAnomaly(f);else if(activeTab==='depau')renderDepAU(f);else if(activeTab==='planfact')renderPlanFact(f);else if(activeTab==='target')renderTarget(f);else if(activeTab==='bflmodel')renderBflModel(f);else if(activeTab==='registry')renderRegistry(f);try{_injectPresetBar();}catch(e){}}
+
+// ───────────────────────── Аудит закупа (контроль контрагентов/касс по подстатье) ─────────────────────────
+// Группировка списаний по контрагенту ИЛИ кассе-плательщику внутри выбранной подстатьи; красные флаги
+// (100% круглые суммы у не-площадок, новый в году, концентрация). Клик по строке - карта денег (все операции).
+const _AUDIT_PLAT=['яндекс','дубльгис','2гис','click','клик.ру','клик ру','vk ','vkontakte','mail','google','megafon','мегафон','авито','avito','telegram','ozon','озон','правовед','elama','елама','смартьюб','умное радио','маркет'];
+function _auditIsPlat(s){s=String(s||'').toLowerCase();return _AUDIT_PLAT.some(k=>s.indexOf(k)>=0);}
+function renderAudit(){
+  const host=document.getElementById('tabAudit');if(!host)return;
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const F=_tabFilters.audit;
+  const fmtR=n=>Math.round(n).toLocaleString('ru-RU');
+  const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
+  if(!Array.isArray(RAW)||!RAW.length){host.innerHTML=`<div style="padding:30px;color:var(--text3)">Нет данных. Подключите Google Sheets.</div>`;return;}
+  const years=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>b-a);
+  const dirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort();
+  const q=(F.sub||'').toLowerCase().trim(),accQ=(F.account||'').toLowerCase().trim();
+  const dim=F.dim||'cp';
+  const keyOf=r=>dim==='acc'?(String(r[COL.ACCOUNT]||'').trim()||'(без кассы)'):(String(r[COL.SECOND_SIDE]||'').trim()||'(без контрагента)');
+  const match=r=>{
+    if(q&&String(r[COL.ARTICLE_NAME]||'').toLowerCase().indexOf(q)<0)return false;
+    if(F.dir&&String(r[COL.ACTIVITY_DIR]||'').trim()!==F.dir)return false;
+    if(accQ&&String(r[COL.ACCOUNT]||'').toLowerCase().indexOf(accQ)<0)return false;
+    return Math.abs(parseNum(r[COL.OUTCOME])||0)>0;
+  };
+  const yOf=r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;};
+  const base=RAW.filter(r=>match(r)&&(!F.year||String(yOf(r))===String(F.year)));
+  let prior=null;
+  if(F.year){prior=new Set();RAW.forEach(r=>{if(match(r)&&String(yOf(r))===String(+F.year-1))prior.add(keyOf(r));});}
+  const map={};
+  base.forEach(r=>{const k=keyOf(r),out=Math.abs(parseNum(r[COL.OUTCOME])||0),d=parseDate(r[COL.DATE_OPIU]);
+    const o=map[k]||(map[k]={key:k,sum:0,n:0,mon:{},rnd:0,first:d,last:d,plat:_auditIsPlat(k),rows:[]});
+    o.sum+=out;o.n++;if(d){o.mon[d.getFullYear()+'-'+d.getMonth()]=1;if(!o.first||d<o.first)o.first=d;if(!o.last||d>o.last)o.last=d;}
+    if(out%5000===0)o.rnd++;o.rows.push(r);});
+  const list=Object.keys(map).map(k=>map[k]).sort((a,b)=>b.sum-a.sum);
+  window._auditList=list;
+  const total=list.reduce((a,x)=>a+x.sum,0),top1=list.length?list[0].sum:0;
+  const flagsCount=list.filter(x=>!x.plat&&x.n>=3&&x.rnd/x.n===1).length;
+  // фильтр-бар
+  const inp=(field,val,w,ph)=>`<input type="text" value="${esc(val)}" placeholder="${ph||''}" oninput="_tabFilters.audit.${field}=this.value" onchange="renderAudit()" onkeydown="if(event.key==='Enter')renderAudit()" style="width:${w}px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+  const yearSel=`<select onchange="_tabFilters.audit.year=this.value;renderAudit()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="">Все годы</option>${years.map(y=>`<option value="${y}"${String(F.year)===String(y)?' selected':''}>${y}</option>`).join('')}</select>`;
+  const dirSel=`<select onchange="_tabFilters.audit.dir=this.value;renderAudit()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;max-width:240px"><option value="">Все направления</option>${dirs.map(d=>`<option value="${esc(d)}"${F.dir===d?' selected':''}>${esc(d)}</option>`).join('')}</select>`;
+  const dimSel=`<select onchange="_tabFilters.audit.dim=this.value;renderAudit()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="cp"${dim==='cp'?' selected':''}>Разрез: Контрагент</option><option value="acc"${dim==='acc'?' selected':''}>Разрез: Касса-плательщик</option></select>`;
+  const kpi=(l,v,c,s)=>`<div style="flex:1;min-width:150px;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:11px 13px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.05em">${l}</div><div style="font-size:18px;font-weight:600;font-family:var(--mono);color:${c||'var(--text)'};margin-top:3px">${v}</div>${s?`<div style="font-size:9.5px;color:var(--text3);margin-top:1px">${s}</div>`:''}</div>`;
+  const badge=(t,col)=>`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;color:#fff;background:${col};white-space:nowrap">${t}</span>`;
+  const cell='padding:5px 8px;font-family:var(--mono);font-size:12px;text-align:right';
+  const rows=list.slice(0,400).map((x,i)=>{
+    const share=total?x.sum/total:0,roundPct=x.n?Math.round(x.rnd/x.n*100):0;
+    const flags=[];
+    if(x.plat)flags.push(badge('площадка','var(--text-muted)'));
+    else{
+      if(x.n>=3&&roundPct===100)flags.push(badge('100% круглые','#d98324'));
+      else if(roundPct>=80&&x.n>=3)flags.push(badge(roundPct+'% круглых','#e0a458'));
+    }
+    if(F.year&&prior&&!prior.has(x.key))flags.push(badge('НОВЫЙ','#3a6ea5'));
+    if(share>=0.15)flags.push(badge('крупный','#7a5fb0'));
+    return `<tr style="border-bottom:1px solid var(--divider);cursor:pointer" onclick="auditShowDetail(${i})">
+      <td style="padding:5px 8px;font-size:12px">${esc(x.key)}</td>
+      <td style="${cell};color:var(--outcome);font-weight:600">${fmtR(x.sum)}</td>
+      <td style="${cell};color:var(--text3)">${(share*100).toFixed(1)}%</td>
+      <td style="${cell};color:var(--text2)">${x.n}</td>
+      <td style="${cell};color:var(--text2)">${Object.keys(x.mon).length}</td>
+      <td style="${cell};color:var(--text2)">${fmtR(x.sum/x.n)}</td>
+      <td style="${cell};color:${!x.plat&&roundPct>=80?'#c0392f':'var(--text3)'}">${roundPct}%</td>
+      <td style="${cell};color:var(--text3);font-size:11px">${ds(x.first)}</td>
+      <td style="${cell};color:var(--text3);font-size:11px">${ds(x.last)}</td>
+      <td style="padding:5px 8px;display:flex;gap:4px;flex-wrap:wrap">${flags.join('')}</td>
+    </tr>`;}).join('');
+  const th=t=>`<th style="padding:6px 8px;font-size:10px;color:var(--label);font-weight:600;text-transform:uppercase;letter-spacing:.04em;text-align:right;white-space:nowrap">${t}</th>`;
+  host.innerHTML=`<div style="padding:4px 2px">
+    <div style="font-size:11.5px;color:var(--text3);margin-bottom:10px">Аудит закупа по подстатье: группировка списаний по контрагенту/кассе + красные флаги (100% круглые суммы у не-площадок, новый в году, концентрация). Клик по строке - все операции с назначением и кассой-плательщиком.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
+      <span style="font-size:11px;color:var(--label)">Подстатья</span>${inp('sub',F.sub,200,'часть названия')}
+      ${yearSel}${dirSel}${dimSel}
+      <span style="font-size:11px;color:var(--label)">Касса</span>${inp('account',F.account,150,'часть реквизита')}
+      <button onclick="_tabFilters.audit={sub:'',year:'',account:'',dir:'',dim:'${dim}'};renderAudit()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:11.5px">× сброс</button>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      ${kpi('Всего закуп',fmtR(total)+' ₽','var(--outcome)',base.length+' операций')}
+      ${kpi(dim==='acc'?'Касс':'Контрагентов',String(list.length),'var(--text)')}
+      ${kpi('Доля топ-1',(total?(top1/total*100):0).toFixed(1)+'%','var(--accent)',list.length?esc(list[0].key).slice(0,28):'')}
+      ${kpi('Флаг «100% круглые»',String(flagsCount),flagsCount>0?'#c0392f':'var(--income)','не-площадки')}
+    </div>
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
+      <table style="width:100%;border-collapse:collapse;min-width:900px">
+        <thead><tr style="border-bottom:2px solid var(--border)"><th style="padding:6px 8px;font-size:10px;color:var(--label);font-weight:600;text-transform:uppercase;letter-spacing:.04em;text-align:left">${dim==='acc'?'Касса-плательщик':'Контрагент'}</th>${th('Закуп ₽')}${th('Доля')}${th('Опер.')}${th('Мес.')}${th('Ср.платёж')}${th('Кругл.%')}${th('Первый')}${th('Послед.')}<th style="padding:6px 8px;font-size:10px;color:var(--label);font-weight:600;text-transform:uppercase;letter-spacing:.04em;text-align:left">Флаги</th></tr></thead>
+        <tbody>${rows||`<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--text3)">Нет операций по фильтру</td></tr>`}</tbody>
+      </table>
+    </div>
+    ${list.length>400?`<div style="font-size:10.5px;color:var(--text3);margin-top:6px">Показаны топ-400 из ${list.length}.</div>`:''}
+  </div>`;
+}
+window.auditShowDetail=function(i){
+  const x=(window._auditList||[])[i];if(!x)return;
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
+  const rs=[...x.rows].sort((a,b)=>(parseDate(a[COL.DATE_OPIU])||0)-(parseDate(b[COL.DATE_OPIU])||0));
+  window._auditMoves=rs;
+  const tdS='padding:3px 7px;font-size:10.5px;border-top:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  const tr=rs.map((r,j)=>`<tr style="cursor:pointer" onclick="ddsShowRecordCard(window._auditMoves[${j}])">
+    <td style="${tdS};text-align:center;width:80px">${ds(r[COL.DATE_OPIU])}</td>
+    <td style="${tdS};max-width:200px">${esc(r[COL.SECOND_SIDE])}</td>
+    <td style="${tdS};text-align:right;font-family:var(--mono);color:var(--outcome);width:90px">${Math.round(Math.abs(parseNum(r[COL.OUTCOME])||0)).toLocaleString('ru-RU')}</td>
+    <td style="${tdS};max-width:170px">${esc(r[COL.ACCOUNT])}</td>
+    <td style="${tdS};max-width:320px;white-space:normal">${esc(r[COL.PURPOSE])}</td>
+    <td style="${tdS};max-width:150px">${esc(r[COL.ACTIVITY_DIR])}</td></tr>`).join('');
+  const o=document.createElement('div');o.className='txn-card-overlay';
+  o.innerHTML=`<div style="background:var(--surface);border-radius:14px;width:94vw;max-width:1180px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--border)">
+      <div style="min-width:0"><div style="font-size:13px;font-weight:700">${esc(x.key)}</div><div style="font-size:10px;color:var(--text3);margin-top:1px">Закуп ${Math.round(x.sum).toLocaleString('ru-RU')} ₽ · ${x.n} операций · клик по строке - полная карточка</div></div>
+      <button onclick="this.closest('.txn-card-overlay').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1">✕</button>
+    </div>
+    <div style="padding:8px 14px;overflow:auto">
+      <table style="border-collapse:collapse;width:100%;table-layout:fixed">
+        <thead><tr style="position:sticky;top:0;background:var(--surface2)">
+          <th style="padding:4px 7px;font-size:9px;text-align:center;color:var(--label)">Дата ОПиУ</th>
+          <th style="padding:4px 7px;font-size:9px;text-align:left;color:var(--label)">Контрагент</th>
+          <th style="padding:4px 7px;font-size:9px;text-align:right;color:var(--label)">Списание ₽</th>
+          <th style="padding:4px 7px;font-size:9px;text-align:left;color:var(--label)">Касса-плательщик</th>
+          <th style="padding:4px 7px;font-size:9px;text-align:left;color:var(--label)">Назначение</th>
+          <th style="padding:4px 7px;font-size:9px;text-align:left;color:var(--label)">Направление</th>
+        </tr></thead><tbody>${tr}</tbody></table>
+    </div>
+  </div>`;
+  o.addEventListener('click',e=>{if(e.target===o)o.remove();});
+  document.body.appendChild(o);
+};
+function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);else if(activeTab==='loans')renderLoans(f);else if(activeTab==='anomaly')renderAnomaly(f);else if(activeTab==='depau')renderDepAU(f);else if(activeTab==='planfact')renderPlanFact(f);else if(activeTab==='target')renderTarget(f);else if(activeTab==='bflmodel')renderBflModel(f);else if(activeTab==='registry')renderRegistry(f);else if(activeTab==='audit')renderAudit(f);try{_injectPresetBar();}catch(e){}}
 
 // ───────────────────────── Пресеты отчётов (config/presets) ─────────────────────────
 // Пресет = именованный частичный снимок фильтров вкладки. Хранится в Firebase config/presets + localStorage-кэш.
