@@ -8936,13 +8936,29 @@ function bflRenderOpiu(host){
 
   // таблица расходов по отделам
   const ex=_tabFilters.bflmodel.depositExcluded;
-  const rows=_bflModel.departments.map(d=>{const c=bflDeptCalc(d,g);const val=ex?c.net:c.gross;
-    return {name:d.name,val:val,inc:c.incassation,pass:c.pass};});
-  const totExp=rows.reduce((a,r)=>a+r.val,0),totInc=rows.reduce((a,r)=>a+r.inc,0);
+  // та же группировка по супер-блокам, что и во вкладке «Отделы · ЦКП»
+  const BLOCKS=[
+    {title:'Коммерческий блок',groups:['attract','sales']},
+    {title:'Производственный блок',groups:['production']},
+    {title:'Административно-управленческий персонал (АУП)',groups:['overhead']}
+  ];
+  let totExp=0,totInc=0;const bodyParts=[];
+  BLOCKS.forEach(B=>{
+    const depts=(_bflModel.departments||[]).filter(d=>B.groups.includes(d.group));if(!depts.length)return;
+    let sExp=0,sInc=0;const rws=[];
+    depts.forEach(d=>{const c=bflDeptCalc(d,g);const val=ex?c.net:c.gross;const self=!!d.selfFunded;
+      if(!self){sExp+=val;sInc+=c.incassation;}                 // самоокупаемые контуры (ОПАУ) - в своём ОПИУ, не в общем
+      rws.push({name:d.name,val:val,inc:c.incassation,pass:c.pass,self:self,selfNet:c.selfNet});});
+    totExp+=sExp;totInc+=sInc;bodyParts.push({title:B.title,rws:rws,sExp:sExp,sInc:sInc});
+  });
+  const tdNum='padding:5px 9px;text-align:right;font-family:var(--mono);font-size:12.5px';
+  const rowHtml=r=>`<tr style="border-bottom:1px solid var(--divider)${r.self?';opacity:.65':''}"><td style="padding:5px 9px 5px 18px;font-size:12.5px">${esc(r.name)}${r.self?` <span style="font-size:9px;color:var(--accent)">свой ОПИУ · сальдо ${bflM(r.selfNet)} (вне общего)</span>`:(r.pass>0&&!ex?` <span style="font-size:9px;color:var(--orange)">вкл. депозит ${bflM(r.pass)}</span>`:'')}</td><td style="${tdNum};color:${r.inc>0?'var(--income)':'var(--text-muted)'}">${r.inc>0?bflM(r.inc):'-'}</td><td style="${tdNum};color:${r.self?'var(--text-muted)':'var(--outcome)'}">${bflM(r.val)}</td><td style="${tdNum};color:var(--text3);font-size:11.5px">${r.self?'-':bflP(bflSafeDiv(r.val,totExp))}</td></tr>`;
   const expTbl=`<table style="width:100%;border-collapse:collapse;min-width:520px">
     <thead><tr style="border-bottom:2px solid var(--border)"><th style="text-align:left;padding:6px 9px;font-size:11px;color:var(--text2)">Отдел</th><th style="text-align:right;padding:6px 9px;font-size:11px;color:var(--text2)">Инкассация</th><th style="text-align:right;padding:6px 9px;font-size:11px;color:var(--text2)">Расходы${ex?' (net)':''}</th><th style="text-align:right;padding:6px 9px;font-size:11px;color:var(--text2)">Доля расх.</th></tr></thead><tbody>
-    ${rows.map(r=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:5px 9px;font-size:12.5px">${esc(r.name)}${r.pass>0&&!ex?` <span style="font-size:9px;color:var(--orange)">вкл. депозит ${bflM(r.pass)}</span>`:''}</td><td style="padding:5px 9px;text-align:right;font-family:var(--mono);font-size:12.5px;color:${r.inc>0?'var(--income)':'var(--text-muted)'}">${r.inc>0?bflM(r.inc):'-'}</td><td style="padding:5px 9px;text-align:right;font-family:var(--mono);font-size:12.5px;color:var(--outcome)">${bflM(r.val)}</td><td style="padding:5px 9px;text-align:right;font-family:var(--mono);font-size:11.5px;color:var(--text3)">${bflP(bflSafeDiv(r.val,totExp))}</td></tr>`).join('')}
-    <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:6px 9px;font-size:12.5px">ИТОГО</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono);color:var(--income)">${bflM(totInc)}</td><td style="padding:6px 9px;text-align:right;font-family:var(--mono);color:var(--outcome)">${bflM(totExp)}</td><td></td></tr>
+    ${bodyParts.map(B=>`<tr style="background:var(--section-bg)"><td style="padding:6px 9px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2)">${esc(B.title)}</td><td style="background:var(--section-bg)"></td><td style="background:var(--section-bg)"></td><td style="background:var(--section-bg)"></td></tr>
+      ${B.rws.map(rowHtml).join('')}
+      <tr style="border-bottom:1px solid var(--border);font-weight:600;background:var(--surface2)"><td style="padding:5px 9px;font-size:12px">Итого · ${esc(B.title)}</td><td style="${tdNum};color:var(--income)">${B.sInc>0?bflM(B.sInc):'-'}</td><td style="${tdNum};color:var(--outcome)">${bflM(B.sExp)}</td><td style="${tdNum};color:var(--text3);font-size:11.5px">${bflP(bflSafeDiv(B.sExp,totExp))}</td></tr>`).join('')}
+    <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:6px 9px;font-size:12.5px">ИТОГО</td><td style="${tdNum};color:var(--income)">${bflM(totInc)}</td><td style="${tdNum};color:var(--outcome)">${bflM(totExp)}</td><td></td></tr>
     </tbody></table>`;
 
   const recon=`<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:12px 14px;margin-top:14px">
@@ -8955,11 +8971,11 @@ function bflRenderOpiu(host){
         <tr><td style="padding:4px 8px">Сальдо</td><td style="padding:4px 8px;text-align:right;font-family:var(--mono)">${bflM(o.saldo)}</td><td style="padding:4px 8px;text-align:right;font-family:var(--mono);color:var(--text3)">${bflM(ET.saldo)}</td><td style="padding:4px 8px;text-align:right;font-family:var(--mono);color:${Math.abs(dSal)/ET.saldo<0.005?'var(--income)':'var(--text2)'}">${dStr(dSal)}</td></tr>
         <tr><td style="padding:4px 8px">Рентабельность</td><td style="padding:4px 8px;text-align:right;font-family:var(--mono)">${bflP(o.rent)}</td><td style="padding:4px 8px;text-align:right;font-family:var(--mono);color:var(--text3)">${bflP(ET.rent)}</td><td style="padding:4px 8px;text-align:right;font-family:var(--mono)">${o.rent!=null?((o.rent-ET.rent>=0?'+':'')+((o.rent-ET.rent)*100).toFixed(1).replace('.',',')+' п.п.'):'-'}</td></tr>
       </tbody></table>
-    <div style="font-size:10.5px;color:var(--text3);margin-top:7px">Допуск ±0,5% (округления + начисления). Депозит ОПАУ (${bflM(o.deposit)}) - оборотные средства; в эталоне §6 включён в расходы (компенсируется возвратом, который не учтён в выручке).</div>
+    <div style="font-size:10.5px;color:var(--text3);margin-top:7px">Допуск ±0,5% (округления + начисления). Депозит суда (${bflM(o.deposit)}, платит ОИ) - оборотные средства; в эталоне §6 включён в расходы (компенсируется возвратом в ОПАУ, который не учтён в общей выручке).</div>
   </div>`;
 
   host.innerHTML=`<div style="padding:4px 2px">${bflViewBar()}${bflPrintControls()}
-    <div style="font-size:11.5px;color:var(--text3);margin-bottom:12px">Слой C · Сборка ОПИУ из отделов. Выручка = инкассации (ОП-KO + ОП-AC + ОС); расходы = Σ отделов + менеджмент.</div>
+    <div style="font-size:11.5px;color:var(--text3);margin-bottom:12px">Слой C · Сборка ОПИУ из отделов по супер-блокам (как «Отделы · ЦКП»). Выручка = инкассации (ОП первый платёж + ОКС рассрочка); расходы = Σ отделов (ОПАУ - самоокупаемый контур, в своём ОПИУ).</div>
     <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:12px"><input type="checkbox" ${ex?'checked':''} onchange="bflToggleDeposit(this)"> Исключить депозит из расходов (pass-through, «теоретически верно»)</label>
     <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:6px">
       ${kpi('Выручка',bflM(o.revenue),'var(--income)','инкассация')}
