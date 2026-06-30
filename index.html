@@ -1255,6 +1255,13 @@ function renderAudit(){
   window._auditList=list;
   const total=list.reduce((a,x)=>a+x.sum,0),top1=list.length?list[0].sum:0;
   const flagsCount=list.filter(x=>!x.plat&&x.n>=3&&x.rnd/x.n===1).length;
+  // флаги на каждый объект (переиспользуются в таблице и в печатном отчёте)
+  list.forEach(x=>{const share=total?x.sum/total:0,roundPct=x.n?Math.round(x.rnd/x.n*100):0;const f=[];
+    if(x.plat)f.push({t:'площадка',c:'#9aa1ad'});
+    else{if(x.n>=3&&roundPct===100)f.push({t:'100% круглые',c:'#d98324'});else if(roundPct>=80&&x.n>=3)f.push({t:roundPct+'% круглых',c:'#e0a458'});}
+    if(F.year&&prior&&!prior.has(x.key))f.push({t:'НОВЫЙ',c:'#3a6ea5'});
+    if(share>=0.15)f.push({t:'крупный',c:'#7a5fb0'});
+    x.flags=f;x._share=share;x._roundPct=roundPct;});
   // фильтр-бар
   const inp=(field,val,w,ph)=>`<input type="text" value="${esc(val)}" placeholder="${ph||''}" oninput="_tabFilters.audit.${field}=this.value" onchange="renderAudit()" onkeydown="if(event.key==='Enter')renderAudit()" style="width:${w}px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
   const yearSel=`<select onchange="_tabFilters.audit.year=this.value;renderAudit()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"><option value="">Все годы</option>${years.map(y=>`<option value="${y}"${String(F.year)===String(y)?' selected':''}>${y}</option>`).join('')}</select>`;
@@ -1264,15 +1271,7 @@ function renderAudit(){
   const badge=(t,col)=>`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;color:#fff;background:${col};white-space:nowrap">${t}</span>`;
   const cell='padding:5px 8px;font-family:var(--mono);font-size:12px;text-align:right';
   const rows=list.slice(0,400).map((x,i)=>{
-    const share=total?x.sum/total:0,roundPct=x.n?Math.round(x.rnd/x.n*100):0;
-    const flags=[];
-    if(x.plat)flags.push(badge('площадка','var(--text-muted)'));
-    else{
-      if(x.n>=3&&roundPct===100)flags.push(badge('100% круглые','#d98324'));
-      else if(roundPct>=80&&x.n>=3)flags.push(badge(roundPct+'% круглых','#e0a458'));
-    }
-    if(F.year&&prior&&!prior.has(x.key))flags.push(badge('НОВЫЙ','#3a6ea5'));
-    if(share>=0.15)flags.push(badge('крупный','#7a5fb0'));
+    const share=x._share,roundPct=x._roundPct;
     return `<tr style="border-bottom:1px solid var(--divider);cursor:pointer" onclick="auditShowDetail(${i})">
       <td style="padding:5px 8px;font-size:12px">${esc(x.key)}</td>
       <td style="${cell};color:var(--outcome);font-weight:600">${fmtR(x.sum)}</td>
@@ -1283,7 +1282,7 @@ function renderAudit(){
       <td style="${cell};color:${!x.plat&&roundPct>=80?'#c0392f':'var(--text3)'}">${roundPct}%</td>
       <td style="${cell};color:var(--text3);font-size:11px">${ds(x.first)}</td>
       <td style="${cell};color:var(--text3);font-size:11px">${ds(x.last)}</td>
-      <td style="padding:5px 8px;display:flex;gap:4px;flex-wrap:wrap">${flags.join('')}</td>
+      <td style="padding:5px 8px;display:flex;gap:4px;flex-wrap:wrap">${x.flags.map(fl=>badge(fl.t,fl.c)).join('')}</td>
     </tr>`;}).join('');
   const th=t=>`<th style="padding:6px 8px;font-size:10px;color:var(--label);font-weight:600;text-transform:uppercase;letter-spacing:.04em;text-align:right;white-space:nowrap">${t}</th>`;
   host.innerHTML=`<div style="padding:4px 2px">
@@ -1293,6 +1292,7 @@ function renderAudit(){
       ${yearSel}${dirSel}${dimSel}
       <span style="font-size:11px;color:var(--label)">Касса</span>${inp('account',F.account,150,'часть реквизита')}
       <button onclick="_tabFilters.audit={sub:'',year:'',account:'',dir:'',dim:'${dim}'};renderAudit()" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:11.5px">× сброс</button>
+      <button onclick="auditPrintReport()" style="margin-left:auto;padding:5px 12px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-size:11.5px;font-weight:600">🖨 Отчёт для СБ (PDF)</button>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       ${kpi('Всего закуп',fmtR(total)+' ₽','var(--outcome)',base.length+' операций')}
@@ -1343,6 +1343,65 @@ window.auditShowDetail=function(i){
   </div>`;
   o.addEventListener('click',e=>{if(e.target===o)o.remove();});
   document.body.appendChild(o);
+};
+// Печатный отчёт для службы безопасности: сводка по контрагентам/кассам + полная расшифровка операций
+window.auditPrintReport=function(){
+  const F=_tabFilters.audit;const list=window._auditList||[];
+  if(!list.length){alert('Нет данных для отчёта. Откройте «Аудит закупа» и настройте фильтр.');return;}
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const fmtR=n=>Math.round(n).toLocaleString('ru-RU');
+  const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
+  const dim=F.dim||'cp';
+  const total=list.reduce((a,x)=>a+x.sum,0),ops=list.reduce((a,x)=>a+x.n,0);
+  const flagged=list.filter(x=>x.flags&&x.flags.length&&!x.plat);
+  const now=new Date();const p2=n=>String(n).padStart(2,'0');
+  const stamp=p2(now.getDate())+'.'+p2(now.getMonth()+1)+'.'+now.getFullYear()+' '+p2(now.getHours())+':'+p2(now.getMinutes());
+  const filt=['Подстатья: <b>'+esc(F.sub||'все')+'</b>','Год: <b>'+esc(F.year||'все')+'</b>',F.dir?'Направление: <b>'+esc(F.dir)+'</b>':'',F.account?'Касса: <b>'+esc(F.account)+'</b>':'','Разрез: <b>'+(dim==='acc'?'касса-плательщик':'контрагент')+'</b>'].filter(Boolean).join(' · ');
+  const flagTxt=x=>(x.flags||[]).map(f=>f.t).join(', ')||'-';
+  // Сводная таблица
+  const sumHead=`<tr><th class="l">${dim==='acc'?'Касса-плательщик':'Контрагент'}</th><th>Закуп, ₽</th><th>Доля</th><th>Опер.</th><th>Мес.</th><th>Ср.платёж</th><th>Кругл.%</th><th>Первый</th><th>Послед.</th><th class="l">Флаги</th></tr>`;
+  const sumRows=list.map(x=>`<tr class="${x.flags&&x.flags.length&&!x.plat?'flag':''}"><td class="l">${esc(x.key)}</td><td class="n">${fmtR(x.sum)}</td><td class="n">${(x._share*100).toFixed(1)}%</td><td class="n">${x.n}</td><td class="n">${Object.keys(x.mon).length}</td><td class="n">${fmtR(x.sum/x.n)}</td><td class="n${!x.plat&&x._roundPct>=80?' red':''}">${x._roundPct}%</td><td class="n">${ds(x.first)}</td><td class="n">${ds(x.last)}</td><td class="l fl">${esc(flagTxt(x))}</td></tr>`).join('');
+  // Расшифровка по каждому ключу
+  const detail=list.map((x,i)=>{
+    const rs=[...(x.rows||[])].sort((a,b)=>(parseDate(a[COL.DATE_OPIU])||0)-(parseDate(b[COL.DATE_OPIU])||0));
+    const tr=rs.map(r=>`<tr><td class="c">${ds(r[COL.DATE_OPIU])}</td><td>${esc(r[COL.SECOND_SIDE])}</td><td class="n">${fmtR(Math.abs(parseNum(r[COL.OUTCOME])||0))}</td><td>${esc(r[COL.ACCOUNT])}</td><td>${esc(r[COL.PURPOSE])}</td><td>${esc(r[COL.ACTIVITY_DIR])}</td></tr>`).join('');
+    return `<div class="dwrap"><div class="dh">${i+1}. ${esc(x.key)} — ${fmtR(x.sum)} ₽ · ${x.n} опер.${x.flags&&x.flags.length?' · <span class="fl">'+esc(flagTxt(x))+'</span>':''}</div>
+      <table class="det"><thead><tr><th class="c">Дата ОПиУ</th><th>Контрагент</th><th class="n">Списание ₽</th><th>Касса-плательщик</th><th>Назначение</th><th>Направление</th></tr></thead><tbody>${tr}</tbody></table></div>`;
+  }).join('');
+  const css=`*{box-sizing:border-box}body{font-family:'Inter',Arial,sans-serif;color:#23272f;margin:0;padding:18px 22px;font-size:11px}
+    h1{font-size:18px;margin:0 0 2px}.sub{color:#6f7682;font-size:11px;margin-bottom:2px}.meta{color:#9aa1ad;font-size:10px;margin-bottom:12px}
+    .kpis{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px}.kpi{border:1px solid #e9ebf0;border-radius:8px;padding:8px 12px;min-width:130px}
+    .kpi .l{font-size:9px;color:#8b919d;text-transform:uppercase;letter-spacing:.05em}.kpi .v{font-size:16px;font-weight:700;font-family:'Courier New',monospace;margin-top:2px}
+    h2{font-size:13px;margin:16px 0 6px;border-bottom:2px solid #2b3145;padding-bottom:3px}
+    table{border-collapse:collapse;width:100%}th,td{border:1px solid #e9ebf0;padding:3px 6px;font-size:10px;text-align:left;vertical-align:top}
+    th{background:#2b3145;color:#fff;font-weight:600;font-size:9px}td.n,th.n{text-align:right;font-family:'Courier New',monospace;white-space:nowrap}td.c,th.c{text-align:center;white-space:nowrap}td.l,th.l{text-align:left}
+    tr.flag td{background:#fdf3e7}td.red{color:#c0392f;font-weight:700}.fl{color:#c0392f}
+    .dwrap{margin:10px 0;break-inside:avoid}.dh{font-weight:700;font-size:11px;background:#f3f5f8;padding:4px 7px;border:1px solid #e9ebf0;border-bottom:0}
+    table.det th{background:#3f5575}
+    .note{color:#6f7682;font-size:9.5px;margin-top:10px;border-top:1px solid #e9ebf0;padding-top:6px}
+    @page{size:A4 landscape;margin:10mm}@media print{.dwrap{break-inside:avoid}h2{break-before:page}}`;
+  const body=`<h1>Аудит закупа — отчёт для службы безопасности</h1>
+    <div class="sub">${filt}</div>
+    <div class="meta">Сформировано: ${stamp} · ГК ОПОРА · источник: лист RawData (по дате ОПиУ)</div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">Всего закуп</div><div class="v">${fmtR(total)} ₽</div></div>
+      <div class="kpi"><div class="l">${dim==='acc'?'Касс':'Контрагентов'}</div><div class="v">${list.length}</div></div>
+      <div class="kpi"><div class="l">Операций</div><div class="v">${ops}</div></div>
+      <div class="kpi"><div class="l">С красными флагами</div><div class="v" style="color:#c0392f">${flagged.length}</div></div>
+      <div class="kpi"><div class="l">Доля топ-1</div><div class="v">${list.length?(list[0].sum/total*100).toFixed(1):0}%</div></div>
+    </div>
+    <h2>1. Сводка по ${dim==='acc'?'кассам-плательщикам':'контрагентам'}</h2>
+    <table>${sumHead}${sumRows}<tr style="font-weight:700;background:#eef1f6"><td class="l">ИТОГО</td><td class="n">${fmtR(total)}</td><td class="n">100%</td><td class="n">${ops}</td><td colspan="6"></td></tr></table>
+    <div class="note">Флаги: «100% круглые» — у не-площадки все суммы кратны 5000 (признак фикс-схемы); «НОВЫЙ» — нет закупа в предыдущем году; «крупный» — доля ≥15%; «площадка» — известная рекламная площадка (круглые пополнения для неё нормальны).</div>
+    <h2>2. Расшифровка операций по ${dim==='acc'?'кассам':'контрагентам'}</h2>
+    ${detail}
+    <div class="note">Рекомендации СБ: по контрагентам с флагами запросить договоры, акты и отчёты (скрины рекламных кабинетов, ID кампаний, кол-во и стоимость лидов); сверить ставку закупа в кабинете с заведённой суммой; проверить аффилированность по ИНН (ЕГРЮЛ/ЕГРИП) и двойную оплату одного источника через разные каналы.</div>`;
+  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Аудит закупа ${esc(F.sub||'')} ${esc(F.year||'')}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>${css}</style></head><body>${body}<script>window.onload=function(){setTimeout(function(){window.print();},350);};<\/script></body></html>`;
+  const w=window.open('','_blank');
+  if(!w){alert('Разрешите всплывающие окна для формирования отчёта');return;}
+  w.document.write(html);w.document.close();
 };
 function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);else if(activeTab==='loans')renderLoans(f);else if(activeTab==='anomaly')renderAnomaly(f);else if(activeTab==='depau')renderDepAU(f);else if(activeTab==='planfact')renderPlanFact(f);else if(activeTab==='target')renderTarget(f);else if(activeTab==='bflmodel')renderBflModel(f);else if(activeTab==='registry')renderRegistry(f);else if(activeTab==='audit')renderAudit(f);try{_injectPresetBar();}catch(e){}}
 
