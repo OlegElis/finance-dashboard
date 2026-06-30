@@ -7915,7 +7915,7 @@ function bflModelDefault(){
     directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
     checkDefault:245991,
     blocks:{aup:{owner:'Болотов Артём'},commercial:{owner:'Черновский Антон'},production:{owner:'Васянина Елена'},opau:{owner:'Кольцова Марина'}}, // руководители блоков/контуров
-    clientPath:{toOks:1,oksToOi:1,court:1,auAppoint:1,simpleShare:0.7,simpleDuration:6,complexDuration:12}, // путь клиента; срок процедуры (мес, после 1-го суд. заседания): простые 6 / сложные (с имуществом) 12
+    clientPath:{toOks:1,oksToOi:1,court:1,auAppoint:1,simpleShare:0.7,simpleDuration:6,complexDuration:12,heavyShare:0,heavyDuration:18}, // путь клиента; срок процедуры (мес, после 1-го суд. заседания): простые 6 / сложные (с имуществом) 12 / затяжные (сверх плана) 18; доля сложных = 1 − простые − затяжные
     // Слой B+C - отделы сквозного конвейера (эталонный датасет §5). ЦКП = расходы_gross / tskpBase.
     // depositExcluded (контрол) переключает расходы ОПИУ gross↔net. По умолчанию депозит ВКЛЮЧЁН (как в эталоне §6).
     departments:[
@@ -8054,6 +8054,7 @@ function bflEnsureModel(m){
   if(!m.clientPath)m.clientPath=JSON.parse(JSON.stringify(d.clientPath));
   // срок процедуры: простые 6 / сложные 12 мес (после первого судебного заседания) - замена прежних min/max/extra
   if(m.clientPath&&m.clientPath.simpleDuration===undefined){m.clientPath.simpleDuration=6;m.clientPath.complexDuration=12;delete m.clientPath.simpleMin;delete m.clientPath.simpleMax;delete m.clientPath.complexExtra;}
+  if(m.clientPath&&m.clientPath.heavyShare===undefined){m.clientPath.heavyShare=0;m.clientPath.heavyDuration=18;} // категория «затяжные» (дела сверх плана)
   // депозит суда 25тр → ОИ (возвратный); почтовые 20тр → ОПАУ; отвал досудебный → ОКС; дела ОИ/ОПАУ = после отвала
   {const oiD=(m.departments||[]).find(x=>x&&x.id==='oi');
    if(oiD){oiD.casesFromProd=true;if(!Array.isArray(oiD.perCase)||!oiD.perCase.length)oiD.perCase=[{name:'Депозит суда (за дело, возвратный)',rate:25000,passThrough:true}];}
@@ -8474,26 +8475,36 @@ function bflPreCourtOtval(){const os=_bflModel.departments.find(x=>x.id==='os');
 function bflCasesProd(){return bflOpDeals()*(1-bflPreCourtOtval());}
 // Ставка начислений на ФОТ (НДФЛ+ФСС); 0 если включена галочка «убрать налоги на ФОТ»
 function bflNachRate(){const g=_bflModel.global;return _tabFilters.bflmodel.exclPayrollTax?0:((g.ndfl||0)+(g.fss||0));}
-// Средний срок процедуры (мес) = доля простых × срок простых + доля сложных × срок сложных
-function bflAvgTerm(){const cp=_bflModel.clientPath||{};return (cp.simpleShare||0)*(cp.simpleDuration||0)+(1-(cp.simpleShare||0))*(cp.complexDuration||0);}
-// Разгон ОПАУ (ramp-up): портфель копится, завершения/доход приходят через 6/12 мес → кассовый разрыв
+// Категории дел по сроку: простые / сложные / затяжные. Доля сложных = остаток (1 − простые − затяжные)
+function bflTermBuckets(){
+  const cp=_bflModel.clientPath||{};
+  const sS=cp.simpleShare||0,hS=cp.heavyShare||0,cS=Math.max(0,1-sS-hS);
+  return [
+    {key:'simple',name:'простые',share:sS,dur:cp.simpleDuration||0},
+    {key:'complex',name:'сложные',share:cS,dur:cp.complexDuration||0},
+    {key:'heavy',name:'затяжные',share:hS,dur:cp.heavyDuration||0}
+  ];
+}
+// Средний срок процедуры (мес) = Σ доля категории × срок категории
+function bflAvgTerm(){return bflTermBuckets().reduce((a,b)=>a+b.share*b.dur,0);}
+// Разгон ОПАУ (ramp-up): портфель копится, завершения/доход приходят через срок каждой категории → кассовый разрыв
 function bflRampOpau(){
   const op=(_bflModel.departments||[]).find(d=>d.id==='opau');if(!op)return null;
-  const g=_bflModel.global,c=bflDeptCalc(op,g),cp=_bflModel.clientPath||{};
-  const s=cp.simpleShare||0,sd=Math.max(1,Math.round(cp.simpleDuration||6)),cd=Math.max(1,Math.round(cp.complexDuration||12));
-  const I=bflCasesProd(),Is=s*I,Ic=(1-s)*I;                 // вход/мес: простые / сложные
-  const wipSteady=Is*sd+Ic*cd;                              // портфель в установившемся режиме (Литтл)
+  const g=_bflModel.global,c=bflDeptCalc(op,g),I=bflCasesProd();
+  const bk=bflTermBuckets().filter(b=>b.share>0&&b.dur>0).map(b=>({dur:Math.max(1,Math.round(b.dur)),I:b.share*I})); // когорты входа
+  if(!bk.length)return null;
+  const wipSteady=bk.reduce((a,b)=>a+b.I*b.dur,0);          // портфель в установившемся режиме (Литтл)
   const revPerCase=c.caseCount?c.selfRev/c.caseCount:0;     // доход контура на 1 завершённое дело
   const grossSteady=c.gross;                                // месячный ФОТ+прочее в установившемся
-  const N=Math.max(sd,cd);const rows=[];let cum=0,trough=0;
+  const durs=bk.map(b=>b.dur),N=Math.max.apply(null,durs);const rows=[];let cum=0,trough=0;
   for(let m=1;m<=N;m++){
-    const wip=Math.min(m,sd)*Is+Math.min(m,cd)*Ic;          // портфель в работе на месяц m
-    const comp=(m>=sd?Is:0)+(m>=cd?Ic:0);                   // завершено за месяц (простые с мес sd, сложные с мес cd)
+    let wip=0,comp=0;
+    bk.forEach(b=>{wip+=Math.min(m,b.dur)*b.I;if(m>=b.dur)comp+=b.I;}); // завершено: когорта, вошедшая dur мес назад
     const cost=wipSteady?grossSteady*wip/wipSteady:0;       // ФОТ масштабируется по портфелю
     const rev=comp*revPerCase;const net=rev-cost;cum+=net;if(cum<trough)trough=cum;
     rows.push({m:m,wip:wip,comp:comp,cost:cost,rev:rev,net:net,cum:cum});
   }
-  return {rows:rows,workingCapital:-trough,approxWC:grossSteady*sd,I:I,sd:sd,cd:cd,wipSteady:wipSteady,revPerCase:revPerCase,grossSteady:grossSteady};
+  return {rows:rows,workingCapital:-trough,approxWC:grossSteady*Math.min.apply(null,durs),I:I,sd:Math.min.apply(null,durs),cd:N,wipSteady:wipSteady,revPerCase:revPerCase,grossSteady:grossSteady};
 }
 // Выручка (поступления) = Σ инкассаций. Без вызова bflDeptCalc для management (иначе цикл через НДС)
 function bflRevenue(){const g=_bflModel.global;let rev=0;(_bflModel.departments||[]).forEach(d=>{
@@ -8865,8 +8876,8 @@ function bflRenderDepts(host){
     let pGross=0,pIncass=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'&&!x.selfFunded){const c=bflDeptCalc(x,g);pGross+=c.gross;pIncass+=c.incassation;}});
     const deals=bflOpDeals();
     const cp=_bflModel.clientPath||{};
-    const simpleDur=cp.simpleDuration||0,complexDur=cp.complexDuration||0;
-    const avgTerm=(cp.simpleShare||0)*simpleDur+(1-(cp.simpleShare||0))*complexDur;
+    const complexShare=Math.max(0,1-(cp.simpleShare||0)-(cp.heavyShare||0));
+    const avgTerm=bflAvgTerm();
     const step=(t)=>`<span style="font-weight:600;color:var(--text)">${t}</span>`;
     const arr=(t)=>`<span style="color:var(--text3)">→ ${t} →</span>`;
     return `<div style="margin:20px 0 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 2px 12px rgba(43,49,69,.06);overflow:hidden">
@@ -8875,14 +8886,14 @@ function bflRenderDepts(host){
         ${_chip('Расходы блока',bflM(pGross),'var(--outcome)','ОКС + ОИ · ОПАУ - свой ОПИУ')}
         ${_chip('Инкассация',bflM(pIncass),'var(--income)','рассрочка ОКС')}
         ${_chip('Дел от ОП',bflI(deals),'var(--text)','входящий поток')}
-        ${_chip('Средний срок процедуры',avgTerm.toFixed(1).replace('.',',')+' мес','var(--text2)','портфель '+Math.round((1-(cp.simpleShare||0))*100)+'/'+Math.round((cp.simpleShare||0)*100))}
+        ${_chip('Средний срок процедуры',avgTerm.toFixed(1).replace('.',',')+' мес','var(--text2)','прост/слож/затяж '+Math.round((cp.simpleShare||0)*100)+'/'+Math.round(complexShare*100)+'/'+Math.round((cp.heavyShare||0)*100)+'%')}
       </div>
       <div style="padding:11px 16px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text2)">
         <div style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Путь клиента</div>
         <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;line-height:2.1">
           ${step('Сделка (ОП)')} ${arr('≤'+_gi('clientPath.toOks',cp.toOks,34)+' мес')} ${step('ОКС')} ${arr('≤'+_gi('clientPath.oksToOi',cp.oksToOi,34)+' мес')} ${step('ОИ: подача в суд')} ${arr(_gi('clientPath.court',cp.court,34)+' мес суд')} ${arr(_gi('clientPath.auAppoint',cp.auAppoint,34)+' мес назначение АУ')} ${step('ОПАУ: ведение процедуры')}
         </div>
-        <div style="margin-top:7px">Срок процедуры (после первого судебного заседания): <b>простые</b> (без имущества) ${_gi('clientPath.simpleShare',+(((cp.simpleShare||0)*100).toFixed(0)),36,true)} % — ${_gi('clientPath.simpleDuration',cp.simpleDuration,30)} мес · <b>сложные</b> (с имуществом) ${_gi('clientPath.complexDuration',cp.complexDuration,30)} мес · средний срок ≈ <b>${avgTerm.toFixed(1).replace('.',',')} мес</b></div>
+        <div style="margin-top:7px;line-height:2.1">Срок процедуры (после первого судебного заседания): <b>простые</b> ${_gi('clientPath.simpleShare',+(((cp.simpleShare||0)*100).toFixed(0)),36,true)} % — ${_gi('clientPath.simpleDuration',cp.simpleDuration,30)} мес · <b>сложные</b> (с имуществом) <span style="color:var(--text3)">${Math.round(complexShare*100)} % (остаток)</span> — ${_gi('clientPath.complexDuration',cp.complexDuration,30)} мес · <b>затяжные</b> (сверх плана) ${_gi('clientPath.heavyShare',+(((cp.heavyShare||0)*100).toFixed(0)),36,true)} % — ${_gi('clientPath.heavyDuration',cp.heavyDuration,30)} мес · средний срок ≈ <b>${avgTerm.toFixed(1).replace('.',',')} мес</b></div>
       </div>`:''}</div>`;
   };
   let lastSuper=null,superOpen=false;
