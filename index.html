@@ -8055,6 +8055,8 @@ function bflEnsureModel(m){
   // срок процедуры: простые 6 / сложные 12 мес (после первого судебного заседания) - замена прежних min/max/extra
   if(m.clientPath&&m.clientPath.simpleDuration===undefined){m.clientPath.simpleDuration=6;m.clientPath.complexDuration=12;delete m.clientPath.simpleMin;delete m.clientPath.simpleMax;delete m.clientPath.complexExtra;}
   if(m.clientPath&&m.clientPath.heavyShare===undefined){m.clientPath.heavyShare=0;m.clientPath.heavyDuration=18;} // категория «затяжные» (дела сверх плана)
+  // вид сотрудничества по умолчанию - официальное трудоустройство (43%), для всех ролей и штата направлений
+  (m.departments||[]).forEach(dep=>{(dep.roles||[]).forEach(r=>{if(r&&r.emp===undefined)r.emp='official';});if(Array.isArray(dep.leadgen))dep.leadgen.forEach(L=>{(L.staff||[]).forEach(r=>{if(r&&r.emp===undefined)r.emp='official';});});});
   // депозит суда 25тр → ОИ (возвратный); почтовые 20тр → ОПАУ; отвал досудебный → ОКС; дела ОИ/ОПАУ = после отвала
   {const oiD=(m.departments||[]).find(x=>x&&x.id==='oi');
    if(oiD){oiD.casesFromProd=true;if(!Array.isArray(oiD.perCase)||!oiD.perCase.length)oiD.perCase=[{name:'Депозит суда (за дело, возвратный)',rate:25000,passThrough:true}];}
@@ -8342,8 +8344,8 @@ function renderBflModel(){
 // ── Слой B+C: расчёт отдела и сборка ОПИУ (§4-§6 ТЗ) ──────────────────────────
 function bflDeptCalc(d,g){
   const roles=d.roles||[],costs=d.costs||[];
-  const _rate=bflNachRate();                          // ставка начислений (0 при включённой галочке «убрать налоги на ФОТ»)
   let fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);      // общий ФОТ отдела
+  let nachAcc=bflRolesNach(roles);                    // начисления по основным ролям (per-role: вид сотрудничества)
   const fteRoles=roles.reduce((a,r)=>a+(r.fte||0),0);
   const ca=c=>{ // расчётные затраты: НДС и налог на прибыль от выручки
     if(c.vatOfRevenue)return (g.vat||0)*bflRevenue();
@@ -8368,20 +8370,20 @@ function bflDeptCalc(d,g){
       const staff=L.staff||[];
       const dFot=staff.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);
       const dFte=staff.reduce((a,r)=>a+(r.fte||0),0);
-      const dNach=dFot*_rate;
+      const dNach=bflRolesNach(staff);
       // стоимость грязного лида: для агентских направлений (rawCostMode='fot') = ФОТ направления / лиды; иначе закупка (costRaw)
       const rawCost = (L.rawCostMode==='fot') ? bflSafeDiv(dFot,leads) : costRaw;
       const variable=media+agentFee;                    // переменные затраты направления
       const dirCost=variable+dFot+dNach;                // полная стоимость направления
       const costQual=bflSafeDiv(dirCost,qual);
-      leadSpend+=variable;qualTotal+=qual;dirFotTotal+=dFot;dirFteTotal+=dFte;leadTotalCost+=dirCost;
+      leadSpend+=variable;qualTotal+=qual;dirFotTotal+=dFot;dirFteTotal+=dFte;leadTotalCost+=dirCost;nachAcc+=dNach;
       return {name:L.name,owner:L.owner,dir:L.dir,leads:leads,brak:brak,costRaw:costRaw,rawCost:rawCost,rawCostMode:L.rawCostMode||'media',deals:deals,dealsInherited:dealsInherited,
         feePerQual:L.feePerQual||0,feePerDeal:L.feePerDeal||0,qual:qual,media:media,
         agentQual:agentQual,agentDeal:agentDeal,agentFee:agentFee,dFot:dFot,dFte:dFte,dNach:dNach,
         variable:variable,dirCost:dirCost,costQual:costQual,staff:staff};});
     fot+=dirFotTotal;
   }
-  const nach=fot*_rate;                                // начисления на весь ФОТ (общий + штат направлений)
+  const nach=nachAcc;                                  // начисления на весь ФОТ (per-role по виду сотрудничества: осн. роли + штат направлений)
   // воронка-стадия (КО и т.п.): вход наследуется от выхода предыдущего отдела → конверсия → отвал → выход
   // byDir: конверсия и отвал РАЗНЫЕ по направлениям (квал-лиды направления наследуются раздельно)
   let inflow=null,assigned=null,output=null,funnelRows=null,sumaTotal=0,firstPayTotal=0;
@@ -8475,6 +8477,10 @@ function bflPreCourtOtval(){const os=_bflModel.departments.find(x=>x.id==='os');
 function bflCasesProd(){return bflOpDeals()*(1-bflPreCourtOtval());}
 // Ставка начислений на ФОТ (НДФЛ+ФСС); 0 если включена галочка «убрать налоги на ФОТ»
 function bflNachRate(){const g=_bflModel.global;return _tabFilters.bflmodel.exclPayrollTax?0:((g.ndfl||0)+(g.fss||0));}
+// Ставка начислений на ФОТ по виду сотрудничества сотрудника: ИП/Самозанятый 7%, Без трудоустройства 0%, Официальное = ndfl+fss (43%); галочка «убрать налоги» обнуляет всё
+function bflRoleNachRate(r){if(_tabFilters.bflmodel.exclPayrollTax)return 0;const e=r&&r.emp;if(e==='ip')return 0.07;if(e==='none')return 0;const g=_bflModel.global;return (g.ndfl||0)+(g.fss||0);}
+// Начисления на штат (per-role по виду сотрудничества)
+function bflRolesNach(roles){return (roles||[]).reduce((a,r)=>a+(r.fte||0)*(r.rate||0)*bflRoleNachRate(r),0);}
 // Категории дел по сроку: простые / сложные / затяжные. Доля сложных = остаток (1 − простые − затяжные)
 function bflTermBuckets(){
   const cp=_bflModel.clientPath||{};
@@ -8593,12 +8599,14 @@ function bflRenderDepts(host){
   const staffTbl=(deptId,roles,prefix,title)=>{
     roles=roles||[];const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
     const in2=(p,v,w)=>`<input type="text" inputmode="decimal" value="${v==null?'':v}" data-dept="${deptId}" data-path="${p}" onchange="bflDeptEdit(this)" style="width:${w}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
-    const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=fot*bflNachRate();
+    const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=bflRolesNach(roles);
+    const effPct=fot?Math.round(nach/fot*100):0;
     const th=t=>`<th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${t}</th>`;
-    const rows=roles.map((r,i)=>`<tr><td style="padding:3px 8px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.rate',r.rate,92)}</td><td style="${cellR};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
-    return `<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px">
-      <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${esc(title||'Штатное расписание')}</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}${th('ФОТ')}</tr></thead>
-      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (${Math.round(bflNachRate()*100)}%)</td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td></tr></tbody></table>`;
+    const empSel=(p,emp)=>{const e=emp||'official';const o=(v,lbl)=>`<option value="${v}"${e===v?' selected':''}>${lbl}</option>`;return `<select data-dept="${deptId}" data-path="${p}" data-text="1" onchange="bflDeptEdit(this)" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:#fffdf0;max-width:150px">${o('official','Официальное (43%)')}${o('ip','ИП/Самозанятый (7%)')}${o('none','Без трудоустройства (0%)')}</select>`;};
+    const rows=roles.map((r,i)=>`<tr><td style="padding:3px 8px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.rate',r.rate,92)}</td><td style="padding:3px 8px">${empSel(prefix+'.'+i+'.emp',r.emp)}</td><td style="${cellR};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
+    return `<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:620px">
+      <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${esc(title||'Штатное расписание')}</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}<th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Вид сотрудничества</th>${th('ФОТ')}</tr></thead>
+      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (≈${effPct}%)</td><td></td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td></tr></tbody></table>`;
   };
   // Единая таблица прямых затрат: Затрата | ₽/мес (редактируемое)
   const costsTbl=(deptId,costs)=>{
@@ -8841,7 +8849,7 @@ function bflRenderDepts(host){
         ${_titleBar('aup',`<div style="margin-left:auto;text-align:right"><div style="font-size:9.5px;opacity:.85;text-transform:uppercase;letter-spacing:.07em">Расходы блока</div><div style="font-size:23px;font-weight:700;font-family:var(--mono);line-height:1.1">${bflM(mc.gross)}</div></div>`)}
         ${bo?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--border)">
           ${_chip('ФОТ (голый)',bflM(mc.fot),'var(--outcome)','штат АУП')}
-          ${_chip('Начисления на ФОТ',bflM(mc.nach),'var(--outcome)',Math.round(bflNachRate()*100)+'%')}
+          ${_chip('Начисления на ФОТ',bflM(mc.nach),'var(--outcome)','≈'+Math.round(mc.fot?mc.nach/mc.fot*100:0)+'%')}
           ${_chip('Налоги',bflM(nalogi),'var(--outcome)','НДС + налог на прибыль')}
           ${_chip('Аутсорсинг',bflM(autsource),'var(--outcome)')}
           ${_chip('Прочее',bflM(prochee),'var(--outcome)')}
