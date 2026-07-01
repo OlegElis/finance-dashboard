@@ -887,7 +887,7 @@ const _tabFilters={
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
-  planfact:{dir:'',year:0,level:'article',period:'monthly'},
+  planfact:{dir:'',year:0,level:'article',period:'monthly',articles:[],subarticles:[]},
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
   bflmodel:{view:'depts',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
   registry:{q:''}
@@ -4215,6 +4215,11 @@ window.expDirSelectAll=function(s){const dd=document.getElementById('exp-dir-dd'
 window.expMultiToggle=function(ddId){const dd=document.getElementById(ddId);if(!dd)return;const open=dd.style.display!=='block';dd.style.display=open?'block':'none';if(!open)renderExpenses(getFilters());};
 window.expMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.expenses[field]=checked;};
 window.expMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.expMultiChange(ddId,btnId,field,labelAll);};
+// БДР (planfact): мультивыбор Статья/Подстатья - применяется по закрытию дропдауна
+window.pfMultiToggle=function(ddId){const dd=document.getElementById(ddId);if(!dd)return;const open=dd.style.display!=='block';dd.style.display=open?'block':'none';if(!open)renderPlanFact(getFilters());};
+window.pfMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.planfact[field]=checked;};
+window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.pfMultiChange(ddId,btnId,field,labelAll);};
+window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];renderPlanFact(getFilters());};
 window.expFilterList=function(ddId,q){const dd=document.getElementById(ddId);if(!dd)return;q=(q||'').toLowerCase();dd.querySelectorAll('label').forEach(l=>{l.style.display=l.textContent.toLowerCase().includes(q)?'':'none';});};
 window.expResetExtra=function(){_tabFilters.expenses.articles=[];_tabFilters.expenses.subarticles=[];renderExpenses(getFilters());};
 // авто-применение: клик вне открытого дропдауна закрывает его и перерисовывает (фильтры применяются)
@@ -5522,6 +5527,18 @@ function renderPlanFact(f){
   // ── ПЛАН из _planRecords ──
   const plans=(_planRecords||[]).filter(p=>p.year===year&&dirsToAgg.includes(p.dir));
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
+  // фильтр по Статье (ARTICLE_CODE) / Подстатье (ARTICLE_NAME) - мультивыбор; применяется к показанным строкам, выручка-база %-планов остаётся полной
+  const selArt=new Set(_tabFilters.planfact.articles||[]),selSub=new Set(_tabFilters.planfact.subarticles||[]);
+  const selArtC3=new Set([...selArt].map(c3)),selSubC3=new Set([...selSub].map(c3));
+  const codePasses=code=>{
+    if(selArt.size){if(level==='article'){if(!selArt.has(code))return false;}else if(!selArtC3.has(c3(code)))return false;}
+    if(selSub.size){if(level==='subarticle'){if(!selSub.has(code))return false;}else if(!selSubC3.has(c3(code)))return false;}
+    return true;
+  };
+  // справочники Статья/Подстатья (по направлению+году, до фильтра статья/подстатья)
+  const _pfArtSet={},_pfSubSet={};
+  RAW.forEach(r=>{const rd=String(r[COL.ACTIVITY_DIR]||'').trim();if(!isAll&&rd!==dir)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;const dt=parseDate(r[COL.DATE_OPIU]);if(!dt||dt.getFullYear()!==year)return;const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();if(ac)_pfArtSet[ac]=1;if(an)_pfSubSet[an]=1;});
+  const pfArts=Object.keys(_pfArtSet).sort((a,b)=>a.localeCompare(b,'ru')),pfSubs=Object.keys(_pfSubSet).sort((a,b)=>a.localeCompare(b,'ru'));
   // базы выручки/чистой прибыли - ПО НАПРАВЛЕНИЮ (чтобы %-планы разрешались корректно и суммировались в своде)
   const revBaseMonthD=(d,m)=>{const r=plans.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);return(r&&r.value>0)?r.value:((revByMonthD[d]||[])[m]||0);};
   const revBaseYearD=d=>{const yr=plans.find(p=>p.dir===d&&p.level==='revenue'&&p.month===0);if(yr&&yr.value>0)return yr.value;let s=0;for(let m=1;m<=12;m++)s+=revBaseMonthD(d,m);return s;};
@@ -5550,10 +5567,12 @@ function renderPlanFact(f){
   // ── строки ──
   const isVyvodCode=code=>!!vyvodCodes[code]||c3(code)==='127'; // распределение прибыли (вывод) - отдельно от расходов
   const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});
+  Object.keys(codeSet).forEach(c=>{if(!codePasses(c))delete codeSet[c];});
   const rowsArr=Object.keys(codeSet).map(code=>{const plan=planExp(code),fact=factExp(code);return{code,plan,fact};}).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   // ── РАСПРЕДЕЛЕНИЕ ПРИБЫЛИ (вывод, код 127) - ниже линии ЧП, как в ОПиУ; в расходы и ЧП НЕ входит ──
   const factVyvodOf=code=>{const a=vyvodByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const vyvodSet={};Object.keys(vyvodByCode).forEach(c=>vyvodSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&isVyvodCode(p.code))vyvodSet[p.code]=1;});
+  Object.keys(vyvodSet).forEach(c=>{if(!codePasses(c))delete vyvodSet[c];});
   const vyvodArr=Object.keys(vyvodSet).map(code=>({code,plan:planExp(code),fact:factVyvodOf(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   const sumVyvodPlan=vyvodArr.reduce((s,r)=>s+(r.plan||0),0),sumVyvodFact=vyvodArr.reduce((s,r)=>s+r.fact,0);
   const revRow={plan:planOf('revenue','__rev__'),fact:revFact()};
@@ -5561,6 +5580,7 @@ function renderPlanFact(f){
   // ── ДОХОДЫ по кодам (симметрично расходам) ──
   const incFactOf=code=>{const a=incByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const incSet={};Object.keys(incByCode).forEach(c=>incSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});
+  Object.keys(incSet).forEach(c=>{if(!codePasses(c))delete incSet[c];});
   const incRowsArr=Object.keys(incSet).map(code=>({code,plan:planInc(code),fact:incFactOf(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   const sumIncPlan=incRowsArr.reduce((s,r)=>s+(r.plan||0),0),sumIncFact=incRowsArr.reduce((s,r)=>s+r.fact,0);
   const incTotalPlan=sumIncPlan>0?sumIncPlan:revRow.plan; // нет доходных кодов - берём общий план «Выручка»
@@ -5573,11 +5593,26 @@ function renderPlanFact(f){
   const lvlOpts=`<option value="subarticle"${level==='subarticle'?' selected':''}>Подстатья</option><option value="article"${level==='article'?' selected':''}>Статья</option>`;
   const perOpts=`<option value="monthly"${isMonthly?' selected':''}>Все месяцы (план/факт)</option><option value="year"${period==='year'?' selected':''}>Весь год (итог)</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>${m}</option>`).join('');
   // year/period select coerces to string; нормализуем в onchange через число для period - оставим строкой, обрабатываем +period
+  // мультивыбор Статья/Подстатья (поиск + все/снять); применяется по клику на кнопку (закрытие дропдауна)
+  const _pfEsc=s=>String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const pfOptList=(items,sel2,change)=>items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_pfEsc(v)}" ${sel2.has(v)?'checked':''} onchange="${change}"> <span>${_pfEsc(v)}</span></label>`).join('');
+  const pfSearch=ddId=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="expFilterList('${ddId}',this.value)" placeholder="Поиск..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`;
+  const pfAllBtns=call=>`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${call.replace('%s','true')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Все</button><button onclick="${call.replace('%s','false')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Снять</button></div>`;
+  const pfDDstyle='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:320px;overflow-y:auto;min-width:240px;margin-top:2px';
+  const pfBtnStyle='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;min-width:110px;text-align:left';
+  const pfArtDD=pfSearch('pf-art-dd')+pfAllBtns("pfMultiAll('pf-art-dd','pf-art-btn','articles','Все статьи',%s)")+pfOptList(pfArts,selArt,"pfMultiChange('pf-art-dd','pf-art-btn','articles','Все статьи')");
+  const pfSubDD=pfSearch('pf-sub-dd')+pfAllBtns("pfMultiAll('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи',%s)")+pfOptList(pfSubs,selSub,"pfMultiChange('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи')");
+  const pfArtBtn=(selArt.size?selArt.size+' выбрано':'Все статьи')+' ▾',pfSubBtn=(selSub.size?selSub.size+' выбрано':'Все подстатьи')+' ▾';
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>${sel('dir',dirOpts)}
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label><select onchange="_tabFilters.planfact.year=+this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${yearOpts}</select>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>${sel('period',perOpts)}
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Уровень:</label>${sel('level',lvlOpts)}
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Статья:</label>
+    <div style="position:relative;display:inline-block"><button id="pf-art-btn" onclick="pfMultiToggle('pf-art-dd')" style="${pfBtnStyle}">${pfArtBtn}</button><div id="pf-art-dd" style="${pfDDstyle}">${pfArtDD}</div></div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Подстатья:</label>
+    <div style="position:relative;display:inline-block"><button id="pf-sub-btn" onclick="pfMultiToggle('pf-sub-dd')" style="${pfBtnStyle}">${pfSubBtn}</button><div id="pf-sub-dd" style="${pfDDstyle}">${pfSubDD}</div></div>
+    ${(selArt.size||selSub.size)?`<button onclick="pfResetExtra()" style="font-size:10px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
     ${isAdmin?`<button onclick="showPlansPanel()" style="margin-left:auto;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">✏ Редактировать планы</button>`:''}
   </div>`;
 
@@ -5686,7 +5721,7 @@ function renderPlanFact(f){
 
   // данные графика
   const planMonthTotal=m=>{let s=0,has=false;Object.keys(codeSet).forEach(c=>{const v=planMonth(level,c,m);if(v!=null){s+=v;has=true;}});return has?s:0;};
-  const factMonthTotal=m=>{let s=0;Object.keys(factByCode).forEach(c=>{s+=factByCode[c][m]||0;});return s;};
+  const factMonthTotal=m=>{let s=0;Object.keys(factByCode).forEach(c=>{if(codePasses(c))s+=factByCode[c][m]||0;});return s;};
   const planArr=[],factArr=[];for(let m=1;m<=12;m++){planArr.push(planMonthTotal(m));factArr.push(factMonthTotal(m));}
   if(window._pfChart){try{window._pfChart.destroy();}catch(e){}window._pfChart=null;}
   const cv=document.getElementById('pfChart');
