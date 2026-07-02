@@ -7501,15 +7501,22 @@ window.planFillRowFact=function(btn){
   const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
   if(mode!=='money'){alert('Заполнение фактом доступно только в режиме ₽ (переключите режим строки)');return;}
   const months=[...tr.querySelectorAll('input.plan-val')].filter(i=>i.getAttribute('data-month')!=='0');
-  // защита от случайного клика: если в строке уже есть введённые значения - спросить подтверждение (иначе план затирался бы фактом)
+  const num=v=>{const n=parseFloat(String(v||'').replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
+  // защита от случайного клика: если в строке уже есть введённые значения - спросить подтверждение
   const hasData=months.some(i=>String(i.value||'').trim()!=='');
-  if(hasData&&!confirm('Заменить введённые значения строки ФАКТОМ за все месяцы?\nТекущий план в этой строке будет перезаписан.'))return;
+  if(hasData&&!confirm('Заполнить строку ФАКТОМ?\nМесяцы, где введённый план БОЛЬШЕ факта, НЕ перезаписываются (их правите вручную) - факт показан подсказкой ячейки.'))return;
   // снимок строки (все месяцы + Год) для «Отменить»
-  const snap=[...tr.querySelectorAll('input.plan-val')].map(i=>({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color}));
-  months.forEach(i=>{const n=parseFloat(i.getAttribute('data-fact'));i.value=_planFmtNum(!isNaN(n)?n:0);}); // месяцы без факта заполняем явным 0 (полная строка бюджета)
+  const snap=[...tr.querySelectorAll('input.plan-val')].map(i=>({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,title:i.title}));
+  let kept=0;
+  months.forEach(i=>{
+    const f=num(i.getAttribute('data-fact'))||0,cur=num(i.value);
+    i.style.background='var(--surface)';
+    if(cur!=null&&cur>f+0.005){kept++;i.style.background='#fff3e0';i.title='План больше факта. Факт: '+fmt(f)+' - при необходимости введите вручную';return;} // план>факта - оставляем ручной ввод, показываем факт-подсказку
+    i.value=_planFmtNum(f);i.title='Факт: '+fmt(f); // остальное (пусто/план≤факта) - заполняем фактом (месяцы без факта → 0)
+  });
   const m1=tr.querySelector('input.plan-val[data-month="1"]'); if(m1&&window.planRowYear)window.planRowYear(m1);
   if(window.planSumFromEl)planSumFromEl(btn);
-  window._planFillUndo={snap}; _planFillToast('Строка заполнена фактом');
+  window._planFillUndo={snap}; _planFillToast(kept?('Заполнено фактом · оставлено вручную (план > факта): '+kept+' - факт в подсказке ячейки'):'Строка заполнена фактом');
 };
 // «Отменить» последнее заполнение фактом - всплывающая плашка с кнопкой
 function _planFillToastHide(){const t=document.getElementById('planFillToast');if(t)t.remove();if(window._planFillToastTimer){clearTimeout(window._planFillToastTimer);window._planFillToastTimer=null;}}
@@ -7523,7 +7530,7 @@ function _planFillToast(msg){
 }
 window.planUndoFill=function(){
   const s=window._planFillUndo; if(!s||!s.snap){_planFillToastHide();return;}
-  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';});
+  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';o.el.style.background=o.bg||'';if(o.title!=null)o.el.title=o.title;});
   const first=s.snap.find(o=>o.el&&o.el.isConnected); if(first&&window.planSumFromEl)planSumFromEl(first.el);
   window._planFillUndo=null; _planFillToastHide();
 };
