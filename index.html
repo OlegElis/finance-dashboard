@@ -5456,6 +5456,7 @@ function renderRegistry(f){
         ${q?`<button onclick="document.getElementById('regSearch').value='';registrySearch('')" title="Очистить" style="border:none;background:none;cursor:pointer;color:var(--text3);font-size:16px;line-height:1">✕</button>`:''}
       </div>
       <span id="regCount" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:8px;font-family:var(--mono);white-space:nowrap"></span>
+      <button onclick="registryExportAI()" title="Скачать найденные строки в CSV с описанием столбцов (для загрузки в ИИ)" style="font-size:11px;font-weight:600;padding:5px 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;white-space:nowrap;font-family:var(--sans)">⬇ Для ИИ (CSV)</button>
     </div>
     <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Поля: контрагент, статья, подстатья, направление, тип, счёт, аналитика, назначение, id, дата, поступление, списание, фнс, финоп. Пример: <code>статья:120 направление:бфл</code>. Пустые ячейки: <code>поле:пусто</code> (напр. <code>контрагент:пусто</code>, <code>статья:-</code>)</div>
     <div class="txn-wrap" style="margin:6px var(--secpx) 0">
@@ -5466,6 +5467,45 @@ function renderRegistry(f){
 }
 window.registrySearch=function(v){if(_tabFilters.registry)_tabFilters.registry.q=v;window._regLimit=500;registryRender(v);};
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
+// Экспорт найденных строк в CSV с описанием столбцов - для загрузки в ИИ
+window.registryExportAI=function(){
+  const rows=window._regRows||[];
+  if(!rows.length){alert('Нет строк для экспорта - уточните поиск');return;}
+  const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
+  const COLS=[
+    {i:COL.DATE_DDS,name:'Дата_ДДС',desc:'дата движения денег (факт оплаты), дд.мм.гггг',date:1},
+    {i:COL.DATE_OPIU,name:'Дата_ОПиУ',desc:'дата признания в ОПиУ (начисление), дд.мм.гггг',date:1},
+    {i:COL.TYPE,name:'Тип',desc:'тип операции: поступление / списание / перемещение'},
+    {i:COL.OFFER_ID,name:'ID_Offer',desc:'идентификатор сделки (id | № договора | ФИО)'},
+    {i:COL.INCOME,name:'Поступление',desc:'сумма прихода в рублях (число)',num:1},
+    {i:COL.OUTCOME,name:'Списание',desc:'сумма расхода в рублях (число, обычно отрицательное)',num:1},
+    {i:COL.FNS,name:'ФНС',desc:'признак налогового оформления (да/нет)'},
+    {i:COL.ACCOUNT,name:'Реквизиты_счета',desc:'касса или счёт-плательщик'},
+    {i:COL.ARTICLE_CODE,name:'Статья',desc:'код статьи (первые 3 цифры = группа статей)'},
+    {i:COL.ARTICLE_NAME,name:'Подстатья',desc:'подстатья (детальная статья затрат/доходов)'},
+    {i:COL.ANALYTICS,name:'Аналитика',desc:'категория для ОПиУ (Прямые/Косвенные, Переменные/Постоянные, Вывод прибыли и т.п.)'},
+    {i:COL.SECOND_SIDE,name:'Контрагент',desc:'контрагент / получатель / сотрудник (ID_SecondSide)'},
+    {i:COL.PURPOSE,name:'Назначение',desc:'назначение платежа (текст)'},
+    {i:COL.ACTIVITY_DIR,name:'Направление',desc:'направление деятельности (ЦФО): БФЛ / АУ / САУ / Автоправо и т.п.'},
+    {i:COL.FIN_OP,name:'Фин_операция',desc:'вид фин. операции: 001_Операционная / 002_Финансовая / 003_Инвестиционная / прочее'}
+  ];
+  const SEP=';';
+  const cell=v=>{v=String(v==null?'':v);return /[";\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const q=(_tabFilters.registry&&_tabFilters.registry.q)||'';
+  let out='';
+  out+='# Реестр операций - ГК ОПОРА (управленческий учёт). Одна строка = одна операция.\n';
+  out+='# Выгружено: '+ds(new Date())+' · строк: '+rows.length+(q?(' · фильтр запроса: "'+q+'"'):'')+'\n';
+  out+='# Формат: CSV, разделитель ";", кодировка UTF-8, десятичный разделитель ".", суммы в рублях.\n';
+  out+='# Описание столбцов:\n';
+  COLS.forEach(c=>{out+='#   '+c.name+' = '+c.desc+'\n';});
+  out+='\n'+COLS.map(c=>c.name).join(SEP)+'\n';
+  rows.forEach(r=>{out+=COLS.map(c=>{let v=r[c.i];if(c.date)return cell(ds(v));if(c.num){const n=parseNum(v);return n?String(n):'';}return cell(v);}).join(SEP)+'\n';});
+  const now=new Date(),p2=n=>String(n).padStart(2,'0');
+  const fn='reestr_'+now.getFullYear()+p2(now.getMonth()+1)+p2(now.getDate())+'_'+p2(now.getHours())+p2(now.getMinutes())+'.csv';
+  const blob=new Blob(['﻿'+out],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
+};
 function registryRender(q){
   const scroll=document.getElementById('regScroll'); if(!scroll)return;
   q=String(q||'').trim().toLowerCase();
