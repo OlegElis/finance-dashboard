@@ -1100,11 +1100,13 @@ async function loadOfferRef(sheetId,apiKey){
     const iNum=hdr.findIndex(h=>h.startsWith('№ договора'));
     const iCreated=hdr.findIndex(h=>h==='дата создания сделки');
     const iDateContract=hdr.findIndex(h=>h==='дата договора');
+    const iStage=hdr.findIndex(h=>h==='стадия сделки');
+    const iSum=hdr.findIndex(h=>h==='сумма');
     if(iOffer<0)return;
     const deals=[];
     rows.slice(1).forEach(r=>{
       const offer=String(r[iOffer]||'').trim(); if(!offer)return;
-      deals.push({offer, fio:iFio>=0?String(r[iFio]||'').trim():'', contract:iNum>=0?String(r[iNum]||'').trim():'', created:iCreated>=0?parseDate(r[iCreated]):null, dateContract:iDateContract>=0?parseDate(r[iDateContract]):null});
+      deals.push({offer, fio:iFio>=0?String(r[iFio]||'').trim():'', contract:iNum>=0?String(r[iNum]||'').trim():'', created:iCreated>=0?parseDate(r[iCreated]):null, dateContract:iDateContract>=0?parseDate(r[iDateContract]):null, stage:iStage>=0?String(r[iStage]||'').trim():'', sum:iSum>=0?parseNum(r[iSum]):0});
     });
     RAW_OFFERS={deals};
     console.log(`[RawData_ID_Offer] справочник всех направлений: ${deals.length} сделок`);
@@ -6881,12 +6883,12 @@ function renderDepAU(f){
   const today=new Date();today.setHours(0,0,0,0);
   const daysB=(a,b)=>Math.floor((b-a)/86400000);
   const EPS=0.5; // допуск совпадения сумм, ₽
-  // текущий статус (стадия сделки) по ID_Offer из листа RawData_BFL (RAW_BFL.deals): точный ID → lead-id (цифры до «|»)
-  const _bflDeals=(typeof RAW_BFL!=='undefined'&&RAW_BFL&&RAW_BFL.deals)||[];
+  // текущий статус (стадия сделки) по ID_Offer из справочника ВСЕХ направлений RawData_ID_Offer (RAW_OFFERS.deals), откат - RawData_BFL: точный ID → lead-id (цифры до «|»)
+  const _bflDeals=((typeof RAW_OFFERS!=='undefined'&&RAW_OFFERS&&RAW_OFFERS.deals&&RAW_OFFERS.deals.length)?RAW_OFFERS.deals:((typeof RAW_BFL!=='undefined'&&RAW_BFL&&RAW_BFL.deals)||[]));
   const _byOffer=new Map(),_byLead=new Map();
   _bflDeals.forEach(d=>{const k=_arNormId(d.offer);if(k&&!_byOffer.has(k))_byOffer.set(k,d);const l=_arLeadId(d.offer);if(l){if(!_byLead.has(l)||(d.sum||0)>(_byLead.get(l).sum||0))_byLead.set(l,d);}});
   const stageOf=id=>{const k=_arNormId(id);let d=k&&_byOffer.get(k);if(!d){const l=_arLeadId(id);d=l&&_byLead.get(l);}return d?String(d.stage||'').trim():'';};
-  const NOSTAT='(нет в BFL)';
+  const NOSTAT='(нет в справочнике)';
   // группируем по ID_Offer: выдачи(112) / возвраты(120) как отдельные операции (сумма + дата)
   const byId={};
   RAW.forEach(r=>{
@@ -6966,7 +6968,7 @@ function renderDepAU(f){
     <td style="${td};text-align:right;font-variant-numeric:tabular-nums;color:${x.notReturned>0.005?'var(--outcome)':'var(--text3)'}">${x.notReturned>0.005?fmt(x.notReturned):'0'}</td>
     <td style="${td};text-align:center;font-weight:600;color:${x.days>90?'#d35450':x.days>30?'#e0894a':'var(--text3)'}">${x.days!=null?x.days+' дн.':'-'}</td>
     <td style="${td};white-space:nowrap"><span style="padding:1px 8px;border-radius:8px;font-weight:600;color:${x.status.c};background:color-mix(in srgb,${x.status.c} 12%,transparent)">${x.status.t}</span>${x.mismatch?' <span title="Возврат не равен выдаче" style="color:var(--outcome);font-size:10px">⚠≠</span>':''}</td>
-    <td style="${td};max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${x.stage?'var(--text2)':'var(--text3)'}" title="${esc(x.stage||'нет в RawData_BFL').replace(/"/g,'&quot;')}">${esc(x.stage||'-')}</td>
+    <td style="${td};max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${x.stage?'var(--text2)':'var(--text3)'}" title="${esc(x.stage||'нет в справочнике сделок (RawData_ID_Offer)').replace(/"/g,'&quot;')}">${esc(x.stage||'-')}</td>
   </tr>`).join('');
   const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
 
