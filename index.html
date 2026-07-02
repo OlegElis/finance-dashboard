@@ -7559,6 +7559,9 @@ window.planFillCellFact=function(inp){
   if(window.planSumFromEl)planSumFromEl(inp);
 };
 // Заполнить все 12 месяцев строки фактом (по data-fact). Месяцы без факта остаются пустыми
+// видимая подпись факта под ячейкой (когда план > факта и мы НЕ перезаписываем автоматически)
+function _planFactHintSet(inp,f){const td=inp&&inp.parentNode;if(!td)return;let h=td.querySelector('.plan-fact-hint');if(!h){h=document.createElement('div');h.className='plan-fact-hint';h.style.cssText='font-size:9px;line-height:1.15;color:#c47a12;text-align:right;margin-top:1px;white-space:nowrap;pointer-events:none;font-family:var(--mono)';td.appendChild(h);}h.textContent='факт '+fmt(f);}
+function _planFactHintClear(inp){const td=inp&&inp.parentNode;if(!td)return;const h=td.querySelector('.plan-fact-hint');if(h)h.remove();}
 window.planFillRowFact=function(btn){
   const tr=btn.closest('tr'); if(!tr)return;
   const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
@@ -7574,8 +7577,8 @@ window.planFillRowFact=function(btn){
   months.forEach(i=>{
     const f=num(i.getAttribute('data-fact'))||0,cur=num(i.value);
     i.style.background='var(--surface)';
-    if(cur!=null&&cur>f+0.005){kept++;i.style.background='#fff3e0';i.title='План больше факта. Факт: '+fmt(f)+' - при необходимости введите вручную';return;} // план>факта - оставляем ручной ввод, показываем факт-подсказку
-    i.value=_planFmtNum(f);i.title='Факт: '+fmt(f); // остальное (пусто/план≤факта) - заполняем фактом (месяцы без факта → 0)
+    if(cur!=null&&cur>f+0.005){kept++;i.style.background='#fff3e0';i.title='План больше факта. Факт: '+fmt(f)+' - при необходимости введите вручную';_planFactHintSet(i,f);return;} // план>факта - оставляем ручной ввод, показываем факт видимой подписью
+    i.value=_planFmtNum(f);i.title='Факт: '+fmt(f);_planFactHintClear(i); // остальное (пусто/план≤факта) - заполняем фактом (месяцы без факта → 0)
   });
   const m1=tr.querySelector('input.plan-val[data-month="1"]'); if(m1&&window.planRowYear)window.planRowYear(m1);
   if(window.planSumFromEl)planSumFromEl(btn);
@@ -7589,7 +7592,7 @@ window.planClearRow=function(btn){
   if(!ins.some(i=>String(i.value||'').trim()!=='')){_planFillToast('Строка уже пуста');return;} // нечего очищать
   if(!confirm('Очистить все значения этой строки?\n(план по этим ячейкам будет удалён - можно «Отменить»)'))return;
   const snap=ins.map(i=>({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,title:i.title}));
-  ins.forEach(i=>{i.value='';i.style.background='var(--surface)';if(i.getAttribute('data-month')==='0'){i.dataset.auto='1';i.style.color='var(--text3)';}});
+  ins.forEach(i=>{i.value='';i.style.background='var(--surface)';_planFactHintClear(i);if(i.getAttribute('data-month')==='0'){i.dataset.auto='1';i.style.color='var(--text3)';}});
   if(window.planSumFromEl)planSumFromEl(btn);
   window._planFillUndo={snap}; _planFillToast('Строка очищена');
 };
@@ -7605,7 +7608,7 @@ function _planFillToast(msg){
 }
 window.planUndoFill=function(){
   const s=window._planFillUndo; if(!s||!s.snap){_planFillToastHide();return;}
-  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';o.el.style.background=o.bg||'';if(o.title!=null)o.el.title=o.title;});
+  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';o.el.style.background=o.bg||'';if(o.title!=null)o.el.title=o.title;_planFactHintClear(o.el);});
   const first=s.snap.find(o=>o.el&&o.el.isConnected); if(first&&window.planSumFromEl)planSumFromEl(first.el);
   window._planFillUndo=null; _planFillToastHide();
 };
