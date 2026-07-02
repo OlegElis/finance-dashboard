@@ -2562,7 +2562,7 @@ document.addEventListener('click',function(e){
   if(osvAccDD&&osvAccDD.style.display==='block'&&!osvAccDD.contains(e.target)&&e.target!==osvAccBtn){osvAccDD.style.display='none';renderOSV(getFilters());}
   [['osv-year-dd','osv-year-btn'],['osv-month-dd','osv-month-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderOSV(getFilters());}});
   [['ar-stage-dd','ar-stage-btn'],['ar-resp-dd','ar-resp-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderDebtBfl(getFilters());}});
-  {const dd=document.getElementById('dep-status-dd');const btn=document.getElementById('dep-status-btn');if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderDepAU(getFilters());}}
+  {let _depClosed=false;[['dep-dir-dd','dep-dir-dd-btn'],['dep-cyc-dd','dep-cyc-dd-btn'],['dep-status-dd','dep-status-dd-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';_depClosed=true;}});if(_depClosed)renderDepAU(getFilters());}
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
@@ -6919,29 +6919,41 @@ function renderDepAU(f){
     const refDate=(notReturned>EPS||!hasDep)?issueLast:depLast; // дней ждём возврата (или с даты возврата, если вернулся)
     const days=refDate?daysB(refDate,today):null;
     const isProblem=st.t!=='Вернулся';
-    return {id:e.id,rows:e.rows,issuedSum,issueLast,depSum,depLast,notReturned,noIssue,mismatch,isProblem,status:st,days,stage:stageOf(e.id)};
+    const dir=(e.rows.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).find(Boolean))||'';
+    return {id:e.id,rows:e.rows,issuedSum,issueLast,depSum,depLast,notReturned,noIssue,mismatch,isProblem,status:st,days,stage:stageOf(e.id),dir};
   });
   const q=S(f.search).toLowerCase(),onlyOpen=!!f.onlyOpen;
-  const selStatus=new Set(f.statuses||[]);
-  // справочник статусов (по всем ID выборки, до фильтра статуса)
-  const _statCnt={};items.forEach(x=>{const s=x.stage||NOSTAT;_statCnt[s]=(_statCnt[s]||0)+1;});
+  const selDir=new Set(f.dirs||[]),selCyc=new Set(f.cycleStatuses||[]),selStatus=new Set(f.statuses||[]);
+  // справочники (по всем ID выборки, до фильтров): направление / статус цикла / статус БФЛ
+  const _dirCnt={},_cycCnt={},_statCnt={};
+  items.forEach(x=>{const d=x.dir||'(нет)';_dirCnt[d]=(_dirCnt[d]||0)+1;_cycCnt[x.status.t]=(_cycCnt[x.status.t]||0)+1;const s=x.stage||NOSTAT;_statCnt[s]=(_statCnt[s]||0)+1;});
+  const dirList=Object.keys(_dirCnt).sort((a,b)=>a.localeCompare(b,'ru'));
+  const cycOrder=['⚠ Не вернулся','Частично вернулся','Возврат > выдачи','Возврат без выдачи','Вернулся'];
+  const cycList=Object.keys(_cycCnt).sort((a,b)=>{const ia=cycOrder.indexOf(a),ib=cycOrder.indexOf(b);return (ia<0?99:ia)-(ib<0?99:ib);});
   const statList=Object.keys(_statCnt).sort((a,b)=>a===NOSTAT?1:b===NOSTAT?-1:a.localeCompare(b,'ru'));
   let shown=items;
   if(q)shown=shown.filter(x=>x.id.toLowerCase().includes(q));
-  if(onlyOpen)shown=shown.filter(x=>x.isProblem);
+  if(selDir.size)shown=shown.filter(x=>selDir.has(x.dir||'(нет)'));
+  if(selCyc.size)shown=shown.filter(x=>selCyc.has(x.status.t));
   if(selStatus.size)shown=shown.filter(x=>selStatus.has(x.stage||NOSTAT));
+  if(onlyOpen)shown=shown.filter(x=>x.isProblem);
   shown.sort((a,b)=>{const pa=a.isProblem?0:1,pb=b.isProblem?0:1;if(pa!==pb)return pa-pb;return Math.max(b.issuedSum,b.depSum)-Math.max(a.issuedSum,a.depSum);});
   window._depRows=shown;
 
   const _dEsc=s=>String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
-  const statDD=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="expFilterList('dep-status-dd',this.value)" placeholder="Поиск статуса..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`
-    +`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="depStatusAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Все</button><button onclick="depStatusAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Снять</button></div>`
-    +statList.map(s=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_dEsc(s)}" ${selStatus.has(s)?'checked':''} onchange="depStatusChange()"> <span>${_dEsc(s)} <span style="color:var(--text3)">(${_statCnt[s]})</span></span></label>`).join('');
-  const statBtn=(selStatus.size?selStatus.size+' выбрано':'Все статусы')+' ▾';
+  // универсальный мультивыбор для депозитов
+  const mkDD=(field,id,labelAll,opts,cnt,withSearch)=>{const sel=new Set(f[field]||[]),bid=id+'-btn';
+    let inner=withSearch?`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="expFilterList('${id}',this.value)" placeholder="Поиск..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`:'';
+    inner+=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="depMultiAll('${id}','${bid}','${field}','${_dEsc(labelAll)}',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Все</button><button onclick="depMultiAll('${id}','${bid}','${field}','${_dEsc(labelAll)}',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Снять</button></div>`;
+    inner+=opts.map(o=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_dEsc(o)}" ${sel.has(o)?'checked':''} onchange="depMultiChange('${id}','${bid}','${field}','${_dEsc(labelAll)}')"> <span>${_dEsc(o)}${cnt?' <span style="color:var(--text3)">('+cnt[o]+')</span>':''}</span></label>`).join('');
+    const btnLabel=(sel.size?sel.size+' выбрано':labelAll)+' ▾';
+    return `<div style="position:relative;display:inline-block"><button id="${bid}" onclick="depMultiToggle('${id}')" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;min-width:130px;text-align:left">${btnLabel}</button><div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:320px;overflow-y:auto;min-width:240px;margin-top:2px">${inner}</div></div>`;};
   const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
     <div class="date-range"><input type="date" value="${f.dateFrom}" onchange="_tabFilters.depau.dateFrom=this.value;renderDepAU(getFilters())"><span class="date-range-sep">-</span><input type="date" value="${f.dateTo}" onchange="_tabFilters.depau.dateTo=this.value;renderDepAU(getFilters())"></div>
-    <input type="text" value="${esc(f.search).replace(/"/g,'&quot;')}" placeholder="Поиск ID_Offer / ФИО..." oninput="_tabFilters.depau.search=this.value;clearTimeout(window._depT);window._depT=setTimeout(()=>renderDepAU(getFilters()),300)" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);width:260px">
-    <div style="position:relative;display:inline-block"><button id="dep-status-btn" onclick="depStatusToggle()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;min-width:130px;text-align:left">${statBtn}</button><div id="dep-status-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:320px;overflow-y:auto;min-width:260px;margin-top:2px">${statDD}</div></div>
+    <input type="text" value="${esc(f.search).replace(/"/g,'&quot;')}" placeholder="Поиск ID_Offer / ФИО..." oninput="_tabFilters.depau.search=this.value;clearTimeout(window._depT);window._depT=setTimeout(()=>renderDepAU(getFilters()),300)" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);width:240px">
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>${mkDD('dirs','dep-dir-dd','Все направления',dirList,_dirCnt,false)}
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Статус:</label>${mkDD('cycleStatuses','dep-cyc-dd','Все статусы',cycList,_cycCnt,false)}
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Статус БФЛ:</label>${mkDD('statuses','dep-status-dd','Все статусы БФЛ',statList,_statCnt,true)}
     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${onlyOpen?'var(--accent)':'var(--surface)'};color:${onlyOpen?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
       <input type="checkbox" ${onlyOpen?'checked':''} onchange="_tabFilters.depau.onlyOpen=this.checked;renderDepAU(getFilters())" style="cursor:pointer;margin:0"> Только проблемные</label>
   </div>`;
@@ -6996,10 +7008,10 @@ function renderDepAU(f){
     ${trunc}
   </div>`;
 }
-// Депозиты АУ: мультивыбор статуса (стадии сделки из RawData_BFL) - применяется по закрытию дропдауна
-window.depStatusToggle=function(){const dd=document.getElementById('dep-status-dd');if(!dd)return;const open=dd.style.display!=='block';dd.style.display=open?'block':'none';if(!open)renderDepAU(getFilters());};
-window.depStatusChange=function(){const dd=document.getElementById('dep-status-dd'),btn=document.getElementById('dep-status-btn');if(!dd)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);if(btn)btn.textContent=(checked.length?checked.length+' выбрано':'Все статусы')+' ▾';_tabFilters.depau.statuses=checked;};
-window.depStatusAll=function(s){const dd=document.getElementById('dep-status-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.depStatusChange();};
+// Депозиты АУ: универсальный мультивыбор (Направление / Статус цикла / Статус БФЛ) - применяется по закрытию дропдауна
+window.depMultiToggle=function(id){const dd=document.getElementById(id);if(!dd)return;const open=dd.style.display!=='block';dd.style.display=open?'block':'none';if(!open)renderDepAU(getFilters());};
+window.depMultiChange=function(id,bid,field,labelAll){const dd=document.getElementById(id),btn=document.getElementById(bid);if(!dd)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);if(btn)btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.depau[field]=checked;};
+window.depMultiAll=function(id,bid,field,labelAll,s){const dd=document.getElementById(id);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.depMultiChange(id,bid,field,labelAll);};
 // Движения по депозиту (ID_Offer) в формате окна ДДС
 window.depShowDetail=function(idx){
   const x=(window._depRows||[])[idx];if(!x)return;
