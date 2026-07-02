@@ -882,7 +882,7 @@ const _tabFilters={
   debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffOn:true,dateSort:''},
   loans:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyDebt:false},
   anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9'},
-  depau:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyOpen:false},
+  depau:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyOpen:false,statuses:[]},
   audit:{sub:'300_Лидогенарация',year:'',account:'',dir:'',dim:'cp'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false},
@@ -2560,6 +2560,7 @@ document.addEventListener('click',function(e){
   if(osvAccDD&&osvAccDD.style.display==='block'&&!osvAccDD.contains(e.target)&&e.target!==osvAccBtn){osvAccDD.style.display='none';renderOSV(getFilters());}
   [['osv-year-dd','osv-year-btn'],['osv-month-dd','osv-month-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderOSV(getFilters());}});
   [['ar-stage-dd','ar-stage-btn'],['ar-resp-dd','ar-resp-btn']].forEach(([ddId,btnId])=>{const dd=document.getElementById(ddId);const btn=document.getElementById(btnId);if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderDebtBfl(getFilters());}});
+  {const dd=document.getElementById('dep-status-dd');const btn=document.getElementById('dep-status-btn');if(dd&&dd.style.display==='block'&&!dd.contains(e.target)&&e.target!==btn){dd.style.display='none';renderDepAU(getFilters());}}
   const opiuDD=document.getElementById('opiu-dir-dd');const opiuBtn=document.getElementById('opiu-dir-btn');
   if(opiuDD&&opiuDD.style.display==='block'&&!opiuDD.contains(e.target)&&e.target!==opiuBtn){opiuDD.style.display='none';window.opiuDirApply&&window.opiuDirApply();}
 });
@@ -6880,6 +6881,12 @@ function renderDepAU(f){
   const today=new Date();today.setHours(0,0,0,0);
   const daysB=(a,b)=>Math.floor((b-a)/86400000);
   const EPS=0.5; // допуск совпадения сумм, ₽
+  // текущий статус (стадия сделки) по ID_Offer из листа RawData_BFL (RAW_BFL.deals): точный ID → lead-id (цифры до «|»)
+  const _bflDeals=(typeof RAW_BFL!=='undefined'&&RAW_BFL&&RAW_BFL.deals)||[];
+  const _byOffer=new Map(),_byLead=new Map();
+  _bflDeals.forEach(d=>{const k=_arNormId(d.offer);if(k&&!_byOffer.has(k))_byOffer.set(k,d);const l=_arLeadId(d.offer);if(l){if(!_byLead.has(l)||(d.sum||0)>(_byLead.get(l).sum||0))_byLead.set(l,d);}});
+  const stageOf=id=>{const k=_arNormId(id);let d=k&&_byOffer.get(k);if(!d){const l=_arLeadId(id);d=l&&_byLead.get(l);}return d?String(d.stage||'').trim():'';};
+  const NOSTAT='(нет в BFL)';
   // группируем по ID_Offer: выдачи(112) / возвраты(120) как отдельные операции (сумма + дата)
   const byId={};
   RAW.forEach(r=>{
@@ -6910,18 +6917,29 @@ function renderDepAU(f){
     const refDate=(notReturned>EPS||!hasDep)?issueLast:depLast; // дней ждём возврата (или с даты возврата, если вернулся)
     const days=refDate?daysB(refDate,today):null;
     const isProblem=st.t!=='Вернулся';
-    return {id:e.id,rows:e.rows,issuedSum,issueLast,depSum,depLast,notReturned,noIssue,mismatch,isProblem,status:st,days};
+    return {id:e.id,rows:e.rows,issuedSum,issueLast,depSum,depLast,notReturned,noIssue,mismatch,isProblem,status:st,days,stage:stageOf(e.id)};
   });
   const q=S(f.search).toLowerCase(),onlyOpen=!!f.onlyOpen;
+  const selStatus=new Set(f.statuses||[]);
+  // справочник статусов (по всем ID выборки, до фильтра статуса)
+  const _statCnt={};items.forEach(x=>{const s=x.stage||NOSTAT;_statCnt[s]=(_statCnt[s]||0)+1;});
+  const statList=Object.keys(_statCnt).sort((a,b)=>a===NOSTAT?1:b===NOSTAT?-1:a.localeCompare(b,'ru'));
   let shown=items;
   if(q)shown=shown.filter(x=>x.id.toLowerCase().includes(q));
   if(onlyOpen)shown=shown.filter(x=>x.isProblem);
+  if(selStatus.size)shown=shown.filter(x=>selStatus.has(x.stage||NOSTAT));
   shown.sort((a,b)=>{const pa=a.isProblem?0:1,pb=b.isProblem?0:1;if(pa!==pb)return pa-pb;return Math.max(b.issuedSum,b.depSum)-Math.max(a.issuedSum,a.depSum);});
   window._depRows=shown;
 
+  const _dEsc=s=>String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const statDD=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="expFilterList('dep-status-dd',this.value)" placeholder="Поиск статуса..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`
+    +`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="depStatusAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Все</button><button onclick="depStatusAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Снять</button></div>`
+    +statList.map(s=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_dEsc(s)}" ${selStatus.has(s)?'checked':''} onchange="depStatusChange()"> <span>${_dEsc(s)} <span style="color:var(--text3)">(${_statCnt[s]})</span></span></label>`).join('');
+  const statBtn=(selStatus.size?selStatus.size+' выбрано':'Все статусы')+' ▾';
   const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
     <div class="date-range"><input type="date" value="${f.dateFrom}" onchange="_tabFilters.depau.dateFrom=this.value;renderDepAU(getFilters())"><span class="date-range-sep">-</span><input type="date" value="${f.dateTo}" onchange="_tabFilters.depau.dateTo=this.value;renderDepAU(getFilters())"></div>
     <input type="text" value="${esc(f.search).replace(/"/g,'&quot;')}" placeholder="Поиск ID_Offer / ФИО..." oninput="_tabFilters.depau.search=this.value;clearTimeout(window._depT);window._depT=setTimeout(()=>renderDepAU(getFilters()),300)" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);width:260px">
+    <div style="position:relative;display:inline-block"><button id="dep-status-btn" onclick="depStatusToggle()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;min-width:130px;text-align:left">${statBtn}</button><div id="dep-status-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:320px;overflow-y:auto;min-width:260px;margin-top:2px">${statDD}</div></div>
     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${onlyOpen?'var(--accent)':'var(--surface)'};color:${onlyOpen?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
       <input type="checkbox" ${onlyOpen?'checked':''} onchange="_tabFilters.depau.onlyOpen=this.checked;renderDepAU(getFilters())" style="cursor:pointer;margin:0"> Только проблемные</label>
   </div>`;
@@ -6948,6 +6966,7 @@ function renderDepAU(f){
     <td style="${td};text-align:right;font-variant-numeric:tabular-nums;color:${x.notReturned>0.005?'var(--outcome)':'var(--text3)'}">${x.notReturned>0.005?fmt(x.notReturned):'0'}</td>
     <td style="${td};text-align:center;font-weight:600;color:${x.days>90?'#d35450':x.days>30?'#e0894a':'var(--text3)'}">${x.days!=null?x.days+' дн.':'-'}</td>
     <td style="${td};white-space:nowrap"><span style="padding:1px 8px;border-radius:8px;font-weight:600;color:${x.status.c};background:color-mix(in srgb,${x.status.c} 12%,transparent)">${x.status.t}</span>${x.mismatch?' <span title="Возврат не равен выдаче" style="color:var(--outcome);font-size:10px">⚠≠</span>':''}</td>
+    <td style="${td};max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${x.stage?'var(--text2)':'var(--text3)'}" title="${esc(x.stage||'нет в RawData_BFL').replace(/"/g,'&quot;')}">${esc(x.stage||'-')}</td>
   </tr>`).join('');
   const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
 
@@ -6967,6 +6986,7 @@ function renderDepAU(f){
           <th style="text-align:right;${thS}">Не вернулось</th>
           <th style="text-align:center;${thS}">Дней</th>
           <th style="text-align:left;${thS}">Статус</th>
+          <th style="text-align:left;${thS}">Статус БФЛ (стадия)</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -6974,6 +6994,10 @@ function renderDepAU(f){
     ${trunc}
   </div>`;
 }
+// Депозиты АУ: мультивыбор статуса (стадии сделки из RawData_BFL) - применяется по закрытию дропдауна
+window.depStatusToggle=function(){const dd=document.getElementById('dep-status-dd');if(!dd)return;const open=dd.style.display!=='block';dd.style.display=open?'block':'none';if(!open)renderDepAU(getFilters());};
+window.depStatusChange=function(){const dd=document.getElementById('dep-status-dd'),btn=document.getElementById('dep-status-btn');if(!dd)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);if(btn)btn.textContent=(checked.length?checked.length+' выбрано':'Все статусы')+' ▾';_tabFilters.depau.statuses=checked;};
+window.depStatusAll=function(s){const dd=document.getElementById('dep-status-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.depStatusChange();};
 // Движения по депозиту (ID_Offer) в формате окна ДДС
 window.depShowDetail=function(idx){
   const x=(window._depRows||[])[idx];if(!x)return;
