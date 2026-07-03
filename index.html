@@ -309,6 +309,7 @@
   /* ── Бургер-меню и затемнение (по умолчанию скрыты, видны только на мобильном) ── */
   .hamburger{display:none;background:none;border:none;font-size:22px;line-height:1;color:var(--text);cursor:pointer;padding:4px 10px 4px 0;flex-shrink:0;}
   .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:199;}
+  .mflt-toggle{display:none;} /* тумблер «Фильтры» виден только на мобильном */
 
   /* Маркетинг: 4 графика в ряд → 2 на узких десктопах/планшетах */
   @media (max-width:1100px){
@@ -406,6 +407,11 @@
     .mtable-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;}
     /* «Модель БФЛ»: шапки карточек/блоков (flex-ряды с чипами ЦКП/ШЕ/Расходы) переносятся, а не распирают экран */
     #tabBflmodel [onclick^="bflToggleDept"],#tabBflmodel [onclick^="bflToggleBlock"]{flex-wrap:wrap;}
+
+    /* ===== Сворачиваемые фильтры: высокие фильтр-бары прячутся за тумблер «Фильтры и период» ===== */
+    .mflt-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;margin:0 0 10px;padding:10px 14px;font-size:12px;font-weight:700;color:var(--text2);background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-family:var(--sans);}
+    .mflt-toggle .mflt-arr{color:var(--accent);font-size:13px;}
+    .mflt-hide{display:none !important;}
 
     /* ===== Фильтр-бары на телефоне: вертикально, метка-подпись над контролом, контрол на всю ширину ===== */
     .tab-filters,.dds-extra-filters,.bank-extra-filters{flex-direction:column;align-items:stretch;gap:8px;}
@@ -1664,8 +1670,41 @@ window._presetSave=function(tab){
 
 // Мобильные карточки: на телефоне любая таблица превращается в карточки; подписи полей берём из заголовка таблицы.
 // Банк имеет свою форму (.bank-table и таблица в .txn-scroll) - её пропускаем. Класс/атрибуты инертны на десктопе (стили только в media ≤820px).
+// iPhone: без авто-зума при фокусе на поле ввода (страница «уезжала» за границы экрана и оставалась увеличенной).
+// maximum-scale=1 на iOS ≥10 НЕ отключает пинч-зум пользователя (жест работает), только авто-зум. Android не трогаем.
+try{if(/iPhone|iPad|iPod/i.test(navigator.userAgent)){const mv=document.querySelector('meta[name="viewport"]');if(mv&&!/maximum-scale/.test(mv.content))mv.content+=', maximum-scale=1';}}catch(e){}
+
+// Мобильные фильтры: высокий фильтр-бар (пол-экрана контролов) сворачивается за тумблер «Фильтры и период».
+// Состояние per-tab в window._mfltOpen (по умолчанию свёрнуто); классы инертны на десктопе (CSS только в media ≤820px).
+function mobileFiltersCollapse(){
+  const bars=[...document.querySelectorAll('#mainContent .tab-filters, #mainContent .dds-extra-filters, #mainContent .bank-extra-filters')];
+  if(!bars.length)return;
+  const byTab={};
+  bars.forEach(b=>{const c=b.closest('#mainContent > div');if(!c||!c.id)return;(byTab[c.id]=byTab[c.id]||[]).push(b);});
+  const ST=window._mfltOpen||(window._mfltOpen={});
+  Object.keys(byTab).forEach(tabId=>{
+    const list=byTab[tabId];
+    let tg=list[0].previousElementSibling;
+    const hasTg=tg&&tg.classList&&tg.classList.contains('mflt-toggle');
+    if(!hasTg){
+      if(window.innerWidth>820)return; // на десктопе тумблер не создаём (классы всё равно инертны)
+      const h=list.reduce((s,b)=>s+b.getBoundingClientRect().height,0);
+      if(h<150)return; // компактный бар (поиск и т.п.) - не прячем
+      tg=document.createElement('button');tg.type='button';tg.className='mflt-toggle';
+      tg.onclick=function(){ST[tabId]=!ST[tabId];mobileFiltersCollapse();};
+      list[0].parentNode.insertBefore(tg,list[0]);
+    }
+    const open=!!ST[tabId];
+    const html='<span>⚙ Фильтры и период</span><span class="mflt-arr">'+(open?'скрыть ▴':'показать ▾')+'</span>';
+    if(tg.innerHTML!==html)tg.innerHTML=html; // без лишних мутаций - иначе зациклится MutationObserver (он вызывает mobileCardify)
+    list.forEach(b=>b.classList.toggle('mflt-hide',!open));
+  });
+}
+try{window.addEventListener('resize',()=>{try{mobileFiltersCollapse();}catch(e){}});}catch(e){}
+
 function mobileCardify(scope){
   const root=scope||document.getElementById('mainContent'); if(!root)return;
+  if(!scope)try{mobileFiltersCollapse();}catch(e){} // тумблер фильтров - только для основного контента (не модалок)
   // обёртка таблицы в горизонтальный скролл (.mtable-scroll активен только на мобиле) - чтобы широкая таблица не распирала страницу
   const wrapScroll=tbl=>{const p=tbl.parentElement;if(!p||p.classList.contains('mtable-scroll'))return;const ox=getComputedStyle(p).overflowX;if(ox==='auto'||ox==='scroll')return;const w=document.createElement('div');w.className='mtable-scroll';p.insertBefore(w,tbl);w.appendChild(tbl);};
   root.querySelectorAll('table').forEach(tbl=>{
