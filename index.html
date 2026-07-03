@@ -5696,7 +5696,7 @@ function renderPlanFact(f){
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Подстатья:</label>
     <div style="position:relative;display:inline-block"><button id="pf-sub-btn" onclick="pfMultiToggle('pf-sub-dd')" style="${pfBtnStyle}">${pfSubBtn}</button><div id="pf-sub-dd" style="${pfDDstyle}">${pfSubDD}</div></div>
     ${(selArt.size||selSub.size)?`<button onclick="pfResetExtra()" style="font-size:10px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
-    ${isAdmin?`<button onclick="showPlansPanel()" style="margin-left:auto;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">✏ Редактировать планы</button>`:''}
+    <button onclick="showPlansPanel()" style="margin-left:auto;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">${isAdmin?'✏ Редактировать планы':'👁 Планы (просмотр)'}</button>
   </div>`;
 
   if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
@@ -7822,6 +7822,17 @@ function _planRenderMatrix(){
   wrap.querySelectorAll('input.plan-onoff').forEach(function(cb){if(window.planToggleRow)window.planToggleRow(cb);}); // отключить поля у строк со снятой галочкой
   wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){const k=t.getAttribute('data-key'),d=t.getAttribute('data-dir');if(window.planSumDir)window.planSumDir(k,d);}); // сначала ИТОГО направлений (ФОТ по сотрудникам)
   wrap.querySelectorAll('tr.plan-total').forEach(function(t){const k=t.getAttribute('data-key');if(window.planSumBlock)window.planSumBlock(k);}); // затем ИТОГО кодов (для 111 - сумма итогов направлений)
+  if(window._planReadOnly)_planApplyReadOnly(wrap); // режим «только просмотр» (не админ) - блокируем правку, оставляем разворот/режим/печать
+}
+// «Только просмотр»: отключаем ввод и действия-правки; разворот подстатей и индикатор режима ₽/% остаются для чтения
+function _planApplyReadOnly(wrap){
+  if(!wrap)return;
+  wrap.querySelectorAll('input.plan-val, input.plan-note, select.plan-owner, input.plan-onoff').forEach(function(el){el.disabled=true;el.style.cursor='default';});
+  wrap.querySelectorAll('button').forEach(function(b){const oc=b.getAttribute('onclick')||'';
+    if(/planToggleExpand/.test(oc))return;                                   // разворот для просмотра - оставляем
+    if(/planSetMode/.test(oc)){b.disabled=true;b.style.cursor='default';return;} // ₽/% - показываем режим, но не меняем
+    b.style.display='none';                                                   // действия (⇉ ⤓ ⌫ «+ добавить») - скрываем
+  });
 }
 // Пересчёт строки ИТОГО блока (сумма по месяцам/году всех включённых направлений; %/%ЧП - в рубли по базам data-rb/nb)
 window.planSumBlock=function(key){
@@ -8026,9 +8037,11 @@ window.showPlansPanel=async function(){
   // список ответственных (ФИО) для фильтра: ЦФО + уже назначенные в планах
   const ownerNames=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{})].map(x=>String(x||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   window._planSubartSel=new Set(); window._planOwnerSel=new Set(); // сброс мультивыбора подстатей и ответственных при открытии (стартуем со «всех»)
+  const isAdmin=(()=>{try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}})();
+  window._planReadOnly=!isAdmin; // не админ - только просмотр (изменять/сохранять нельзя)
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='plansPanelOverlay';
   overlay.innerHTML=`<div class="txn-card" style="width:98vw;max-width:none">
-    <div class="txn-card-head"><h3>Планы (БДР)</h3><button class="txn-card-close">✕</button></div>
+    <div class="txn-card-head"><h3>Планы (БДР)${isAdmin?'':' — просмотр'}</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:14px 18px 18px">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <span style="font-size:12px;color:var(--text2);font-weight:600;align-self:center">Все направления</span>
@@ -8065,11 +8078,11 @@ window.showPlansPanel=async function(){
       <div style="font-size:11px;color:var(--text3);margin-bottom:8px">План по месяцам и/или на год. Кнопка режима: ₽ → %выр (доля выручки) → %ЧП (доля чистой прибыли, только для статьи 127). Кнопка <b>⤓</b> - вставить ФАКТ (поступления/расходы по подстатье, режим ₽; если в строке уже есть значения - спросит подтверждение, а после заполнения можно «↶ Отменить»). Пусто = плана нет; «Год» пусто = сумма месяцев.</div>
       <div id="plan-matrix" style="overflow:auto;max-height:55vh;border:1px solid var(--border);border-radius:8px"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
-        <span style="font-size:10px;color:var(--text3)">Хранится в облаке (Firebase), запись только админу</span>
+        <span style="font-size:10px;color:var(--text3)">${isAdmin?'Хранится в облаке (Firebase), запись только админу':'Только просмотр. Изменять планы может администратор.'}</span>
         <div style="display:flex;gap:8px">
           <button onclick="planPrintOwners()" title="Печать: план по месяцам (как в редакторе), свод по направлениям, с учётом фильтров" style="font-size:12px;padding:7px 14px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">🖨 Печать (план по месяцам)</button>
-          <button onclick="document.getElementById('plansPanelOverlay').remove()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Отмена</button>
-          <button onclick="planSave(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>
+          <button onclick="document.getElementById('plansPanelOverlay').remove()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">${isAdmin?'Отмена':'Закрыть'}</button>
+          ${isAdmin?`<button onclick="planSave(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>`:''}
         </div>
       </div>
     </div>
