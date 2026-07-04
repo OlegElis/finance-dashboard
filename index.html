@@ -859,8 +859,10 @@ window.bankShowCard=function(idx){
 function bankRebuildChartData(){
   const d=window._bankChartData;
   if(!d)return;
+  // база - полностью отфильтрованные данные листа (_bankFilteredData: даты, «Будущие оплаты», extra-фильтры, направления - как KPI/таблица);
+  // раньше бралось RAW только с фильтром направления - после клика по счёту график показывал всё время без фильтров
   const bankDirs=_tabFilters.bank.activityDirs||[];
-  const baseRaw=bankDirs.length?RAW.filter(r=>bankDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):RAW;
+  const baseRaw=window._bankFilteredData||(bankDirs.length?RAW.filter(r=>bankDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):RAW);
   const src=_bankFilter.accs?baseRaw.filter(r=>_bankFilter.accs.includes(String(r[COL.ACCOUNT]||'').trim())):baseRaw;
 
   const allYearsInc=d.allYears.map(()=>0),allYearsOut=d.allYears.map(()=>0);
@@ -1091,13 +1093,22 @@ async function connectAndLoad(){
     const json=await resp.json();
     const rows=json.values||[];
     if(rows.length<2)throw new Error('Нет данных в листе «'+sheet+'»');
+    // сверка структуры листа: COL - фиксированные индексы, переставленная колонка молча ломает ВСЕ отчёты.
+    // Эталон - заголовки первой успешной загрузки (per sheet, localStorage); при расхождении - предупреждение
+    try{
+      const hdrNow=(rows[0]||[]).slice(0,15).map(h=>String(h||'').trim()).join('|');
+      const hdrKey='fin_rawHeaders_'+sheet, hdrSaved=localStorage.getItem(hdrKey);
+      if(hdrSaved&&hdrSaved!==hdrNow)alert('⚠ Структура листа «'+sheet+'» изменилась (порядок/названия колонок).\n\nБыло: '+hdrSaved+'\nСтало: '+hdrNow+'\n\nОтчёты читают колонки по позициям - проверьте, что порядок колонок прежний, иначе цифры разъедутся.');
+      localStorage.setItem(hdrKey,hdrNow);
+    }catch(e){}
     RAW=rows.slice(1).map(r=>{while(r.length<15)r.push('');return r.map((v,i)=>{if(i===COL.INCOME||i===COL.OUTCOME)return parseNum(v);return v;});});
     localStorage.setItem('fin_sheetId',sheetId);
     localStorage.setItem('fin_apiKey',apiKey);
-    try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/sheets').set({sheetId,apiKey}); } }catch(e){} // реквизиты - в облако (общие для устройств)
+    _fbSetSafe('config/sheets',{sheetId,apiKey},'Реквизиты подключения'); // реквизиты - в облако (общие для устройств)
     if(sheet==='RawData'){await loadBflDeals(sheetId,apiKey); await loadOfferRef(sheetId,apiKey);} // БФЛ-сделки + справочник сделок ВСЕХ направлений (RawData_ID_Offer)
     else {RAW_BFL=null;RAW_OFFERS=null;}
-    onDataLoaded();
+    try{onDataLoaded();}catch(re){ // ошибка РЕНДЕРА - не «ошибка загрузки»: данные получены, покажем суть
+      console.error('[render]',re);setStatus('ok','Загружено, но отчёт упал: '+re.message);alert('Данные загружены, но при построении отчёта произошла ошибка:\n'+re.message);return;}
   }catch(e){setStatus('error','Ошибка: '+e.message);alert('Ошибка:\n'+e.message);}
 }
 
@@ -1111,7 +1122,7 @@ async function loadOfferRef(sheetId,apiKey){
   RAW_OFFERS=null;
   try{
     const url=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/RawData_ID_Offer?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`;
-    const resp=await fetch(url); if(!resp.ok)return; // листа нет - работаем по RawData_BFL
+    const resp=await fetch(url); if(!resp.ok){if(resp.status!==400&&resp.status!==404)console.warn('[RawData_ID_Offer] HTTP '+resp.status+' - возможно квота API, справочник сделок не загружен');return;} // 400/404 = листа нет - работаем по RawData_BFL
     const json=await resp.json(); const rows=json.values||[]; if(rows.length<2)return;
     const hdr=rows[0].map(h=>String(h||'').toLowerCase().trim());
     let iOffer=hdr.findIndex(h=>h==='id_offer'); if(iOffer<0)iOffer=hdr.findIndex(h=>h.indexOf('id_offer')>=0||h.indexOf('id offer')>=0);
@@ -1136,7 +1147,7 @@ async function loadBflDeals(sheetId,apiKey){
   try{
     const url=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/RawData_BFL?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`;
     const resp=await fetch(url);
-    if(!resp.ok)return; // листа нет - работаем без него
+    if(!resp.ok){if(resp.status!==400&&resp.status!==404)console.warn('[RawData_BFL] HTTP '+resp.status+' - возможно квота API, лист сделок БФЛ не загружен');return;} // 400/404 = листа нет - работаем без него
     const json=await resp.json();
     const rows=json.values||[];
     if(rows.length<2)return;
@@ -1424,7 +1435,15 @@ window.auditPrintReport=function(){
   if(!w){alert('Разрешите всплывающие окна для формирования отчёта');return;}
   w.document.write(html);w.document.close();
 };
-function renderActiveTab(){const f=getFilters();if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);else if(activeTab==='loans')renderLoans(f);else if(activeTab==='anomaly')renderAnomaly(f);else if(activeTab==='depau')renderDepAU(f);else if(activeTab==='planfact')renderPlanFact(f);else if(activeTab==='target')renderTarget(f);else if(activeTab==='bflmodel')renderBflModel(f);else if(activeTab==='registry')renderRegistry(f);else if(activeTab==='audit')renderAudit(f);try{_injectPresetBar();}catch(e){}}
+function renderActiveTab(){const f=getFilters();
+  try{
+    if(activeTab==='bank')renderBank(f);else if(activeTab==='dds')renderDDS(f);else if(activeTab==='opiu')renderOPIU(f);else if(activeTab==='fot')renderFOT(f);else if(activeTab==='marketing')renderMarketing(f);else if(activeTab==='expenses')renderExpenses(f);else if(activeTab==='dupes')renderDupes(f);else if(activeTab==='incomplete')renderIncomplete(f);else if(activeTab==='osv')renderOSV(f);else if(activeTab==='debtbfl')renderDebtBfl(f);else if(activeTab==='loans')renderLoans(f);else if(activeTab==='anomaly')renderAnomaly(f);else if(activeTab==='depau')renderDepAU(f);else if(activeTab==='planfact')renderPlanFact(f);else if(activeTab==='target')renderTarget(f);else if(activeTab==='bflmodel')renderBflModel(f);else if(activeTab==='registry')renderRegistry(f);else if(activeTab==='audit')renderAudit(f);
+  }catch(e){ // ошибка одного рендерера НЕ должна давать «мёртвую» вкладку без объяснения
+    console.error('[render '+activeTab+']',e);
+    const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1));
+    if(cont)cont.innerHTML=emptyState('Ошибка построения отчёта','«'+String(e&&e.message||e).replace(/</g,'&lt;')+'» - обновите данные (↻) или сообщите администратору');
+  }
+  try{_injectPresetBar();}catch(e){}}
 
 // ───────────────────────── Пресеты отчётов (config/presets) ─────────────────────────
 // Пресет = именованный частичный снимок фильтров вкладки. Хранится в Firebase config/presets + localStorage-кэш.
@@ -1475,9 +1494,23 @@ function _filterSig(tab){const f=_tabFilters[tab]||{};const ks=['preset','period
 function _presetActive(tab){if(_activePreset[tab]&&_filterSig(tab)!==_activePresetSig[tab])_activePreset[tab]='';return _activePreset[tab]||'';}
 try{const _ls=JSON.parse(localStorage.getItem('reportPresets')||'null');if(_ls&&typeof _ls==='object')_presets=Object.assign({bank:[],opiu:[],dds:[],osv:[],fot:[]},_ls);}catch(e){}
 function _presetsNormalize(v){const out={bank:[],opiu:[],dds:[],osv:[],fot:[]};if(v&&typeof v==='object'){['bank','opiu','dds','osv','fot'].forEach(t=>{const a=v[t];out[t]=Array.isArray(a)?a.filter(Boolean):(a&&typeof a==='object'?Object.values(a).filter(Boolean):[]);});}return out;}
+// Запись в облако с предупреждением при отказе (правила БД / офлайн): раньше set() без .catch - «✓ Сохранено» показывалось,
+// а правки жили только в localStorage и затирались старым облаком при следующей загрузке (тихая потеря данных)
+function _fbSetSafe(path,val,label){
+  try{
+    if(!(window.firebase&&FIREBASE_CONFIG.databaseURL))return;
+    fbApp();
+    firebase.database().ref(path).set(val).catch(e=>{
+      console.warn('[cloud-save] '+path+':',e&&e.message||e);
+      window._fbSetWarned=window._fbSetWarned||{};
+      if(!window._fbSetWarned[path]){window._fbSetWarned[path]=1;
+        alert('⚠ Не удалось сохранить «'+label+'» в облако:\n'+((e&&e.message)||e)+'\n\nИзменения сохранены только на этом устройстве и могут быть потеряны. Проверьте правила Realtime Database (запись '+path+').');}
+    });
+  }catch(e){}
+}
 function _presetsSave(){
   try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){}
-  try{if(window.firebase&&FIREBASE_CONFIG.databaseURL){fbApp();firebase.database().ref('config/presets').set(_presets);}}catch(e){}
+  _fbSetSafe('config/presets',_presets,'Пресеты отчётов');
 }
 let _presetsSynced=false;
 function startPresetsSync(){
@@ -1880,10 +1913,6 @@ function renderBank(f){
   });
   [ds,pretaxMain,pretaxCards,pretaxKassy,noReq].forEach(arr=>arr.sort((a,b)=>b.total-a.total));
 
-  // Диагностика - посмотреть что в «Без реквизитов» и пустые счета в RAW
-  const emptyAccRows=RAW.filter(r=>{const d=applyBaseFilters([r],f);return d.length&&!String(r[COL.ACCOUNT]||'').trim();});
-  console.log('[Без реквизитов] noReq.length=',noReq.length,'| emptyAccRows в RAW=',emptyAccRows.length);
-  console.log('[Без реквизитов] примеры пустых строк (первые 5):', emptyAccRows.slice(0,5).map(r=>({acc:JSON.stringify(r[COL.ACCOUNT]),fns:r[COL.FNS],inc:r[COL.INCOME],out:r[COL.OUTCOME]})));
   let totInc=0,totOut=0,totAll=0;
   [...ds,...pretaxMain,...pretaxKassy,...pretaxCards,...noReq].forEach(a=>{totInc+=a.inc;totOut+=a.out;totAll+=a.total;});
   const saldo=totInc+totOut;
@@ -2099,12 +2128,9 @@ function renderBank(f){
     </div>
   </div>`;
 
-  // Таблица транзакций - сортировка и хранение в глобальной переменной
-  window._bankTxnData=data.slice().sort((a,b)=>{
-    const da=parseDate(a[COL.DATE_DDS])||parseDate(a[COL.DATE_OPIU])||new Date(0);
-    const db=parseDate(b[COL.DATE_DDS])||parseDate(b[COL.DATE_OPIU])||new Date(0);
-    return db-da;
-  });
+  // Таблица транзакций - сортировка по предвычисленному ключу (parseDate в компараторе = ~1 млн лишних Date на 12 тыс. строк)
+  window._bankTxnData=data.map(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return[d?d.getTime():0,r];})
+    .sort((a,b)=>b[0]-a[0]).map(x=>x[1]);
 
   const txnHtml=`<div class="txn-wrap">
     <div class="txn-header"><span class="table-title">Операции</span><span class="table-count" id="txnCount">${window._bankTxnData.length.toLocaleString('ru-RU')} транзакций</span><button id="txnFilterReset" onclick="bankTxnResetFilter()" style="display:none;margin-left:8px;padding:2px 8px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3)">× сброс</button></div>
@@ -3962,7 +3988,8 @@ function renderFOT(f){
     const t=String(row[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;
     const d=parseDate(row[COL.DATE_OPIU]);if(!d||!fotInScope(d))return;
     const o=parseNum(row[COL.OUTCOME]),inc=parseNum(row[COL.INCOME]);
-    if(t==='списание'&&o<0)totalExpAbs+=Math.abs(o);
+    const _anl=String(row[COL.ANALYTICS]||'').toLowerCase();
+    if(t==='списание'&&o<0&&!(_anl.includes('вывод')&&_anl.includes('прибыл')))totalExpAbs+=Math.abs(o); // вывод прибыли (дивиденды) - не расход, как в ОПиУ
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))totalRev+=inc;
   });
@@ -4111,11 +4138,13 @@ function renderExpenses(f){
     :groupMode==='article'?(String(r[COL.ARTICLE_CODE]||'').trim()||'Без статьи')
     :(String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'Без подстатьи').trim());
   const l2key=r=>String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||'Без подстатьи').trim();
+  // «Вывод чистой прибыли» (дивиденды, 127) - распределение, НЕ расход (как в ОПиУ/БДР: ниже линии ЧП); иначе итог расходился с ОПиУ на сумму дивидендов
+  const _expIsVyvod=r=>{const a=String(r[COL.ANALYTICS]||'').toLowerCase();return a.includes('вывод')&&a.includes('прибыл');};
   const cats={};let totalExp=0;
   data.forEach(r=>{
     const type=String(r[COL.TYPE]||'').trim().toLowerCase();
     const out=parseNum(r[COL.OUTCOME]);
-    if(type!=='списание'||out>=0)return;
+    if(type!=='списание'||out>=0||_expIsVyvod(r))return;
     const cat=l1key(r);
     if(!cats[cat])cats[cat]={total:0,subs:{}};
     cats[cat].total+=out;
@@ -4130,7 +4159,7 @@ function renderExpenses(f){
   const cmpMode=f.periodType||'year';
   const cmpPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(cmpMode==='year')return String(y);if(cmpMode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
   const perCat={},perSub={};const cmpPset=new Set();
-  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const out=parseNum(r[COL.OUTCOME]);if(type!=='списание'||out>=0)return;const pk=cmpPK(r);if(!pk)return;cmpPset.add(pk);const cat=l1key(r);(perCat[cat]=perCat[cat]||{});perCat[cat][pk]=(perCat[cat][pk]||0)+Math.abs(out);const sub=String(r[COL.ARTICLE_NAME]||'Без подстатьи').trim();(perSub[sub]=perSub[sub]||{});perSub[sub][pk]=(perSub[sub][pk]||0)+Math.abs(out);});
+  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const out=parseNum(r[COL.OUTCOME]);if(type!=='списание'||out>=0||_expIsVyvod(r))return;const pk=cmpPK(r);if(!pk)return;cmpPset.add(pk);const cat=l1key(r);(perCat[cat]=perCat[cat]||{});perCat[cat][pk]=(perCat[cat][pk]||0)+Math.abs(out);const sub=String(r[COL.ARTICLE_NAME]||'Без подстатьи').trim();(perSub[sub]=perSub[sub]||{});perSub[sub][pk]=(perSub[sub][pk]||0)+Math.abs(out);});
   const cmpPeriods=[...cmpPset].sort((a,b)=>periodSortKey(a,cmpMode).localeCompare(periodSortKey(b,cmpMode)));
 
   // Фильтр-бар + направление
@@ -5067,7 +5096,8 @@ function renderOSV(f){
     thead=`<tr><th rowspan="2" style="text-align:left;min-width:220px;vertical-align:bottom;${thCorner}">${rowDimLabel}</th>${pHead}</tr><tr>${pSub}</tr>`;
     buildRow=(a,bold,label)=>{
       const openAdj=rowCalc(a);
-      let run=openAdj;let lastVisIdx=-1;
+      // скрытые периоды ДО первого видимого уже вкатаны в openAdj (rowCalc) - цикл докатывает только скрытые МЕЖДУ видимыми (иначе двойной счёт в day-режиме с обрезкой 62 дней)
+      let run=openAdj;let lastVisIdx=pksAll.indexOf(visPks[0])-1;
       const cells=visPks.map(pk=>{
         // докатываем скрытые периоды между предыдущим видимым и текущим (только при учёте вход. сальдо)
         const curIdx=pksAll.indexOf(pk);
@@ -5173,6 +5203,8 @@ function renderDebtBfl(f){
   const payByOffer={};
   RAW.forEach(r=>{
     if(S(r[COL.ACTIVITY_DIR])!==BFL_DIR)return;
+    if(S(r[COL.TYPE]).toLowerCase()==='перемещение')return; // перемещения - не оплаты клиента
+    if(/поступлени.*депозит/i.test(S(r[COL.ARTICLE_NAME])))return; // «120_Поступление депозита» - возврат депозита из суда (несёт тот же ID_Offer), не оплата клиента
     const offer=_arNormId(r[COL.OFFER_ID]);if(!offer)return;
     const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
     const refund=(out<0&&isRefund(r))?out:0;
@@ -5516,7 +5548,9 @@ function renderRegistry(f){
     </div>`;
   registryRender(q);
 }
-window.registrySearch=function(v){if(_tabFilters.registry)_tabFilters.registry.q=v;window._regLimit=500;registryRender(v);};
+window.registrySearch=function(v){if(_tabFilters.registry)_tabFilters.registry.q=v;window._regLimit=500;
+  if(window._regSearchT)clearTimeout(window._regSearchT); // debounce 300мс - скан 12+ тыс. блобов и сборка таблицы не на каждое нажатие (как в Дебиторке/Займах)
+  window._regSearchT=setTimeout(()=>{window._regSearchT=null;registryRender(v);},300);};
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
 // Экспорт найденных строк в CSV с описанием столбцов - для загрузки в ИИ
 window.registryExportAI=function(){
@@ -5599,7 +5633,8 @@ function registryRender(q){
   if(!total){scroll.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Ничего не найдено по запросу</div>';return;}
   const hlTerms=tokens.map(tk=>tk.val).filter(Boolean);
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
-  const hl=s=>{let o=esc(s);if(hlTerms.length){hlTerms.forEach(t=>{if(!t)return;const re=new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');o=o.replace(re,'<mark style="background:#fde68a;color:#23272f;padding:0 1px;border-radius:2px">$1</mark>');});}return o;};
+  const hlRes=hlTerms.map(t=>new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi')); // RegExp один раз на рендер, а не на каждую из ~7500 ячеек
+  const hl=s=>{let o=esc(s);hlRes.forEach(re=>{o=o.replace(re,'<mark style="background:#fde68a;color:#23272f;padding:0 1px;border-radius:2px">$1</mark>');});return o;};
   const ds=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
   const dsO=v=>{const d=parseDate(v);if(!d)return '';const M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];return M[d.getMonth()]+' '+d.getFullYear();};
   const f2=v=>{const n=parseNum(v);return n?n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';};
@@ -5713,16 +5748,38 @@ function renderPlanFact(f){
   const subsAll=[..._subsAllSet];
   const pfOwnerSet=new Set();subsAll.forEach(s=>{ownersOfSub(s).forEach(o=>pfOwnerSet.add(o));});
   const pfOwners=[...pfOwnerSet].sort((a,b)=>a.localeCompare(b,'ru'));
+  // ── индекс планов (один проход вместо filter/find в циклах «12 месяцев × коды × направления») ──
+  const PIDX=new Map(); // dir|level|code → записи
+  const PLVL=new Map(); // dir|level → записи (толерантный поиск revenue-планов без привязки к code)
+  plans.forEach(p=>{const k=p.dir+'|'+p.level+'|'+p.code;let a=PIDX.get(k);if(!a)PIDX.set(k,a=[]);a.push(p);const k2=p.dir+'|'+p.level;let b=PLVL.get(k2);if(!b)PLVL.set(k2,b=[]);b.push(p);});
+  const recsOf=(d,rl,code)=>PIDX.get(d+'|'+rl+'|'+code)||[];
   // базы выручки/чистой прибыли - ПО НАПРАВЛЕНИЮ (чтобы %-планы разрешались корректно и суммировались в своде)
   // каскад базы %-планов: план «Выручка всего» → Σ планов доходов (level='income') → факт выручки. План не «плавает» по факту, %-планы работают на будущие месяцы
-  const revBaseMonthD=(d,m)=>{const r=plans.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;const ip=_planIncBaseMonth(d,year,m);if(ip>0)return ip;return((revByMonthD[d]||[])[m]||0);};
-  const revBaseYearD=d=>{const yr=plans.find(p=>p.dir===d&&p.level==='revenue'&&p.month===0);if(yr&&yr.value>0)return yr.value;let s=0;for(let m=1;m<=12;m++)s+=revBaseMonthD(d,m);return s;};
+  const _rbCache=new Map(),_ibCache=new Map();
+  const incBaseM=(d,m)=>{const k=d+'|'+m;if(_ibCache.has(k))return _ibCache.get(k);const v=_planIncBaseMonth(d,year,m);_ibCache.set(k,v);return v;};
+  const revBaseMonthD=(d,m)=>{const k=d+'|'+m;if(_rbCache.has(k))return _rbCache.get(k);const r=(PLVL.get(d+'|revenue')||[]).find(p=>p.month===m);let v;if(r&&r.value>0)v=r.value;else{const ip=incBaseM(d,m);v=ip>0?ip:(((revByMonthD[d]||[])[m])||0);}_rbCache.set(k,v);return v;};
+  const revBaseYearD=d=>{const yr=(PLVL.get(d+'|revenue')||[]).find(p=>p.month===0);if(yr&&yr.value>0)return yr.value;let s=0;for(let m=1;m<=12;m++)s+=revBaseMonthD(d,m);return s;};
   const netBaseMonthD=(d,m)=>Math.max(0,((revByMonthD[d]||[])[m]||0)-((npExpMonthD[d]||[])[m]||0));
   const netBaseYearD=d=>{let s=0;for(let m=1;m<=12;m++)s+=netBaseMonthD(d,m);return s;};
   const cvtD=(r,m)=>r.mode==='pct'?r.value*(m?revBaseMonthD(r.dir,m):revBaseYearD(r.dir)):r.mode==='pct_profit'?r.value*(m?netBaseMonthD(r.dir,m):netBaseYearD(r.dir)):r.value;
-  // суммируем по всем записям кода (в т.ч. по сотрудникам side для 111-ФОТ - несколько записей на код+месяц)
-  const planMonth=(rl,code,m)=>{let tot=null;dirsToAgg.forEach(d=>{plans.filter(p=>p.dir===d&&p.level===rl&&p.code===code&&p.month===m).forEach(r=>{tot=(tot||0)+cvtD(r,m);});});return tot;};
-  const planYear=(rl,code)=>{let tot=null;dirsToAgg.forEach(d=>{const all=plans.filter(p=>p.dir===d&&p.level===rl&&p.code===code);if(!all.length)return;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvtD(yr,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(r,m);}}if(v!=null)tot=(tot||0)+v;});});return tot;};
+  // суммируем по всем записям кода (в т.ч. по сотрудникам side для 111-ФОТ - несколько записей на код+месяц).
+  // Годовой план БЕЗ помесячной разбивки (только month=0 у dir+side) в помесячных расчётах распределяется равномерно /12 -
+  // раньше он был невидим в матрице «все месяцы», на графике и в отчёте за месяц (учитывался только в годовом итоге)
+  const _pmCache=new Map(),_pyCache=new Map();
+  const planMonth=(rl,code,m)=>{const ck=rl+'|'+code+'|'+m;if(_pmCache.has(ck))return _pmCache.get(ck);
+    let tot=null;
+    dirsToAgg.forEach(d=>{const recs=recsOf(d,rl,code);if(!recs.length)return;
+      const sides=[...new Set(recs.map(p=>String(p.side||'')))];
+      sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);
+        let hitM=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hitM=true;}});
+        if(hitM)return;
+        if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;} // только годовой план - равномерно
+      });});
+    _pmCache.set(ck,tot);return tot;};
+  const planYear=(rl,code)=>{const ck=rl+'|'+code;if(_pyCache.has(ck))return _pyCache.get(ck);
+    let tot=null;
+    dirsToAgg.forEach(d=>{const all=recsOf(d,rl,code);if(!all.length)return;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvtD(yr,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(r,m);}}if(v!=null)tot=(tot||0)+v;});});
+    _pyCache.set(ck,tot);return tot;};
   const planOf=(rl,code)=>isYear?planYear(rl,code):planMonth(rl,code,+period);
   // Планы хранятся ТОЛЬКО на уровне подстатьи (level='subarticle'/'income'). Статья = сумма подстатей по первым 3 цифрам кода.
   const _subCodes=lvl=>{const s={};plans.forEach(p=>{if(p.level===lvl)s[p.code]=1;});return Object.keys(s);};
@@ -5868,7 +5925,7 @@ function renderPlanFact(f){
   let monthlyHtml='';
   if(isMonthly){
     const MS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
-    const monthsOn=[];for(let m=1;m<=12;m++){let any=false;for(const c in factByCode){if(factByCode[c][m]){any=true;break;}}if(!any)for(const c in incByCode){if(incByCode[c][m]){any=true;break;}}if(!any)for(const c in vyvodByCode){if(vyvodByCode[c][m]){any=true;break;}}if(!any&&plans.some(p=>p.month===m))any=true;if(any)monthsOn.push(m);}
+    const monthsOn=[];for(let m=1;m<=12;m++){let any=false;for(const c in factByCode){if(factByCode[c][m]){any=true;break;}}if(!any)for(const c in incByCode){if(incByCode[c][m]){any=true;break;}}if(!any)for(const c in vyvodByCode){if(vyvodByCode[c][m]){any=true;break;}}if(!any&&plans.some(p=>p.month===m||p.month===0))any=true;if(any)monthsOn.push(m);} // годовой план (month=0) распределяется /12 - месяц с ним считается заполненным
     if(!monthsOn.length)for(let m=1;m<=12;m++)monthsOn.push(m);
     const mth=`text-align:right;padding:6px 7px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:2px solid var(--border);color:var(--label);text-transform:uppercase;white-space:nowrap`;
     const cellHtml=(plan,fact,kind,click)=>{
@@ -6018,7 +6075,7 @@ let _mktDirKey='__all__'; // текущее направление (устана
 let _kassaLimits=(()=>{try{return JSON.parse(localStorage.getItem('kassaLimits')||'{}')}catch(e){return{}}})();
 function _kassaSaveLimits(){
   try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}
-  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/kassaLimits').set(_kassaLimits); } }catch(e){}
+  _fbSetSafe('config/kassaLimits',_kassaLimits,'Лимиты счетов');
 }
 // Синхронизация реквизитов подключения (ID таблицы + API Key) между устройствами через config/sheets
 function startConfigSync(){
@@ -6061,7 +6118,7 @@ function startLimitsSync(){
       }else if(!window._limitsMigrated&&_kassaLimits&&Object.keys(_kassaLimits).length){
         // в облаке ещё нет лимитов - один раз переносим локальные «вверх»
         window._limitsMigrated=true;
-        firebase.database().ref('config/kassaLimits').set(_kassaLimits);
+        firebase.database().ref('config/kassaLimits').set(_kassaLimits).catch(e=>console.warn('[limits] миграция в облако не удалась:',e&&e.message));
       }
     });
   }catch(e){console.warn('[limits] синхронизация не активна:',e&&e.message);}
@@ -6513,9 +6570,10 @@ window.mktEnlarge=function(key,title){
     +'<div style="min-width:0"><div style="font-size:15.5px;font-weight:700;color:var(--text)">'+esc(title)+'</div><div style="font-size:11.5px;color:var(--text3);margin-top:3px;line-height:1.45">'+esc(DESC[key]||'')+'</div></div>'
     +'<button class="mkt-big-close" title="Закрыть" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);line-height:1;padding:0 4px">✕</button></div>'
     +'<div style="flex:1;padding:18px 24px 22px;position:relative;min-height:0"><canvas id="mktBigCanvas"></canvas></div></div>';
-  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  const ovClose=()=>{try{if(ov._chart)ov._chart.destroy();}catch(e){}ov.remove();}; // destroy - иначе Chart.js держит инстанс в реестре (утечка на каждый клик «увеличить»)
+  ov.addEventListener('click',e=>{if(e.target===ov)ovClose();});
   document.body.appendChild(ov);
-  ov.querySelector('.mkt-big-close').onclick=()=>ov.remove();
+  ov.querySelector('.mkt-big-close').onclick=ovClose;
   const cvs=ov.querySelector('#mktBigCanvas');
   let data; try{data=JSON.parse(JSON.stringify(cfg.data));}catch(e){data=cfg.data;} // данные клонируем (числа/строки)
   // опции переиспользуем (с колбэками форматирования), но: включаем легенду рядов и крупнее подписи осей
@@ -7133,7 +7191,7 @@ function renderDepAU(f){
   RAW.forEach(r=>{
     const iss=isIssue(r),dep=isDep(r);if(!iss&&!dep)return;
     const d=parseDate(r[COL.DATE_DDS]);if(!inRange(d))return;
-    const id=S(r[COL.OFFER_ID])||'- без ID_Offer -';
+    const id=_arNormId(S(r[COL.OFFER_ID]))||'- без ID_Offer -'; // нормализация как в Дебиторке (NBSP/пробелы вокруг «|») - иначе выдача и возврат одного ID разъезжаются в две группы
     const e=byId[id]||(byId[id]={id,issues:[],deps:[],rows:[]});
     e.rows.push(r);
     if(iss){const out=Math.abs(parseNum(r[COL.OUTCOME]));if(out>0)e.issues.push({amt:out,date:d});}
@@ -7335,13 +7393,14 @@ function startPresence(displayName){
       db.ref(base+'/email').set(_email);
     }catch(e){} };
     const beat=()=>{ref.update({ts:firebase.database.ServerValue.TIMESTAMP,name:displayName||'',dev:dev,email:_email});logActivity();};
-    db.ref('.info/connected').on('value',s=>{ if(s.val()){ ref.onDisconnect().remove(); beat(); } });
-    setInterval(beat,20000); // пульс каждые 20 сек
+    const connFn=s=>{ if(s.val()){ ref.onDisconnect().remove(); beat(); } };
+    db.ref('.info/connected').on('value',connFn);
+    const timer=setInterval(beat,20000); // пульс каждые 20 сек
     const leave=()=>{try{ref.remove();}catch(e){}};
     window.addEventListener('pagehide',leave);
     window.addEventListener('beforeunload',leave);
     // подписка: считаем сессии с меткой за последние 60 сек (с поправкой на серверное время)
-    db.ref('presence').on('value',s=>{
+    const subFn=s=>{
       const now=Date.now()+offset;let n=0;const list=[];
       s.forEach(c=>{const v=c.val();if(v&&v.ts&&(now-v.ts)<60000){n++;list.push({name:(v.name||'').trim(),dev:(v.dev||'').trim(),ago:Math.max(0,Math.round((now-v.ts)/1000)),email:(v.email||'').trim()});}});
       window._presenceList=list;
@@ -7349,7 +7408,12 @@ function startPresence(displayName){
       if(box)box.style.display='inline-flex';
       // если открыт попап - обновляем на лету
       if(document.getElementById('presenceListPopup'))showPresenceList(true);
-    });
+    };
+    db.ref('presence').on('value',subFn);
+    // остановка при выходе: пульс/подписки гасятся, чтобы разлогиненный не числился «Онлайн» и повторный вход не писал презенс под старым email
+    window._presenceStop=()=>{try{clearInterval(timer);}catch(e){}try{ref.remove();}catch(e){}
+      try{db.ref('presence').off('value',subFn);}catch(e){}try{db.ref('.info/connected').off('value',connFn);}catch(e){}
+      window._presenceStarted=false;window._presenceStop=null;};
   }catch(e){console.warn('[presence] счётчик не запущен:',e&&e.message);}
 }
 
@@ -7452,7 +7516,11 @@ function authErrMsg(err){
   return (err&&err.message)||'Ошибка входа';
 }
 const ADMIN_EMAIL='o017ev@gmail.com'; // админ: всегда разрешён + видит кнопку «Сбросить сессии»
-window.appLogout=function(){ try{ if(window.firebase&&firebase.auth) firebase.auth().signOut(); }catch(e){} };
+window.appLogout=function(){
+  try{if(window._presenceStop)window._presenceStop();}catch(e){} // гасим пульс презенса под старым email
+  window._appBooted=false; window._dataSheet=''; // следующий вход перезагрузит данные СВОЕЙ вкладки (раньше новый пользователь видел RAW предыдущего до «↻ Обновить»)
+  try{ if(window.firebase&&firebase.auth) firebase.auth().signOut(); }catch(e){}
+};
 // Вход через Google (всплывающее окно)
 window.appLoginGoogle=function(){
   try{
@@ -7580,7 +7648,7 @@ window.showAccessPanel=async function(){
 let _planRecords=(()=>{try{return JSON.parse(localStorage.getItem('finPlans')||'[]')}catch(e){return[]}})();
 function _plansSave(){
   try{localStorage.setItem('finPlans',JSON.stringify(_planRecords));}catch(e){}
-  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/plans').set(_planRecords); } }catch(e){}
+  _fbSetSafe('config/plans',_planRecords,'Планы БДР');
 }
 function startPlansSync(){
   if(window._plansSyncStarted)return; window._plansSyncStarted=true;
@@ -7598,7 +7666,7 @@ let _planOwners=(()=>{try{return JSON.parse(localStorage.getItem('finPlanOwners'
 const _ownerKey=(dir,code)=>String(dir||'')+'||'+String(code||'');
 function _ownersSave(){
   try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){}
-  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/planOwners').set(_planOwners); } }catch(e){}
+  _fbSetSafe('config/planOwners',_planOwners,'Ответственные по планам');
 }
 function startOwnersSync(){
   if(window._ownersSyncStarted)return; window._ownersSyncStarted=true;
@@ -7613,7 +7681,7 @@ function startOwnersSync(){
 let _planNotes=(()=>{try{return JSON.parse(localStorage.getItem('finPlanNotes')||'{}')}catch(e){return{}}})();
 function _notesSave(){
   try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}
-  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/planNotes').set(_planNotes); } }catch(e){}
+  _fbSetSafe('config/planNotes',_planNotes,'Примечания к планам');
 }
 function startNotesSync(){
   if(window._notesSyncStarted)return; window._notesSyncStarted=true;
@@ -7640,7 +7708,7 @@ function startCfoSync(){
 window._rentObjects=(()=>{try{const a=JSON.parse(localStorage.getItem('finRentObjects')||'[]');return Array.isArray(a)?a:[]}catch(e){return[]}})();
 function _rentObjectsSave(){
   try{localStorage.setItem('finRentObjects',JSON.stringify(window._rentObjects||[]));}catch(e){}
-  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/rentObjects').set(window._rentObjects||[]); } }catch(e){}
+  _fbSetSafe('config/rentObjects',window._rentObjects||[],'Объекты аренды');
 }
 function startRentObjectsSync(){
   if(window._rentObjSyncStarted)return; window._rentObjSyncStarted=true;
@@ -7657,7 +7725,7 @@ function startRentObjectsSync(){
 function _targetLockedSave(){
   const v=(_tabFilters.target&&_tabFilters.target.locked)||[];
   try{localStorage.setItem('finTargetLocked',JSON.stringify(v));}catch(e){}
-  try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); firebase.database().ref('config/targetLocked').set(v); } }catch(e){}
+  _fbSetSafe('config/targetLocked',v,'Фиксации Целевого ОПиУ');
 }
 function startTargetLockedSync(){
   try{const a=JSON.parse(localStorage.getItem('finTargetLocked')||'[]');if(Array.isArray(a))_tabFilters.target.locked=a;}catch(e){} // localStorage сразу
@@ -7832,7 +7900,13 @@ function _planRenderMatrix(){
   wrap.dataset.dir=dir;wrap.dataset.year=year;wrap.dataset.level=level;
   const esc=s=>String(s||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const MON=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
-  const cellVal=(rdir,rl,code,m,side)=>{const sd=String(side||'');const r=_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code&&p.month===m&&String(p.side||'')===sd);return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
+  // индекс планов года (один проход вместо _planRecords.find/filter на каждую ячейку 12 месяцев × коды × направления)
+  const EIDX=new Map(); // dir|level|code → записи
+  const ECELL=new Map(); // dir|level|code|month|side → запись
+  const ELVL=new Map(); // dir|level → записи (revenue-планы без привязки к code)
+  _planRecords.forEach(p=>{if(p.year!==year)return;const g=p.dir+'|'+p.level+'|'+p.code;let a=EIDX.get(g);if(!a)EIDX.set(g,a=[]);a.push(p);ECELL.set(g+'|'+p.month+'|'+String(p.side||''),p);const k2=p.dir+'|'+p.level;let b=ELVL.get(k2);if(!b)ELVL.set(k2,b=[]);b.push(p);});
+  const eRecs=(d,rl,code)=>EIDX.get(d+'|'+rl+'|'+code)||[];
+  const cellVal=(rdir,rl,code,m,side)=>{const r=ECELL.get(rdir+'|'+rl+'|'+code+'|'+m+'|'+String(side||''));return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const isFotCode=code=>c3(code)==='111'; // подстатьи ФОТ - доп. уровень планирования по сотрудникам (ID_SecondSide)
   const isRentCode=code=>c3(code)==='223'; // подстатьи аренды - доп. уровень по объектам аренды (справочник config/rentObjects)
@@ -7860,29 +7934,31 @@ function _planRenderMatrix(){
   // список сотрудников по (направление, 111-код): фактические ФИО ∪ плановые ФИО ∪ добавленные вручную; unalloc - есть план/факт без ФИО
   const fotSides=(d,code)=>{const named={};let unalloc=false;
     const F=FAD[d];if(F&&F.sideExp&&F.sideExp[code])Object.keys(F.sideExp[code]).forEach(sd=>{if(sd)named[sd]=1;else unalloc=true;});
-    _planRecords.forEach(p=>{if(p.dir===d&&p.year===year&&p.level===level&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else unalloc=true;}});
+    eRecs(d,level,code).forEach(p=>{const sd=String(p.side||'').trim();if(sd)named[sd]=1;else unalloc=true;});
     const ak=d+'||'+code;((window._planAddedSides||{})[ak]||[]).forEach(sd=>{if(sd)named[sd]=1;});
     if(isRentCode(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;}); // справочник объектов аренды (config/rentObjects) - общий для всех направлений
     return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),unalloc};};
   // ── суммы по группе (подстатья по всем направлениям) для свёрнутого вида: год план (с разрешением %/%ЧП) + год факт ──
   // база %выручки - каскад как в отчёте: план «Выручка» → Σ планов доходов (income) → факт; %ЧП - по факту
-  const _revPlanM=(d,m)=>{const r=_planRecords.find(p=>p.dir===d&&p.year===year&&p.level==='revenue'&&p.month===m);return(r&&r.value>0)?r.value:null;};
-  const revM=(d,m)=>{const rp=_revPlanM(d,m);if(rp!=null)return rp;const ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,m):0;if(ip>0)return ip;const F=FAD[d];return F?(F.rev[m]||0):0;};
-  const revYrD=d=>{const yr0=_planRecords.find(p=>p.dir===d&&p.year===year&&p.level==='revenue'&&p.month===0);if(yr0&&yr0.value>0)return yr0.value;let s=0;for(let m=1;m<=12;m++)s+=revM(d,m);return s;};
+  const _revC=new Map(),_ibC=new Map();
+  const _revPlanM=(d,m)=>{const r=(ELVL.get(d+'|revenue')||[]).find(p=>p.month===m);return(r&&r.value>0)?r.value:null;};
+  const revM=(d,m)=>{const k=d+'|'+m;if(_revC.has(k))return _revC.get(k);let v;const rp=_revPlanM(d,m);if(rp!=null)v=rp;else{let ip=_ibC.get(k);if(ip==null){ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,m):0;_ibC.set(k,ip);}if(ip>0)v=ip;else{const F=FAD[d];v=F?(F.rev[m]||0):0;}}_revC.set(k,v);return v;};
+  const revYrD=d=>{const yr0=(ELVL.get(d+'|revenue')||[]).find(p=>p.month===0);if(yr0&&yr0.value>0)return yr0.value;let s=0;for(let m=1;m<=12;m++)s+=revM(d,m);return s;};
   const netYrD=d=>{const F=FAD[d];if(!F)return 0;let s=0;for(let m=1;m<=12;m++)s+=Math.max(0,F.rev[m]-F.npExp[m]);return s;};
   const netM=(d,m)=>{const F=FAD[d];return F?Math.max(0,(F.rev[m]||0)-(F.npExp[m]||0)):0;};
-  const dirYearPlan=(rl,code,d)=>{const all=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code);if(!all.length)return null;const F=FAD[d];const cvt=(r,m)=>r.mode==='pct'?r.value*(m?revM(d,m):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):netYrD(d)):r.value;
+  const dirYearPlan=(rl,code,d)=>{const all=eRecs(d,rl,code);if(!all.length)return null;const F=FAD[d];const cvt=(r,m)=>r.mode==='pct'?r.value*(m?revM(d,m):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):netYrD(d)):r.value;
     const sides=[...new Set(all.map(p=>String(p.side||'')))];let tot=null;
     sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvt(y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvt(r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
   const subYearPlan=(rl,code)=>{let s=null;allDirs.forEach(d=>{const v=dirYearPlan(rl,code,d);if(v!=null)s=(s||0)+v;});return s;};
   const subYearFact=(rl,code)=>{let s=0;allDirs.forEach(d=>{s+=factYr(d,rl,code);});return s;};
   // помесячный план направления (из сохранённых записей, с разрешением %/%ЧП) и сумма по группе - для свёрнутой шапки
-  const dirMonthPlan=(rl,code,d,m)=>{const recs=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code&&p.month===m);if(!recs.length)return null;const F=FAD[d];let s=0;recs.forEach(r=>{s+=r.mode==='pct'?r.value*revM(d,m):r.mode==='pct_profit'?r.value*Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):r.value;});return s;};
+  const dirMonthPlan=(rl,code,d,m)=>{const recs=eRecs(d,rl,code).filter(p=>p.month===m);if(!recs.length)return null;const F=FAD[d];let s=0;recs.forEach(r=>{s+=r.mode==='pct'?r.value*revM(d,m):r.mode==='pct_profit'?r.value*Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):r.value;});return s;};
   const subMonthPlan=(rl,code,m)=>{let s=null;allDirs.forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;};
   const rowHtml=(rdir,rl,code,label,rev,sub,key)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
-    let mode='money'; if(!moneyOnly){const any=_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code);if(any)mode=any.mode;}
-    const hasPlan=!!_planRecords.find(p=>p.dir===rdir&&p.year===year&&p.level===rl&&p.code===code); // есть план по направлению - чекбокс «планировать» включён; иначе выключен (поля отключены)
+    const _recs=eRecs(rdir,rl,code);
+    let mode='money'; if(!moneyOnly&&_recs.length)mode=_recs[0].mode;
+    const hasPlan=!!_recs.length; // есть план по направлению - чекбокс «планировать» включён; иначе выключен (поля отключены)
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,rl,code,i+1));
@@ -7940,7 +8016,7 @@ function _planRenderMatrix(){
       <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">${isRentCode(code)?'🏢':'👤'}</span>${esc(label)}</td>
       <td style="padding:2px 4px;text-align:center;white-space:nowrap"><span style="font-size:11px;color:var(--text3)">₽</span><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button><button type="button" onclick="planClearRow(this)" title="Очистить все месяцы строки" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--outcome);vertical-align:middle">⌫</button></td>${cells}${yr}<td></td><td></td></tr>`;};
   // строка направления для 111-ФОТ: read-only ИТОГО по сотрудникам (plan-dirtotal, ▸ разворот) + ответственный/примечание (по направлению+коду)
-  const dirHeaderFot=(rl,code,d,key)=>{const dkey=key+'|'+d;const dopen=EXP.has(dkey);const hasPlan=_planRecords.some(p=>p.dir===d&&p.year===year&&p.level===rl&&p.code===code);
+  const dirHeaderFot=(rl,code,d,key)=>{const dkey=key+'|'+d;const dopen=EXP.has(dkey);const hasPlan=!!eRecs(d,rl,code).length;
     const mc=[...Array(12)].map((_,i)=>{const v=dirMonthPlan(rl,code,d,i+1);const vv=(v!=null)?_planFmtNum(+v.toFixed(2)):'';return`<td style="padding:2px 3px"><input class="plan-dttl" data-m="${i+1}" readonly tabindex="-1" value="${vv}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;}).join('');
     const yV=dirYearPlan(rl,code,d);const yVV=(yV!=null)?_planFmtNum(+yV.toFixed(2)):'';
     const yrCell=`<td style="padding:2px 3px"><input class="plan-dttl" data-m="0" readonly tabindex="-1" value="${yVV}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface2);color:var(--text);font-weight:700;font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;
@@ -8315,13 +8391,14 @@ window.appLogoutAll=function(){
 };
 // слежение за рубильником: если метка позже времени входа этой сессии - выходим
 function watchForceLogout(authMs){
+  window._flAuthMs=authMs; // всегда актуализируем время входа: после re-login в той же вкладке listener сравнивает с НОВЫМ входом (раньше замыкание держало authMs первого входа и выбивало легитимную сессию)
   if(window._flWatch)return; window._flWatch=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
     fbApp();
     firebase.database().ref('config/forceLogoutAfter').on('value',s=>{
       const v=s.val();
-      if(v&&authMs&&v>authMs){ try{firebase.auth().signOut();}catch(e){} }
+      if(v&&window._flAuthMs&&v>window._flAuthMs){ try{firebase.auth().signOut();}catch(e){} }
     });
   }catch(e){console.warn('[forceLogout] не активен:',e&&e.message);}
 }
@@ -8667,7 +8744,7 @@ function bflAutoFact(){
 function _bflModelSave(){
   _bflModel.savedAt=Date.now(); // метка времени - чтобы старое облако не затирало свежие локальные правки
   try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
-  try{if(window.firebase&&FIREBASE_CONFIG.databaseURL){fbApp();firebase.database().ref('config/bflModel').set(_bflModel);}}catch(e){}
+  _fbSetSafe('config/bflModel',_bflModel,'Модель БФЛ');
   try{const s=document.getElementById('bfl-save-status');if(s){const d=new Date();const p=n=>String(n).padStart(2,'0');s.textContent='✓ Сохранено '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());s.style.color='var(--income)';}}catch(e){}
 }
 function startBflModelSync(){
