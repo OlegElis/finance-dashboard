@@ -657,6 +657,8 @@ const TAB_TITLES={bank:'Реестр банковских и кассовых о
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 // Глобальный HTML-эскейп для данных из Sheets в innerHTML (защита от хранимого XSS через ячейки таблицы)
 function _htmlEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// Текущий пользователь - админ? (ADMIN_EMAIL). Для UI-гейтинга и решения «писать ли общие config/*»
+function _isAdmin(){try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtPct(v){if(typeof v!=='number'||isNaN(v))return'-';return(v*100).toFixed(1)+'%';}
 function numClass(v){if(typeof v!=='number')return'';return v>0?'num-positive':v<0?'num-negative':'';}
@@ -1106,7 +1108,7 @@ async function connectAndLoad(){
     RAW=rows.slice(1).map(r=>{while(r.length<15)r.push('');return r.map((v,i)=>{if(i===COL.INCOME||i===COL.OUTCOME)return parseNum(v);return v;});});
     localStorage.setItem('fin_sheetId',sheetId);
     localStorage.setItem('fin_apiKey',apiKey);
-    _fbSetSafe('config/sheets',{sheetId,apiKey},'Реквизиты подключения'); // реквизиты - в облако (общие для устройств)
+    if(_isAdmin())_fbSetSafe('config/sheets',{sheetId,apiKey},'Реквизиты подключения'); // реквизиты в облако пишет ТОЛЬКО админ (сотрудники их читают через startConfigSync); иначе при правиле «запись - админ» каждый вход сотрудника ловил бы отказ
     if(sheet==='RawData'){await loadBflDeals(sheetId,apiKey); await loadOfferRef(sheetId,apiKey);} // БФЛ-сделки + справочник сделок ВСЕХ направлений (RawData_ID_Offer)
     else {RAW_BFL=null;RAW_OFFERS=null;}
     try{onDataLoaded();}catch(re){ // ошибка РЕНДЕРА - не «ошибка загрузки»: данные получены, покажем суть
@@ -6102,9 +6104,9 @@ function startConfigSync(){
         const dash=document.getElementById('dashWrap');
         if(dash&&dash.classList.contains('hidden'))connectAndLoad();
       }else{
-        // в облаке пусто - один раз переносим локальные реквизиты «вверх»
+        // в облаке пусто - один раз переносим локальные реквизиты «вверх» (только админ - у него право записи)
         const sid=localStorage.getItem('fin_sheetId')||'',key=localStorage.getItem('fin_apiKey')||'';
-        if(sid&&key)ref.set({sheetId:sid,apiKey:key});
+        if(sid&&key&&_isAdmin())ref.set({sheetId:sid,apiKey:key}).catch(e=>console.warn('[config] sheets init:',e&&e.message));
       }
     }).catch(e=>console.warn('[config] sheets sync:',e&&e.message));
   }catch(e){console.warn('[config] sheets sync не активен:',e&&e.message);}
