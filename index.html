@@ -655,6 +655,8 @@ let activeTab='bank';
 const TAB_TITLES={bank:'Реестр банковских и кассовых операций (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ - план от обратного (сколько тратить под целевую прибыль)',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Контроль - Дубли записей',incomplete:'Контроль - Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ - задолженность по договорам',bflmodel:'Модель БФЛ - юнит-экономика и сценарии',registry:'Реестр операций - поиск по любому полю',audit:'Аудит закупа - контрагенты и кассы по подстатье'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
+// Глобальный HTML-эскейп для данных из Sheets в innerHTML (защита от хранимого XSS через ячейки таблицы)
+function _htmlEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function fmt(v){if(typeof v!=='number'||isNaN(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtPct(v){if(typeof v!=='number'||isNaN(v))return'-';return(v*100).toFixed(1)+'%';}
 function numClass(v){if(typeof v!=='number')return'';return v>0?'num-positive':v<0?'num-negative':'';}
@@ -726,7 +728,7 @@ function bankFillTxn(reset){
   const body=document.getElementById('txnBody');
   if(!body)return;
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const c=v=>v||'';
+  const c=v=>_htmlEsc(v||''); // данные Sheets в innerHTML - только через эскейп (XSS через ячейку)
   const html=slice.map((r,i)=>{
     const idx=offset+i;
     const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
@@ -818,7 +820,7 @@ window.bankResetAllFilters=function(){
 window.bankShowCard=function(idx){
   const r=window._bankTxnData[idx];if(!r)return;
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';};
-  const c=v=>String(v||'').trim()||'-';
+  const c=v=>_htmlEsc(String(v||'').trim())||'-'; // XSS через ячейку Sheets
   const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
   const incHtml=inc?`<span class="pos">${fmt(inc)}</span>`:`<span>-</span>`;
   const outHtml=out?`<span class="neg">${fmt(out)}</span>`:`<span>-</span>`;
@@ -1970,7 +1972,7 @@ function renderBank(f){
   </div>`;
 
   // Общая функция для кликабельной строки счёта
-  const makeAccRow=(a,extraClass='')=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}${extraClass?'  '+extraClass:''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')"><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`;
+  const makeAccRow=(a,extraClass='')=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}${extraClass?'  '+extraClass:''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td>${_htmlEsc(a.name)}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`;
 
   let sectionIdx=0;
   const buildSection=(arr,label)=>{
@@ -2007,7 +2009,7 @@ function renderBank(f){
         <td style="text-align:right;color:var(--outcome)">${fmt(go)}</td>
         <td style="text-align:right" class="${numClass(gt)}">${fmt(gt)}</td>
       </tr>`;
-      const rows=subarr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr class="acc-row-selectable sub-row${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" data-group="${gid}" style="display:none" onclick="bankFilterByAccount('${a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')"><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
+      const rows=subarr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr class="acc-row-selectable sub-row${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" data-group="${gid}" style="display:none" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td>${_htmlEsc(a.name)}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
       return hdrRow+rows;
     };
     const restRows=rest.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>makeAccRow(a)).join('');
@@ -2037,7 +2039,7 @@ function renderBank(f){
         <td style="text-align:right;color:var(--outcome)">${fmt(go)}</td>
         <td style="text-align:right" class="${numClass(gt)}">${fmt(gt)}</td>
       </tr>`;
-      const rows=arr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr class="acc-row-selectable sub-row${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" data-group="${gid}" style="display:none" onclick="bankFilterByAccount('${a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')"><td>${a.name}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
+      const rows=arr.filter(a=>a.inc!==0||a.out!==0||a.total!==0).map(a=>`<tr class="acc-row-selectable sub-row${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" data-group="${gid}" style="display:none" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td>${_htmlEsc(a.name)}</td>${td(a.inc)}${td(a.out)}${td(a.total)}</tr>`).join('');
       return hdrRow+rows;
     };
 
@@ -2157,7 +2159,7 @@ function renderBank(f){
 
   const bankSelDirs=f.activityDirs||[];
   const bankDirCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="bankDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="bankDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
-    allBankDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${bankSelDirs.includes(d)?'checked':''} onchange="bankDirChange()"> <span>${d}</span></label>`).join('');
+    allBankDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${bankSelDirs.includes(d)?'checked':''} onchange="bankDirChange()"> <span>${_htmlEsc(d)}</span></label>`).join('');
   const bankDirBtnLabel=(bankSelDirs.length?bankSelDirs.length+' выбрано':'Все направления')+' ▾';
 
   // Options for new bank filters (с поиском)
@@ -2165,7 +2167,7 @@ function renderBank(f){
     const search=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`;
     const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${onchangeFn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="${onchangeFn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`;
     const list=`<div class="bank-dd-list" style="max-height:220px;overflow-y:auto">`+
-      items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(String(v))?'checked':''} onchange="${onchangeFn}Change()"> <span>${v}</span></label>`).join('')+`</div>`;
+      items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_htmlEsc(v)}" ${selArr.includes(String(v))?'checked':''} onchange="${onchangeFn}Change()"> <span>${_htmlEsc(v)}</span></label>`).join('')+`</div>`;
     return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:520px;margin-top:2px">${search}${head}${list}</div>`;
   };
   const allOfferIds=[...new Set(dataBase.map(r=>String(r[COL.OFFER_ID]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
@@ -2716,7 +2718,7 @@ window.opiuShowTxnModal=function(subNodeId,pk){
     subNodeId=useId;data=window._opiuTxnMap[useId];
   }
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const c=v=>String(v||'').trim();
+  const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const totalInc=data.rows.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
   const totalOut=data.rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
@@ -2781,7 +2783,7 @@ window.opiuTxnSearch=function(subNodeId,modalId,query){
   const q=query.toLowerCase().trim();
   const filtered=q?data.rows.filter(r=>r.some(v=>String(v||'').toLowerCase().includes(q))):data.rows;
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const c=v=>String(v||'').trim();
+  const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
   const body=document.getElementById(modalId+'-body');
@@ -2805,7 +2807,7 @@ window.opiuTxnSearch=function(subNodeId,modalId,query){
 
 window.ddsShowRecordCard=function(row){
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';};
-  const c=v=>String(v||'').trim()||'-';
+  const c=v=>_htmlEsc(String(v||'').trim())||'-'; // XSS через ячейку Sheets (карточка переиспользуется всеми вкладками)
   const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
   const field=(lbl,val,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label><span>${val}</span></div>`;
   const fieldHtml=(lbl,html,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label>${html}</div>`;
@@ -2849,7 +2851,7 @@ window.ddsShowTxnModal=function(subNodeId,pk){
     subNodeId=useId;data=window._ddsTxnMap[useId];
   }
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const c=v=>String(v||'').trim();
+  const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const totalInc=data.rows.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
   const totalOut=data.rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
@@ -2918,7 +2920,7 @@ window.ddsTxnSearch=function(subNodeId,modalId,query){
   const q=query.toLowerCase().trim();
   const filtered=q?data.rows.filter(r=>r.some(v=>String(v||'').toLowerCase().includes(q))):data.rows;
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const c=v=>String(v||'').trim();
+  const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
   const body=document.getElementById(modalId+'-body');
@@ -2981,7 +2983,7 @@ function renderDDS(f){
   const monthBtnLabel=(selMonthsArr.length?selMonthsArr.length+' выбрано':'Все')+' ▾';
   const selDirs=f.activityDirs||[];
   const dirCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="ddsDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="ddsDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
-    allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="ddsDirChange()"> <span>${d}</span></label>`).join('');
+    allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="ddsDirChange()"> <span>${_htmlEsc(d)}</span></label>`).join('');
   const dirBtnLabel=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
   const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
   const extraFilters=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
@@ -3121,7 +3123,7 @@ function renderDDS(f){
   // Group row (ПОСТУПЛЕНИЯ/ВЫПЛАТЫ)
   const groupRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
     return`<tr class="dds-group dds-child-${parentNodeId}" data-node="${nodeId}" onclick="ddsTgl('${nodeId}')">
-      <td style="padding:4px 8px 4px 20px;font-weight:600;font-size:11px;background:#f5f7ff;cursor:pointer;position:sticky;left:0;z-index:1"><span class="dds-arrow">▶</span>${label}</td>
+      <td style="padding:4px 8px 4px 20px;font-weight:600;font-size:11px;background:#f5f7ff;cursor:pointer;position:sticky;left:0;z-index:1"><span class="dds-arrow">▶</span>${_htmlEsc(label)}</td>
       ${periodCells(perInc,perOut,'#f5f7ff',true)}
     </tr>`;
   };
@@ -3129,7 +3131,7 @@ function renderDDS(f){
   // Article row
   const artRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
     return`<tr class="dds-art dds-child-${parentNodeId}" data-node="${nodeId}" style="display:none" onclick="ddsTgl('${nodeId}')">
-      <td style="padding:3px 8px 3px 36px;font-weight:600;font-size:11px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap"><span class="dds-arrow">▶</span>${label}</td>
+      <td style="padding:3px 8px 3px 36px;font-weight:600;font-size:11px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap"><span class="dds-arrow">▶</span>${_htmlEsc(label)}</td>
       ${periodCells(perInc,perOut,'',false)}
     </tr>`;
   };
@@ -3137,7 +3139,7 @@ function renderDDS(f){
   // SubArticle row - opens modal on click
   const subRow=(nodeId,parentNodeId,label,perInc,perOut)=>{
     return`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="ddsShowTxnModal('${nodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
-      <td style="padding:3px 8px 3px 52px;font-size:10px;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${label} <span style="font-size:9px;color:var(--accent);margin-left:4px">↗</span></td>
+      <td style="padding:3px 8px 3px 52px;font-size:10px;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${_htmlEsc(label)} <span style="font-size:9px;color:var(--accent);margin-left:4px">↗</span></td>
       ${periodCells(perInc,perOut,'',false,nodeId)}
     </tr>`;
   };
@@ -3447,7 +3449,7 @@ function renderOPIU(f){
   const ptOptsHtmlO=ptOptsO.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
 
   const opiuDirCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="opiuDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="opiuDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
-    allOpiuDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selOpiuDirs.includes(d)?'checked':''} onchange="opiuDirChange()"> <span>${d}</span></label>`).join('');
+    allOpiuDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selOpiuDirs.includes(d)?'checked':''} onchange="opiuDirChange()"> <span>${_htmlEsc(d)}</span></label>`).join('');
   const opiuDirBtnLabel=(selOpiuDirs.length?selOpiuDirs.length+' выбрано':'Все направления')+' ▾';
 
   const extraFiltersOPIU=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
@@ -3528,14 +3530,14 @@ function renderOPIU(f){
     const catTotal=Object.values(catData.perOut).reduce((a,b)=>a+b,0);
     if(catTotal===0&&Object.keys(catData.arts).length===0)return'';
     let html=`<tr class="dds-group" data-node="${nodeId}" onclick="opiuTgl('${nodeId}')" style="cursor:pointer">
-      <td style="padding:3px 8px 3px 10px;font-weight:600;font-size:10px;background:#f8f9fa;cursor:pointer;position:sticky;left:0;z-index:1;white-space:nowrap"><span class="dds-arrow">▶</span>${catName}</td>
+      <td style="padding:3px 8px 3px 10px;font-weight:600;font-size:10px;background:#f8f9fa;cursor:pointer;position:sticky;left:0;z-index:1;white-space:nowrap"><span class="dds-arrow">▶</span>${_htmlEsc(catName)}</td>
       ${periodCellsOPIU(catData.perOut,'#f8f9fa',true)}
     </tr>`;
     Object.keys(catData.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
       const artData=catData.arts[art];
       const artNodeId=nodeId+'-a'+ai;
       html+=`<tr class="dds-art dds-child-${nodeId}" data-node="${artNodeId}" style="display:none;cursor:pointer" onclick="opiuTgl('${artNodeId}')">
-        <td style="padding:3px 8px 3px 28px;font-weight:600;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap"><span class="dds-arrow">▶</span>${art}</td>
+        <td style="padding:3px 8px 3px 28px;font-weight:600;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap"><span class="dds-arrow">▶</span>${_htmlEsc(art)}</td>
         ${periodCellsOPIU(artData.perOut,'',false)}
       </tr>`;
       Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
@@ -3543,7 +3545,7 @@ function renderOPIU(f){
         const subNodeId=artNodeId+'-s'+subi;
         window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:catName,rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
         html+=`<tr class="dds-sub dds-child-${artNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
-          <td style="padding:3px 8px 3px 46px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
+          <td style="padding:3px 8px 3px 46px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${_htmlEsc(sub)} <span style="font-size:9px;color:var(--accent)">↗</span></td>
           ${periodCellsOPIU(subData.perOut,'',false,subNodeId)}
         </tr>`;
       });
@@ -3557,14 +3559,14 @@ function renderOPIU(f){
     Object.keys(artObj.arts).sort((a,b)=>a.localeCompare(b,'ru')).forEach((art,ai)=>{
       const artData=artObj.arts[art];const artNodeId=idPrefix+ai;
       html+=`<tr class="dds-group" data-node="${artNodeId}" onclick="opiuTgl('${artNodeId}')" style="cursor:pointer">
-        <td style="padding:3px 8px 3px 10px;font-weight:600;font-size:10px;background:#f8f9fa;cursor:pointer;position:sticky;left:0;z-index:1;white-space:nowrap"><span class="dds-arrow">▶</span>${art}</td>
+        <td style="padding:3px 8px 3px 10px;font-weight:600;font-size:10px;background:#f8f9fa;cursor:pointer;position:sticky;left:0;z-index:1;white-space:nowrap"><span class="dds-arrow">▶</span>${_htmlEsc(art)}</td>
         ${periodCellsOPIU(artData.perOut,'#f8f9fa',true)}
       </tr>`;
       Object.keys(artData.subs).sort((a,b)=>a.localeCompare(b,'ru')).forEach((sub,subi)=>{
         const subData=artData.subs[sub];const subNodeId=artNodeId+'-s'+subi;
         window._opiuTxnMap[subNodeId]={label:sub,artLabel:art,secLabel:secLabel||'РАСХОДЫ',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
         html+=`<tr class="dds-sub dds-child-${artNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
-          <td style="padding:3px 8px 3px 28px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
+          <td style="padding:3px 8px 3px 28px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${_htmlEsc(sub)} <span style="font-size:9px;color:var(--accent)">↗</span></td>
           ${periodCellsOPIU(subData.perOut,'',false,subNodeId)}
         </tr>`;
       });
@@ -3579,7 +3581,7 @@ function renderOPIU(f){
       const subNodeId=parentNodeId+'-rs'+i;
       window._opiuTxnMap[subNodeId]={label:sub,artLabel:'Выручка',secLabel:'ВЫРУЧКА',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
       html+=`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
-        <td style="padding:3px 8px 3px 24px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${sub} <span style="font-size:9px;color:var(--accent)">↗</span></td>
+        <td style="padding:3px 8px 3px 24px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${_htmlEsc(sub)} <span style="font-size:9px;color:var(--accent)">↗</span></td>
         ${periodCellsOPIU(subData.perInc,'',false,subNodeId)}
       </tr>`;
     });
@@ -3916,7 +3918,7 @@ function renderFOT(f){
   const mkFotDD=(id,items,selArr,fn)=>{
     const search=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`;
     const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`;
-    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(String(v))?'checked':''} onchange="${fn}Change()"> <span>${v}</span></label>`).join('')+`</div>`;
+    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(String(v))?'checked':''} onchange="${fn}Change()"> <span>${_htmlEsc(v)}</span></label>`).join('')+`</div>`;
     return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:520px;margin-top:2px">${search}${head}${list}</div>`;
   };
   const fotBtnLabel=(sel,def)=>(sel.length?sel.length+' выбрано':def)+' ▾';
@@ -4163,7 +4165,7 @@ function renderExpenses(f){
   const cmpPeriods=[...cmpPset].sort((a,b)=>periodSortKey(a,cmpMode).localeCompare(periodSortKey(b,cmpMode)));
 
   // Фильтр-бар + направление
-  const dirCb=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="expDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="expDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="expDirChange()"> <span>${d}</span></label>`).join('');
+  const dirCb=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="expDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="expDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selDirs.includes(d)?'checked':''} onchange="expDirChange()"> <span>${_htmlEsc(d)}</span></label>`).join('');
   const dirBtn=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
   // Дропдауны Статья/Подстатья (мультивыбор + поиск)
   const mkOptList=(items,sel,changeCall)=>items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${sel.includes(v)?'checked':''} onchange="${changeCall}"> <span>${String(v).replace(/</g,'&lt;')}</span></label>`).join('');
@@ -4246,12 +4248,12 @@ function renderExpenses(f){
   let body='';
   catArr.forEach(c=>{
     const hdrBg=hasL2?'background:#f5f5f5':'';
-    body+=`<tr style="${hdrBg}"><td style="padding:5px 10px;font-size:11px;font-weight:${hasL2?700:500};color:var(--text2)">${c.name}</td>
+    body+=`<tr style="${hdrBg}"><td style="padding:5px 10px;font-size:11px;font-weight:${hasL2?700:500};color:var(--text2)">${_htmlEsc(c.name)}</td>
       <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500};color:var(--outcome);font-variant-numeric:tabular-nums">${fmt(-c.total)}</td>
       <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500}">${fmtPct(c.total/totalExpAbs)}</td>
       <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500};color:var(--text3)">${totalRev?fmtPct(c.total/revAbs):'-'}</td></tr>`;
     if(hasL2)Object.entries(c.subs).map(([s,v])=>[s,Math.abs(v)]).sort((a,b)=>b[1]-a[1]).forEach(([s,v])=>{
-      body+=`<tr><td style="padding:3px 10px 3px 26px;font-size:11px;color:var(--text2)">${s}</td>
+      body+=`<tr><td style="padding:3px 10px 3px 26px;font-size:11px;color:var(--text2)">${_htmlEsc(s)}</td>
         <td style="padding:3px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums">${fmt(-v)}</td>
         <td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--text3)">${fmtPct(v/totalExpAbs)}</td>
         <td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--text3)">${totalRev?fmtPct(v/revAbs):'-'}</td></tr>`;
@@ -4455,7 +4457,7 @@ function renderDupes(f){
 window.dupesShowCard=function(idx){
   const r=(window._dupesRows||[])[idx];if(!r)return;
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';};
-  const c=v=>String(v||'').trim()||'-';
+  const c=v=>_htmlEsc(String(v||'').trim())||'-'; // XSS через ячейку Sheets
   const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
   const incHtml=inc?`<span class="pos">${fmt(inc)}</span>`:`<span>-</span>`;
   const outHtml=out?`<span class="neg">${fmt(out)}</span>`:`<span>-</span>`;
@@ -4965,7 +4967,7 @@ function renderOSV(f){
   const mkDD=(id,fn,items,selArr,labelFn,withSearch)=>{
     const search=withSearch?`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`:'';
     const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
-    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(typeof v==='number'?v:String(v))?'checked':''} onchange="${fn}Change()"> <span>${labelFn?labelFn(v):v}</span></label>`).join('')+`</div>`;
+    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_htmlEsc(v)}" ${selArr.includes(typeof v==='number'?v:String(v))?'checked':''} onchange="${fn}Change()"> <span>${_htmlEsc(labelFn?labelFn(v):v)}</span></label>`).join('')+`</div>`;
     return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:${withSearch?'340px;max-width:520px':'130px'};margin-top:2px">${search}${head}${list}</div>`;
   };
   const btnStyle='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);text-align:left';
@@ -5086,7 +5088,7 @@ function renderOSV(f){
       const open=inclOpen?a.opening:0;
       const end=open+p.dt+p.kt;
       return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':''}>
-        <td style="${tdSticky(bold)}">${label||a.name}</td>
+        <td style="${tdSticky(bold)}">${_htmlEsc(label||a.name)}</td>
         ${numSaldo(open)}${num(p.dt)}${num(p.kt)}${numSaldo(end)}</tr>`;
     };
   }else{
@@ -5109,7 +5111,7 @@ function renderOSV(f){
         return numSaldo(openP,'border-left:2px solid var(--border);')+num(p.dt)+num(p.kt)+numSaldo(run);
       }).join('');
       return`<tr ${bold?'style="font-weight:700;background:var(--surface2)"':''}>
-        <td style="${tdSticky(bold)}">${label||a.name}</td>${cells}</tr>`;
+        <td style="${tdSticky(bold)}">${_htmlEsc(label||a.name)}</td>${cells}</tr>`;
     };
   }
 
@@ -5305,7 +5307,7 @@ function renderDebtBfl(f){
   const mkDD=(id,fn,itemsArr,selArr)=>{
     const search=`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`;
     const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`;
-    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+itemsArr.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(v)?'checked':''} onchange="${fn}Change()"> <span>${v}</span></label>`).join('')+`</div>`;
+    const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+itemsArr.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${String(v).replace(/"/g,'&quot;')}" ${selArr.includes(v)?'checked':''} onchange="${fn}Change()"> <span>${_htmlEsc(v)}</span></label>`).join('')+`</div>`;
     return`<div id="${id}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:340px;max-width:560px;margin-top:2px">${search}${head}${list}</div>`;
   };
   const btnStyle='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);text-align:left';
@@ -5439,7 +5441,7 @@ window.arShowDetail=function(idx){
   const totOut=moveRowsRaw.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
   const net=totInc+totOut;
   // Таблица в формате всплывающего окна ДДС: те же 15 колонок и стили
-  const c=v=>String(v||'').trim();
+  const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
   const movesThead=`<tr style="position:sticky;top:0;z-index:1">
@@ -5577,7 +5579,10 @@ window.registryExportAI=function(){
     {i:COL.FIN_OP,name:'Фин_операция',desc:'вид фин. операции: 001_Операционная / 002_Финансовая / 003_Инвестиционная / прочее'}
   ];
   const SEP=';';
-  const cell=v=>{v=String(v==null?'':v);return /[";\n\r#]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const cell=v=>{v=String(v==null?'':v);
+    // защита от формульных инъекций: текст, начинающийся с = + @ (или - не перед числом), Excel исполнил бы как формулу (=HYPERLINK и т.п.) - префиксуем апострофом
+    if(/^[=+@\t\r]/.test(v)||(v.charAt(0)==='-'&&!/^-?\d+([.,]\d+)?$/.test(v)))v="'"+v;
+    return /[";\n\r#]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
   // период ОПиУ - мин/макс месяц по фактически выгружаемым строкам
   let minD=null,maxD=null;
   rows.forEach(r=>{const d=parseDate(r[COL.DATE_OPIU]);if(!d)return;if(!minD||d<minD)minD=d;if(!maxD||d>maxD)maxD=d;});
@@ -5602,6 +5607,7 @@ window.registryExportAI=function(){
   out+='#   без разделителя разрядов, суммы в рублях.\n';
   out+="# Импорт: строки, начинающиеся с '#', пропускать (в pandas: comment='#').\n";
   out+='# Пустые значения: пустая ячейка в Поступление/Списание = 0.\n';
+  out+="# Защита: текст, начинающийся с '=', '+', '@' или '-', экранирован апострофом (формулы Excel не исполняются).\n";
   out+='# Описание столбцов:\n';
   COLS.forEach(c=>{out+='#   '+c.name+' = '+c.desc+'\n';});
   out+='\n'+COLS.map(c=>c.name).join(SEP)+'\n';
@@ -6267,7 +6273,7 @@ function renderMarketing(f){
   const monthCb=allBtns('months')+allMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${selMonths.includes(m)?'checked':''} onchange="multiSelChange('marketing','months','mkt-month-dd','mkt-month-btn')"> <span>${MONTHS_SHORT_M[m-1]}</span></label>`).join('');
   const yearBtnLabel=(selYears.length?selYears.length+' выбрано':'Все')+' ▾';
   const monthBtnLabel=(selMonths.length?selMonths.length+' выбрано':'Все')+' ▾';
-  const dirOptsHtml=allDirs.map(d=>`<option value="${d.replace(/"/g,'&quot;')}"${selDir===d?' selected':''}>${d}</option>`).join('');
+  const dirOptsHtml=allDirs.map(d=>`<option value="${_htmlEsc(d)}"${selDir===d?' selected':''}>${_htmlEsc(d)}</option>`).join('');
   const ptOptsHtml=ptOpts.map(o=>`<option value="${o.v}"${mode===o.v?' selected':''}>${o.l}</option>`).join('');
   const lblS='color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase';
   const btnS='font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left';
@@ -6596,7 +6602,7 @@ window.mktShowCostModal=function(metric,pk){
   const rows=(window._mktTxn||{})[metric+'|'+pk]||[];
   if(!rows.length)return;
   window._mktTxnCur=rows;
-  const c=v=>String(v||'').trim();
+  const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const n0=v=>Math.round(Math.abs(v)).toLocaleString('ru-RU');
@@ -6899,7 +6905,7 @@ function renderLoans(f){
 window.loanShowDetail=function(idx){
   const x=(window._loanRows||[])[idx];if(!x)return;
   const esc=s=>String(s||'').replace(/</g,'&lt;');
-  const c=v=>String(v||'').trim();
+  const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const ds=v=>{const d=v instanceof Date?v:parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const moveRowsRaw=[...x.rows].sort((a,b)=>(parseDate(a[COL.DATE_DDS])||0)-(parseDate(b[COL.DATE_DDS])||0));
