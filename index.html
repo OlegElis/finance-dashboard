@@ -7966,11 +7966,11 @@ function _planRenderMatrix(){
   const dirYearPlan=(rl,code,d)=>{const all=eRecs(d,rl,code);if(!all.length)return null;const F=FAD[d];const cvt=(r,m)=>r.mode==='pct'?r.value*(m?revM(d,m):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):netYrD(d)):r.value;
     const sides=[...new Set(all.map(p=>String(p.side||'')))];let tot=null;
     sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvt(y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvt(r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
-  const subYearPlan=(rl,code)=>{let s=null;allDirs.forEach(d=>{const v=dirYearPlan(rl,code,d);if(v!=null)s=(s||0)+v;});return s;};
-  const subYearFact=(rl,code)=>{let s=0;allDirs.forEach(d=>{s+=factYr(d,rl,code);});return s;};
+  const subYearPlan=(rl,code)=>{let s=null;dirsShown.forEach(d=>{const v=dirYearPlan(rl,code,d);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: при фильтре направления итоги свёрнутых строк согласованы с развёрнутым видом
+  const subYearFact=(rl,code)=>{let s=0;dirsShown.forEach(d=>{s+=factYr(d,rl,code);});return s;};
   // помесячный план направления (из сохранённых записей, с разрешением %/%ЧП) и сумма по группе - для свёрнутой шапки
   const dirMonthPlan=(rl,code,d,m)=>{const recs=eRecs(d,rl,code).filter(p=>p.month===m);if(!recs.length)return null;const F=FAD[d];let s=0;recs.forEach(r=>{s+=r.mode==='pct'?r.value*revM(d,m):r.mode==='pct_profit'?r.value*Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):r.value;});return s;};
-  const subMonthPlan=(rl,code,m)=>{let s=null;allDirs.forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;};
+  const subMonthPlan=(rl,code,m)=>{let s=null;dirsShown.forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: итоги при фильтре направления
   const rowHtml=(rdir,rl,code,label,rev,sub,key)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
     const _recs=eRecs(rdir,rl,code);
@@ -8003,11 +8003,20 @@ function _planRenderMatrix(){
       <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button><button type="button" onclick="planClearRow(this)" title="Очистить все месяцы строки" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--outcome);vertical-align:middle">⌫</button></td>${cells}${yr}${ownerCell}${noteCell}</tr>`;
   };
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  // фильтр «Направление» редактора: развороты и итоги показывают только выбранное; планы скрытых направлений НЕ трогаются при сохранении (presentKeys в _planStage)
+  const dirFlt=String(window._planDirFlt||'');
+  const dirsShown=(dirFlt&&allDirs.includes(dirFlt))?[dirFlt]:allDirs;
   const unionCodes=fn=>{const s={};allDirs.forEach(d=>fn(d,level).forEach(c=>s[c]=1));return Object.keys(s).sort((a,b)=>String(a).localeCompare(String(b),'ru'));};
-  const incCodes=unionCodes(_planIncomeCodes);
-  const codes=unionCodes(_planCodes);
+  // поиск по строкам матрицы (фильтр кодов по подстроке, live)
+  const rowQ=String(window._planRowQ||'').trim().toLowerCase();
+  const rowQOk=c=>!rowQ||String(c).toLowerCase().includes(rowQ);
+  const incCodes=unionCodes(_planIncomeCodes).filter(rowQOk);
+  const codes=unionCodes(_planCodes).filter(rowQOk);
   const secRow=t=>`<tr><td colspan="17" style="padding:5px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg);position:sticky;left:0">${t}</td></tr>`;
   const EXP=window._planExpanded||(window._planExpanded=new Set());
+  // команда «развернуть все / свернуть все» (кнопки над матрицей); только 1-й уровень (коды), сотрудники/объекты - вручную
+  if(window._planExpandCmd){const cmd=window._planExpandCmd;window._planExpandCmd=null;EXP.clear();
+    if(cmd==='all'){incCodes.forEach(c=>EXP.add('income|'+c));codes.forEach(c=>EXP.add(level+'|'+c));}}
   // итоговая ячейка = readonly input 72px (точно как ячейки ввода направлений → колонки совпадают один в один)
   const totCellIn=(val,cls,m,bold)=>`<td style="padding:2px 3px"><input ${cls?'class="'+cls+'" ':''}${m!=null?'data-m="'+m+'" ':''}readonly tabindex="-1" value="${(val!=null&&val!=='')?_planFmtNum(val):''}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:${bold?'var(--text)':'var(--text2)'};font-weight:${bold?700:600};font-family:var(--mono);pointer-events:none;box-sizing:content-box"></td>`;
   // свёрнутая шапка подстатьи: название + ИТОГО (план) по месяцам/году в ячейках (из сохранённых планов)
@@ -8048,13 +8057,13 @@ function _planRenderMatrix(){
   const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label);
     let html=openHeader(rl,code,label,key);
     if(isSubLevel(code)&&rl!=='revenue'){ // 111-ФОТ (сотрудники) / 223-аренда (объекты): направление → 3-й уровень
-      allDirs.forEach(d=>{html+=dirHeaderFot(rl,code,d,key);
+      dirsShown.forEach(d=>{html+=dirHeaderFot(rl,code,d,key);
         if(EXP.has(key+'|'+d)){const sd=fotSides(d,code);sd.named.forEach(s=>{html+=empRowHtml(d,code,s,s,key);});if(sd.unalloc)html+=empRowHtml(d,code,'','(не распределено)',key);html+=empAddRow(d,code,key);}});
       return html;
     }
-    return html+allDirs.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
+    return html+dirsShown.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
   const subSel=window._planSubartSel, ownerSel=window._planOwnerSel; // мультивыбор подстатей и ответственных (Set); пусто = все
-  const ownerOk=code=>{if(!ownerSel||!ownerSel.size)return true;return allDirs.some(d=>{const o=String(_planOwners[_ownerKey(d,code)]||'').trim();return o?ownerSel.has(o):ownerSel.has('__none__');});};
+  const ownerOk=code=>{if(!ownerSel||!ownerSel.size)return true;return dirsShown.some(d=>{const o=String(_planOwners[_ownerKey(d,code)]||'').trim();return o?ownerSel.has(o):ownerSel.has('__none__');});};
   let body;
   if((subSel&&subSel.size)||(ownerSel&&ownerSel.size)){ // активен фильтр подстатей и/или ответственных
     let incSel=incCodes, expSel=codes;
@@ -8068,6 +8077,7 @@ function _planRenderMatrix(){
   }else{
     body=secRow('Доходы')+incCodes.map(c=>codeBlock('income',c,c)).join('')
       +secRow('Расходы')+codes.map(c=>codeBlock(level,c,c)).join('');
+    if(!incCodes.length&&!codes.length)body=`<tr><td colspan="17" style="padding:14px 12px;color:var(--text3);font-size:12px">Ничего не найдено${rowQ?` по запросу «${esc(rowQ)}»`:''} за ${year}</td></tr>`;
   }
   const ths=MON.map(m=>`<th style="padding:6px 4px;font-size:10px;color:var(--text3);font-weight:600;position:sticky;top:0;background:var(--surface2);z-index:1">${m}</th>`).join('');
   const ownerOpts=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{}).filter(Boolean)])].sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(n=>`<option value="${esc(n)}">`).join('');
@@ -8170,6 +8180,12 @@ window.planOwnerUpdateBtn=function(){const b=document.getElementById('plan-owner
 // Развернуть/свернуть подстатью по направлениям (заполнение плана в разрезе направлений)
 window._planExpanded=window._planExpanded||new Set();
 window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window._planExpanded||(window._planExpanded=new Set());if(S.has(key))S.delete(key);else S.add(key);_planRenderMatrix();};
+// Фильтр «Направление» редактора: показывать развороты/итоги только по выбранному (пусто = все)
+window.planDirFlt=function(v){try{_planStage();}catch(e){}window._planDirFlt=v||'';_planRenderMatrix();};
+// «Развернуть все / Свернуть все» (1-й уровень - коды; сотрудники/объекты разворачиваются вручную)
+window.planExpandCmd=function(cmd){try{_planStage();}catch(e){}window._planExpandCmd=cmd;_planRenderMatrix();};
+// Живой поиск по строкам матрицы (debounce 250мс; состояние разворотов сохраняется)
+window.planRowSearch=function(v){clearTimeout(window._planRowQT);window._planRowQT=setTimeout(()=>{try{_planStage();}catch(e){}window._planRowQ=v;_planRenderMatrix();const q=document.getElementById('plan-row-q');if(q)q.focus();},250);};
 // Добавить элемент 3-го уровня: для 111-ФОТ - сотрудника (временный список); для 223-аренды - объект аренды (в Firebase-справочник config/rentObjects, общий для всех)
 window._planAddedSides=window._planAddedSides||{};
 window.planAddEmp=function(dir,code,key){
@@ -8313,17 +8329,25 @@ window.showPlansPanel=async function(){
   // список ответственных (ФИО) для фильтра: ЦФО + уже назначенные в планах
   const ownerNames=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{})].map(x=>String(x||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   window._planSubartSel=new Set(); window._planOwnerSel=new Set(); // сброс мультивыбора подстатей и ответственных при открытии (стартуем со «всех»)
+  window._planDirFlt=''; window._planRowQ=''; window._planExpandCmd=null; // сброс фильтра направления, поиска и команды разворота
   const isAdmin=(()=>{try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}})();
   window._planReadOnly=!isAdmin; // не админ - только просмотр (изменять/сохранять нельзя)
   window._planDirty=false; // несохранённые правки (защита от потери при закрытии)
   try{window._planSnapshot=JSON.stringify(_planRecords||[]);}catch(e){window._planSnapshot=null;} // снимок для отката при «закрыть без сохранения»
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='plansPanelOverlay';
-  overlay.innerHTML=`<div class="txn-card" style="width:98vw;max-width:none">
-    <div class="txn-card-head"><h3>Планы (БДР)${isAdmin?'':' — просмотр'}</h3><button class="txn-card-close">✕</button></div>
-    <div style="padding:14px 18px 18px">
+  overlay.innerHTML=`<div class="txn-card" style="width:98vw;max-width:none;height:94vh;max-height:94vh;display:flex;flex-direction:column">
+    <div class="txn-card-head" style="flex-shrink:0"><h3>Планы (БДР)${isAdmin?'':' — просмотр'}</h3><button class="txn-card-close">✕</button></div>
+    <div style="padding:14px 18px 18px;flex:1;min-height:0;display:flex;flex-direction:column">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-        <span style="font-size:12px;color:var(--text2);font-weight:600;align-self:center">Все направления</span>
+        <select id="plan-dir-flt" onchange="planDirFlt(this.value)" title="Показывать развороты и итоги только по выбранному направлению (планы остальных не трогаются)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:260px">
+          <option value="">Все направления</option>${dirs.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')}
+        </select>
         <select id="plan-year" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${years.map(y=>`<option value="${y}"${y===cy?' selected':''}>${y}</option>`).join('')}</select>
+        <input id="plan-row-q" type="text" autocomplete="off" placeholder="Поиск по строкам..." oninput="planRowSearch(this.value)" style="font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:170px">
+        <span style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+          <button type="button" onclick="planExpandCmd('all')" title="Развернуть все подстатьи" style="font-size:11px;padding:5px 10px;border:0;border-right:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer">⊞ Развернуть все</button>
+          <button type="button" onclick="planExpandCmd('none')" title="Свернуть все подстатьи" style="font-size:11px;padding:5px 10px;border:0;background:var(--surface);color:var(--text2);cursor:pointer">⊟ Свернуть</button>
+        </span>
         <input type="hidden" id="plan-level" value="subarticle">
         <style>.plan-flt-list .psub-opt,.plan-flt-list .powner-opt{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:12px;border-radius:5px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plan-flt-list .psub-opt:hover,.plan-flt-list .powner-opt:hover{background:var(--accent-light)}.plan-flt-list .psub-cb,.plan-flt-list .powner-cb{margin:0;cursor:pointer}</style>
         <div id="plan-subart-wrap" style="position:relative">
@@ -8354,7 +8378,7 @@ window.showPlansPanel=async function(){
         <span style="font-size:11px;color:var(--text3);align-self:center">Уровень: Подстатья · статьи собираются автоматически по первым 3 цифрам</span>
       </div>
       <div style="font-size:11px;color:var(--text3);margin-bottom:8px">План по месяцам и/или на год. Кнопка режима: ₽ → %выр (доля выручки) → %ЧП (доля чистой прибыли, только для статьи 127). Кнопка <b>⤓</b> - вставить ФАКТ (поступления/расходы по подстатье, режим ₽; если в строке уже есть значения - спросит подтверждение, а после заполнения можно «↶ Отменить»). Пусто = плана нет; «Год» пусто = сумма месяцев.</div>
-      <div id="plan-matrix" style="overflow:auto;max-height:55vh;border:1px solid var(--border);border-radius:8px"></div>
+      <div id="plan-matrix" style="overflow:auto;flex:1;min-height:0;border:1px solid var(--border);border-radius:8px"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--text3)">${isAdmin?'Хранится в облаке (Firebase), запись только админу':'Только просмотр. Изменять планы может администратор.'}</span>
         <div style="display:flex;gap:8px">
@@ -8370,6 +8394,18 @@ window.showPlansPanel=async function(){
   // правка в матрице → несохранённые изменения (защита от потери при закрытии)
   overlay.addEventListener('input',e=>{if(e.target&&e.target.closest&&e.target.closest('#plan-matrix'))window._planDirty=true;});
   overlay.addEventListener('change',e=>{if(e.target&&e.target.closest&&e.target.closest('#plan-matrix'))window._planDirty=true;});
+  // экселевская навигация по ячейкам: Enter/↓ - к тому же месяцу строкой ниже, Shift+Enter/↑ - выше (← → остаются курсору в тексте)
+  overlay.addEventListener('keydown',e=>{
+    const t=e.target;
+    if(!t||!t.classList||!t.classList.contains('plan-val'))return;
+    if(e.key!=='Enter'&&e.key!=='ArrowDown'&&e.key!=='ArrowUp')return;
+    e.preventDefault();
+    const m=t.getAttribute('data-month'),mx=document.getElementById('plan-matrix'); if(!mx)return;
+    const list=[...mx.querySelectorAll('input.plan-val[data-month="'+m+'"]')].filter(i=>!i.disabled&&i.offsetParent!==null);
+    const idx=list.indexOf(t); if(idx<0)return;
+    const nx=(e.key==='ArrowUp'||(e.key==='Enter'&&e.shiftKey))?list[idx-1]:list[idx+1];
+    if(nx){nx.focus();try{nx.select();}catch(err){}} // blur текущей сам форматирует значение (onblur=planFmtInput)
+  });
   document.body.appendChild(overlay);
   // закрытие выпадашки «Подстатья» по клику снаружи (один раз)
   if(!window._planFltDocBound){window._planFltDocBound=true;document.addEventListener('mousedown',function(e){[['plan-subart-wrap','plan-subart-list'],['plan-owner-wrap','plan-owner-list']].forEach(function(p){const w=document.getElementById(p[0]),l=document.getElementById(p[1]);if(l&&l.style.display!=='none'&&w&&!w.contains(e.target))l.style.display='none';});});}
