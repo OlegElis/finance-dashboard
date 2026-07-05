@@ -5237,7 +5237,8 @@ function renderDebtBfl(f){
   // Индекс сделок по уникальному ID Bitrix24 (цифры до «|») - для сверки оплат, у которых ID_Offer записан иначе
   const byLeadId=new Map();
   byOffer.forEach(d=>{const lid=_arLeadId(d.offer);if(!lid)return;if(!byLeadId.has(lid)||d.sum>byLeadId.get(lid).sum)byLeadId.set(lid,d);});
-  const daysBetween=(a,b)=>Math.floor((b-a)/86400000);
+  // календарные дни по локальным компонентам (parseDate = UTC-полночь, today = локальная) - иначе занижение на 1 день из-за часового пояса
+  const daysBetween=(a,b)=>{const dk=d=>Date.UTC(d.getFullYear(),d.getMonth(),d.getDate());return Math.round((dk(b)-dk(a))/86400000);};
   let itemsAll=[...byOffer.values()].filter(d=>d.sum>0).map(d=>{
     const p=payByOffer[d.offer]||{paid:0,income:0,count:0,firstDate:null,lastDate:null};
     const daysSince=p.lastDate?daysBetween(p.lastDate,today):null;
@@ -6755,11 +6756,14 @@ function renderLoans(f){
   window._loanRows=shown;
 
   const today=new Date();today.setHours(0,0,0,0);
-  const daysB=(a,b)=>Math.floor((b-a)/86400000);
+  // разница в КАЛЕНДАРНЫХ днях по локальным компонентам дат: parseDate даёт UTC-полночь, а today - локальную;
+  // прямое (b-a)/сутки занижало на 1 день (и давало −1 для «сегодня») из-за смещения часового пояса
+  const daysB=(a,b)=>{const dk=d=>Date.UTC(d.getFullYear(),d.getMonth(),d.getDate());return Math.round((dk(b)-dk(a))/86400000);};
   const dsF=d=>d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';
   const C_PAID='#2e9e6b',C_PART='#e0894a',C_NONE='#d35450';
   const statusOf=x=>x.issued<=0?{t:'-',c:'var(--text3)'}:x.balance<=0.005?{t:'Погашен',c:C_PAID}:x.repaid>0?{t:'Частично',c:C_PART}:{t:'Не возвращал',c:C_NONE};
-  const agingOf=x=>{if(x.balance<=0.005)return null;const ref=x.lastRepay||x.lastIssue;return ref?daysB(ref,today):null;};
+  // дней без возврата: с последнего возврата; если возвратов НЕ было - с ПЕРВОЙ выдачи (сколько долг висит без единого возврата, а не с последней до-выдачи)
+  const agingOf=x=>{if(x.balance<=0.005)return null;const ref=x.lastRepay||x.firstIssue;return ref?daysB(ref,today):null;};
   const agingColor=d=>d==null?'var(--text3)':d<=30?C_PAID:d<=90?C_PART:C_NONE;
 
   const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
@@ -6847,7 +6851,7 @@ function renderLoans(f){
     </tr></thead><tbody>
     ${comboArr.map(([k,c])=>`<tr><td style="padding:3px 8px;font-size:10px;border-bottom:1px solid var(--border)">${esc(k)}</td><td style="padding:3px 8px;font-size:10px;text-align:right;border-bottom:1px solid var(--border)">${c.n}</td><td style="padding:3px 8px;font-size:10px;text-align:right;border-bottom:1px solid var(--border)">${fmt(c.issued)}</td><td style="padding:3px 8px;font-size:10px;text-align:right;border-bottom:1px solid var(--border);color:var(--income)">${fmt(c.repaid)}</td></tr>`).join('')}
     </tbody></table>
-    <div style="font-size:9px;color:var(--text3);margin-top:4px">Матчинг: «Реквизиты счёта» (касса) содержит «займ» и «сотрудник» (статья/подстатья не используются). Выдача = списание, возврат = поступление; группировка по контрагенту (ID_SecondSide - кому заняли).</div>
+    <div style="font-size:9px;color:var(--text3);margin-top:4px">Матчинг: «Реквизиты счёта» (касса) содержит «займ» и «сотрудник» (статья/подстатья не используются). Знаковая модель: сумма строки = Поступление + Списание; «+» = выдача (долг растёт), «−» = возврат (долг падает); остаток (долг) = выдано − возвращено. Группировка по контрагенту (ID_SecondSide - кому заняли).</div>
     ${looseExtra?`<div style="font-size:10px;color:var(--outcome);margin-top:4px">⚠ Ещё ${looseExtra} строк с «займ» в реквизитах счёта без «сотрудник» НЕ вошли (иная займовая касса). Если это сотрудники - пришлите точное название.</div>`:''}
   </details>`;
 
@@ -6880,7 +6884,7 @@ function renderLoans(f){
           <th style="text-align:right;${thS}">Возвращено</th>
           <th style="text-align:right;${thS}">Остаток</th>
           <th style="text-align:left;${thS}">Погашение</th>
-          <th style="text-align:center;${thS}" title="Дней с последнего возврата (или с выдачи, если возвратов не было)">Без возврата</th>
+          <th style="text-align:center;${thS}" title="Дней с последнего возврата (или с первой выдачи, если возвратов не было)">Без возврата</th>
           <th style="text-align:center;${thS}">Послед. возврат</th>
           <th style="text-align:center;${thS}">Опер.</th>
         </tr></thead>
@@ -7190,7 +7194,8 @@ function renderDepAU(f){
   const inRange=d=>{if(!fromD&&!toD)return true;if(!d)return false;const iso=toIso(d);if(fromD&&iso<fromD)return false;if(toD&&iso>toD)return false;return true;};
   const dsF=d=>d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';
   const today=new Date();today.setHours(0,0,0,0);
-  const daysB=(a,b)=>Math.floor((b-a)/86400000);
+  // календарные дни по локальным компонентам (parseDate = UTC-полночь) - иначе занижение на 1 день из-за часового пояса
+  const daysB=(a,b)=>{const dk=d=>Date.UTC(d.getFullYear(),d.getMonth(),d.getDate());return Math.round((dk(b)-dk(a))/86400000);};
   const EPS=0.5; // допуск совпадения сумм, ₽
   // текущий статус (стадия сделки) по ID_Offer из справочника ВСЕХ направлений RawData_ID_Offer (RAW_OFFERS.deals), откат - RawData_BFL: точный ID → lead-id (цифры до «|»)
   const _bflDeals=((typeof RAW_OFFERS!=='undefined'&&RAW_OFFERS&&RAW_OFFERS.deals&&RAW_OFFERS.deals.length)?RAW_OFFERS.deals:((typeof RAW_BFL!=='undefined'&&RAW_BFL&&RAW_BFL.deals)||[]));
