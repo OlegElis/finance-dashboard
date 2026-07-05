@@ -2414,6 +2414,7 @@ window.kassaSetLimit=function(input,name){
 };
 window.showKassaLimitsPopup=function(){
   const d=window._kassaData||[];
+  const ro=!_isAdmin(); // лимиты меняет только админ; сотрудникам - просмотр (иначе отказ записи в config/kassaLimits)
   const fmt2=v=>(v!==null&&v!==undefined&&v!=='')?(+v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
   const rows=d.length?d.map(k=>{
     const lim=k.limit;
@@ -2421,12 +2422,15 @@ window.showKassaLimitsPopup=function(){
     const over=hasLim&&k.balance>+lim;
     const stTxt=!hasLim?'- лимит не задан':over?('⚠ Превышение +'+fmt(k.balance-+lim)):('✓ Запас '+fmt(+lim-k.balance));
     const stColor=!hasLim?'var(--text3)':over?'var(--outcome)':'var(--income)';
-    const safeName=k.name.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const safeName=_htmlEsc(k.name).replace(/'/g,"\\'");
+    const limCell=ro
+      ?`<span style="font-family:var(--mono);font-size:11px;color:var(--text2)">${hasLim?fmt2(k.limit):'<span style=color:var(--text3)>не задан</span>'}</span>`
+      :`<input type="text" value="${hasLim?_htmlEsc(k.limit):''}" data-balance="${k.balance}" placeholder="не задан" onchange="kassaSetLimit(this,'${safeName}')" style="width:140px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;padding:3px 6px;background:var(--surface);color:var(--text);font-family:var(--sans)">`;
     return`<tr>
-      <td style="padding:6px 10px;font-size:10px;border-bottom:1px solid var(--border);color:var(--text3);white-space:nowrap">${k.group||''}</td>
-      <td style="padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border)">${k.name}</td>
+      <td style="padding:6px 10px;font-size:10px;border-bottom:1px solid var(--border);color:var(--text3);white-space:nowrap">${_htmlEsc(k.group||'')}</td>
+      <td style="padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border)">${_htmlEsc(k.name)}</td>
       <td style="padding:6px 10px;font-size:11px;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums">${fmt2(k.balance)}</td>
-      <td style="padding:4px 10px;text-align:right;border-bottom:1px solid var(--border)"><input type="text" value="${hasLim?k.limit:''}" data-balance="${k.balance}" placeholder="не задан" onchange="kassaSetLimit(this,'${safeName}')" style="width:140px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;padding:3px 6px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>
+      <td style="padding:4px 10px;text-align:right;border-bottom:1px solid var(--border)">${limCell}</td>
       <td class="kassa-status" style="padding:6px 10px;font-size:11px;border-bottom:1px solid var(--border);white-space:nowrap;color:${stColor}">${stTxt}</td>
     </tr>`;
   }).join(''):'<tr><td colspan="5" style="padding:12px;font-size:11px;color:var(--text3);text-align:center">Реквизиты не найдены в данных</td></tr>';
@@ -2442,7 +2446,7 @@ window.showKassaLimitsPopup=function(){
       </div>
       <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:3px 18px">
         <span style="${hcell}">Реквизит</span><span style="${hcell};text-align:right">Остаток</span><span style="${hcell};text-align:right">Лимит</span><span style="${hcell};text-align:right">Превышение</span>
-        ${overList.map(k=>`<span style="font-size:11px;color:var(--text2)">${k.group?'<span style=\"color:var(--text3)\">['+k.group+']</span> ':''}${k.name}</span><span style="font-size:11px;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${fmt2(k.balance)}</span><span style="font-size:11px;text-align:right;color:var(--text3);font-variant-numeric:tabular-nums">${fmt2(k.limit)}</span><span style="font-size:11px;text-align:right;color:var(--outcome);font-weight:700;font-variant-numeric:tabular-nums">+${fmt2(k.over)}</span>`).join('')}
+        ${overList.map(k=>`<span style="font-size:11px;color:var(--text2)">${k.group?'<span style=\"color:var(--text3)\">['+_htmlEsc(k.group)+']</span> ':''}${_htmlEsc(k.name)}</span><span style="font-size:11px;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">${fmt2(k.balance)}</span><span style="font-size:11px;text-align:right;color:var(--text3);font-variant-numeric:tabular-nums">${fmt2(k.limit)}</span><span style="font-size:11px;text-align:right;color:var(--outcome);font-weight:700;font-variant-numeric:tabular-nums">+${fmt2(k.over)}</span>`).join('')}
       </div>
     </div>`:`<div style="background:#e8f5ee;border:1px solid #b8e0c8;border-radius:8px;padding:10px 16px;margin-bottom:14px;font-size:12px;font-weight:600;color:var(--income)">✓ Превышений нет - все реквизиты в пределах лимитов</div>`;
   const overlay=document.createElement('div');
@@ -2456,7 +2460,7 @@ window.showKassaLimitsPopup=function(){
     <div style="padding:16px 20px 20px">
       ${summaryBlock}
       <p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.6">
-        Лимит остатка задаётся для каждого реквизита (счёт ООО/ИП, карта ФЛ, касса). Если текущий остаток превышает лимит - реквизит подсвечивается как <b style="color:var(--outcome)">превышение</b>. Лимиты сохраняются в облаке (Firebase) и видны на всех устройствах.
+        Лимит остатка задаётся для каждого реквизита (счёт ООО/ИП, карта ФЛ, касса). Если текущий остаток превышает лимит - реквизит подсвечивается как <b style="color:var(--outcome)">превышение</b>. Лимиты сохраняются в облаке (Firebase) и видны на всех устройствах.${ro?' <b>Только просмотр - лимиты задаёт администратор.</b>':''}
       </p>
       <div style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
         <table style="width:100%;border-collapse:collapse">
