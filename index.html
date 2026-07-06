@@ -915,7 +915,7 @@ const _tabFilters={
   planfact:{dir:'',year:0,level:'article',period:'monthly',articles:[],subarticles:[]},
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
   bflmodel:{view:'depts',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
-  registry:{q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''}}
+  registry:{q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}}
 };
 
 function getFilters(){return _tabFilters[activeTab]||_tabFilters.bank;}
@@ -5550,8 +5550,11 @@ function renderRegistry(f){
   _tabFilters.registry=_tabFilters.registry||{q:'',sel:{}}; _tabFilters.registry.sel=_tabFilters.registry.sel||{};
   _tabFilters.registry.dds=_tabFilters.registry.dds||{years:[],months:[],from:'',to:''};
   _tabFilters.registry.opiu=_tabFilters.registry.opiu||{years:[],months:[],from:'',to:''};
+  _tabFilters.registry.inc=_tabFilters.registry.inc||{from:'',to:''};
+  _tabFilters.registry.out=_tabFilters.registry.out||{from:'',to:''};
+  _tabFilters.registry.offer=_tabFilters.registry.offer||{q:'',empty:false};
   const q=(f&&f.q)||'';
-  const sel=_tabFilters.registry.sel,dds=_tabFilters.registry.dds,opiu=_tabFilters.registry.opiu;
+  const sel=_tabFilters.registry.sel,dds=_tabFilters.registry.dds,opiu=_tabFilters.registry.opiu,finc=_tabFilters.registry.inc,fout=_tabFilters.registry.out,foffer=_tabFilters.registry.offer;
   const MONTHS_R=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const _ySet=new Set();RAW.forEach(r=>[COL.DATE_DDS,COL.DATE_OPIU].forEach(c=>{const d=parseDate(r[c]);if(d)_ySet.add(d.getFullYear());}));
   const yearOpts=[..._ySet].sort((a,b)=>b-a).map(y=>({v:y,label:String(y)}));
@@ -5593,7 +5596,20 @@ function renderRegistry(f){
       <div><label style="${smLbl}">по</label><input type="date" value="${st.to||''}" onchange="regDateRange('${which}','to',this.value)" style="${dateInp}"></div>
     </div>`;
   const dateActive=o=>(o.years&&o.years.length)||(o.months&&o.months.length)||o.from||o.to;
-  const activeCnt=Object.values(sel).reduce((s,a)=>s+((a&&a.length)?1:0),0)+(q?1:0)+(dateActive(dds)?1:0)+(dateActive(opiu)?1:0);
+  // числовой диапазон Поступление/Списание (списание - по модулю, «расходы больше N»)
+  const numInp='width:96px;font-size:11px;padding:5px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--mono);text-align:right;box-sizing:border-box';
+  const amtGroup=(which,label,st)=>`<div style="display:flex;gap:6px;align-items:flex-end;padding:5px 8px;background:var(--surface2);border-radius:8px">
+      <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text3);align-self:center;max-width:74px;line-height:1.2">${label}</span>
+      <div><label style="${smLbl}">от ₽</label><input type="number" inputmode="decimal" value="${st.from}" oninput="regNumRange('${which}','from',this.value)" placeholder="0" style="${numInp}"></div>
+      <div><label style="${smLbl}">до ₽</label><input type="number" inputmode="decimal" value="${st.to}" oninput="regNumRange('${which}','to',this.value)" placeholder="∞" style="${numInp}"></div>
+    </div>`;
+  const offGroup=`<div style="display:flex;gap:8px;align-items:flex-end;padding:5px 8px;background:var(--surface2);border-radius:8px">
+      <div><label style="${smLbl}">ID Offer содержит</label><input type="text" value="${String(foffer.q||'').replace(/"/g,'&quot;')}" oninput="regOfferQ(this.value)" placeholder="id / № договора / ФИО" style="width:180px;font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>
+      <label style="font-size:11px;display:flex;align-items:center;gap:5px;align-self:center;color:var(--text3);white-space:nowrap;cursor:pointer"><input type="checkbox" ${foffer.empty?'checked':''} onchange="regOfferEmpty(this.checked)" style="cursor:pointer"> (пусто)</label>
+    </div>`;
+  const numActive=o=>String(o.from||'').trim()!==''||String(o.to||'').trim()!=='';
+  const offerActive=foffer.empty||String(foffer.q||'').trim()!=='';
+  const activeCnt=Object.values(sel).reduce((s,a)=>s+((a&&a.length)?1:0),0)+(q?1:0)+(dateActive(dds)?1:0)+(dateActive(opiu)?1:0)+(numActive(finc)?1:0)+(numActive(fout)?1:0)+(offerActive?1:0);
   el.innerHTML=`<div class="tab-filters" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
       <div style="display:flex;flex-direction:column">
         <label style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--label);margin-bottom:2px">Быстрый поиск</label>
@@ -5605,6 +5621,9 @@ function renderRegistry(f){
       </div>
       ${dateGroup('dds','Дата ДДС',dds)}
       ${dateGroup('opiu','Дата ОПиУ',opiu)}
+      ${amtGroup('inc','Поступление',finc)}
+      ${amtGroup('out','Списание',fout)}
+      ${offGroup}
       ${REG_FIELDS.map(mkRegDD).join('')}
       ${activeCnt?`<button onclick="regResetAll()" title="Сбросить все фильтры" style="font-size:11px;padding:5px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;align-self:flex-end">× сброс (${activeCnt})</button>`:''}
       <span id="regCount" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:8px;font-family:var(--mono);white-space:nowrap;align-self:flex-end"></span>
@@ -5632,7 +5651,11 @@ window.regDDAll=function(c,select){const dd=document.getElementById('reg-dd-'+c)
 window.regDateSel=function(which,part,id){const dd=document.getElementById(id);if(!dd)return;const vals=[...dd.querySelectorAll('.reg-cb:checked')].map(cb=>+cb.value);_tabFilters.registry[which]=_tabFilters.registry[which]||{years:[],months:[],from:'',to:''};_tabFilters.registry[which][part]=vals;window._regLimit=500;const btn=document.getElementById(id+'-btn');if(btn)btn.textContent=(vals.length?vals.length+' выбрано':'Все')+' ▾';registrySearchApply();};
 window.regDateAll=function(id,which,part,select){const dd=document.getElementById(id);if(!dd)return;dd.querySelectorAll('.reg-cb').forEach(cb=>cb.checked=select);regDateSel(which,part,id);};
 window.regDateRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{years:[],months:[],from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
-window.regResetAll=function(){_tabFilters.registry={q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''}};window._regLimit=500;renderRegistry(_tabFilters.registry);};
+// числовой диапазон Поступление/Списание; ID Offer (подстрока + пусто)
+window.regNumRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
+window.regOfferQ=function(val){_tabFilters.registry.offer=_tabFilters.registry.offer||{q:'',empty:false};_tabFilters.registry.offer.q=val;window._regLimit=500;registrySearchApply();};
+window.regOfferEmpty=function(checked){_tabFilters.registry.offer=_tabFilters.registry.offer||{q:'',empty:false};_tabFilters.registry.offer.empty=!!checked;window._regLimit=500;registrySearchApply();};
+window.regResetAll=function(){_tabFilters.registry={q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regLimit=500;renderRegistry(_tabFilters.registry);};
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
 // Экспорт найденных строк в CSV с описанием столбцов - для загрузки в ИИ
 window.registryExportAI=function(){
@@ -5684,6 +5707,10 @@ window.registryExportAI=function(){
   const MONS_F=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
   const dfPart=(w,lbl)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const p=[];if(o.years&&o.years.length)p.push('годы '+o.years.join(','));if(o.months&&o.months.length)p.push('месяцы '+o.months.map(m=>MONS_F[m-1]).join(','));if(o.from)p.push('с '+o.from);if(o.to)p.push('по '+o.to);if(p.length)parts.push(lbl+': '+p.join(', '));};
   dfPart('dds','Дата ДДС');dfPart('opiu','Дата ОПиУ');
+  const rg=(w,lbl,abs)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const fr=String(o.from||'').trim(),t=String(o.to||'').trim();if(!fr&&!t)return;parts.push(lbl+(abs?' (по модулю)':'')+': '+(fr?'от '+fr:'')+(fr&&t?' ':'')+(t?'до '+t:'')+' ₽');};
+  rg('inc','Поступление');rg('out','Списание',true);
+  const of=(_tabFilters.registry&&_tabFilters.registry.offer)||{};
+  if(of.empty)parts.push('ID Offer пусто'); else if(String(of.q||'').trim())parts.push('ID Offer содержит "'+String(of.q).trim()+'"');
   const filterLine=parts.length?parts.join(' · '):'нет';
   let out='';
   out+='# Реестр операций - ГК ОПОРА (управленческий учёт). Одна строка = одна операция.\n';
@@ -5728,18 +5755,27 @@ function registryRender(q){
     if(mm.length&&mm.indexOf(d.getMonth()+1)<0)return true;
     if(from||to){const iso=toIso(d);if(from&&iso<from)return true;if(to&&iso>to)return true;}
     return false;};
+  // числовой диапазон Поступление / |Списание| + ID Offer (подстрока / пусто)
+  const _rn=v=>{const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
+  const rInc=(_tabFilters.registry&&_tabFilters.registry.inc)||{},rOut=(_tabFilters.registry&&_tabFilters.registry.out)||{},rOff=(_tabFilters.registry&&_tabFilters.registry.offer)||{};
+  const incFrom=_rn(rInc.from),incTo=_rn(rInc.to),outFrom=_rn(rOut.from),outTo=_rn(rOut.to);
+  const offQ=String(rOff.q||'').trim().toLowerCase(),offEmpty=!!rOff.empty;
+  const numFail=(v,lo,hi)=>{if(lo!=null&&v<lo)return true;if(hi!=null&&v>hi)return true;return false;};
   const blobs=_buildRegBlobs();
   const idx=[];
   for(let i=0;i<RAW.length;i++){
     let ok=true;
     if(dateFail(RAW[i],COL.DATE_DDS,dfDDS)||dateFail(RAW[i],COL.DATE_OPIU,dfOP))ok=false;
+    if(ok&&(incFrom!=null||incTo!=null)&&numFail(parseNum(RAW[i][COL.INCOME])||0,incFrom,incTo))ok=false;
+    if(ok&&(outFrom!=null||outTo!=null)&&numFail(Math.abs(parseNum(RAW[i][COL.OUTCOME])||0),outFrom,outTo))ok=false;
+    if(ok&&(offEmpty||offQ)){const id=String(RAW[i][COL.OFFER_ID]==null?'':RAW[i][COL.OFFER_ID]).trim();if(offEmpty){if(id!=='')ok=false;}else if(id.toLowerCase().indexOf(offQ)<0)ok=false;}
     if(ok)for(let s=0;s<selSets.length;s++){const sc=selSets[s];const v=String(RAW[i][sc.col]==null?'':RAW[i][sc.col]).trim();if(!sc.set.has(v)){ok=false;break;}}
     if(ok)for(let t=0;t<tokens.length;t++){const tk=tokens[t]; if(tk.empty){if(String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).trim()!==''){ok=false;break;}} else if(tk.col!=null){let fv=String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).toLowerCase();if(tk.col===0||tk.col===1)fv+=' '+dstr(RAW[i][tk.col]);if(fv.indexOf(tk.val)<0){ok=false;break;}} else if(blobs[i].indexOf(tk.val)<0){ok=false;break;} }
     if(ok)idx.push(i);
   }
   window._regRows=idx.map(i=>RAW[i]);
   const total=idx.length, limit=window._regLimit||500, show=Math.min(limit,total);
-  const anyFilter=tokens.length||selSets.length||(dfDDS.years&&dfDDS.years.length)||(dfDDS.months&&dfDDS.months.length)||dfDDS.from||dfDDS.to||(dfOP.years&&dfOP.years.length)||(dfOP.months&&dfOP.months.length)||dfOP.from||dfOP.to;
+  const anyFilter=tokens.length||selSets.length||(dfDDS.years&&dfDDS.years.length)||(dfDDS.months&&dfDDS.months.length)||dfDDS.from||dfDDS.to||(dfOP.years&&dfOP.years.length)||(dfOP.months&&dfOP.months.length)||dfOP.from||dfOP.to||incFrom!=null||incTo!=null||outFrom!=null||outTo!=null||offEmpty||offQ;
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=anyFilter?('найдено: '+total.toLocaleString('ru-RU')):('всего: '+total.toLocaleString('ru-RU'));
   const hc=document.getElementById('regHdrCount'); if(hc)hc.textContent=show.toLocaleString('ru-RU')+(show<total?(' из '+total.toLocaleString('ru-RU')):'')+' строк';
   if(!total){scroll.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Ничего не найдено по запросу</div>';return;}
