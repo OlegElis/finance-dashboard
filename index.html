@@ -5685,6 +5685,8 @@ window.pfShowTxn=function(kind,code,m){
   window._opiuTxnMap['__pfcell']={label:code,artLabel:kind==='inc'?'Доходы':kind==='vyv'?'Распределение прибыли':'Расходы',secLabel:'БДР · '+(meta.dirLabel||'')+' · '+(meta.year||'')+plbl,rows,pks:[]};
   if(window.opiuShowTxnModal)opiuShowTxnModal('__pfcell');
 };
+// Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
+window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
 function renderPlanFact(f){
   const el=document.getElementById('tabPlanfact');
   if(!RAW||!RAW.length){el.innerHTML=emptyState('Нет данных','Подключите таблицу (шестерёнка → Подключение)');return;}
@@ -5709,6 +5711,7 @@ function renderPlanFact(f){
   const revByMonthD={},npExpMonthD={}; // по направлениям - для разрешения %-планов в режиме «Свод»
   const pfTxn={}; // 'inc|код'/'exp|код'/'vyv|код' → строки RAW (расшифровка по клику)
   const expByDirSub={}; // 'направление||подстатья' → расходы по месяцам (свод «Исполнение по ЦФО»)
+  const factSubN={},incSubN={},vyvodSubN={}; // по ПОДСТАТЬЕ (ARTICLE_NAME) - для инлайн-разворота статья→подстатья в режиме «Статья»
   RAW.forEach(r=>{
     const rd=String(r[COL.ACTIVITY_DIR]||'').trim();
     if(!isAll&&rd!==dir)return;
@@ -5717,13 +5720,16 @@ function renderPlanFact(f){
     const m=d.getMonth()+1,out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
     const rvD=revByMonthD[rd]||(revByMonthD[rd]=new Array(13).fill(0)),npD=npExpMonthD[rd]||(npExpMonthD[rd]=new Array(13).fill(0));
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?ac:an;if(ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}}
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?ac:an;if(ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}
+      if(level==='article'&&an){(incSubN[an]=incSubN[an]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+an]=pfTxn['inc|'+an]||[]).push(r);}}
     if(t==='списание'&&out<0){
       const c=level==='article'?ac:an,av=Math.abs(out);
       const anl=nrm(r[COL.ANALYTICS]),isVyvod=anl.includes('вывод')&&anl.includes('прибыл'); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
-      if(isVyvod){if(c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}}
+      if(isVyvod){if(c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
+        if(level==='article'&&an){(vyvodSubN[an]=vyvodSubN[an]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+an]=pfTxn['vyv|'+an]||[]).push(r);}}
       else{
         if(c){(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+c]=pfTxn['exp|'+c]||[]).push(r);}
+        if(level==='article'&&an){(factSubN[an]=factSubN[an]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+an]=pfTxn['exp|'+an]||[]).push(r);}
         npExpMonth[m]+=av;npD[m]+=av;
         if(an){const K=rd+'||'+an;(expByDirSub[K]=expByDirSub[K]||new Array(13).fill(0))[m]+=av;}
       }
@@ -5913,12 +5919,15 @@ function renderPlanFact(f){
     else{over=fact>plan;txt=over?'перерасход +'+fmtPct(p):'экономия '+fmtPct(p);col=over?'#d35450':'#2e9e6b';}
     return`<span style="padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600;color:${col};background:color-mix(in srgb,${col} 12%,transparent)">${txt}</span>`;
   };
-  const dRow=(label,plan,fact,revenue,bold,kind,code)=>{
+  const dRow=(label,plan,fact,revenue,bold,kind,code,opts)=>{
+    opts=opts||{};
     const d=plan!=null?fact-plan:null;
     const inTol=plan!=null&&plan!==0&&Math.abs(d)/Math.abs(plan)<=PF_TOL;
     const dCol=plan==null?'var(--text3)':inTol?'var(--text2)':revenue?(fact>=plan?'var(--income)':'var(--outcome)'):(fact>plan?'var(--outcome)':'var(--income)');
-    return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period})" title="Клик - операции по строке"`:''}>
-      <td style="${td};text-align:left;${bold?'font-weight:700':''}">${esc(label)}${kind?' <span style="font-size:9px;color:var(--accent)">↗</span>':''}</td>
+    const tog=opts.expandable?`<span onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;cursor:pointer;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
+    const labStyle=`${td};text-align:left;${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${bold?'font-weight:700':''}`;
+    return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period})" title="Клик - операции по строке"`:''}>
+      <td style="${labStyle}">${tog}${esc(label)}${kind?' <span style="font-size:9px;color:var(--accent)">↗</span>':''}</td>
       <td style="${td};text-align:right">${plan!=null?fmt(revenue?plan:-plan):'<span style=color:var(--text3)>-</span>'}</td>
       <td style="${td};text-align:right;${bold?'font-weight:700':''}">${fmt(revenue?fact:-fact)}</td>
       <td style="${td};text-align:right;color:${dCol}">${d!=null?((d>0?'+':d<0?'−':'')+fmt(Math.abs(d))):'-'}</td>
@@ -5927,12 +5936,32 @@ function renderPlanFact(f){
     </tr>`;
   };
   const secRow=t=>`<tr><td colspan="6" style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
-  const incBodyRows=incRowsArr.map(r=>dRow(r.code,r.plan,r.fact,true,false,'inc',r.code)).join('');
+  // ── инлайн-разворот статья → подстатьи (только в режиме «Статья») ──
+  const artExp=(level==='article')?(window._pfArtExp||(window._pfArtExp=new Set())):null;
+  const _sumNP=(mp,name)=>{const a=mp[name];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
+  // подстатьи статьи (по первым 3 цифрам): из факта ∪ планов; kind: inc/exp/vyv
+  const subsOfArt=(kind,art)=>{const tc=c3(art),set={};
+    const fm=kind==='inc'?incSubN:kind==='vyv'?vyvodSubN:factSubN;
+    Object.keys(fm).forEach(n=>{if(c3(n)===tc)set[n]=1;});
+    const lvl=kind==='inc'?'income':'subarticle';
+    plans.forEach(p=>{if(p.level!==lvl||c3(p.code)!==tc)return;if(kind==='vyv'){if(isVyvodCode(p.code))set[p.code]=1;}else if(kind==='exp'){if(!isVyvodCode(p.code))set[p.code]=1;}else set[p.code]=1;});
+    return Object.keys(set).sort((a,b)=>String(a).localeCompare(String(b),'ru'));};
+  const childFact=(kind,sub)=>kind==='inc'?_sumNP(incSubN,sub):kind==='vyv'?_sumNP(vyvodSubN,sub):_sumNP(factSubN,sub);
+  const childPlan=(kind,sub)=>kind==='inc'?planOf('income',sub):planOf('subarticle',sub);
+  // строка статьи + (если развёрнута) её подстатьи
+  const artRow=(code,plan,fact,revenue,kind)=>{
+    if(level!=='article')return dRow(code,plan,fact,revenue,false,kind,code);
+    const subs=subsOfArt(kind,code),has=subs.length>0,key=kind+'|'+code,open=has&&artExp.has(key);
+    let h=dRow(code,plan,fact,revenue,false,kind,code,{expandable:has,expanded:open});
+    if(open)subs.forEach(sub=>{h+=dRow(sub,childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true});});
+    return h;
+  };
+  const incBodyRows=incRowsArr.map(r=>artRow(r.code,r.plan,r.fact,true,'inc')).join('');
   const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalPlan,revRow.fact,true,true);
-  const bodyRows=rowsArr.map(r=>dRow(r.code,r.plan,r.fact,false,false,'exp',r.code)).join('');
+  const bodyRows=rowsArr.map(r=>artRow(r.code,r.plan,r.fact,false,'exp')).join('');
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumPlan||null,sumFact,false,true);
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netPlanV,netFactV,true,true);
-  const vyvodRows=vyvodArr.length?(secRow('Распределение прибыли (вывод)')+vyvodArr.map(r=>dRow(r.code,r.plan,r.fact,false,false,'vyv',r.code)).join('')+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodPlan||null,sumVyvodFact,false,true)):'';
+  const vyvodRows=vyvodArr.length?(secRow('Распределение прибыли (вывод)')+vyvodArr.map(r=>artRow(r.code,r.plan,r.fact,false,'vyv')).join('')+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodPlan||null,sumVyvodFact,false,true)):'';
   const periodLbl=period==='monthly'?('все месяцы '+year):isYear?('Весь год '+year):(MON[+period-1]+' '+year);
   // ── Матрица «все месяцы (план/факт)»: строки статьи/подстатьи, колонки месяцы, в ячейке факт (цвет по отклонению) + план мелким ──
   let monthlyHtml='';
@@ -6023,7 +6052,7 @@ function renderPlanFact(f){
           <tbody>${body}</tbody></table></div></details>`;
     }
   }
-  const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${isAll?'Свод (все направления)':esc(dir)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.</span></div>
+  const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${isAll?'Свод (все направления)':esc(dir)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.${level==='article'?' · ▸ клик по статье - подстатьи':''}</span></div>
     <div class="table-scroll" style="overflow-x:auto"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
       <thead><tr><th style="text-align:left;${th}">${level==='article'?'Статья':'Подстатья'}</th><th style="${th}">План</th><th style="${th}">Факт</th><th style="${th}">Δ</th><th style="${th}">Δ %</th><th style="text-align:left;${th}">Статус</th></tr></thead>
       <tbody>${secRow('Доходы')}${incBodyRows}${incTotalRow}${secRow('Расходы')}${bodyRows}${totalRow}${netRow}${vyvodRows}</tbody></table></div></div>`;
