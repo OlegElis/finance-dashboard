@@ -5538,12 +5538,18 @@ function _buildRegBlobs(){
   blobs._n=RAW.length;window._regBlobs=blobs;return blobs;
 }
 // Поля Реестра с мультивыбор-дропдауном (по индексу COL); search:true - большой список с поиском внутри
+// порядок = как столбцы таблицы (Тип · ID Offer · ФНС · Счёт · Статья · Подстатья · Аналитика · Контрагент · Направление · Фин.операция); даты и суммы вставляются на свои позиции при сборке панели
 const REG_FIELDS=[
-  {c:COL.TYPE,label:'Тип',primary:true},{c:COL.ACTIVITY_DIR,label:'Направление',primary:true},
-  {c:COL.ARTICLE_CODE,label:'Статья',search:true,primary:true},{c:COL.ARTICLE_NAME,label:'Подстатья',search:true,primary:true},
+  {c:COL.TYPE,label:'Тип'},
   {c:COL.OFFER_ID,label:'ID Offer',search:true},
-  {c:COL.ANALYTICS,label:'Аналитика'},{c:COL.ACCOUNT,label:'Реквизиты счёта',search:true},
-  {c:COL.SECOND_SIDE,label:'Контрагент',search:true},{c:COL.FNS,label:'ФНС'},{c:COL.FIN_OP,label:'Фин. операция'}
+  {c:COL.FNS,label:'ФНС'},
+  {c:COL.ACCOUNT,label:'Реквизиты счёта',search:true},
+  {c:COL.ARTICLE_CODE,label:'Статья',search:true},
+  {c:COL.ARTICLE_NAME,label:'Подстатья',search:true},
+  {c:COL.ANALYTICS,label:'Аналитика'},
+  {c:COL.SECOND_SIDE,label:'Контрагент',search:true},
+  {c:COL.ACTIVITY_DIR,label:'Направление'},
+  {c:COL.FIN_OP,label:'Фин. операция'}
 ];
 function renderRegistry(f){
   const el=document.getElementById('tabRegistry');
@@ -5605,12 +5611,26 @@ function renderRegistry(f){
       <div><label style="${smLbl}">до ₽</label><input type="number" inputmode="decimal" value="${st.to}" oninput="regNumRange('${which}','to',this.value)" placeholder="∞" style="${numInp}"></div>
     </div>`;
   const numActive=o=>String(o.from||'').trim()!==''||String(o.to||'').trim()!=='';
-  const primaryFields=REG_FIELDS.filter(F=>F.primary),extraFields=REG_FIELDS.filter(F=>!F.primary);
   const activeCnt=Object.values(sel).reduce((s,a)=>s+((a&&a.length)?1:0),0)+(q?1:0)+(dateActive(dds)?1:0)+(dateActive(opiu)?1:0)+(numActive(finc)?1:0)+(numActive(fout)?1:0);
-  // сколько активных фильтров в скрытой секции «Ещё» (Дата ДДС, суммы, ID/Аналитика/Счёт/Контрагент/ФНС/Финоп)
-  const extraCnt=extraFields.reduce((s,F)=>s+((sel[F.c]&&sel[F.c].length)?1:0),0)+(dateActive(dds)?1:0)+(numActive(finc)?1:0)+(numActive(fout)?1:0);
-  const moreOpen=!!window._regMoreOpen||extraCnt>0; // если в «Ещё» есть активные - раскрываем, чтобы их было видно
-  el.innerHTML=`<div class="tab-filters" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
+  const fdd=c=>{const F=REG_FIELDS.find(x=>x.c===c);return F?mkRegDD(F):'';};
+  // фильтры строго в порядке столбцов таблицы: ДДС · ОПиУ · Тип · ID · Поступление · Списание · ФНС · Счёт · Статья · Подстатья · Аналитика · Контрагент · Направление · Фин.операция
+  const orderedFilters=[
+    dateGroup('dds','Дата ДДС',dds,true),
+    dateGroup('opiu','Дата ОПиУ',opiu,false),
+    fdd(COL.TYPE),
+    fdd(COL.OFFER_ID),
+    amtGroup('inc','Поступление',finc),
+    amtGroup('out','Списание',fout),
+    fdd(COL.FNS),
+    fdd(COL.ACCOUNT),
+    fdd(COL.ARTICLE_CODE),
+    fdd(COL.ARTICLE_NAME),
+    fdd(COL.ANALYTICS),
+    fdd(COL.SECOND_SIDE),
+    fdd(COL.ACTIVITY_DIR),
+    fdd(COL.FIN_OP)
+  ].join('');
+  el.innerHTML=`<div class="tab-filters" style="flex-wrap:wrap;align-items:flex-end;gap:8px 10px">
       <div style="display:flex;flex-direction:column">
         <label style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--label);margin-bottom:2px">Быстрый поиск</label>
         <div style="display:flex;align-items:center;gap:6px;min-width:220px;background:var(--surface);border:1px solid var(--accent);border-radius:6px;padding:4px 9px">
@@ -5619,20 +5639,14 @@ function renderRegistry(f){
           ${q?`<button onclick="document.getElementById('regSearch').value='';registrySearch('')" title="Очистить" style="border:none;background:none;cursor:pointer;color:var(--text3);font-size:15px;line-height:1">✕</button>`:''}
         </div>
       </div>
-      ${primaryFields.map(mkRegDD).join('')}
-      ${dateGroup('opiu','Дата ОПиУ',opiu,false)}
-      <button id="reg-more-btn" onclick="regToggleMore()" title="Показать/скрыть дополнительные фильтры" style="font-size:11px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;align-self:flex-end">Ещё фильтры${extraCnt?' ('+extraCnt+')':''} ${moreOpen?'▴':'▾'}</button>
-      <button onclick="regResetAll()" title="Сбросить все фильтры" style="font-size:11px;font-weight:600;padding:5px 12px;border:1px solid ${activeCnt?'var(--outcome)':'var(--border)'};border-radius:6px;background:${activeCnt?'#fdecea':'var(--surface2)'};color:${activeCnt?'var(--outcome)':'var(--text3)'};cursor:pointer;align-self:flex-end">× Сбросить всё${activeCnt?' ('+activeCnt+')':''}</button>
-      <span id="regCount" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:8px;font-family:var(--mono);white-space:nowrap;align-self:flex-end"></span>
-      <button onclick="registryExportAI()" title="Скачать найденные строки в CSV с описанием столбцов" style="font-size:11px;font-weight:600;padding:5px 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;white-space:nowrap;font-family:var(--sans);align-self:flex-end">⬇ Выгрузка (CSV)</button>
+      ${orderedFilters}
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-left:auto">
+        <button onclick="regResetAll()" title="Сбросить все фильтры" style="font-size:11px;font-weight:600;padding:5px 12px;border:1px solid ${activeCnt?'var(--outcome)':'var(--border)'};border-radius:6px;background:${activeCnt?'#fdecea':'var(--surface2)'};color:${activeCnt?'var(--outcome)':'var(--text3)'};cursor:pointer">× Сбросить всё${activeCnt?' ('+activeCnt+')':''}</button>
+        <span id="regCount" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:8px;font-family:var(--mono);white-space:nowrap;align-self:center"></span>
+        <button onclick="registryExportAI()" title="Скачать найденные строки в CSV с описанием столбцов" style="font-size:11px;font-weight:600;padding:5px 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;white-space:nowrap;font-family:var(--sans)">⬇ Выгрузка (CSV)</button>
+      </div>
     </div>
-    <div id="reg-more" class="tab-filters" style="display:${moreOpen?'flex':'none'};flex-wrap:wrap;align-items:flex-end;gap:8px;border-top:1px dashed var(--border);margin-top:2px;padding-top:8px">
-      ${dateGroup('dds','Дата ДДС',dds,true)}
-      ${amtGroup('inc','Поступление',finc)}
-      ${amtGroup('out','Списание',fout)}
-      ${extraFields.map(mkRegDD).join('')}
-    </div>
-    <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Отметь значения в нужных полях (несколько = ИЛИ, разные поля = И). Опция <b>«(пусто)»</b> - незаполненные ячейки. «Быстрый поиск» ищет подстроку во всех полях сразу.</div>
+    <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Фильтры идут в порядке столбцов таблицы. Несколько значений в поле = ИЛИ, разные поля = И. Опция <b>«(пусто)»</b> - незаполненные ячейки. «Быстрый поиск» - подстрока по всем полям.</div>
     <div class="txn-wrap" style="margin:6px var(--secpx) 0">
       <div class="txn-header"><span class="table-title">Реестр операций</span><span class="table-count" id="regHdrCount"></span></div>
       <div class="txn-scroll" id="regScroll" style="max-height:none"></div>
@@ -5641,7 +5655,6 @@ function renderRegistry(f){
   if(!window._regDDDocBound){window._regDDDocBound=true;document.addEventListener('mousedown',e=>{if(e.target.closest&&(e.target.closest('.reg-dd')||e.target.closest('[id^="reg-btn-"]')))return;document.querySelectorAll('.reg-dd').forEach(x=>x.style.display='none');});}
   registryRender(q);
 }
-window.regToggleMore=function(){const m=document.getElementById('reg-more');if(!m)return;const open=m.style.display==='none';m.style.display=open?'flex':'none';window._regMoreOpen=open;const b=document.getElementById('reg-more-btn');if(b)b.innerHTML=b.innerHTML.replace(/[▾▴]\s*$/,open?'▴':'▾');};
 window.registrySearch=function(v){if(_tabFilters.registry)_tabFilters.registry.q=v;window._regLimit=500;registrySearchApply();};
 // применить фильтры (быстрый поиск + мультивыборы) с debounce - перерисовывается только таблица, дропдауны остаются открытыми
 window.registrySearchApply=function(){window._regLimit=window._regLimit||500;
