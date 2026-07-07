@@ -1098,12 +1098,23 @@ async function connectAndLoad(){
     const rows=json.values||[];
     if(rows.length<2)throw new Error('Нет данных в листе «'+sheet+'»');
     // сверка структуры листа: COL - фиксированные индексы, переставленная колонка молча ломает ВСЕ отчёты.
-    // Эталон - заголовки первой успешной загрузки (per sheet, localStorage); при расхождении - предупреждение
+    // Эталон - заголовки первой ПОЛНОЙ загрузки (per sheet, localStorage); при расхождении - предупреждение.
+    // ⚠ Данные собираются через IMPORTRANGE: во время пересчёта импорта заголовки временно приходят пустыми/#ERROR!/Loading… -
+    //   такие транзитные состояния НЕ считаются изменением структуры (иначе ложная тревога + порча эталона).
     try{
-      const hdrNow=(rows[0]||[]).slice(0,15).map(h=>String(h||'').trim()).join('|');
-      const hdrKey='fin_rawHeaders_'+sheet, hdrSaved=localStorage.getItem(hdrKey);
-      if(hdrSaved&&hdrSaved!==hdrNow)alert('⚠ Структура листа «'+sheet+'» изменилась (порядок/названия колонок).\n\nБыло: '+hdrSaved+'\nСтало: '+hdrNow+'\n\nОтчёты читают колонки по позициям - проверьте, что порядок колонок прежний, иначе цифры разъедутся.');
-      localStorage.setItem(hdrKey,hdrNow);
+      const norm=a=>a.slice(0,15).map(h=>String(h==null?'':h).replace(/ /g,' ').replace(/\s+/g,' ').trim().toLowerCase());
+      const hn=norm(rows[0]||[]);
+      const isComplete=arr=>arr.length===15&&arr.every(h=>h!==''&&h.charAt(0)!=='#'&&h.indexOf('loading')<0&&h.indexOf('n/a')<0); // 15 заполненных, без маркеров ошибок/загрузки
+      if(isComplete(hn)){ // сверяем ТОЛЬКО когда пришла полная валидная шапка (не транзит IMPORTRANGE)
+        const hdrKey='fin_rawHeaders_'+sheet, hdrSaved=localStorage.getItem(hdrKey), cur=hn.join('|');
+        const savedOk=hdrSaved&&isComplete(hdrSaved.split('|')); // старый эталон валиден? (мог быть испорчен прежним багом - тогда молча чиним, без тревоги)
+        if(savedOk&&hdrSaved!==cur){
+          const was=hdrSaved.split('|'),now=cur.split('|'),diff=[];
+          for(let k=0;k<15;k++){if(was[k]!==now[k])diff.push('#'+(k+1)+': «'+(was[k]||'-')+'» → «'+(now[k]||'-')+'»');}
+          alert('⚠ Структура листа «'+sheet+'» изменилась (порядок/названия колонок).\n\nОтличия:\n'+diff.join('\n')+'\n\nОтчёты читают колонки по позициям - проверьте, что порядок колонок прежний, иначе цифры разъедутся.');
+        }
+        localStorage.setItem(hdrKey,cur); // эталон обновляем/чиним ТОЛЬКО из полной валидной шапки
+      }
     }catch(e){}
     RAW=rows.slice(1).map(r=>{while(r.length<15)r.push('');return r.map((v,i)=>{if(i===COL.INCOME||i===COL.OUTCOME)return parseNum(v);return v;});});
     localStorage.setItem('fin_sheetId',sheetId);
