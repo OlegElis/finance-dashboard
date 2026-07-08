@@ -7184,9 +7184,12 @@ function renderAnomaly(f){
   const isOfficialAcc=r=>{const n=S(r[COL.ACCOUNT]);return isOOO(n)||isIP(n);};
   const fnsYes=a=>['да','true','1','+'].includes(S(a).toLowerCase());
   const isAuSauDir=a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}; // направление АУ или САУ
-  // Карты/касса, относящиеся только к АУ/САУ (матч по реквизитам счёта - банк+номер / «КМ-Касса»)
-  const AU_CARDS=['сбербанк1638','сбербанк8572','альфабанк6170','совкомбанк1673','тинькофф9930','кмкасса'];
+  // Карты/касса, относящиеся только к АУ/САУ (матч по реквизитам счёта - банк+номер / «КМ-Касса»).
+  // СберБанк-1638 (Елисеев) исключён - используется в любых направлениях (по решению пользователя)
+  const AU_CARDS=['сбербанк8572','альфабанк6170','совкомбанк1673','тинькофф9930','кмкасса'];
   const isAuCard=r=>{const a=norm(r[COL.ACCOUNT]);return AU_CARDS.some(k=>a.includes(k));};
+  // Возврат: списание законно положительное (+), не считается ошибкой знака - подстатья/назначение содержит «возврат»
+  const isRefund=r=>norm(r[COL.ARTICLE_NAME]).includes('возврат')||norm(r[COL.PURPOSE]).includes('возврат');
   // Справочник сделок Bitrix24 (RawData_BFL) для сверки ID_Offer - логика как в Дебиторке БФЛ
   const BFL_DIR='БФЛ - Банкротство физических лиц';
   const refOffer=new Set(),refLead={},refContract=new Set(),refName=new Set();
@@ -7215,7 +7218,7 @@ function renderAnomaly(f){
     {id:'a300',label:'Статья 300 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='300',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
     {id:'a112',label:'Статья 112 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='112',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
     {id:'sro',label:'112_Платежи в СРО → направление АУ/САУ',where:r=>!isMove(r)&&norm(r[COL.ARTICLE_NAME]).includes('сро'),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}}]},
-    {id:'outsign',label:'Списание → только со знаком «−»',where:r=>!isMove(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
+    {id:'outsign',label:'Списание → только со знаком «−» (кроме возвратов)',where:r=>!isMove(r)&&!isRefund(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
     {id:'div',label:'Статья 127 → Вывод чистой прибыли · 002_Финансовая деятельность · контрагент',where:is127,checks:[
       {field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Вывод чистой прибыли'},
       {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'002_Финансовая деятельность',ok:okFin002},
