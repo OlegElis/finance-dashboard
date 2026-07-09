@@ -6123,7 +6123,13 @@ function renderPlanFact(f){
   const bodyRows=rowsArr.map(r=>artRow(r.code,r.plan,r.fact,false,'exp')).join('');
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumPlan||null,sumFact,false,true);
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netPlanV,netFactV,true,true);
-  const vyvodRows=vyvodArr.length?(secRow('Распределение прибыли (вывод)')+vyvodArr.map(r=>artRow(r.code,r.plan,r.fact,false,'vyv')).join('')+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodPlan||null,sumVyvodFact,false,true)):'';
+  const vyvodBody=vyvodArr.length?vyvodArr.map(r=>artRow(r.code,r.plan,r.fact,false,'vyv')).join(''):'';
+  const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodPlan||null,sumVyvodFact,false,true)):'';
+  // при активном фильтре по статье/подстатье/ЦФО - показываем только отфильтрованные строки без строк-итогов (ИТОГО/ЧП не нужны)
+  const pfFilterOn=selArt.size||selSub.size||selOwn.size;
+  const pfTbody=pfFilterOn
+    ? ((incBodyRows?secRow('Доходы')+incBodyRows:'')+(bodyRows?secRow('Расходы')+bodyRows:'')+(vyvodBody?secRow('Распределение прибыли (вывод)')+vyvodBody:''))||`<tr><td colspan="6" style="padding:14px 12px;color:var(--text3);font-size:12px">По фильтру строк нет</td></tr>`
+    : (secRow('Доходы')+incBodyRows+incTotalRow+secRow('Расходы')+bodyRows+totalRow+netRow+vyvodRows);
   const periodLbl=period==='monthly'?('все месяцы '+year):isYear?('Весь год '+year):(MON[+period-1]+' '+year);
   // ── Матрица «все месяцы (план/факт)»: строки статьи/подстатьи, колонки месяцы, в ячейке факт (цвет по отклонению) + план мелким ──
   let monthlyHtml='';
@@ -6152,17 +6158,19 @@ function renderPlanFact(f){
     };
     const secR=t=>`<tr><td colspan="${monthsOn.length+2}" style="position:sticky;left:0;padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
     const sumP=(arr,getter,m)=>{let s=null;arr.forEach(r=>{const v=getter(r.code,m);if(v!=null)s=(s||0)+v;});return s;};
-    let rh=secR('Доходы');
-    incRowsArr.forEach(r=>{rh+=mrow(r.code,m=>planIncM(r.code,m),m=>incFactM(r.code,m),'inc',false,'inc',r.code);});
-    rh+=mrow('ИТОГО ДОХОДЫ',m=>sumP(incRowsArr,planIncM,m),m=>revByMonth[m]||0,'inc',true);
-    rh+=secR('Расходы');
-    rowsArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factExpM(r.code,m),'exp',false,'exp',r.code);});
-    rh+=mrow('ИТОГО РАСХОДЫ',m=>sumP(rowsArr,planExpM,m),m=>{let s=0;rowsArr.forEach(r=>{s+=factExpM(r.code,m);});return s;},'exp',true);
-    rh+=mrow('ЧИСТАЯ ПРИБЫЛЬ',m=>{const ip=sumP(incRowsArr,planIncM,m),ep=sumP(rowsArr,planExpM,m);return (ip==null&&ep==null)?null:((ip||0)-(ep||0));},m=>{let ef=0;rowsArr.forEach(r=>{ef+=factExpM(r.code,m);});return (revByMonth[m]||0)-ef;},'net',true);
+    // при активном фильтре - только отфильтрованные строки без ИТОГО/ЧП и без пустых секций
+    let rh='';
+    if(!pfFilterOn||incRowsArr.length){rh+=secR('Доходы');
+      incRowsArr.forEach(r=>{rh+=mrow(r.code,m=>planIncM(r.code,m),m=>incFactM(r.code,m),'inc',false,'inc',r.code);});
+      if(!pfFilterOn)rh+=mrow('ИТОГО ДОХОДЫ',m=>sumP(incRowsArr,planIncM,m),m=>revByMonth[m]||0,'inc',true);}
+    if(!pfFilterOn||rowsArr.length){rh+=secR('Расходы');
+      rowsArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factExpM(r.code,m),'exp',false,'exp',r.code);});
+      if(!pfFilterOn)rh+=mrow('ИТОГО РАСХОДЫ',m=>sumP(rowsArr,planExpM,m),m=>{let s=0;rowsArr.forEach(r=>{s+=factExpM(r.code,m);});return s;},'exp',true);}
+    if(!pfFilterOn)rh+=mrow('ЧИСТАЯ ПРИБЫЛЬ',m=>{const ip=sumP(incRowsArr,planIncM,m),ep=sumP(rowsArr,planExpM,m);return (ip==null&&ep==null)?null:((ip||0)-(ep||0));},m=>{let ef=0;rowsArr.forEach(r=>{ef+=factExpM(r.code,m);});return (revByMonth[m]||0)-ef;},'net',true);
     if(vyvodArr.length){
       rh+=secR('Распределение прибыли (вывод)');
       vyvodArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factVyvodM(r.code,m),'exp',false,'vyv',r.code);});
-      rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'exp',true);
+      if(!pfFilterOn)rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'exp',true);
     }
     const ths=monthsOn.map(m=>`<th style="${mth};position:sticky;top:0;z-index:2">${MS[m-1]}</th>`).join('');
     monthlyHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${isAll?'Свод (все направления)':esc(dir)} · все месяцы ${year}</span><span class="table-count">факт + план по месяцам</span></div>
@@ -6217,7 +6225,7 @@ function renderPlanFact(f){
   const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${isAll?'Свод (все направления)':esc(dir)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.${level==='article'?' · ▸ клик по статье - подстатьи':''}</span></div>
     <div class="table-scroll" style="overflow-x:auto"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
       <thead><tr><th style="text-align:left;${th}">${level==='article'?'Статья':'Подстатья'}</th><th style="${th}">План</th><th style="${th}">Факт</th><th style="${th}">Δ</th><th style="${th}">Δ %</th><th style="text-align:left;${th}">Статус</th></tr></thead>
-      <tbody>${secRow('Доходы')}${incBodyRows}${incTotalRow}${secRow('Расходы')}${bodyRows}${totalRow}${netRow}${vyvodRows}</tbody></table></div></div>`;
+      <tbody>${pfTbody}</tbody></table></div></div>`;
 
   // график План vs Факт по месяцам (расходы)
   const chartHtml=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:14px">
