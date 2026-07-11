@@ -8038,31 +8038,56 @@ window.planFillCellFact=function(inp){
 // видимая подпись факта под ячейкой (когда план > факта и мы НЕ перезаписываем автоматически)
 function _planFactHintSet(inp,f){const td=inp&&inp.parentNode;if(!td)return;let h=td.querySelector('.plan-fact-hint');if(!h){h=document.createElement('div');h.className='plan-fact-hint';h.style.cssText='font-size:9px;line-height:1.15;color:#c47a12;text-align:right;margin-top:1px;white-space:nowrap;pointer-events:none;font-family:var(--mono)';td.appendChild(h);}h.textContent='факт '+fmt(f);}
 function _planFactHintClear(inp){const td=inp&&inp.parentNode;if(!td)return;const h=td.querySelector('.plan-fact-hint');if(h)h.remove();}
-window.planFillRowFact=function(btn){
-  const tr=btn.closest('tr'); if(!tr)return;
+// Ядро заполнения фактом ОДНОЙ строки: пустые месяцы → факт; введённые не меняются (отличаются от факта → подсветка + подсказка).
+// Снимок ячеек пишется в snapAcc (для общего «Отменить»). Возвращает {applied, kept}. НЕ спрашивает/не пересчитывает итоги/не тостит.
+function _planFillTrFactCore(tr,snapAcc){
   const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
-  if(mode!=='money'){alert('Заполнение фактом доступно только в режиме ₽ (переключите режим строки)');return;}
-  const months=[...tr.querySelectorAll('input.plan-val')].filter(i=>i.getAttribute('data-month')!=='0');
+  if(mode!=='money')return {applied:false,kept:0}; // % режим - пропускаем (факт в рублях не вставить)
   const num=v=>{const n=parseFloat(String(v||'').replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
-  // защита от случайного клика: если в строке уже есть введённые значения - спросить подтверждение
-  const hasData=months.some(i=>String(i.value||'').trim()!=='');
-  if(hasData&&!confirm('Заполнить строку ФАКТОМ?\nЗаполнятся только ПУСТЫЕ месяцы. Введённые вручную суммы НЕ меняются - если они отличаются от факта, подсветятся (факт показан подсказкой ячейки).'))return;
-  // снимок строки (все месяцы + Год) для «Отменить»
-  const snap=[...tr.querySelectorAll('input.plan-val')].map(i=>({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,title:i.title}));
+  const months=[...tr.querySelectorAll('input.plan-val')].filter(i=>i.getAttribute('data-month')!=='0');
+  if(!months.length)return {applied:false,kept:0};
+  [...tr.querySelectorAll('input.plan-val')].forEach(i=>snapAcc.push({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,title:i.title}));
   let kept=0;
   months.forEach(i=>{
     const f=num(i.getAttribute('data-fact'))||0,cur=num(i.value);
     i.style.background='var(--surface)';
-    if(cur!=null){ // ячейка заполнена вручную - НЕ перезаписываем (ни больше, ни меньше факта)
-      if(Math.abs(cur-f)>0.005){kept++;i.style.background='#fff3e0';i.title='План отличается от факта. Факт: '+fmt(f)+' - при необходимости правьте вручную';_planFactHintSet(i,f);} // отличается - подсветить + показать факт
-      else{i.title='Факт: '+fmt(f);_planFactHintClear(i);} // совпадает с фактом - без подсветки
+    if(cur!=null){ // введено вручную - НЕ перезаписываем (ни больше, ни меньше факта)
+      if(Math.abs(cur-f)>0.005){kept++;i.style.background='#fff3e0';i.title='План отличается от факта. Факт: '+fmt(f)+' - при необходимости правьте вручную';_planFactHintSet(i,f);}
+      else{i.title='Факт: '+fmt(f);_planFactHintClear(i);}
       return;
     }
     i.value=_planFmtNum(f);i.title='Факт: '+fmt(f);_planFactHintClear(i); // ПУСТО - заполняем фактом (месяцы без факта → 0)
   });
   const m1=tr.querySelector('input.plan-val[data-month="1"]'); if(m1&&window.planRowYear)window.planRowYear(m1);
+  return {applied:true,kept};
+}
+window.planFillRowFact=function(btn){
+  const tr=btn.closest('tr'); if(!tr)return;
+  const mb=tr.querySelector('.plan-mode'); const mode=mb?mb.getAttribute('data-mode'):'money';
+  if(mode!=='money'){alert('Заполнение фактом доступно только в режиме ₽ (переключите режим строки)');return;}
+  const months=[...tr.querySelectorAll('input.plan-val')].filter(i=>i.getAttribute('data-month')!=='0');
+  const hasData=months.some(i=>String(i.value||'').trim()!=='');
+  if(hasData&&!confirm('Заполнить строку ФАКТОМ?\nЗаполнятся только ПУСТЫЕ месяцы. Введённые вручную суммы НЕ меняются - если они отличаются от факта, подсветятся (факт показан подсказкой ячейки).'))return;
+  const snap=[]; const r=_planFillTrFactCore(tr,snap);
   if(window.planSumFromEl)planSumFromEl(btn);
-  window._planFillUndo={snap}; window._planDirty=true; _planFillToast(kept?('Пустые месяцы заполнены фактом · оставлено вручную (отличается от факта): '+kept+' - факт в подсказке ячейки'):'Пустые месяцы заполнены фактом');
+  window._planFillUndo={snap}; window._planDirty=true; _planFillToast(r.kept?('Пустые месяцы заполнены фактом · оставлено вручную (отличается от факта): '+r.kept+' - факт в подсказке ячейки'):'Пустые месяцы заполнены фактом');
+};
+// Заполнить фактом ВСЕ направления подстатьи (кнопка на шапке кода) - та же логика, что и у строки; один общий «Отменить»
+window.planFillCodeFact=function(btn){
+  const tr=btn.closest('tr'); if(!tr)return;
+  const key=tr.getAttribute('data-key'), mx=document.getElementById('plan-matrix'); if(!mx||!key)return;
+  // все РЕДАКТИРУЕМЫЕ строки этого кода (направления/сотрудники): есть input.plan-val, но не строки-итоги (plan-total/plan-dirtotal)
+  const rows=[...mx.querySelectorAll('tr[data-key]')].filter(x=>x.getAttribute('data-key')===key&&x.querySelector('input.plan-val')&&!x.classList.contains('plan-total')&&!x.classList.contains('plan-dirtotal'));
+  if(!rows.length){alert('Нет строк для заполнения - разверните направления подстатьи (▸).');return;}
+  const anyData=rows.some(x=>[...x.querySelectorAll('input.plan-val')].some(i=>i.getAttribute('data-month')!=='0'&&String(i.value||'').trim()!==''));
+  if(anyData&&!confirm('Заполнить ФАКТОМ ВСЕ направления этой подстатьи?\nЗаполнятся только ПУСТЫЕ месяцы. Введённые вручную суммы не меняются (если отличаются от факта - подсветятся).'))return;
+  const snap=[]; let kept=0,filled=0,skipped=0;
+  rows.forEach(x=>{const r=_planFillTrFactCore(x,snap);if(r.applied){filled++;kept+=r.kept;}else skipped++;});
+  // пересчёт итогов: сначала ИТОГО направлений (111-ФОТ), затем ИТОГО кода
+  mx.querySelectorAll('tr.plan-dirtotal').forEach(t=>{if(t.getAttribute('data-key')===key){const d=t.getAttribute('data-dir');if(window.planSumDir)planSumDir(key,d);}});
+  if(window.planSumBlock)planSumBlock(key);
+  window._planFillUndo={snap}; window._planDirty=true;
+  _planFillToast(filled?('Заполнено фактом направлений: '+filled+(kept?' · оставлено вручную (отличается): '+kept:'')+(skipped?' · пропущено (режим %): '+skipped:'')):'Нет строк в режиме ₽ для заполнения');
 };
 // Очистить все значения строки (месяцы + Год); с возможностью «Отменить»
 window.planClearRow=function(btn){
@@ -8252,7 +8277,7 @@ function _planRenderMatrix(){
     const mc=[...Array(12)].map((_,i)=>totCellIn('','plan-ttl',i+1,false)).join('');
     return `<tr class="plan-total" data-key="${esc(key)}" style="background:var(--accent-light)">
       <td onclick="planToggleExpand('${jesc(key)}')" title="${esc(label)} - клик чтобы свернуть" style="padding:5px 8px;font-size:11px;font-weight:700;position:sticky;left:0;background:var(--accent-light);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="display:inline-block;width:16px;color:var(--text2)">▾</span>${esc(label)} <span style="font-weight:400;color:var(--text3);font-size:10px">· ИТОГО</span></td>
-      <td></td>${mc}${totCellIn('','plan-ttl',0,true)}<td></td><td></td>
+      <td style="padding:2px 4px;text-align:center;white-space:nowrap"><button type="button" onclick="planFillCodeFact(this)" title="Заполнить фактом ВСЕ направления подстатьи (пустые месяцы; введённые не меняются)" style="font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${mc}${totCellIn('','plan-ttl',0,true)}<td></td><td></td>
     </tr>`;};
   // строка сотрудника (3-й уровень, 111-ФОТ): ввод по месяцам/году (только ₽); без ответственного/примечания (они на строке направления)
   const empRowHtml=(rdir,code,side,label,key)=>{
