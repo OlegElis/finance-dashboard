@@ -5861,7 +5861,7 @@ function renderPlanFact(f){
   // дефолты: направление с данными (приоритет БФЛ); год - последний год С ДАННЫМИ (или текущий, если данных нет)
   if(f.dir!=='__all__'&&(!f.dir||!dirs.includes(f.dir)))f.dir=dirs.find(d=>/^бфл/i.test(d))||dirs[0]||'';
   if(!f.year||!years.includes(f.year))f.year=dataYears.includes(cy)?cy:(dataYears[0]||cy);
-  const dir=f.dir,year=f.year,level=f.level||'subarticle',period=f.period||'year';
+  const dir=f.dir,year=f.year,level='article',period=f.period||'year'; // режим зафиксирован на «Статья» (+ инлайн-разворот подстатей); селект «Уровень» убран из UI, ветка 'subarticle' оставлена в коде, но недостижима. Сохранённый f.level игнорируется
   const isAll=dir==='__all__';const dirsToAgg=isAll?dirs:[dir]; // свод - агрегируем по всем направлениям
   const isMonthly=period==='monthly'; // матрица «все месяцы (план/факт)»
   const isYear=period==='year'||isMonthly; // для KPI и колонки «Год» считаем год целиком
@@ -6067,7 +6067,6 @@ function renderPlanFact(f){
   const sel=(id,opts)=>`<select onchange="_tabFilters.planfact.${id}=this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${opts}</select>`;
   const dirOpts=`<option value="__all__"${isAll?' selected':''}>Свод · все направления</option>`+dirs.map(d=>`<option value="${esc(d).replace(/"/g,'&quot;')}"${d===dir?' selected':''}>${esc(d)}</option>`).join('');
   const yearOpts=years.map(y=>`<option value="${y}"${y===year?' selected':''}>${y}</option>`).join('');
-  const lvlOpts=`<option value="subarticle"${level==='subarticle'?' selected':''}>Подстатья</option><option value="article"${level==='article'?' selected':''}>Статья</option>`;
   const perOpts=`<option value="monthly"${isMonthly?' selected':''}>Все месяцы (план/факт)</option><option value="year"${period==='year'?' selected':''}>Весь год (итог)</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>${m}</option>`).join('');
   // year/period select coerces to string; нормализуем в onchange через число для period - оставим строкой, обрабатываем +period
   // мультивыбор Статья/Подстатья (поиск + все/снять); применяется по клику на кнопку (закрытие дропдауна)
@@ -6089,7 +6088,6 @@ function renderPlanFact(f){
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>${sel('dir',dirOpts)}
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label><select onchange="_tabFilters.planfact.year=+this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${yearOpts}</select>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>${sel('period',perOpts)}
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Уровень:</label>${sel('level',lvlOpts)}
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Статья:</label>
     <div style="position:relative;display:inline-block"><button id="pf-art-btn" onclick="pfMultiToggle('pf-art-dd')" style="${pfBtnStyle}">${pfArtBtn}</button><div id="pf-art-dd" style="${pfDDstyle}">${pfArtDD}</div></div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Подстатья:</label>
@@ -6182,12 +6180,14 @@ function renderPlanFact(f){
     const d=base!=null?fact-base:null;
     const inTol=base!=null&&base!==0&&Math.abs(d)/Math.abs(base)<=PF_TOL;
     const dCol=base==null?'var(--text3)':inTol?'var(--text2)':revenue?(fact>=base?'var(--income)':'var(--outcome)'):(fact>base?'var(--outcome)':'var(--income)');
-    const tog=opts.expandable?`<span onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;cursor:pointer;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
-    const labStyle=`${td};text-align:left;${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${bold?'font-weight:700':''}`;
+    const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
+    const labStyle=`${td};text-align:left${opts.expandable?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${bold?'font-weight:700':''}`;
+    // клик по лейблу: у статьи - разворот/сворачивание подстатей; у подстатьи/листа - гасим (не открываем расшифровку). Расшифровка - по клику на ячейки значений (строка сохраняет onclick)
+    const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:(kind?` onclick="event.stopPropagation()"`:'');
     const dash='<span style=color:var(--text3)>-</span>';
     const statusHtml=hasBaseline?statusCell(base,fact,revenue):dash;
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period})" title="Клик - операции по строке"`:''}>
-      <td style="${labStyle}">${tog}${esc(label)}${kind?' <span style="font-size:9px;color:var(--accent)">↗</span>':''}</td>
+      <td style="${labStyle}"${labClick}>${tog}${esc(label)}</td>
       <td style="${td};text-align:right${bold?';font-weight:700':''}" title="Утверждённый (замороженный) план">${base!=null?fmt(revenue?base:-base):dash}</td>
       <td style="${td};text-align:right" title="Текущий прогноз (рабочий план)">${plan!=null?fmt(revenue?plan:-plan):dash}</td>
       <td style="${td};text-align:right;${bold?'font-weight:700':''}">${fmt(revenue?fact:-fact)}</td>
@@ -6260,7 +6260,8 @@ function renderPlanFact(f){
       const small=parts.length?`<div style="font-size:9px;color:var(--text3);font-family:var(--mono);border-top:1px solid var(--divider);margin-top:2px;padding-top:1px">${parts.join(' · ')}${pct}</div>`:'';
       return `<td style="text-align:right;padding:4px 7px;border-bottom:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}"${click?` onclick="${click}" title="Клик - операции месяца"`:''}><div style="color:${col};font-weight:600;font-size:12px;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${small}</td>`;
     };
-    const mrow=(label,getBase,getPlan,getFact,kind,bold,tk,code)=>{ // tk/code - расшифровка по клику (tk: inc/exp/vyv)
+    const mrow=(label,getBase,getPlan,getFact,kind,bold,tk,code,opts)=>{ // tk/code - расшифровка по клику (tk: inc/exp/vyv); opts.expandable/expanded/child - инлайн-разворот статья→подстатьи
+      opts=opts||{};
       let cells='',yb=null,yp=null,yf=0;
       monthsOn.forEach(m=>{const b=getBase(m),p=getPlan(m),fa=getFact(m)||0;if(b!=null)yb=(yb||0)+b;if(p!=null)yp=(yp||0)+p;yf+=fa;cells+=cellHtml(b,p,fa,kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null);});
       const yInTol=yb!=null&&Math.abs(yb)>0.0001&&Math.abs(yf-yb)/Math.abs(yb)<=PF_TOL;
@@ -6268,22 +6269,37 @@ function renderPlanFact(f){
       const ypct=(yb!=null&&Math.abs(yb)>0.0001&&kind!=='net')?` · <span style="color:${ycol};font-weight:600">${Math.round(yf/yb*100)}%</span>`:'';
       const yparts=[];if(yb!=null)yparts.push('утв '+fmt(yb));if(yp!=null)yparts.push('прог '+fmt(yp));
       const yc=`<td style="text-align:right;padding:4px 7px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:700;font-size:12px;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${yparts.length?`<div style="font-size:9px;color:var(--text3);font-family:var(--mono);border-top:1px solid var(--divider);margin-top:2px;padding-top:1px">${yparts.join(' · ')}${ypct}</div>`:''}</td>`;
-      return `<tr${bold?' style="background:var(--surface2)"':''}><td style="position:sticky;left:0;background:${bold?'var(--total-bg)':'var(--surface)'};padding:5px 10px;font-size:11px;${bold?'font-weight:700;':''}white-space:nowrap;z-index:1${tk?';cursor:pointer':''}"${tk?` onclick="pfShowTxn('${tk}','${jesc2(code)}',0)" title="Клик - все операции строки за год"`:''}>${esc(label)}${tk?' <span style="font-size:9px;color:var(--accent)">↗</span>':''}</td>${cells}${yc}</tr>`;
+      const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
+      const labPad=opts.child?'padding:4px 10px 4px 26px':'padding:5px 10px',labFont=opts.child?'font-size:10px;color:var(--text2)':'font-size:11px';
+      // клик по лейблу статьи = разворот подстатей; расшифровка - только по ячейкам месяцев (cellHtml). У подстатей/итогов лейбл некликабелен
+      const labClick=opts.expandable?` onclick="pfToggleArt('${tk}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:'';
+      return `<tr${bold?' style="background:var(--surface2)"':opts.child?' class="dds-sub"':''}><td style="position:sticky;left:0;background:${bold?'var(--total-bg)':'var(--surface)'};${labPad};${labFont};${bold?'font-weight:700;':''}white-space:nowrap;z-index:1${opts.expandable?';cursor:pointer':''}"${labClick}>${tog}${esc(label)}</td>${cells}${yc}</tr>`;
     };
     const secR=t=>`<tr><td colspan="${monthsOn.length+2}" style="position:sticky;left:0;padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
     const sumP=(arr,getter,m)=>{let s=null;arr.forEach(r=>{const v=getter(r.code,m);if(v!=null)s=(s||0)+v;});return s;};
+    // помесячные аксессоры дочерних подстатей (инлайн-разворот статьи в матрице) - те же карты, что в обычной таблице
+    const childFactMon=(k,sub,m)=>{const mp=k==='inc'?incSubN:k==='vyv'?vyvodSubN:factSubN;const a=mp[sub];return a?(a[m]||0):0;};
+    const childBaseMon=(k,sub,m)=>PB?PB.planMonth(k==='inc'?'income':'subarticle',sub,m):null;
+    const childPlanMon=(k,sub,m)=>planMonth(k==='inc'?'income':'subarticle',sub,m);
+    // строка статьи + (если развёрнута) дочерние подстатьи; tk: inc/exp/vyv, цвет-kind для вывода = exp; состояние разворота - общий artExp (_pfArtExp)
+    const artMrow=(r,tk,ck,getBase,getPlan,getFact)=>{
+      const subs=subsOfArt(tk,r.code),open=subs.length&&artExp&&artExp.has(tk+'|'+r.code);
+      let h=mrow(artLabel(r.code),getBase,getPlan,getFact,ck,false,tk,r.code,{expandable:subs.length>0,expanded:!!open});
+      if(open)subs.forEach(sub=>{h+=mrow(sub,m=>childBaseMon(tk,sub,m),m=>childPlanMon(tk,sub,m),m=>childFactMon(tk,sub,m),ck,false,tk,sub,{child:true});});
+      return h;
+    };
     // при активном фильтре - только отфильтрованные строки без ИТОГО/ЧП и без пустых секций
     let rh='';
     if(!pfFilterOn||incRowsArr.length){rh+=secR('Доходы');
-      incRowsArr.forEach(r=>{rh+=mrow(level==='article'?artLabel(r.code):r.code,m=>bPlanIncM(r.code,m),m=>planIncM(r.code,m),m=>incFactM(r.code,m),'inc',false,'inc',r.code);});
+      incRowsArr.forEach(r=>{rh+=artMrow(r,'inc','inc',m=>bPlanIncM(r.code,m),m=>planIncM(r.code,m),m=>incFactM(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО ДОХОДЫ',m=>sumP(incRowsArr,bPlanIncM,m),m=>sumP(incRowsArr,planIncM,m),m=>revByMonth[m]||0,'inc',true);}
     if(!pfFilterOn||rowsArr.length){rh+=secR('Расходы');
-      rowsArr.forEach(r=>{rh+=mrow(level==='article'?artLabel(r.code):r.code,m=>bPlanExpM(r.code,m),m=>planExpM(r.code,m),m=>factExpM(r.code,m),'exp',false,'exp',r.code);});
+      rowsArr.forEach(r=>{rh+=artMrow(r,'exp','exp',m=>bPlanExpM(r.code,m),m=>planExpM(r.code,m),m=>factExpM(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО РАСХОДЫ',m=>sumP(rowsArr,bPlanExpM,m),m=>sumP(rowsArr,planExpM,m),m=>{let s=0;rowsArr.forEach(r=>{s+=factExpM(r.code,m);});return s;},'exp',true);}
     if(!pfFilterOn)rh+=mrow('ЧИСТАЯ ПРИБЫЛЬ',m=>{const ib=sumP(incRowsArr,bPlanIncM,m),eb=sumP(rowsArr,bPlanExpM,m);return (ib==null&&eb==null)?null:((ib||0)-(eb||0));},m=>{const ip=sumP(incRowsArr,planIncM,m),ep=sumP(rowsArr,planExpM,m);return (ip==null&&ep==null)?null:((ip||0)-(ep||0));},m=>{let ef=0;rowsArr.forEach(r=>{ef+=factExpM(r.code,m);});return (revByMonth[m]||0)-ef;},'net',true);
     if(vyvodArr.length){
       rh+=secR('Распределение прибыли (вывод)');
-      vyvodArr.forEach(r=>{rh+=mrow(level==='article'?artLabel(r.code):r.code,m=>bPlanExpM(r.code,m),m=>planExpM(r.code,m),m=>factVyvodM(r.code,m),'exp',false,'vyv',r.code);});
+      vyvodArr.forEach(r=>{rh+=artMrow(r,'vyv','exp',m=>bPlanExpM(r.code,m),m=>planExpM(r.code,m),m=>factVyvodM(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,bPlanExpM,m),m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'exp',true);
     }
     const ths=monthsOn.map(m=>`<th style="${mth};position:sticky;top:0;z-index:2">${MS[m-1]}</th>`).join('');
