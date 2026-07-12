@@ -6096,6 +6096,7 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${(selArt.size||selSub.size||selOwn.size)?`<button onclick="pfResetExtra()" style="font-size:10px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
     ${baselineStatus}${approveBtn}
+    ${isAdmin?`<button onclick="cfoStatementOpen()" title="Персональная печатная выписка по бюджету для ответственного (ЦФО) - только его подстатьи" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">🖨 Выписка для ЦФО</button>`:''}
     <button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">${isAdmin?'✏ Редактировать планы':'👁 Планы (просмотр)'}</button>
   </div>`;
 
@@ -8765,6 +8766,144 @@ window.planPrintOwners=function(){
   const w=window.open('','_blank'); if(!w){alert('Разрешите всплывающие окна для печати');return;}
   w.document.open(); w.document.write(html); w.document.close();
   setTimeout(()=>{try{w.focus();w.print();}catch(e){}},450);
+};
+// ===== Персональная выписка для ЦФО (BDR) - только его подстатьи, baseline vs факт, A4 portrait. Отдельно от planPrintOwners (форма сбора плана) =====
+window.cfoStatementOpen=function(){
+  if(!_isAdmin()){alert('Выписку формирует только администратор.');return;}
+  if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
+  if(document.getElementById('cfoStmtOverlay'))return;
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const owners=[...new Set(Object.values(_planOwners||{}).map(v=>String(v||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const MONF=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  const curM=new Date().getMonth()+1;
+  const year=+((_tabFilters.planfact&&_tabFilters.planfact.year))||new Date().getFullYear();
+  const monOpts=MONF.map((m,i)=>`<option value="${i+1}"${(i+1)===curM?' selected':''}>${m}</option>`).join('');
+  const ownOpts=`<option value="__none__">(не назначен)</option>`+owners.map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('');
+  const ov=document.createElement('div');ov.id='cfoStmtOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:440px;max-width:94vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">🖨 Выписка для ЦФО</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:16px">Персональная выписка по бюджету за ${year} год. В неё попадают ТОЛЬКО подстатьи выбранного ответственного.</div>
+    <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">Ответственный (ЦФО)</label>
+    <select id="cfo-stmt-owner" style="width:100%;box-sizing:border-box;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);margin-bottom:14px">${ownOpts}</select>
+    <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">Отчётный месяц (в PDF: «за месяц» и «YTD январь-месяц»)</label>
+    <select id="cfo-stmt-month" style="width:100%;box-sizing:border-box;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);margin-bottom:20px">${monOpts}</select>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button onclick="document.getElementById('cfoStmtOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Отмена</button>
+      <button onclick="cfoStatementGen()" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сформировать</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
+window.cfoStatementGen=function(){
+  const owEl=document.getElementById('cfo-stmt-owner'),mEl=document.getElementById('cfo-stmt-month');
+  if(!owEl||!mEl)return;
+  const fio=owEl.value,M=+mEl.value,isNoOwn=fio==='__none__',fioLabel=isNoOwn?'(не назначен)':fio;
+  const pf=_tabFilters.planfact||{};
+  const year=+pf.year||new Date().getFullYear();
+  const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const isAll=(!pf.dir||pf.dir==='__all__');
+  const dirsScope=isAll?allDirs:(allDirs.includes(pf.dir)?[pf.dir]:allDirs);
+  const dirLabel=isAll?'Все направления':pf.dir;
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const f=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
+  const MONF=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+  const today=new Date().toLocaleDateString('ru-RU');
+  // baseline года (снимок)
+  const bl=(typeof _baselineForYear==='function')?_baselineForYear(year):null;
+  const blRecs=bl?bl.records.filter(p=>p.year===year):[];
+  const hasBl=blRecs.length>0;
+  // контекст факта (выручка/непрофильный расход по месяцам) - для %-планов
+  const ctx={};
+  dirsScope.forEach(dir=>{const rev=new Array(13).fill(0),npExp=new Array(13).fill(0);
+    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=parseNum(r[COL.OUTCOME]); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc; if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=Math.abs(out);} });
+    ctx[dir]={rev,npExp};});
+  // baseline-конвертер %-планов от СНИМКОВОЙ базы выручки (income/revenue из blRecs); pct_profit - от факта
+  const blIncBaseM=(d,m)=>{const rc=blRecs.filter(p=>p.dir===d&&p.level==='income');let v=0;if(rc.length){const byc={};rc.forEach(p=>{const k=p.code+'|'+(p.side||'');(byc[k]=byc[k]||[]).push(p);});Object.values(byc).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)v+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)v+=yr.value/12;}});}return v;};
+  const blRevBaseM=(d,m)=>{const r=blRecs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;const ip=blIncBaseM(d,m);if(ip>0)return ip;return (ctx[d]?ctx[d].rev[m]:0)||0;};
+  const blRevBaseY=d=>{const r=blRecs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===0);if(r&&r.value>0)return r.value;let s=0;for(let m=1;m<=12;m++)s+=blRevBaseM(d,m);return s;};
+  const blNetM=(d,m)=>Math.max(0,(ctx[d]?ctx[d].rev[m]:0)-(ctx[d]?ctx[d].npExp[m]:0));
+  const blNetY=d=>{let s=0;for(let m=1;m<=12;m++)s+=blNetM(d,m);return s;};
+  const blCvt=(d,r,m)=>r.mode==='pct'?r.value*(m?blRevBaseM(d,m):blRevBaseY(d)):r.mode==='pct_profit'?r.value*(m?blNetM(d,m):blNetY(d)):r.value;
+  const blPlanMD=(d,code,m)=>{const recs=blRecs.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+blCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+blCvt(d,yr,0)/12;}});return tot;};
+  // факт + операции: dir||ARTICLE_NAME → [13] месяцев и список строк (вывод прибыли исключён, как в отчёте)
+  const factIdx={},opsIdx={};
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=parseNum(r[COL.OUTCOME]); if(!(out<0))return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIdx[key]=factIdx[key]||new Array(13).fill(0))[m]+=Math.abs(out); (opsIdx[key]=opsIdx[key]||[]).push(r); });
+  // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = выбранный (или пусто для «не назначен»)
+  const ownerOf=(d,code)=>String((_planOwners||{})[d+'||'+code]||'').trim();
+  const ownMatch=(d,code)=>{const o=ownerOf(d,code);return isNoOwn?!o:(o===fio);};
+  const pairSet={}; // code → Set направлений (только совпавшие по владельцу)
+  blRecs.forEach(p=>{if(p.level!=='subarticle')return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatch(p.dir,p.code))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
+  Object.keys(factIdx).forEach(key=>{const i=key.indexOf('||'),d=key.slice(0,i),code=key.slice(i+2);if(!ownMatch(d,code))return;(pairSet[code]=pairSet[code]||new Set()).add(d);});
+  const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
+  const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanMD(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
+  const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=factIdx[d+'||'+code];if(a)s+=a[m]||0;});return s;};
+  const blYTD=code=>{let s=null;for(let m=1;m<=M;m++){const v=blMonth(code,m);if(v!=null)s=(s||0)+v;}return s;};
+  const factYTD=code=>{let s=0;for(let m=1;m<=M;m++)s+=factMonth(code,m);return s;};
+  // цветная Δ-ячейка (перерасход красный, экономия зелёная)
+  const dCell=(dv,bold)=>dv==null?'<td class="r'+(bold?' b':'')+'">-</td>':'<td class="r'+(bold?' b':'')+'" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#23272f')+';font-weight:700">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
+  let rows='',sBP=null,sFP=0,sBY=null,sFY=0;
+  codes.forEach(code=>{const bP=blMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),fY=factYTD(code);
+    if(bP!=null)sBP=(sBP||0)+bP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; sFY+=fY;
+    const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
+    rows+='<tr><td class="nm">'+esc(code)+'</td><td class="r">'+(bP!=null?f(bP):'-')+'</td><td class="r">'+f(fP)+'</td>'+dCell(dP)+'<td class="r">'+(bY!=null?f(bY):'-')+'</td><td class="r">'+f(fY)+'</td>'+dCell(dY)+'</tr>';});
+  const dSP=sBP!=null?sFP-sBP:null,dSY=sBY!=null?sFY-sBY:null;
+  const totRow=codes.length?'<tr class="tot"><td class="nm b">ИТОГО</td><td class="r b">'+(sBP!=null?f(sBP):'-')+'</td><td class="r b">'+f(sFP)+'</td>'+dCell(dSP,true)+'<td class="r b">'+(sBY!=null?f(sBY):'-')+'</td><td class="r b">'+f(sFY)+'</td>'+dCell(dSY,true)+'</tr>':'';
+  const tableBody=codes.length?(rows+totRow):'<tr><td colspan="7" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
+  // операции по подстатьям с превышением YTD (Δ YTD > 0), за диапазон январь-M
+  const overCodes=codes.filter(code=>{const bY=blYTD(code);return bY!=null&&(factYTD(code)-bY)>0;});
+  let opsBlock='';
+  if(overCodes.length){
+    let opsRows='';
+    overCodes.forEach(code=>{ let ops=[]; pairSet[code].forEach(d=>{const a=opsIdx[d+'||'+code];if(a)ops=ops.concat(a);});
+      ops=ops.filter(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return dt&&(dt.getMonth()+1)<=M;}).sort((x,y)=>{const a=parseDate(x[COL.DATE_OPIU]),b=parseDate(y[COL.DATE_OPIU]);return (a?a.getTime():0)-(b?b.getTime():0);});
+      opsRows+='<tr class="opsec"><td colspan="4">'+esc(code)+' · перерасход YTD +'+f(factYTD(code)-blYTD(code))+'</td></tr>';
+      opsRows+=ops.map(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return '<tr><td class="c">'+(dt?dt.toLocaleDateString('ru-RU'):'')+'</td><td>'+esc(r[COL.SECOND_SIDE])+'</td><td class="r">'+f(Math.abs(parseNum(r[COL.OUTCOME])||0))+'</td><td class="pp">'+esc(r[COL.PURPOSE])+'</td></tr>';}).join('');
+    });
+    opsBlock='<h2>Операции по подстатьям с превышением (YTD)</h2><table class="ops"><colgroup><col style="width:14%"><col style="width:30%"><col style="width:16%"><col style="width:40%"></colgroup><thead><tr><th>Дата ОПиУ</th><th>Контрагент</th><th class="r">Сумма</th><th>Назначение</th></tr></thead><tbody>'+opsRows+'</tbody></table>';
+  } else {
+    opsBlock='<p class="noover">Превышений по утверждённому плану нет.</p>';
+  }
+  const blStamp=hasBl?('<span class="ok">План утверждён '+new Date(bl.approvedAt).toLocaleDateString('ru-RU')+'</span>'):'<span class="no">План НЕ утверждён</span>';
+  const perLabel='за '+MONF[M-1]+' '+year+' · YTD январь-'+MONF[M-1];
+  // выбран текущий незакрытый месяц → колонки «за месяц»/Δ предварительные (полный план против неполного факта). Δ YTD не помечаем
+  const _now=new Date(),isCurUnclosed=(year===_now.getFullYear()&&M===_now.getMonth()+1);
+  const _monCap=MONF[M-1].charAt(0).toUpperCase()+MONF[M-1].slice(1);
+  const warnLine=isCurUnclosed?'<div class="warn">⚠ '+_monCap+' не закрыт - факт неполный, отклонение за месяц предварительное</div>':'';
+  const _dn=new Date(),_iso=_dn.getFullYear()+'-'+String(_dn.getMonth()+1).padStart(2,'0')+'-'+String(_dn.getDate()).padStart(2,'0');
+  const fileName=(_iso+'_Выписка_'+fioLabel+'_'+year).replace(/[\\/:*?"<>|]+/g,'-').replace(/[.\s]+$/,'');
+  const CSS='*{box-sizing:border-box}body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#23272f;margin:0;padding:22px;font-size:12px;background:#fff}'
+    +'.head{border-bottom:2px solid #2b3145;padding-bottom:10px;margin-bottom:14px}'
+    +'.brand{font-size:10.5px;letter-spacing:.02em;color:#6f7682;font-weight:600}h1{font-size:19px;margin:3px 0 6px;font-weight:700;color:#2b3145}'
+    +'.meta{font-size:11.5px;color:#4a505c;line-height:1.6}.meta b{color:#2b3145}'
+    +'.ok{color:#1e8a54;font-weight:700}.no{color:#c0392b;font-weight:700}'
+    +'h2{font-size:13px;color:#2b3145;margin:20px 0 6px}'
+    +'table{border-collapse:collapse;width:100%;table-layout:fixed;margin-top:4px;border:0.75pt solid #9aa1b0}' /* collapse надёжно рисует внутренние вертикали в этом рендерере; ширины/overflow ниже не дают контенту выйти за печатную область */
+    +'th,td{border:0.75pt solid #9aa1b0;padding:5px 7px;font-size:10.5px;text-align:left;white-space:nowrap;overflow:hidden}' /* overflow:hidden держит контент внутри ячейки (в collapse границы принадлежат таблице и не режутся) */
+    +'th{background:#2b3145;color:#fff;font-weight:600;font-size:9.5px;text-transform:uppercase;border-color:#6b7382}' /* граница светлее тёмного фона шапки - вертикали видны */
+    +'th:first-child,td:first-child{border-left:0.75pt solid #9aa1b0}th:last-child,td:last-child{border-right:0.75pt solid #9aa1b0}' /* явные внешние левая/правая границы на крайних ячейках */
+    +'th.r,td.r{text-align:right;font-variant-numeric:tabular-nums;font-size:9.5px;padding-left:4px;padding-right:5px}.b{font-weight:700}td.c{text-align:center}' /* числовые колонки: мельче шрифт + плотнее поля, чтобы крупные суммы (−2 202 763,01) помещались в 6 колонок портретной A4 */
+    +'td.nm{font-weight:600;color:#2b3145;white-space:normal;overflow-wrap:anywhere;word-break:break-word}tr.tot td{background:#eef1f6;border-top:1.5pt solid #cdd3e0}'
+    +'table.ops td,table.ops th{white-space:normal;overflow-wrap:anywhere;word-break:break-word}table.ops td.pp{font-size:9.5px;color:#4a505c}' /* длинный текст без пробелов (назначение/контрагент) переносим ВНУТРИ фиксированной ячейки - иначе он вылезает за правый край и перекрывает границу на первой странице */
+    +'tr.opsec td{background:#f3f5f8;font-weight:700;color:#2b3145;font-size:10px;border:0.75pt solid #9aa1b0}' /* строка-заголовок подстатьи (colspan) - явная рамка */
+    +'.noover{margin:14px 0;padding:10px 12px;background:#eef7f0;border:1px solid #bfe3cd;border-radius:6px;color:#1e8a54;font-weight:600;font-size:11.5px}'
+    +'.warn{margin-top:8px;padding:7px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:6px;color:#b5651d;font-weight:600;font-size:11px}'
+    +'.sign{margin-top:28px;font-size:11.5px;color:#333;line-height:2.4}'
+    +'@media print{@page{size:A4 portrait;margin:12mm}body{padding:0 2mm}}';/* при печати body{padding:0} ставил правый край таблицы ровно на границу печатной области, и внешняя половина collapse-границы (центрирована на ребре) обрезалась браузером - правая замыкающая линия пропадала. Отступ 2мм по бокам держит левую/правую границы внутри печатной области (то же, что ручное расширение полей печати) */
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>'+fileName+'</title><style>'+CSS+'</style></head><body>'
+    +'<div class="head"><div class="brand">Бюджет доходов и расходов (БДР)</div><h1>Выписка по бюджету · '+esc(fioLabel)+'</h1>'
+    +'<div class="meta"><b>Направление:</b> '+esc(dirLabel)+' &nbsp;·&nbsp; <b>Год:</b> '+year+' &nbsp;·&nbsp; <b>Период:</b> '+perLabel+'<br>'+blStamp+' &nbsp;·&nbsp; сформировано '+today+'</div>'+warnLine+'</div>'
+    +'<table><colgroup><col style="width:22%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>'
+    +'<thead><tr><th>Подстатья</th><th class="r">Утв. мес.</th><th class="r">Факт мес.</th><th class="r">Δ мес.</th><th class="r">Утв. YTD</th><th class="r">Факт YTD</th><th class="r">Δ YTD</th></tr></thead>'
+    +'<tbody>'+tableBody+'</tbody></table>'
+    +opsBlock
+    +'<div class="sign">Ответственный ____________________ / ____________<br>Дата ознакомления ____________</div>'
+    +'</body></html>';
+  const w=window.open('','_blank'); if(!w){alert('Разрешите всплывающие окна для печати');return;}
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{try{w.focus();w.print();}catch(e){}},450);
+  const ovEl=document.getElementById('cfoStmtOverlay'); if(ovEl)ovEl.remove();
 };
 window.showPlansPanel=async function(){
   if(document.getElementById('plansPanelOverlay'))return;
