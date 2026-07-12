@@ -5869,6 +5869,8 @@ function renderPlanFact(f){
 
   // ── ФАКТ из RAW (по дате ОПиУ, выбранное направление+год, перемещения исключены) ──
   const nrm=s=>String(s||'').toLowerCase().replace(/[^а-яёa-z0-9]/gi,'');
+  const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';}; // первые 3 цифры кода - единственный ключ связи статья↔подстатья
+  const artRepAmt={}; // c3 → {полныйARTICLE_CODE: Σ|сумма|} - выбор представителя для лейбла строки-статьи
   const factByCode={},incByCode={},vyvodByCode={},vyvodCodes={},revByMonth=new Array(13).fill(0),npExpMonth=new Array(13).fill(0); // factByCode - расходы БЕЗ вывода прибыли; vyvodByCode - вывод (127, распределение); npExpMonth = Σ factByCode
   const revByMonthD={},npExpMonthD={}; // по направлениям - для разрешения %-планов в режиме «Свод»
   const pfTxn={}; // 'inc|код'/'exp|код'/'vyv|код' → строки RAW (расшифровка по клику)
@@ -5881,17 +5883,20 @@ function renderPlanFact(f){
     const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
     const m=d.getMonth()+1,out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
+    const gkey=an?c3(an):c3(ac); // ключ строки-статьи (режим «Статья») = c3 ПОДСТАТЬИ; общий для доходов/расходов/вывода, чтобы статья = Σ подстатей по c3 и разворот сходился с родителем. Нет подстатьи - fallback c3 статьи (сохраняет ИТОГО)
+    const sn=an||ac; // имя дочерней «подстатьи» для разворота; при пустой подстатье - код статьи (c3(sn)===gkey), чтобы строка была видна и статья = Σ детей сходилась
     const rvD=revByMonthD[rd]||(revByMonthD[rd]=new Array(13).fill(0)),npD=npExpMonthD[rd]||(npExpMonthD[rd]=new Array(13).fill(0));
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?ac:an;if(ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}
-      if(level==='article'&&an){(incSubN[an]=incSubN[an]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+an]=pfTxn['inc|'+an]||[]).push(r);}}
+    if(level==='article'&&gkey&&ac){const _amt=Math.abs(inc)+Math.abs(out);if(_amt){(artRepAmt[gkey]=artRepAmt[gkey]||{})[ac]=(artRepAmt[gkey][ac]||0)+_amt;}} // представитель лейбла статьи = ARTICLE_CODE с макс. оборотом в c3-группе
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?gkey:an;if(ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}
+      if(level==='article'&&sn){(incSubN[sn]=incSubN[sn]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+sn]=pfTxn['inc|'+sn]||[]).push(r);}}
     if(t==='списание'&&out<0){
-      const c=level==='article'?ac:an,av=Math.abs(out);
+      const c=level==='article'?gkey:an,av=Math.abs(out);
       const anl=nrm(r[COL.ANALYTICS]),isVyvod=anl.includes('вывод')&&anl.includes('прибыл'); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
       if(isVyvod){if(c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
-        if(level==='article'&&an){(vyvodSubN[an]=vyvodSubN[an]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+an]=pfTxn['vyv|'+an]||[]).push(r);}}
+        if(level==='article'&&sn){(vyvodSubN[sn]=vyvodSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+sn]=pfTxn['vyv|'+sn]||[]).push(r);}}
       else{
         if(c){(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+c]=pfTxn['exp|'+c]||[]).push(r);}
-        if(level==='article'&&an){(factSubN[an]=factSubN[an]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+an]=pfTxn['exp|'+an]||[]).push(r);}
+        if(level==='article'&&sn){(factSubN[sn]=factSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+sn]=pfTxn['exp|'+sn]||[]).push(r);}
         npExpMonth[m]+=av;npD[m]+=av;
         if(an){const K=rd+'||'+an;(expByDirSub[K]=expByDirSub[K]||new Array(13).fill(0))[m]+=av;}
       }
@@ -5900,7 +5905,6 @@ function renderPlanFact(f){
   window._pfTxn=pfTxn;window._pfTxnMeta={dirLabel:isAll?'Свод (все направления)':dir,year};
   // ── ПЛАН из _planRecords ──
   const plans=(_planRecords||[]).filter(p=>p.year===year&&dirsToAgg.includes(p.dir));
-  const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   // фильтр по Статье (ARTICLE_CODE) / Подстатье (ARTICLE_NAME) - мультивыбор; применяется к показанным строкам, выручка-база %-планов остаётся полной
   const selArt=new Set(_tabFilters.planfact.articles||[]),selSub=new Set(_tabFilters.planfact.subarticles||[]);
   const selArtC3=new Set([...selArt].map(c3)),selSubC3=new Set([...selSub].map(c3));
@@ -5915,7 +5919,7 @@ function renderPlanFact(f){
     const tc=c3(code);return subsAll.filter(s=>c3(s)===tc).some(subOwnerPass); // статья проходит, если проходит любая её подстатья
   }
   const codePasses=code=>{
-    if(selArt.size){if(level==='article'){if(!selArt.has(code))return false;}else if(!selArtC3.has(c3(code)))return false;}
+    if(selArt.size&&!selArtC3.has(c3(code)))return false; // фильтр по статье - всегда по c3 (в режиме «Статья» code уже c3; в «Подстатье» - c3 подстатьи). selArt хранит полные коды → сверяем через selArtC3
     if(selSub.size){if(level==='subarticle'){if(!selSub.has(code))return false;}else if(!selSubC3.has(c3(code)))return false;}
     if(!ownerPass(code))return false;
     return true;
@@ -5979,12 +5983,12 @@ function renderPlanFact(f){
 
   // ── строки ──
   const isVyvodCode=code=>!!vyvodCodes[code]||c3(code)==='127'; // распределение прибыли (вывод) - отдельно от расходов
-  const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});
+  const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code)){const t=c3(p.code);if(t)codeSet[t]=1;}}); // режим «Статья»: план-only c3-группы (нет факта) тоже дают строку-статью
   Object.keys(codeSet).forEach(c=>{if(!codePasses(c))delete codeSet[c];});
   const rowsArr=Object.keys(codeSet).map(code=>{const plan=planExp(code),fact=factExp(code);return{code,plan,fact};}).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   // ── РАСПРЕДЕЛЕНИЕ ПРИБЫЛИ (вывод, код 127) - ниже линии ЧП, как в ОПиУ; в расходы и ЧП НЕ входит ──
   const factVyvodOf=code=>{const a=vyvodByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
-  const vyvodSet={};Object.keys(vyvodByCode).forEach(c=>vyvodSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&isVyvodCode(p.code))vyvodSet[p.code]=1;});
+  const vyvodSet={};Object.keys(vyvodByCode).forEach(c=>vyvodSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&isVyvodCode(p.code))vyvodSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='subarticle'&&isVyvodCode(p.code)){const t=c3(p.code);if(t)vyvodSet[t]=1;}});
   Object.keys(vyvodSet).forEach(c=>{if(!codePasses(c))delete vyvodSet[c];});
   const vyvodArr=Object.keys(vyvodSet).map(code=>({code,plan:planExp(code),fact:factVyvodOf(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   const sumVyvodPlan=vyvodArr.reduce((s,r)=>s+(r.plan||0),0),sumVyvodFact=vyvodArr.reduce((s,r)=>s+r.fact,0);
@@ -5992,7 +5996,7 @@ function renderPlanFact(f){
   const sumPlan=rowsArr.reduce((s,r)=>s+(r.plan||0),0),sumFact=rowsArr.reduce((s,r)=>s+r.fact,0);
   // ── ДОХОДЫ по кодам (симметрично расходам) ──
   const incFactOf=code=>{const a=incByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
-  const incSet={};Object.keys(incByCode).forEach(c=>incSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});
+  const incSet={};Object.keys(incByCode).forEach(c=>incSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='income'){const t=c3(p.code);if(t)incSet[t]=1;}});
   Object.keys(incSet).forEach(c=>{if(!codePasses(c))delete incSet[c];});
   const incRowsArr=Object.keys(incSet).map(code=>({code,plan:planInc(code),fact:incFactOf(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   const sumIncPlan=incRowsArr.reduce((s,r)=>s+(r.plan||0),0),sumIncFact=incRowsArr.reduce((s,r)=>s+r.fact,0);
@@ -6110,11 +6114,13 @@ function renderPlanFact(f){
     return Object.keys(set).sort((a,b)=>String(a).localeCompare(String(b),'ru'));};
   const childFact=(kind,sub)=>kind==='inc'?_sumNP(incSubN,sub):kind==='vyv'?_sumNP(vyvodSubN,sub):_sumNP(factSubN,sub);
   const childPlan=(kind,sub)=>kind==='inc'?planOf('income',sub):planOf('subarticle',sub);
+  // лейбл строки-статьи «c3 · представитель» (представитель = ARTICLE_CODE с макс. оборотом в c3-группе, без ведущего кода); code теперь c3
+  const artLabel=c3v=>{const base=c3v||'(без кода)';const m=artRepAmt[c3v];if(!m)return base;let best='',bv=-1;Object.keys(m).forEach(k=>{if(m[k]>bv){bv=m[k];best=k;}});const rest=String(best).replace(c3v,'').replace(/^[_\s.\-–—]+/,'').trim();return rest?base+' · '+rest:base;};
   // строка статьи + (если развёрнута) её подстатьи
   const artRow=(code,plan,fact,revenue,kind)=>{
     if(level!=='article')return dRow(code,plan,fact,revenue,false,kind,code);
     const subs=subsOfArt(kind,code),has=subs.length>0,key=kind+'|'+code,open=has&&artExp.has(key);
-    let h=dRow(code,plan,fact,revenue,false,kind,code,{expandable:has,expanded:open});
+    let h=dRow(artLabel(code),plan,fact,revenue,false,kind,code,{expandable:has,expanded:open});
     if(open)subs.forEach(sub=>{h+=dRow(sub,childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true});});
     return h;
   };
@@ -6161,15 +6167,15 @@ function renderPlanFact(f){
     // при активном фильтре - только отфильтрованные строки без ИТОГО/ЧП и без пустых секций
     let rh='';
     if(!pfFilterOn||incRowsArr.length){rh+=secR('Доходы');
-      incRowsArr.forEach(r=>{rh+=mrow(r.code,m=>planIncM(r.code,m),m=>incFactM(r.code,m),'inc',false,'inc',r.code);});
+      incRowsArr.forEach(r=>{rh+=mrow(level==='article'?artLabel(r.code):r.code,m=>planIncM(r.code,m),m=>incFactM(r.code,m),'inc',false,'inc',r.code);});
       if(!pfFilterOn)rh+=mrow('ИТОГО ДОХОДЫ',m=>sumP(incRowsArr,planIncM,m),m=>revByMonth[m]||0,'inc',true);}
     if(!pfFilterOn||rowsArr.length){rh+=secR('Расходы');
-      rowsArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factExpM(r.code,m),'exp',false,'exp',r.code);});
+      rowsArr.forEach(r=>{rh+=mrow(level==='article'?artLabel(r.code):r.code,m=>planExpM(r.code,m),m=>factExpM(r.code,m),'exp',false,'exp',r.code);});
       if(!pfFilterOn)rh+=mrow('ИТОГО РАСХОДЫ',m=>sumP(rowsArr,planExpM,m),m=>{let s=0;rowsArr.forEach(r=>{s+=factExpM(r.code,m);});return s;},'exp',true);}
     if(!pfFilterOn)rh+=mrow('ЧИСТАЯ ПРИБЫЛЬ',m=>{const ip=sumP(incRowsArr,planIncM,m),ep=sumP(rowsArr,planExpM,m);return (ip==null&&ep==null)?null:((ip||0)-(ep||0));},m=>{let ef=0;rowsArr.forEach(r=>{ef+=factExpM(r.code,m);});return (revByMonth[m]||0)-ef;},'net',true);
     if(vyvodArr.length){
       rh+=secR('Распределение прибыли (вывод)');
-      vyvodArr.forEach(r=>{rh+=mrow(r.code,m=>planExpM(r.code,m),m=>factVyvodM(r.code,m),'exp',false,'vyv',r.code);});
+      vyvodArr.forEach(r=>{rh+=mrow(level==='article'?artLabel(r.code):r.code,m=>planExpM(r.code,m),m=>factVyvodM(r.code,m),'exp',false,'vyv',r.code);});
       if(!pfFilterOn)rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'exp',true);
     }
     const ths=monthsOn.map(m=>`<th style="${mth};position:sticky;top:0;z-index:2">${MS[m-1]}</th>`).join('');
