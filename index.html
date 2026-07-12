@@ -6026,10 +6026,11 @@ function renderPlanFact(f){
     const planIncM=(code,m)=>level==='article'?planMonthAgg('income',code,m):planMonth('income',code,m);
     return {R,cvtD,recsOf,planMonth,planYear,planOf,planExp,planInc,planExpM,planIncM};
   }
-  const _baseObj=_baselineForYear(year);
-  const hasBaseline=!!_baseObj;
-  const PB=hasBaseline?buildPlanCalc(_baseObj.records):null;
-  // baseline-аксессоры (null, если план года не утверждён)
+  // baseline теперь ПОМЕСЯЧНЫЙ: PB строится из объединения записей замороженных месяцев. bPlanExpM(code,m) вернёт null для незамороженного месяца (записей нет) → «утв»/Δ/остаток по нему пусты автоматически
+  const _frozen=_frozenMonths(year),frozenSet=new Set(_frozen),_blMap=_baselineMonthsMap(year);
+  const hasBaseline=_frozen.length>0;
+  const PB=hasBaseline?buildPlanCalc(_baselineRecords(year)):null;
+  // baseline-аксессоры (null, если ни один месяц не заморожен)
   const bPlanExp=code=>PB?PB.planExp(code):null;
   const bPlanInc=code=>PB?PB.planInc(code):null;
   const bPlanExpM=(code,m)=>PB?PB.planExpM(code,m):null;
@@ -6080,10 +6081,10 @@ function renderPlanFact(f){
   const pfSubDD=pfSearch('pf-sub-dd')+pfAllBtns("pfMultiAll('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи',%s)")+pfOptList(pfSubs,selSub,"pfMultiChange('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи')");
   const pfOwnDD=pfSearch('pf-own-dd')+pfAllBtns("pfMultiAll('pf-own-dd','pf-own-btn','owners','Все ЦФО',%s)")+pfOptList([NOOWN,...pfOwners],selOwn,"pfMultiChange('pf-own-dd','pf-own-btn','owners','Все ЦФО')");
   const pfArtBtn=(selArt.size?selArt.size+' выбрано':'Все статьи')+' ▾',pfSubBtn=(selSub.size?selSub.size+' выбрано':'Все подстатьи')+' ▾',pfOwnBtn=(selOwn.size?selOwn.size+' выбрано':'Все ЦФО')+' ▾';
-  // статус утверждения (baseline) и кнопка утверждения (админу)
-  const blDate=hasBaseline?new Date(_baseObj.approvedAt).toLocaleDateString('ru-RU'):null;
-  const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('План '+year+' утверждён (baseline); отклонения считаются от него'):('План '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('✓ План утверждён '+blDate):'⚠ План НЕ утверждён'}</span>`;
-  const approveBtn=isAdmin?`<button onclick="planApproveYear(${year})" title="Заморозить текущий прогноз как утверждённый план ${year} года" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить план ${year}</button>`:'';
+  // статус заморозки по месяцам + кнопка «Утвердить месяц» (админу)
+  const frozenLbl=hasBaseline?_frozenMonthsLabel(year):'';
+  const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются только по замороженным месяцам ('+frozenLbl+')'):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
+  const approveBtn=isAdmin?`<button onclick="planApproveMonthOpen(${year})" title="Заморозить план выбранного месяца ${year} года (изменить замороженный месяц нельзя)" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить месяц</button>`:'';
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>${sel('dir',dirOpts)}
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label><select onchange="_tabFilters.planfact.year=+this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${yearOpts}</select>
@@ -6105,7 +6106,7 @@ function renderPlanFact(f){
   // ── YTD и прогноз года: истёкшие ПОЛНЫЕ месяцы (текущий не берём - факт неполный); годовые планы без помесячной разбивки распределяются равномерно /12 ──
   const nowD=new Date();
   const curY=nowD.getFullYear(),curM=nowD.getMonth()+1; // текущий календарный месяц - для колонки «Остаток лимита»
-  const showRem=hasBaseline&&year===curY; // остаток лимита осмыслен только для baseline и ТЕКУЩЕГО года; период отчёта не влияет - всегда текущий месяц
+  const showRem=year===curY&&frozenSet.has(curM); // остаток лимита - только если ТЕКУЩИЙ месяц заморожен (иначе обязательства по нему нет); период отчёта не влияет
   const L=year<nowD.getFullYear()?12:(year>nowD.getFullYear()?0:nowD.getMonth()); // число истёкших полных месяцев
   const planSeries=(codes,pm,py)=>{const arr=new Array(13).fill(0);codes.forEach(c=>{const ms=[];let has=false;for(let m=1;m<=12;m++){const v=pm(c,m);ms.push(v);if(v!=null)has=true;}if(has){for(let m=1;m<=12;m++)arr[m]+=ms[m-1]||0;}else{const y=py(c);if(y!=null)for(let m=1;m<=12;m++)arr[m]+=y/12;}});return arr;};
   const expPlanArrY=planSeries(Object.keys(codeSet),(c,m)=>planExpM(c,m),c=>planExp(c));
@@ -6116,21 +6117,18 @@ function renderPlanFact(f){
   const ytdFactInc=sumR(revByMonth,1,L);
   const fcExp=ytdFactExp+sumR(expPlanArrY,L+1,12),fcInc=ytdFactInc+sumR(incPlanArrY,L+1,12),fcNet=fcInc-fcExp;
   const MONR=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
-  // YTD «Исполнение расходов» - от BASELINE (это про исполнение обещаний); прогноз года ЧП - от прогноза (планирование)
-  const basePlanArrY=planSeries(Object.keys(codeSet),(c,m)=>bPlanExpM(c,m),c=>bPlanExp(c));
-  const ytdPlanBase=sumR(basePlanArrY,1,L);
-  const showYtd=hasBaseline&&isYear&&L>=1&&L<=11&&ytdPlanBase>0; // в середине текущего года - исполнение к УТВЕРЖДЁННОМУ плану истёкших месяцев
+  // YTD «Исполнение расходов» - от BASELINE, ТОЛЬКО по ЗАМОРОЖЕННЫМ месяцам (пропуски не заполняются); прогноз года ЧП - от прогноза (планирование)
+  const basePlanArrY=planSeries(Object.keys(codeSet),(c,m)=>bPlanExpM(c,m),c=>bPlanExp(c)); // незамороженные месяцы = 0 (записей нет)
+  let ytdPlanBase=0,ytdFactFrozen=0; _frozen.forEach(m=>{ytdPlanBase+=basePlanArrY[m]||0;ytdFactFrozen+=factExpArrY[m]||0;});
+  const showYtd=hasBaseline&&isYear&&ytdPlanBase>0;
   const showFc=isYear&&year===nowD.getFullYear()&&L<=11&&(sumPlan>0||(incTotalPlan||0)>0);
   // KPI
   const revDone=incTotalBase?revRow.fact/incTotalBase:0; // исполнение доходов - от утв.
   const netCol=netFactV>=0?'var(--income)':'var(--outcome)';
-  const ytdDone=ytdPlanBase?ytdFactExp/ytdPlanBase:0;
-  const expDoneBase=sumBase?sumFact/sumBase:0;
+  const ytdDone=ytdPlanBase?ytdFactFrozen/ytdPlanBase:0;
   const ytdCard=showYtd
-    ?`<div class="kpi-card ${ytdDone>1.05?'red':'orange'}" title="Факт и УТВЕРЖДЁННЫЙ план за истёкшие полные месяцы (январь - ${MONR[L-1]}). Отклонение считается от baseline. Годовые планы без помесячной разбивки распределены равномерно."><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">${fmtPct(ytdDone)}</div><div class="kpi-sub">по ${MONR[L-1]}: факт ${fmt(-ytdFactExp)} · утв. ${fmt(-ytdPlanBase)}</div></div>`
-    :hasBaseline
-    ?`<div class="kpi-card ${expDoneBase>1?'red':'orange'}"><div class="kpi-label">Исполнение плана расходов</div><div class="kpi-value">${sumBase?fmtPct(expDoneBase):'-'}</div><div class="kpi-sub">факт / утверждённый</div></div>`
-    :`<div class="kpi-card" style="opacity:.75"><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">-</div><div class="kpi-sub">план не утверждён</div></div>`;
+    ?`<div class="kpi-card ${ytdDone>1.05?'red':'orange'}" title="Факт и утверждённый план ТОЛЬКО по замороженным месяцам (${frozenLbl}). Незамороженные месяцы в расчёт не входят."><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">${fmtPct(ytdDone)}</div><div class="kpi-sub">по замороженным (${frozenLbl}): факт ${fmt(-ytdFactFrozen)} · утв. ${fmt(-ytdPlanBase)}</div></div>`
+    :`<div class="kpi-card" style="opacity:.75" title="Заморозьте хотя бы один месяц (кнопка «✓ Утвердить месяц»), чтобы считать исполнение"><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">-</div><div class="kpi-sub">${hasBaseline?'нет плана по замороженным':'месяцы не утверждены'}</div></div>`;
   const fcCard=showFc
     ?`<div class="kpi-card" style="border-left:3px solid ${fcNet>=0?'var(--income)':'var(--outcome)'}" title="Прогноз до конца года (от текущего прогноза): факт истёкших месяцев + план оставшихся. Годовые планы без помесячной разбивки распределены равномерно."><div class="kpi-label">Прогноз года · ЧП</div><div class="kpi-value" style="color:${fcNet>=0?'var(--income)':'var(--outcome)'}">${fmt(fcNet)}</div><div class="kpi-sub">доходы ${fmt(fcInc)} · расходы ${fmt(-fcExp)}</div></div>`
     :'';
@@ -6303,7 +6301,9 @@ function renderPlanFact(f){
       vyvodArr.forEach(r=>{rh+=artMrow(r,'vyv','exp',m=>bPlanExpM(r.code,m),m=>planExpM(r.code,m),m=>factVyvodM(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,bPlanExpM,m),m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'exp',true);
     }
-    const ths=monthsOn.map(m=>`<th style="${mth};position:sticky;top:0;z-index:2">${MS[m-1]}</th>`).join('');
+    const ths=monthsOn.map(m=>{const fr=frozenSet.has(m),mo=fr?_blMap[m]:null,hf=mo&&mo.hadFact;
+      const mark=fr?(' 🔒'+(hf?'<span title="План утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+fmt(mo.factAtApproval)+'">⚠</span>':'')):'';
+      return `<th style="${mth};position:sticky;top:0;z-index:2"${fr?` title="Месяц утверждён (заморожен)${hf?' при известном факте':''}"`:''}>${MS[m-1]}${mark}</th>`;}).join('');
     monthlyHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${isAll?'Свод (все направления)':esc(dir)} · все месяцы ${year}</span><span class="table-count">факт + план по месяцам</span></div>
       <div class="table-scroll" style="overflow:auto;max-height:72vh"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
         <thead><tr><th style="text-align:left;${mth};position:sticky;top:0;left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th>${ths}<th style="${mth};border-left:2px solid var(--border);position:sticky;top:0;z-index:2">Год</th></tr></thead>
@@ -6380,7 +6380,7 @@ function renderPlanFact(f){
   const noPlans=!plans.some(p=>p.level==='subarticle'||p.level==='revenue'||p.level==='income');
   const banner=noPlans?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:var(--accent-light);border:1px solid #d6d2f2;border-radius:8px;font-size:12px;color:var(--accent-hover)">Планы на «${isAll?'Свод (все направления)':esc(dir)}» за ${year} (уровень ${level==='article'?'статья':'подстатья'}) ещё не заданы. ${isAdmin?'Нажмите «✏ Редактировать планы».':'Их задаёт администратор.'} Пока показан только факт.</div>`:'';
   // baseline не утверждён - отклонения не рассчитываются (колонка «Утверждено» и Δ пусты)
-  const baselineBanner=(!hasBaseline&&!noPlans)?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:color-mix(in srgb,var(--outcome) 8%,transparent);border:1px solid color-mix(in srgb,var(--outcome) 35%,transparent);border-radius:8px;font-size:12px;color:var(--outcome)">План ${year} не утверждён - отклонения не рассчитываются. Колонки «Утверждено» и «Δ к утв.» пусты. ${isAdmin?'Нажмите «✓ Утвердить план '+year+'», чтобы заморозить текущий прогноз как baseline.':'Утверждает администратор.'}</div>`:'';
+  const baselineBanner=(!hasBaseline&&!noPlans)?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:color-mix(in srgb,var(--outcome) 8%,transparent);border:1px solid color-mix(in srgb,var(--outcome) 35%,transparent);border-radius:8px;font-size:12px;color:var(--outcome)">Ни один месяц ${year} не утверждён - отклонения не рассчитываются. Колонки «Утверждено» и «Δ к утв.» пусты. ${isAdmin?'Нажмите «✓ Утвердить месяц», чтобы заморозить план месяца как baseline.':'Утверждает администратор.'}</div>`:'';
   el.innerHTML=filterBar+banner+baselineBanner+kpiHtml+cfoHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
 
   // данные графика
@@ -8039,19 +8039,52 @@ function startPlansSync(){
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[plans] sync',e&&e.message);}
 }
-// ===== BASELINE: утверждённый (замороженный) план года - config/plansBaseline =====
-// Отдельно от «живого» config/plans. Правка прогноза baseline НЕ меняет. Отклонения в отчёте считаются от baseline.
-// Структура: { [year]: { approvedAt:<ms>, approvedBy:<email>, year:<N>, records:[ снимок _planRecords года ] } }
+// ===== BASELINE: замороженный план ПО МЕСЯЦАМ - config/plansBaseline/<year>/<month> =====
+// Отдельно от «живого» config/plans. Прогноз правится свободно; замороженный месяц НЕ редактируется никогда (повторная заморозка запрещена).
+// Структура: { [year]: { [month 1..12]: { approvedAt:<ms>, approvedBy:<email>, hadFact:<bool>, factAtApproval:<число>, records:[запечённые money-записи месяца] } } }
+// Старая годовая структура (records на уровне года) НЕ поддерживается - удаляется вручную через Firebase Console.
+const MONTH_FULL_RU=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 let _plansBaseline=(()=>{try{const o=JSON.parse(localStorage.getItem('finPlansBaseline')||'{}');return(o&&typeof o==='object'&&!Array.isArray(o))?o:{};}catch(e){return{};}})();
 function _baselineSave(){
   try{localStorage.setItem('finPlansBaseline',JSON.stringify(_plansBaseline));}catch(e){}
   _fbSetSafe('config/plansBaseline',_plansBaseline,'Baseline планов');
 }
-// объект baseline для года (или null); толерантен к форме из Firebase (числовые ключи → объект)
-function _baselineForYear(year){
-  const o=_plansBaseline&&_plansBaseline[year];
-  if(o&&typeof o==='object'&&Array.isArray(o.records)&&o.records.length)return o;
-  return null;
+// карта замороженных месяцев года {N:{…}}; толерантна к форме из Firebase - и ОБЪЕКТ {1:{…}}, и МАССИВ [null,{…}] (RTDB хранит числовые ключи массивом с null-дырами); пропускает null и записи без approvedAt
+function _baselineMonthsMap(year){
+  const o=_plansBaseline&&_plansBaseline[year]; if(!o||typeof o!=='object')return {}; // объект ИЛИ массив - оба итерируются через Object.keys
+  const out={}; Object.keys(o).forEach(k=>{const m=+k,e=o[k]; if(m>=1&&m<=12&&e&&typeof e==='object'&&e.approvedAt)out[m]=e;}); return out;
+}
+function _frozenMonths(year){return Object.keys(_baselineMonthsMap(year)).map(Number).sort((a,b)=>a-b);}
+function _baselineMonthObj(year,m){return _baselineMonthsMap(year)[+m]||null;}
+function _baselineRecords(year){const map=_baselineMonthsMap(year);let r=[];Object.keys(map).forEach(m=>{if(Array.isArray(map[m].records))r=r.concat(map[m].records);});return r;} // объединение записей всех замороженных месяцев - для buildPlanCalc
+// компактная метка замороженных месяцев: [1,2,3,5] → «янв-мар, май»
+function _frozenMonthsLabel(year){const ms=_frozenMonths(year);if(!ms.length)return '';const S=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];const parts=[];let a=ms[0],p=ms[0];for(let i=1;i<=ms.length;i++){const c=ms[i];if(c===p+1){p=c;continue;}parts.push(a===p?S[a-1]:S[a-1]+'-'+S[p-1]);a=c;p=c;}return parts.join(', ');}
+// запекание плана месяца m в конкретные рубли (money-записи всех уровней/направлений) - как показывает отчёт/матрица за месяц: явная month===m → cvt; только годовая month===0 → cvt(годовая)/12
+function _baselineBakeMonth(year,m){
+  year=+year;m=+m;
+  const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))];
+  const ctx={};allDirs.forEach(dir=>{const rev=new Array(13).fill(0),npExp=new Array(13).fill(0);
+    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const mm=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=parseNum(r[COL.OUTCOME]); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[mm]+=inc; if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[mm]+=Math.abs(out);} });
+    ctx[dir]={rev,npExp};});
+  const _rpM=(d,mo)=>{const r=(_planRecords||[]).find(p=>p.dir===d&&p.year===year&&p.level==='revenue'&&p.month===mo);return(r&&r.value>0)?r.value:null;};
+  const baseM=(d,mo)=>{const rp=_rpM(d,mo);if(rp!=null)return rp;const ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,mo):0;if(ip>0)return ip;return (ctx[d]?ctx[d].rev[mo]:0)||0;};
+  const revYrD=d=>{const yr0=(_planRecords||[]).find(p=>p.dir===d&&p.year===year&&p.level==='revenue'&&p.month===0);if(yr0&&yr0.value>0)return yr0.value;let s=0;for(let mo=1;mo<=12;mo++)s+=baseM(d,mo);return s;};
+  const netM=(d,mo)=>Math.max(0,(ctx[d]?ctx[d].rev[mo]:0)-(ctx[d]?ctx[d].npExp[mo]:0));
+  const netYrD=d=>{let s=0;for(let mo=1;mo<=12;mo++)s+=netM(d,mo);return s;};
+  const cvt=(d,r,mo)=>r.mode==='pct'?r.value*(mo?baseM(d,mo):revYrD(d)):r.mode==='pct_profit'?r.value*(mo?netM(d,mo):netYrD(d)):r.value;
+  const groups={};(_planRecords||[]).forEach(p=>{if(p.year!==year)return;const k=p.dir+'|'+p.level+'|'+p.code+'|'+String(p.side||'');(groups[k]=groups[k]||[]).push(p);});
+  const out=[];
+  Object.keys(groups).forEach(k=>{const rs=groups[k];const mr=rs.find(p=>p.month===m);let val=null;
+    if(mr)val=cvt(mr.dir,mr,m); else{const yr=rs.find(p=>p.month===0);if(yr)val=cvt(yr.dir,yr,0)/12;}
+    if(val==null)return;const s=rs[0];
+    out.push({dir:s.dir,year:year,month:m,level:s.level,code:s.code,side:s.side||'',mode:'money',value:val});});
+  return out;
+}
+// факт расходов месяца m (все направления, без «вывода прибыли») + число операций - для factAtApproval/предупреждения
+function _baselineFactMonth(year,m){
+  year=+year;m=+m;let sum=0,cnt=0;
+  (RAW||[]).forEach(r=>{const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const out=parseNum(r[COL.OUTCOME]);if(!(out<0))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year||(d.getMonth()+1)!==m)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;sum+=Math.abs(out);cnt++;});
+  return {sum,cnt};
 }
 function startBaselineSync(){
   if(window._baselineSyncStarted)return; window._baselineSyncStarted=true;
@@ -8063,24 +8096,63 @@ function startBaselineSync(){
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[baseline] sync',e&&e.message);}
 }
-// Утвердить (заморозить) план выбранного года - только админ. Снимок _planRecords года → baseline.
-window.planApproveYear=function(year){
+// Заморозить план ОДНОГО месяца - только админ. Замороженный месяц изменить нельзя (повторная заморозка запрещена).
+window.planApproveMonth=function(year,month){
   if(!_isAdmin()){alert('Утверждать план может только администратор.');return;}
-  if(window._planDirty){alert('Есть несохранённые правки плана. Сначала сохраните план (кнопка «Сохранить»), затем утверждайте - иначе baseline разойдётся с прогнозом.');return;} // baseline замораживает СОХРАНЁННЫЙ прогноз; несохранённое могло бы откатиться по «Отмена»
-  year=+year;
-  const cnt=(_planRecords||[]).filter(p=>p.year===year).length;
-  const prev=_baselineForYear(year);
-  const msg='Утвердить план на '+year+' год?\n\n'
-    +'• План будет заморожен (снимок '+cnt+' записей).\n'
-    +'• Отклонения в отчёте будут считаться ОТ него, а не от текущего прогноза.\n'
-    +(prev?'• ВНИМАНИЕ: baseline на '+year+' уже есть (утверждён '+new Date(prev.approvedAt).toLocaleDateString('ru-RU')+') - он будет перезаписан.\n':'')
-    +'\nПродолжить?';
-  if(!confirm(msg))return;
+  if(window._planDirty){alert('Есть несохранённые правки плана. Сначала сохраните план (кнопка «Сохранить»), затем замораживайте месяц.');return;}
+  year=+year;month=+month; if(!(month>=1&&month<=12)){alert('Выберите месяц.');return;}
+  if(_baselineMonthObj(year,month)){alert(MONTH_FULL_RU[month-1]+' '+year+' уже утверждён - изменить замороженный месяц нельзя.');return;}
+  const recs=_baselineBakeMonth(year,month);
+  const fi=_baselineFactMonth(year,month);
+  const warn=fi.sum>0.005?('\n\n⚠ По месяцу уже есть факт '+fmt(fi.sum)+' ('+fi.cnt+' оп.). План замораживается при известном факте - это будет отмечено в отчётах и выписках.'):'';
+  if(!confirm('Заморозить план на '+MONTH_FULL_RU[month-1]+' '+year+'? Изменить его будет нельзя.'+warn))return;
   let email='';try{email=(firebase.auth().currentUser.email||'');}catch(e){}
-  _plansBaseline[year]={approvedAt:Date.now(),approvedBy:email,year,records:JSON.parse(JSON.stringify((_planRecords||[]).filter(p=>p.year===year)))};
+  // нормализуем к плоскому объекту {N:{…}} через _baselineMonthsMap - иначе форма-массив из Firebase ([null,{…}]) была бы затёрта на {} и потеряла бы уже замороженные месяцы
+  const cur=_baselineMonthsMap(year);
+  cur[month]={approvedAt:Date.now(),approvedBy:email,hadFact:fi.sum>0.005,factAtApproval:fi.sum,records:recs};
+  _plansBaseline[year]=cur;
   _baselineSave();
   try{renderActiveTab();}catch(e){}
-  alert('План на '+year+' год утверждён. Отклонения теперь считаются от него.');
+  const ov=document.getElementById('cfoApproveOverlay'); if(ov)ov.remove();
+  alert(MONTH_FULL_RU[month-1]+' '+year+' заморожен. Отклонения по этому месяцу считаются от утверждённого плана.');
+};
+// Модал заморозки месяца (админу): выбор месяца, план/факт месяца, предупреждение о факте
+window.planApproveMonthOpen=function(year){
+  if(!_isAdmin()){alert('Утверждать план может только администратор.');return;}
+  if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
+  if(window._planDirty){alert('Есть несохранённые правки плана. Сначала сохраните план, затем замораживайте месяц.');return;}
+  if(document.getElementById('cfoApproveOverlay'))return;
+  year=+year;
+  const frozen=new Set(_frozenMonths(year));
+  const plan=new Array(13).fill(0),factS=new Array(13).fill(0),factC=new Array(13).fill(0);
+  for(let m=1;m<=12;m++){ _baselineBakeMonth(year,m).forEach(r=>{if(r.level==='subarticle'){const c3=(String(r.code).match(/\d{3}/)||[])[0];if(c3!=='127')plan[m]+=r.value;}}); const fi=_baselineFactMonth(year,m); factS[m]=fi.sum; factC[m]=fi.cnt; }
+  window._cfoApproveData={year,plan,factS,factC,frozen:[...frozen]};
+  let firstFree=0;for(let m=1;m<=12;m++){if(!frozen.has(m)){firstFree=m;break;}}
+  const monOpts=MONTH_FULL_RU.map((nm,i)=>{const m=i+1,fr=frozen.has(m);return `<option value="${m}"${fr?' disabled':''}${m===firstFree?' selected':''}>${nm}${fr?' 🔒 утверждён':''}</option>`;}).join('');
+  const ov=document.createElement('div');ov.id='cfoApproveOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:460px;max-width:94vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">✓ Утвердить месяц (${year})</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:14px">Заморозка плана месяца. Замороженный месяц изменить нельзя. Отклонения считаются только по замороженным месяцам. Утверждено: ${frozen.size} из 12${frozen.size?' ('+_frozenMonthsLabel(year)+')':''}.</div>
+    <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">Месяц</label>
+    <select id="cfo-appr-month" onchange="cfoApproveMonthInfo()" style="width:100%;box-sizing:border-box;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);margin-bottom:12px">${monOpts}</select>
+    <div id="cfo-appr-info" style="margin-bottom:18px"></div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button onclick="document.getElementById('cfoApproveOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Отмена</button>
+      <button onclick="planApproveMonth(${year},+document.getElementById('cfo-appr-month').value)" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--income);color:#fff;cursor:pointer;font-family:var(--sans)">Заморозить</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  cfoApproveMonthInfo();
+};
+window.cfoApproveMonthInfo=function(){
+  const d=window._cfoApproveData,sel=document.getElementById('cfo-appr-month'),box=document.getElementById('cfo-appr-info');
+  if(!d||!sel||!box)return; const m=+sel.value; if(!(m>=1&&m<=12)){box.innerHTML='';return;}
+  const fact=d.factS[m]||0;
+  let h='<div style="font-size:12.5px;color:var(--text);padding:8px 10px;background:var(--surface2);border-radius:7px">План на '+MONTH_FULL_RU[m-1]+' (расходы): <b>'+fmt(d.plan[m]||0)+'</b></div>';
+  if(fact>0.005)h+='<div style="margin-top:8px;font-size:11.5px;padding:8px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:7px;color:#b5651d;font-weight:600">⚠ По '+MONTH_FULL_RU[m-1].toLowerCase()+' уже есть факт '+fmt(fact)+' ('+(d.factC[m]||0)+' оп.). План замораживается при известном факте - это будет отмечено в отчётах и выписках.</div>';
+  box.innerHTML=h;
 };
 // ===== Ответственные за расходы (ФИО по подстатье+направлению) - config/planOwners =====
 // ключ = `${dir}||${code}`; значение = ФИО (строка). Хранится отдельно от планов, чтобы не зависеть от года
@@ -8756,8 +8828,8 @@ window.planPrintOwners=function(){
     +'.sign{margin-top:24px;display:flex;justify-content:space-between;font-size:11px;color:#444}'
     +'@media print{@page{size:landscape;margin:8mm}body{padding:0}}';
   const colg='<colgroup><col style="width:22%">'+MON.map(()=>'<col style="width:5.6%">').join('')+'<col style="width:7%"></colgroup>';
-  const _bl=(typeof _baselineForYear==='function')?_baselineForYear(year):null; // штамп об утверждении (baseline); значения в матрице остаются прогнозными
-  const blStamp=_bl?('Baseline утверждён '+new Date(_bl.approvedAt).toLocaleDateString('ru-RU')):'Baseline НЕ утверждён';
+  const _frz=(typeof _frozenMonths==='function')?_frozenMonths(year):[]; // штамп о заморозке (значения в матрице остаются прогнозными)
+  const blStamp=_frz.length?('Заморожено месяцев: '+_frz.length+' ('+_frozenMonthsLabel(year)+')'):'Замороженных месяцев нет';
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+fileName+'</title><style>'+CSS+'</style></head><body>'
     +'<div class="head"><div><div class="brand">Бюджет доходов и расходов (БДР)</div><h1>План по месяцам '+year+' год</h1><div class="meta">'+year+' год · развёрнуто: подстатья → направление → сотрудник/объект · сформировано '+today+(fltNote.length?' · фильтр: '+fltNote.join(', '):'')+'</div></div><div class="meta" style="text-align:right">'+blStamp+'</div></div>'
     +'<table>'+colg+'<thead><tr><th>Подстатья</th>'+thMon+'<th class="r yr">Год</th></tr></thead><tbody>'+rowsHtml+'</tbody></table>'
@@ -8810,10 +8882,10 @@ window.cfoStatementGen=function(){
   const f=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
   const MONF=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
   const today=new Date().toLocaleDateString('ru-RU');
-  // baseline года (снимок)
-  const bl=(typeof _baselineForYear==='function')?_baselineForYear(year):null;
-  const blRecs=bl?bl.records.filter(p=>p.year===year):[];
-  const hasBl=blRecs.length>0;
+  // baseline ПО МЕСЯЦАМ: объединение запечённых записей замороженных месяцев (уже money)
+  const frozen=_frozenMonths(year),frozenSet=new Set(frozen),blMap=_baselineMonthsMap(year);
+  const blRecs=_baselineRecords(year);
+  const hasBl=frozen.length>0;
   // контекст факта (выручка/непрофильный расход по месяцам) - для %-планов
   const ctx={};
   dirsScope.forEach(dir=>{const rev=new Array(13).fill(0),npExp=new Array(13).fill(0);
@@ -8839,8 +8911,9 @@ window.cfoStatementGen=function(){
   const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
   const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanMD(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
   const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=factIdx[d+'||'+code];if(a)s+=a[m]||0;});return s;};
-  const blYTD=code=>{let s=null;for(let m=1;m<=M;m++){const v=blMonth(code,m);if(v!=null)s=(s||0)+v;}return s;};
-  const factYTD=code=>{let s=0;for(let m=1;m<=M;m++)s+=factMonth(code,m);return s;};
+  // YTD - ТОЛЬКО по замороженным месяцам ≤ M (пропуски не заполняются); факт тоже гейтим frozenSet
+  const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;};
+  const factYTD=code=>{let s=0;frozen.forEach(m=>{if(m>M)return;s+=factMonth(code,m);});return s;};
   // цветная Δ-ячейка (перерасход красный, экономия зелёная)
   const dCell=(dv,bold)=>dv==null?'<td class="r'+(bold?' b':'')+'">-</td>':'<td class="r'+(bold?' b':'')+'" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#23272f')+';font-weight:700">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
   let rows='',sBP=null,sFP=0,sBY=null,sFY=0;
@@ -8865,8 +8938,10 @@ window.cfoStatementGen=function(){
   } else {
     opsBlock='<p class="noover">Превышений по утверждённому плану нет.</p>';
   }
-  const blStamp=hasBl?('<span class="ok">План утверждён '+new Date(bl.approvedAt).toLocaleDateString('ru-RU')+'</span>'):'<span class="no">План НЕ утверждён</span>';
-  const perLabel='за '+MONF[M-1]+' '+year+' · YTD январь-'+MONF[M-1];
+  const _cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+  const frozenListHtml=frozen.length?frozen.map(m=>{const mo=blMap[m],nm=_cap(MONF[m-1]);return (mo&&mo.hadFact)?('<span style="color:#b5651d;font-weight:600" title="Утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+f(mo.factAtApproval)+'">'+nm+' ⚠</span>'):nm;}).join(', '):'—';
+  const blStamp=hasBl?('<span class="ok">Заморожено месяцев: '+frozen.length+'</span> · '+frozenListHtml):'<span class="no">Ни один месяц не утверждён</span>';
+  const perLabel='за '+MONF[M-1]+' '+year+' · YTD - по замороженным месяцам ≤ '+MONF[M-1];
   // выбран текущий незакрытый месяц → колонки «за месяц»/Δ предварительные (полный план против неполного факта). Δ YTD не помечаем
   const _now=new Date(),isCurUnclosed=(year===_now.getFullYear()&&M===_now.getMonth()+1);
   const _monCap=MONF[M-1].charAt(0).toUpperCase()+MONF[M-1].slice(1);
@@ -8974,7 +9049,7 @@ window.showPlansPanel=async function(){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--text3)">${isAdmin?'Хранится в облаке (Firebase), запись только админу':'Только просмотр. Изменять планы может администратор.'}</span>
         <div style="display:flex;gap:8px">
-          ${isAdmin?`<button onclick="planSave();planApproveYear(document.getElementById('plan-year').value)" title="Сохранить прогноз и заморозить его как утверждённый план (baseline) выбранного года. Отклонения в отчёте будут считаться от него." style="font-size:12px;font-weight:600;padding:7px 14px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить план года</button>`:''}
+          ${isAdmin?`<button onclick="planSave();planApproveMonthOpen(document.getElementById('plan-year').value)" title="Сохранить прогноз и заморозить план выбранного месяца (baseline). Замороженный месяц изменить нельзя." style="font-size:12px;font-weight:600;padding:7px 14px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить месяц</button>`:''}
           <button onclick="planPrintOwners()" title="Печать: план по месяцам (как в редакторе), свод по направлениям, с учётом фильтров" style="font-size:12px;padding:7px 14px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">🖨 Печать (план по месяцам)</button>
           <button onclick="planPanelClose()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">${isAdmin?'Отмена':'Закрыть'}</button>
           ${isAdmin?`<button onclick="planSave(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>`:''}
