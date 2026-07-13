@@ -5849,6 +5849,106 @@ window.pfShowTxn=function(kind,code,m){
 };
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
 window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
+// ── ⚠ Факт без плана: операции по строке (формат ДДС, через существующий opiuShowTxnModal) ──
+window.pfNoPlanShowTxn=function(kind,idx){
+  const NP=window._pfNoPlan; if(!NP)return;
+  let rows,label,art;
+  if(kind==='__empty'){rows=(NP.empty||{}).rows||[];label='(подстатья не заполнена)';art='Расходы без плана';}
+  else{const arr=kind==='inc'?(NP.listInc||[]):(NP.list||[]);const it=arr[+idx]; if(!it)return; rows=it.rows;label=it.sub;art=kind==='inc'?'Доходы без плана':'Расходы без плана';}
+  if(!rows||!rows.length)return;
+  window._opiuTxnMap=window._opiuTxnMap||{};
+  window._opiuTxnMap['__pfnoplan']={label,artLabel:art,secLabel:'БДР · факт без плана · '+(NP.dirLabel||'')+' · '+(NP.year||''),rows,pks:[]};
+  if(window.opiuShowTxnModal)opiuShowTxnModal('__pfnoplan');
+};
+// ── ⚠ Факт без плана: модал со списком подстатей ──
+window.pfNoPlanOpen=function(){
+  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  const NP=window._pfNoPlan; if(!NP)return;
+  if(document.getElementById('pfNoPlanOverlay'))return;
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const list=NP.list||[],listInc=NP.listInc||[],emp=NP.empty||{cnt:0,sum:0};
+  const pct=v=>(Math.round((v||0)*1000)/10).toLocaleString('ru-RU',{maximumFractionDigits:1})+'%';
+  const plur=(n,a,b,c)=>{const n10=n%10,n100=n%100;return(n10===1&&n100!==11)?a:(n10>=2&&n10<=4&&(n100<12||n100>14))?b:c;};
+  const th='text-align:right;padding:7px 10px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:2px solid var(--border);color:var(--text3);text-transform:uppercase;white-space:nowrap';
+  const ownCell=it=>it.owner?esc(it.owner):'<span style="color:var(--text3)">-</span>';
+  const dataRow=(it,i,kind,isInc)=>`<tr onclick="pfNoPlanShowTxn('${kind}','${i}')" style="cursor:pointer;border-bottom:1px solid var(--border)" title="Клик - операции по подстатье">
+    <td style="padding:6px 10px;font-size:11px">${esc(it.sub)}</td>
+    <td style="padding:6px 10px;font-size:11px;color:var(--text2)">${esc((it.dirs||[]).join(', '))}</td>
+    <td style="padding:6px 10px;font-size:11px;text-align:right;font-family:var(--mono);color:${isInc?'var(--income)':'var(--outcome)'};font-weight:600">${fmt(isInc?it.sum:-it.sum)}</td>
+    <td style="padding:6px 10px;font-size:11px;text-align:right;font-family:var(--mono)">${it.cnt}</td>
+    <td style="padding:6px 10px;font-size:11px;color:var(--text2)">${ownCell(it)}</td></tr>`;
+  const emptyRow=emp.cnt>0?`<tr onclick="pfNoPlanShowTxn('__empty')" style="cursor:pointer;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--outcome) 8%,transparent)" title="Дефект данных - подстатья не заполнена. Клик - операции">
+    <td style="padding:6px 10px;font-size:11px;font-weight:600;color:var(--outcome)">⚠ (подстатья не заполнена) <span style="font-weight:400;color:var(--text3)">· дефект данных</span></td>
+    <td style="padding:6px 10px"></td>
+    <td style="padding:6px 10px;font-size:11px;text-align:right;font-family:var(--mono);color:var(--outcome);font-weight:600">${fmt(-emp.sum)}</td>
+    <td style="padding:6px 10px;font-size:11px;text-align:right;font-family:var(--mono)">${emp.cnt}</td>
+    <td style="padding:6px 10px"></td></tr>`:'';
+  const tableWrap=inner=>`<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
+    <table style="width:100%;border-collapse:collapse;min-width:640px">
+      <thead><tr><th style="${th};text-align:left">Подстатья</th><th style="${th};text-align:left">Направление</th><th style="${th}">Факт за год</th><th style="${th}">Операций</th><th style="${th};text-align:left">Ответственный</th></tr></thead>
+      <tbody>${inner}</tbody>
+    </table></div>`;
+  const secTitle=(txt,cnt,sumHtml,cov)=>`<div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 6px">${txt} <span style="font-weight:400;color:var(--text3)">· ${cnt} ${plur(cnt,'подстатья','подстатьи','подстатей')} на ${sumHtml} · покрытие ${pct(cov)}</span></div>`;
+  // РАСХОДЫ (вкл. дефект-строку пустой подстатьи)
+  const expCnt=list.length+(emp.cnt>0?1:0),expSum=(NP.withoutSum||0)+(emp.cnt>0?emp.sum:0);
+  const expSec=(list.length||emp.cnt>0)
+    ?secTitle('РАСХОДЫ без плана',expCnt,`<b style="color:var(--outcome)">${fmt(-expSum)}</b>`,NP.coverage)+tableWrap(emptyRow+list.map((it,i)=>dataRow(it,i,'exp',false)).join(''))
+    :`<div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 6px">РАСХОДЫ без плана</div><div style="padding:16px 12px;text-align:center;color:var(--income);font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px">✓ Все расходы имеют план</div>`;
+  // ДОХОДЫ (только если есть; доходы планируются по подстатьям level='income')
+  const incSec=listInc.length
+    ?secTitle('ДОХОДЫ без плана',listInc.length,`<b style="color:var(--income)">${fmt(NP.withoutIncSum||0)}</b>`,NP.coverageInc)+tableWrap(listInc.map((it,i)=>dataRow(it,i,'inc',true)).join(''))
+    :'';
+  const hasAny=list.length||emp.cnt>0||listInc.length;
+  const ov=document.createElement('div');ov.id='pfNoPlanOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:820px;max-width:96vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:4px">
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:700;color:var(--text)">⚠ Факт без плана · ${esc(NP.dirLabel||'')} · ${NP.year||''}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Подстатьи, по которым идёт факт, но плана нет вообще - деньги вне бюджета.</div>
+      </div>
+      <button onclick="document.getElementById('pfNoPlanOverlay').remove()" title="Закрыть" style="font-size:16px;line-height:1;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer">×</button>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin:10px 0 4px;padding:8px 12px;background:var(--surface2);border-radius:8px">
+      Всего <b>${NP.N||0}</b> ${plur(NP.N||0,'подстатья','подстатьи','подстатей')} без плана. Покрытие считается отдельно по расходам и доходам.
+    </div>
+    ${expSec}
+    ${incSec}
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      ${hasAny?`<button onclick="pfNoPlanCSV()" title="Выгрузить список в CSV" style="font-size:12px;font-weight:600;padding:8px 16px;border:1px solid var(--accent);border-radius:7px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⬇ CSV</button>`:''}
+      <button onclick="document.getElementById('pfNoPlanOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Закрыть</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
+// ── ⚠ Факт без плана: выгрузка списка в CSV (защита от формульных инъекций Excel) ──
+window.pfNoPlanCSV=function(){
+  const NP=window._pfNoPlan; if(!NP)return;
+  const list=NP.list||[],listInc=NP.listInc||[],emp=NP.empty||{cnt:0,sum:0};
+  if(!list.length&&!listInc.length&&!emp.cnt){alert('Нет подстатей без плана');return;}
+  const SEP=';';
+  const cell=v=>{v=String(v==null?'':v);
+    if(/^[=+@\t\r]/.test(v)||(v.charAt(0)==='-'&&!/^-?\d+([.,]\d+)?$/.test(v)))v="'"+v;
+    return /[";\n\r#]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  const rowCsv=(it,signed)=>[cell(it.sub),cell((it.dirs||[]).join(', ')),String(signed),String(it.cnt),cell(it.owner||'')].join(SEP)+'\n';
+  let out='';
+  out+='# Факт без плана - ГК ОПОРА, БДР. Подстатьи с фактом, у которых нет плана в прогнозе.\n';
+  out+='# Направление: '+(NP.dirLabel||'')+' · год: '+(NP.year||'')+' · подстатей: '+(NP.N||0)+'\n';
+  out+='# Расходы - отрицательные, доходы - положительные (₽). Разделитель ";", UTF-8 с BOM.\n';
+  out+='\n'+['Подстатья','Направление','Факт_за_год','Операций','Ответственный'].join(SEP)+'\n';
+  out+='# РАСХОДЫ без плана\n';
+  if(emp.cnt)out+=[cell('(подстатья не заполнена) [дефект данных]'),'',String(-Math.round(emp.sum)),String(emp.cnt),''].join(SEP)+'\n';
+  list.forEach(it=>{out+=rowCsv(it,-Math.round(it.sum));});
+  if(listInc.length){out+='# ДОХОДЫ без плана\n';listInc.forEach(it=>{out+=rowCsv(it,Math.round(it.sum));});}
+  const now=new Date(),p2=n=>String(n).padStart(2,'0');
+  const stamp=now.getFullYear()+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate())+'-'+p2(now.getHours())+p2(now.getMinutes())+p2(now.getSeconds());
+  const slug=String(NP.dirLabel||'').replace(/[\\\/:*?"<>|]+/g,'').replace(/\s+/g,'_').slice(0,40)||'все';
+  const fn=stamp+'_ФактБезПлана_'+slug+'.csv';
+  const blob=new Blob(['﻿'+out],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
+};
 function renderPlanFact(f){
   const el=document.getElementById('tabPlanfact');
   if(!RAW||!RAW.length){el.innerHTML=emptyState('Нет данных','Подключите таблицу (шестерёнка → Подключение)');return;}
@@ -5903,6 +6003,51 @@ function renderPlanFact(f){
     }
   });
   window._pfTxn=pfTxn;window._pfTxnMeta={dirLabel:isAll?'Свод (все направления)':dir,year};
+  // ── ⚠ Факт без плана: подстатьи с фактом, у которых нет НИ ОДНОЙ записи плана в scope (расходы И доходы) ──
+  // Отдельный проход (не трогаем основной цикл) с теми же исключениями: перемещения / начальный остаток / вывод прибыли (127).
+  // Матч плана - по ARTICLE_NAME (расходы level='subarticle', доходы level='income'; проверка p.code===an одинакова); scope = dirsToAgg.
+  // Доходы планируются по подстатьям (level='income'), поэтому проверяем и их.
+  {
+    const _npHasPlan=an=>(_planRecords||[]).some(p=>p&&p.year===year&&dirsToAgg.includes(p.dir)&&p.code===an);
+    const _npExpAcc={},_npIncAcc={}; // ARTICLE_NAME → {sum,cnt,rows,dirs:Set}
+    const _npEmpty={sum:0,cnt:0,rows:[]}; // пустая подстатья расхода - дефект данных (для доходов пустую не отслеживаем)
+    const _npBump=(acc,an,amt,rd,r)=>{let a=acc[an];if(!a)a=acc[an]={sum:0,cnt:0,rows:[],dirs:new Set()};a.sum+=amt;a.cnt++;a.rows.push(r);a.dirs.add(rd);};
+    RAW.forEach(r=>{
+      const rd=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!dirsToAgg.includes(rd))return;
+      const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
+      const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
+      const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
+      const out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
+      // расходы
+      if(t==='списание'&&out<0&&!isOpeningBalance(an)){
+        const anl=nrm(r[COL.ANALYTICS]);
+        if(!(anl.includes('вывод')&&anl.includes('прибыл'))){ // вывод 127 - распределение, не расход
+          const av=Math.abs(out);
+          if(!an){_npEmpty.sum+=av;_npEmpty.cnt++;_npEmpty.rows.push(r);}
+          else _npBump(_npExpAcc,an,av,rd,r);
+        }
+      }
+      // доходы (начальный остаток - не доход)
+      if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)&&an)
+        _npBump(_npIncAcc,an,inc,rd,r);
+    });
+    const _npBuild=acc=>{const listNP=[];let withPlan=0;
+      Object.keys(acc).forEach(an=>{const a=acc[an];
+        if(_npHasPlan(an)){withPlan+=a.sum;return;} // план есть - в знаменатель покрытия
+        const os=new Set();dirsToAgg.forEach(dd=>{const o=(_planOwners||{})[dd+'||'+an];if(o)os.add(String(o).trim());});
+        listNP.push({sub:an,sum:a.sum,cnt:a.cnt,rows:a.rows,dirs:[...a.dirs].sort((x,y)=>x.localeCompare(y,'ru')),owner:[...os].filter(Boolean).sort((x,y)=>x.localeCompare(y,'ru')).join(', ')});
+      });
+      listNP.sort((x,y)=>y.sum-x.sum);
+      const without=listNP.reduce((s,r)=>s+r.sum,0),tot=withPlan+without; // покрытие: пустая подстатья в знаменатель НЕ входит (дефект, не «имеет/не имеет план»)
+      return{list:listNP,withoutSum:without,coverage:tot>0?withPlan/tot:1};};
+    const _npE=_npBuild(_npExpAcc),_npI=_npBuild(_npIncAcc);
+    window._pfNoPlan={
+      list:_npE.list,withoutSum:_npE.withoutSum,coverage:_npE.coverage, // расходы
+      listInc:_npI.list,withoutIncSum:_npI.withoutSum,coverageInc:_npI.coverage, // доходы
+      empty:_npEmpty,
+      N:_npE.list.length+_npI.list.length+(_npEmpty.cnt>0?1:0),
+      dirLabel:isAll?'Свод (все направления)':dir,year};
+  }
   // ── ПЛАН из _planRecords ──
   const plans=(_planRecords||[]).filter(p=>p.year===year&&dirsToAgg.includes(p.dir));
   // фильтр по Статье (ARTICLE_CODE) / Подстатье (ARTICLE_NAME) - мультивыбор; применяется к показанным строкам, выручка-база %-планов остаётся полной
@@ -6097,6 +6242,7 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${(selArt.size||selSub.size||selOwn.size)?`<button onclick="pfResetExtra()" style="font-size:10px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
     ${baselineStatus}${approveBtn}
+    ${isAdmin?(()=>{const np=window._pfNoPlan||{N:0};const has=np.N>0;return`<button onclick="pfNoPlanOpen()" title="Подстатьи расходов, по которым идёт факт, но плана нет вообще - траты вне бюджета" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid ${has?'var(--outcome)':'var(--border)'};border-radius:6px;background:transparent;color:${has?'var(--outcome)':'var(--text2)'};cursor:pointer;font-family:var(--sans)">⚠ Факт без плана${has?' <span style="font-weight:700">('+np.N+')</span>':''}</button>`;})():''}
     ${isAdmin?`<button onclick="cfoStatementOpen()" title="Персональная печатная выписка по бюджету для ответственного (ЦФО) - только его подстатьи" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">🖨 Выписка для ЦФО</button>`:''}
     <button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">${isAdmin?'✏ Редактировать планы':'👁 Планы (просмотр)'}</button>
   </div>`;
