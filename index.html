@@ -6235,7 +6235,10 @@ function renderPlanFact(f){
   const pfArtBtn=(selArt.size?selArt.size+' выбрано':'Все статьи')+' ▾',pfSubBtn=(selSub.size?selSub.size+' выбрано':'Все подстатьи')+' ▾',pfOwnBtn=(selOwn.size?selOwn.size+' выбрано':'Все ЦФО')+' ▾';
   // статус заморозки по месяцам + кнопка «Утвердить месяц» (админу)
   const frozenLbl=hasBaseline?_frozenMonthsLabel(year):'';
-  const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются только по замороженным месяцам ('+frozenLbl+')'):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
+  const _planableFr=_frozen.filter(m=>!(_blMap[m]&&_blMap[m].retro)); // замороженные, которые реально планировались (без ретроспективы) - для метрики исполнения
+  const planableLbl=hasBaseline?_monthsRangeLabel(_planableFr):'';
+  const _retroN=_frozen.length-_planableFr.length;
+  const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются по замороженным месяцам ('+frozenLbl+')'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'+(_retroN?(' · из них ретро: '+_retroN):'')):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
   // действия БДР свёрнуты в одно меню «⚙ Действия» (админу); не-админ - одна кнопка просмотра планов
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
   const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
@@ -6275,24 +6278,28 @@ function renderPlanFact(f){
   const MONR=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
   // YTD «Исполнение расходов» - от BASELINE, ТОЛЬКО по ЗАМОРОЖЕННЫМ месяцам (пропуски не заполняются); прогноз года ЧП - от прогноза (планирование)
   const basePlanArrY=planSeries(Object.keys(codeSet),(c,m)=>bPlanExpM(c,m),c=>bPlanExp(c)); // незамороженные месяцы = 0 (записей нет)
-  let ytdPlanBase=0,ytdFactFrozen=0; _frozen.forEach(m=>{ytdPlanBase+=basePlanArrY[m]||0;ytdFactFrozen+=factExpArrY[m]||0;});
+  // YTD-исполнение считаем ТОЛЬКО по ПЛАНИРУЕМЫМ замороженным месяцам (ретроспективные исключены - их план=факт, дал бы фальшивые ~100%)
+  let ytdPlanBase=0,ytdFactFrozen=0; _planableFr.forEach(m=>{ytdPlanBase+=basePlanArrY[m]||0;ytdFactFrozen+=factExpArrY[m]||0;});
   const showYtd=hasBaseline&&isYear&&ytdPlanBase>0;
-  // YTD «Исполнение доходов» - симметрично расходам: факт доходов (revByMonth) vs baseline доходов, ТОЛЬКО по замороженным месяцам
+  // YTD «Исполнение доходов» - симметрично расходам: факт доходов (revByMonth) vs baseline доходов, только по ПЛАНИРУЕМЫМ месяцам
   const baseIncArrY=hasBaseline?(incRowsArr.length?planSeries(incRowsArr.map(r=>r.code),(c,m)=>bPlanIncM(c,m),c=>bPlanInc(c)):planSeries(['__rev__'],(c,m)=>PB.planMonth('revenue','__rev__',m),c=>PB.planYear('revenue','__rev__'))):new Array(13).fill(0);
-  let ytdPlanBaseInc=0,ytdFactFrozenInc=0; _frozen.forEach(m=>{ytdPlanBaseInc+=baseIncArrY[m]||0;ytdFactFrozenInc+=revByMonth[m]||0;});
+  let ytdPlanBaseInc=0,ytdFactFrozenInc=0; _planableFr.forEach(m=>{ytdPlanBaseInc+=baseIncArrY[m]||0;ytdFactFrozenInc+=revByMonth[m]||0;});
   const showYtdInc=hasBaseline&&isYear&&ytdPlanBaseInc>0;
+  const _allRetro=hasBaseline&&_frozen.length>0&&_planableFr.length===0; // все замороженные - ретроспектива → исполнение считать не по чему
+  const _ytdEmptySub=_allRetro?'нет планируемых месяцев':(hasBaseline?'нет плана по планируемым':'месяцы не утверждены');
   const showFc=isYear&&year===nowD.getFullYear()&&L<=11&&(sumPlan>0||(incTotalPlan||0)>0);
   // KPI
   const netCol=netFactV>=0?'var(--income)':'var(--outcome)';
   const utvLbl=(hasBaseline&&frozenLbl)?('утв. ('+frozenLbl+')'):'утв.'; // «утв.» = baseline ТОЛЬКО по замороженным месяцам - подписываем период, чтобы не сравнивать годовой факт с планом части года
   const ytdDone=ytdPlanBase?ytdFactFrozen/ytdPlanBase:0;
+  const _retroTip=_retroN?(' Ретроспективные месяцы ('+_retroN+') исключены.'):'';
   const ytdCard=showYtd
-    ?`<div class="kpi-card ${ytdDone>1.05?'red':'orange'}" title="Факт и утверждённый план ТОЛЬКО по замороженным месяцам (${frozenLbl}). Незамороженные месяцы в расчёт не входят."><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">${fmtPct(ytdDone)}</div><div class="kpi-sub">по замороженным (${frozenLbl}): факт ${fmt(-ytdFactFrozen)} · утв. ${fmt(-ytdPlanBase)}</div></div>`
-    :`<div class="kpi-card" style="opacity:.75" title="Заморозьте хотя бы один месяц (кнопка «✓ Утвердить месяц»), чтобы считать исполнение"><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">-</div><div class="kpi-sub">${hasBaseline?'нет плана по замороженным':'месяцы не утверждены'}</div></div>`;
+    ?`<div class="kpi-card ${ytdDone>1.05?'red':'orange'}" title="Факт и утверждённый план по ПЛАНИРУЕМЫМ месяцам (${planableLbl}).${_retroTip} Незамороженные месяцы в расчёт не входят."><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">${fmtPct(ytdDone)}</div><div class="kpi-sub">по планируемым (${planableLbl}): факт ${fmt(-ytdFactFrozen)} · утв. ${fmt(-ytdPlanBase)}</div></div>`
+    :`<div class="kpi-card" style="opacity:.75" title="${_allRetro?'Все замороженные месяцы - ретроспектива (план=факт). Заморозьте планируемый месяц, чтобы считать исполнение.':'Заморозьте хотя бы один месяц (кнопка «✓ Утвердить месяц»), чтобы считать исполнение'}"><div class="kpi-label">Исполнение YTD · расходы</div><div class="kpi-value">-</div><div class="kpi-sub">${_ytdEmptySub}</div></div>`;
   const ytdDoneInc=ytdPlanBaseInc?ytdFactFrozenInc/ytdPlanBaseInc:0;
   const ytdIncCard=showYtdInc
-    ?`<div class="kpi-card ${ytdDoneInc>=0.95?'green':'red'}" title="Факт доходов и утверждённый план доходов ТОЛЬКО по замороженным месяцам (${frozenLbl}). Ниже 100% - недовыполнение плана выручки."><div class="kpi-label">Исполнение YTD · доходы</div><div class="kpi-value">${fmtPct(ytdDoneInc)}</div><div class="kpi-sub">по замороженным (${frozenLbl}): факт ${fmt(ytdFactFrozenInc)} · утв. ${fmt(ytdPlanBaseInc)}</div></div>`
-    :`<div class="kpi-card" style="opacity:.75" title="Заморозьте хотя бы один месяц (кнопка «✓ Утвердить месяц»), чтобы считать исполнение доходов"><div class="kpi-label">Исполнение YTD · доходы</div><div class="kpi-value">-</div><div class="kpi-sub">${hasBaseline?'нет плана по замороженным':'месяцы не утверждены'}</div></div>`;
+    ?`<div class="kpi-card ${ytdDoneInc>=0.95?'green':'red'}" title="Факт доходов и утверждённый план доходов по ПЛАНИРУЕМЫМ месяцам (${planableLbl}).${_retroTip} Ниже 100% - недовыполнение плана выручки."><div class="kpi-label">Исполнение YTD · доходы</div><div class="kpi-value">${fmtPct(ytdDoneInc)}</div><div class="kpi-sub">по планируемым (${planableLbl}): факт ${fmt(ytdFactFrozenInc)} · утв. ${fmt(ytdPlanBaseInc)}</div></div>`
+    :`<div class="kpi-card" style="opacity:.75" title="${_allRetro?'Все замороженные месяцы - ретроспектива (план=факт). Заморозьте планируемый месяц, чтобы считать исполнение доходов.':'Заморозьте хотя бы один месяц (кнопка «✓ Утвердить месяц»), чтобы считать исполнение доходов'}"><div class="kpi-label">Исполнение YTD · доходы</div><div class="kpi-value">-</div><div class="kpi-sub">${_ytdEmptySub}</div></div>`;
   const fcCard=showFc
     ?`<div class="kpi-card" style="border-left:3px solid ${fcNet>=0?'var(--income)':'var(--outcome)'}" title="Прогноз до конца года (от текущего прогноза): факт истёкших месяцев + план оставшихся. Годовые планы без помесячной разбивки распределены равномерно."><div class="kpi-label">Прогноз года · ЧП</div><div class="kpi-value" style="color:${fcNet>=0?'var(--income)':'var(--outcome)'}">${fmt(fcNet)}</div><div class="kpi-sub">доходы ${fmt(fcInc)} · расходы ${fmt(-fcExp)}</div></div>`
     :'';
@@ -6466,9 +6473,9 @@ function renderPlanFact(f){
       vyvodArr.forEach(r=>{rh+=artMrow(r,'vyv','exp',m=>bPlanExpM(r.code,m),m=>planExpM(r.code,m),m=>factVyvodM(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,bPlanExpM,m),m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'exp',true);
     }
-    const ths=monthsOn.map(m=>{const fr=frozenSet.has(m),mo=fr?_blMap[m]:null,hf=mo&&mo.hadFact;
-      const mark=fr?(' 🔒'+(hf?'<span title="План утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+fmt(mo.factAtApproval)+'">⚠</span>':'')):'';
-      return `<th style="${mth};position:sticky;top:0;z-index:2"${fr?` title="Месяц утверждён (заморожен)${hf?' при известном факте':''}"`:''}>${MS[m-1]}${mark}</th>`;}).join('');
+    const ths=monthsOn.map(m=>{const fr=frozenSet.has(m),mo=fr?_blMap[m]:null,hf=mo&&mo.hadFact,rt=mo&&mo.retro;
+      const mark=fr?(' 🔒'+(rt?'<span title="Ретроспектива: план приравнен к факту, месяц не планировался">📋</span>':hf?'<span title="План утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+fmt(mo.factAtApproval)+'">⚠</span>':'')):''; // ретроспектива приоритетнее пометки о факте
+      return `<th style="${mth};position:sticky;top:0;z-index:2"${fr?` title="Месяц утверждён (заморожен)${rt?' · ретроспектива (не планировался)':hf?' при известном факте':''}"`:''}>${MS[m-1]}${mark}</th>`;}).join('');
     monthlyHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${isAll?'Свод (все направления)':esc(dir)} · все месяцы ${year}</span><span class="table-count">факт + план по месяцам</span></div>
       <div class="table-scroll" style="overflow:auto;max-height:72vh"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
         <thead><tr><th style="text-align:left;${mth};position:sticky;top:0;left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th>${ths}<th style="${mth};border-left:2px solid var(--border);position:sticky;top:0;z-index:2">Год</th></tr></thead>
@@ -6571,11 +6578,34 @@ function renderPlanFact(f){
       <div style="height:300px"><canvas id="pfChart"></canvas></div></div>
   </div>`;
 
+  // ── Динамика сбора внутри месяца: список доходных подстатей (факт ∪ планы income ∪ baseline income) ──
+  const _collSet={};Object.keys(incSubN).forEach(an=>{if(an)_collSet[an]=1;});
+  plans.forEach(p=>{if(p.level==='income'&&p.code)_collSet[p.code]=1;});
+  if(PB)PB.R.forEach(p=>{if(p.level==='income'&&p.code)_collSet[p.code]=1;});
+  const collectSubs=Object.keys(_collSet).sort((a,b)=>String(a).localeCompare(String(b),'ru'));
+  let collectSel=f.collectSub;
+  if(!collectSel||!collectSubs.includes(collectSel))collectSel=collectSubs.includes('120_Поступление от ОС')?'120_Поступление от ОС':(collectSubs[0]||'');
+  f.collectSub=collectSel; // сохраняем нормализованный выбор в _tabFilters.planfact
+  const escA=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const collectHtml=collectSubs.length?`<details style="margin:14px var(--secpx) 0;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+    <summary style="padding:9px 14px;font-size:12px;font-weight:600;color:var(--text2);cursor:pointer;user-select:none">📈 Динамика сбора внутри месяца</summary>
+    <div style="padding:4px 14px 14px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--text2)">Доходная подстатья:</label>
+        <select id="pfCollectSub" onchange="_tabFilters.planfact.collectSub=this.value;window._pfCollectRender&&window._pfCollectRender()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:360px">${collectSubs.map(s=>`<option value="${escA(s)}"${s===collectSel?' selected':''}>${escA(s)}</option>`).join('')}</select>
+      </div>
+      <div id="pfCollectLegend" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px"></div>
+      <div style="height:380px"><canvas id="pfCollectChart"></canvas></div>
+      <div id="pfCollectConcl" style="font-size:15px;font-weight:700;margin-top:12px;line-height:1.4"></div>
+      <div style="font-size:10.5px;color:var(--text2);opacity:.85;margin-top:8px">Факт - по дате поступления денег (ДДС), план - месячный из БДР. Кумулятивно с 1-го числа; линия текущего месяца обрывается на сегодня. Коридор - диапазон min-max прошлых месяцев на ту же дату.</div>
+    </div>
+  </details>`:'';
+
   const noPlans=!plans.some(p=>p.level==='subarticle'||p.level==='revenue'||p.level==='income');
   const banner=noPlans?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:var(--accent-light);border:1px solid #d6d2f2;border-radius:8px;font-size:12px;color:var(--accent-hover)">Планы на «${isAll?'Свод (все направления)':esc(dir)}» за ${year} (уровень ${level==='article'?'статья':'подстатья'}) ещё не заданы. ${isAdmin?'Нажмите «✏ Редактировать планы».':'Их задаёт администратор.'} Пока показан только факт.</div>`:'';
   // baseline не утверждён - отклонения не рассчитываются (колонка «Утверждено» и Δ пусты)
   const baselineBanner=(!hasBaseline&&!noPlans)?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:color-mix(in srgb,var(--outcome) 8%,transparent);border:1px solid color-mix(in srgb,var(--outcome) 35%,transparent);border-radius:8px;font-size:12px;color:var(--outcome)">Ни один месяц ${year} не утверждён - отклонения не рассчитываются. Колонки «Утверждено» и «Δ к утв.» пусты. ${isAdmin?'Нажмите «✓ Утвердить месяц», чтобы заморозить план месяца как baseline.':'Утверждает администратор.'}</div>`:'';
-  el.innerHTML=filterBar+banner+baselineBanner+kpiHtml+cfoHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
+  el.innerHTML=filterBar+banner+baselineBanner+kpiHtml+cfoHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml+collectHtml;
 
   // данные графика
   const planMonthTotal=m=>{let s=0,has=false;Object.keys(codeSet).forEach(c=>{const v=planExpM(c,m);if(v!=null){s+=v;has=true;}});return has?s:0;};
@@ -6603,6 +6633,104 @@ function renderPlanFact(f){
       {label:'Факт',data:factIncArr,backgroundColor:'#16a34a',borderRadius:3}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:10,padding:8}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmt(c.raw)}}},
       scales:{x:{grid:{display:false},ticks:{font:{size:10}}},y:{grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:moneyTick}}}}});
+
+  // ── График «Динамика сбора внутри месяца»: кумулятивный %-план сбора по дням, факт по ДДС, план месячный из БДР ──
+  // Замыкает dir/isAll/year/frozenSet/PB/planMonth/f текущего рендера. Пересобирает ТОЛЬКО себя (смена подстатьи не ре-рендерит вкладку).
+  function renderCollectChart(){
+    const cv=document.getElementById('pfCollectChart'),legEl=document.getElementById('pfCollectLegend'),cEl=document.getElementById('pfCollectConcl');
+    if(window._pfCollectChart){try{window._pfCollectChart.destroy();}catch(e){}window._pfCollectChart=null;}
+    if(cEl)cEl.innerHTML='';
+    if(!cv||!window.Chart)return;
+    const code=f.collectSub;
+    const collChip=(c,t)=>`<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;white-space:nowrap"><span style="width:9px;height:9px;border-radius:2px;background:${c};flex-shrink:0"></span>${t}</span>`;
+    const dashChip=(c,t)=>`<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;white-space:nowrap;color:var(--text2)"><span style="width:14px;border-top:2px dashed ${c};flex-shrink:0"></span>${t}</span>`;
+    if(!code){if(legEl)legEl.innerHTML='<span style="font-size:11px;color:var(--text2)">Нет доходных подстатей</span>';return;}
+    // факт по ДДС (фактический приход денег), кумулятив по дням, только выбранная подстатья. Критерий поступления - как везде в БДР
+    const byMonthDay={};
+    RAW.forEach(r=>{
+      const rd=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!isAll&&rd!==dir)return;
+      const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
+      const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return;
+      const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
+      if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return;
+      if(an!==code)return;
+      const d=parseDate(r[COL.DATE_DDS]); if(!d||d.getFullYear()!==year)return; // нет даты ДДС - строка не участвует
+      const m=d.getMonth()+1,day=d.getDate();
+      (byMonthDay[m]=byMonthDay[m]||new Array(32).fill(0))[day]+=inc;
+    });
+    // план месяца: baseline для замороженных, прогноз для незамороженных; null/≤0 → месяц не строится
+    const planForMonth=m=>{const v=frozenSet.has(m)?(PB?PB.planMonth('income',code,m):null):planMonth('income',code,m);return (v!=null&&v>0)?v:null;};
+    const nowD=new Date(),curYear=nowD.getFullYear(),curMonth=nowD.getMonth()+1,curDay=nowD.getDate();
+    const accent=(getComputedStyle(document.documentElement).getPropertyValue('--accent')||'').trim()||'#3b4a6b';
+    const PAL=['#94a3b8','#a3b18a','#c8a2c8','#e6b89c','#9bb7d4','#b0a8b9','#c9ada7','#8d99ae','#a5a58d','#d4a373','#b5838d'];
+    const MONF=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const MONG=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+    const pct1=v=>v.toFixed(1).replace('.',','); // русский формат процента (22,4)
+    // кумулятивные %-серии по каждому месяцу с планом И фактом
+    const series=[];let cur=null;
+    for(let m=1;m<=12;m++){
+      const plan=planForMonth(m); if(plan==null)continue;
+      const dayArr=byMonthDay[m]; if(!(dayArr&&dayArr.some(v=>v>0)))continue;
+      const dim=new Date(year,m,0).getDate();
+      const isCur=(year===curYear&&m===curMonth);
+      const lastDay=isCur?Math.min(curDay,dim):dim;
+      let cum=0;const pct=[],rub=[];
+      for(let day=1;day<=31;day++){
+        if(day<=lastDay){cum+=(dayArr[day]||0);pct.push(+(cum/plan*100).toFixed(2));rub.push(cum);}
+        else{pct.push(null);rub.push(null);}
+      }
+      const s={m,plan,pct,rub,isCur,label:MONF[m-1]};
+      series.push(s); if(isCur)cur=s;
+    }
+    if(!series.length){if(legEl)legEl.innerHTML='<span style="font-size:11px;color:var(--text2)">Нет месяцев с планом и фактом по этой подстатье</span>';return;}
+    const past=series.filter(s=>!s.isCur); // прошлые месяцы (для коридора)
+    const datasets=[],legChips=[];
+    const line100={label:'100% плана',data:new Array(31).fill(100),borderColor:'#9aa1b0',borderWidth:1,borderDash:[5,4],pointRadius:0,pointHoverRadius:0,tension:0,order:9,_skipTip:true};
+    if(past.length>=2){
+      // ── КОРИДОР: заливка min-max + медиана прошлых месяцев по дням ──
+      const medianOf=a=>{const s=a.filter(v=>v!=null).sort((x,y)=>x-y);if(!s.length)return null;const n=s.length,h=n>>1;return n%2?s[h]:(s[h-1]+s[h])/2;};
+      const maxArr=[],minArr=[],medArr=[];
+      for(let day=1;day<=31;day++){const idx=day-1;const vals=past.map(s=>s.pct[idx]).filter(v=>v!=null);
+        if(vals.length){maxArr.push(Math.max(...vals));minArr.push(Math.min(...vals));medArr.push(medianOf(vals));}
+        else{maxArr.push(null);minArr.push(null);medArr.push(null);}}
+      datasets.push({label:'_max',data:maxArr,borderColor:'transparent',backgroundColor:'transparent',pointRadius:0,borderWidth:0,fill:false,tension:.2,order:6,_skipTip:true});
+      datasets.push({label:'Диапазон прошлых месяцев',data:minArr,borderColor:'transparent',backgroundColor:'rgba(148,163,184,0.28)',pointRadius:0,borderWidth:0,fill:'-1',tension:.2,order:6,_skipTip:true}); // fill:-1 → заливка между этим (min) и предыдущим (max)
+      datasets.push({label:'Типично (медиана)',data:medArr,borderColor:'#6b7382',borderWidth:1.5,borderDash:[5,4],pointRadius:0,pointHoverRadius:3,fill:false,tension:.2,order:3,_isMed:true});
+      legChips.push(collChip('rgba(148,163,184,0.6)','Диапазон прошлых месяцев'));
+      legChips.push(dashChip('#6b7382','Типично (медиана)'));
+      if(cur){datasets.push({label:'Текущий месяц',data:cur.pct,borderColor:accent,backgroundColor:accent,borderWidth:3,pointRadius:0,pointHoverRadius:4,fill:false,tension:.2,order:1,_rub:cur.rub,_plan:cur.plan});
+        legChips.push(collChip(accent,'Текущий месяц'));}
+      // строка-вывод: текущее vs типичное на сегодня
+      if(cur){const idx=Math.min(curDay,cur.pct.length)-1;const cv2=cur.pct[idx],mv=medArr[idx];
+        if(cv2!=null&&mv!=null){const diff=cv2-mv;const col=diff<-0.05?'var(--outcome)':diff>0.05?'var(--income)':'var(--text2)';
+          const tail=diff<-0.05?('Отставание '+pct1(Math.abs(diff))+' п.п.'):diff>0.05?('Опережение '+pct1(diff)+' п.п.'):'На уровне типичного';
+          if(cEl)cEl.innerHTML='<span style="color:'+col+'">На '+curDay+' '+MONG[curMonth-1]+' собрано '+pct1(cv2)+'% плана. Типично на эту дату: '+pct1(mv)+'%. '+tail+'</span>';}}
+    }else{
+      // ── прошлых месяцев < 2: коридор не строим, рисуем доступные месяцы линиями (текущий - жирный акцент) ──
+      let pi=0;
+      series.forEach(s=>{const col=s.isCur?accent:PAL[pi++%PAL.length];
+        datasets.push({label:s.label+(s.isCur?' (текущий)':''),data:s.pct,borderColor:col,backgroundColor:col,borderWidth:s.isCur?3:1.5,pointRadius:0,pointHoverRadius:4,fill:false,tension:.2,order:s.isCur?1:2,_rub:s.rub,_plan:s.plan});
+        legChips.push(collChip(col,s.label+(s.isCur?' · текущий':'')));});
+    }
+    datasets.push(line100);
+    legChips.push(dashChip('#9aa1b0','100% плана'));
+    if(legEl)legEl.innerHTML=legChips.join('');
+    const labels=[];for(let d=1;d<=31;d++)labels.push(String(d));
+    window._pfCollectChart=new Chart(cv,{type:'line',
+      data:{labels,datasets},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},
+        plugins:{legend:{display:false},tooltip:{filter:it=>!(it.dataset&&it.dataset._skipTip),callbacks:{
+          title:items=>items.length?('День '+items[0].label):'',
+          label:c=>{const ds=c.dataset,v=c.parsed.y;if(v==null)return null;
+            if(ds._isMed)return 'Типично (медиана): '+pct1(v)+'%';
+            const rub=ds._rub?ds._rub[c.dataIndex]:null;if(rub==null)return ds.label+': '+pct1(v)+'%';
+            const plan=ds._plan,rem=plan-rub;return ds.label+': накоплено '+fmt(rub)+' · '+pct1(v)+'% плана · осталось '+fmt(rem);}
+        }}},
+        scales:{x:{title:{display:true,text:'День месяца',font:{size:10}},grid:{display:false},ticks:{font:{size:9}}},
+          y:{title:{display:true,text:'% выполнения месячного плана (кумулятивно)',font:{size:10}},grid:{color:'#ebebeb'},ticks:{font:{size:9},callback:v=>v+'%'}}}}});
+  }
+  window._pfCollectRender=renderCollectChart;
+  renderCollectChart();
 }
 
 function emptyState(msg='Нет данных',sub='Попробуй изменить фильтры'){return`<div class="state-box"><div class="icon">◎</div><div class="msg">${msg}</div><div class="sub">${sub}</div></div>`;}
@@ -8275,8 +8403,14 @@ function _baselineMonthsMap(year){
 function _frozenMonths(year){return Object.keys(_baselineMonthsMap(year)).map(Number).sort((a,b)=>a-b);}
 function _baselineMonthObj(year,m){return _baselineMonthsMap(year)[+m]||null;}
 function _baselineRecords(year){const map=_baselineMonthsMap(year);let r=[];Object.keys(map).forEach(m=>{if(Array.isArray(map[m].records))r=r.concat(map[m].records);});return r;} // объединение записей всех замороженных месяцев - для buildPlanCalc
-// компактная метка замороженных месяцев: [1,2,3,5] → «янв-мар, май»
-function _frozenMonthsLabel(year){const ms=_frozenMonths(year);if(!ms.length)return '';const S=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];const parts=[];let a=ms[0],p=ms[0];for(let i=1;i<=ms.length;i++){const c=ms[i];if(c===p+1){p=c;continue;}parts.push(a===p?S[a-1]:S[a-1]+'-'+S[p-1]);a=c;p=c;}return parts.join(', ');}
+// РЕТРОСПЕКТИВА: месяц заморожен, но НЕ планировался заранее (план проставлен задним числом = факт). retro-месяцы исключаются из «Исполнение YTD», но остаются в «Утверждено»/Δ/остатке/коридоре. Отсутствие поля retro → false (миграция)
+function _isRetroMonth(year,m){const mo=_baselineMonthObj(year,m);return !!(mo&&mo.retro);}
+function _planableFrozenMonths(year){return _frozenMonths(year).filter(m=>!_isRetroMonth(year,m));} // замороженные, которые РЕАЛЬНО планировались - для метрики исполнения
+function _retroMonths(year){return _frozenMonths(year).filter(m=>_isRetroMonth(year,m));}
+// компактная метка списка месяцев: [1,2,3,5] → «янв-мар, май»
+function _monthsRangeLabel(ms){if(!ms||!ms.length)return '';const S=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];const parts=[];let a=ms[0],p=ms[0];for(let i=1;i<=ms.length;i++){const c=ms[i];if(c===p+1){p=c;continue;}parts.push(a===p?S[a-1]:S[a-1]+'-'+S[p-1]);a=c;p=c;}return parts.join(', ');}
+function _frozenMonthsLabel(year){return _monthsRangeLabel(_frozenMonths(year));}
+function _planableMonthsLabel(year){return _monthsRangeLabel(_planableFrozenMonths(year));}
 // запекание плана месяца m в конкретные рубли (money-записи всех уровней/направлений) - как показывает отчёт/матрица за месяц: явная month===m → cvt; только годовая month===0 → cvt(годовая)/12
 function _baselineBakeMonth(year,m){
   year=+year;m=+m;
@@ -8322,12 +8456,14 @@ window.planApproveMonth=function(year,month){
   if(_baselineMonthObj(year,month)){alert(MONTH_FULL_RU[month-1]+' '+year+' уже утверждён - изменить замороженный месяц нельзя.');return;}
   const recs=_baselineBakeMonth(year,month);
   const fi=_baselineFactMonth(year,month);
+  const retroEl=document.getElementById('cfo-appr-retro'),retro=!!(retroEl&&retroEl.checked); // ретроспектива: план приравнен к факту, месяц не планировался
   const warn=fi.sum>0.005?('\n\n⚠ По месяцу уже есть факт '+fmt(fi.sum)+' ('+fi.cnt+' оп.). План замораживается при известном факте - это будет отмечено в отчётах и выписках.'):'';
-  if(!confirm('Заморозить план на '+MONTH_FULL_RU[month-1]+' '+year+'? Изменить его будет нельзя.'+warn))return;
+  const retroNote=retro?'\n\n📋 Месяц помечен как РЕТРОСПЕКТИВА (план = факт, не планировался). Он не войдёт в расчёт «Исполнение YTD».':'';
+  if(!confirm('Заморозить план на '+MONTH_FULL_RU[month-1]+' '+year+'? Изменить его будет нельзя.'+warn+retroNote))return;
   let email='';try{email=(firebase.auth().currentUser.email||'');}catch(e){}
   // нормализуем к плоскому объекту {N:{…}} через _baselineMonthsMap - иначе форма-массив из Firebase ([null,{…}]) была бы затёрта на {} и потеряла бы уже замороженные месяцы
   const cur=_baselineMonthsMap(year);
-  cur[month]={approvedAt:Date.now(),approvedBy:email,hadFact:fi.sum>0.005,factAtApproval:fi.sum,records:recs};
+  cur[month]={approvedAt:Date.now(),approvedBy:email,hadFact:fi.sum>0.005,factAtApproval:fi.sum,retro:retro,records:recs};
   _plansBaseline[year]=cur;
   _baselineSave();
   try{renderActiveTab();}catch(e){}
@@ -8367,9 +8503,13 @@ window.planApproveMonthOpen=function(year){
 window.cfoApproveMonthInfo=function(){
   const d=window._cfoApproveData,sel=document.getElementById('cfo-appr-month'),box=document.getElementById('cfo-appr-info');
   if(!d||!sel||!box)return; const m=+sel.value; if(!(m>=1&&m<=12)){box.innerHTML='';return;}
-  const fact=d.factS[m]||0;
+  const fact=d.factS[m]||0,hf=fact>0.005;
   let h='<div style="font-size:12.5px;color:var(--text);padding:8px 10px;background:var(--surface2);border-radius:7px">План на '+MONTH_FULL_RU[m-1]+' (расходы): <b>'+fmt(d.plan[m]||0)+'</b></div>';
-  if(fact>0.005)h+='<div style="margin-top:8px;font-size:11.5px;padding:8px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:7px;color:#b5651d;font-weight:600">⚠ По '+MONTH_FULL_RU[m-1].toLowerCase()+' уже есть факт '+fmt(fact)+' ('+(d.factC[m]||0)+' оп.). План замораживается при известном факте - это будет отмечено в отчётах и выписках.</div>';
+  if(hf)h+='<div style="margin-top:8px;font-size:11.5px;padding:8px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:7px;color:#b5651d;font-weight:600">⚠ По '+MONTH_FULL_RU[m-1].toLowerCase()+' уже есть факт '+fmt(fact)+' ('+(d.factC[m]||0)+' оп.). План замораживается при известном факте - это будет отмечено в отчётах и выписках.</div>';
+  // чекбокс «Ретроспектива» - по умолчанию СНЯТ; при наличии факта рамка подсвечена (но галка НЕ ставится авто - решает пользователь)
+  h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;padding:9px 11px;border:1px solid '+(hf?'#f0c58a':'var(--border)')+';border-radius:7px;background:'+(hf?'#fdf9f2':'var(--surface)')+';cursor:pointer">'
+    +'<input type="checkbox" id="cfo-appr-retro" style="margin-top:2px;cursor:pointer">'
+    +'<span style="font-size:12px;color:var(--text)"><b>📋 Ретроспектива</b> (план приравнен к факту, месяц не планировался)<br><span style="font-size:10.5px;color:var(--text2)">Отметьте, если план по этому месяцу не составлялся заранее, а проставлен задним числом по факту. Такие месяцы не участвуют в расчёте исполнения плана.</span></span></label>';
   box.innerHTML=h;
 };
 // ===== Ответственные за расходы (ФИО по подстатье+направлению) - config/planOwners =====
@@ -9222,7 +9362,7 @@ window.cfoStatementGen=function(){
   // ── режим «все месяцы» (матрица подстатья × 12 + Год) ──
   const MONS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   const mColg=(()=>{let cg='<colgroup><col style="width:13%">';for(let i=0;i<12;i++)cg+='<col style="width:6.2%">';return cg+'<col style="width:6.6%"></colgroup>';})();
-  const mHead=(()=>{let th='<thead><tr><th>Подстатья</th>';for(let m=1;m<=12;m++){const fr=frozenSet.has(m),mo=fr?blMap[m]:null,hf=mo&&mo.hadFact;const mark=fr?(' 🔒'+(hf?'⚠':'')):'';th+='<th class="r"'+(fr?' title="Месяц утверждён (заморожен)'+(hf?' при известном факте':'')+'"':'')+'>'+MONS[m-1]+mark+'</th>';}return th+'<th class="r">ГОД</th></tr></thead>';})();
+  const mHead=(()=>{let th='<thead><tr><th>Подстатья</th>';for(let m=1;m<=12;m++){const fr=frozenSet.has(m),mo=fr?blMap[m]:null,hf=mo&&mo.hadFact,rt=mo&&mo.retro;const mark=fr?(' 🔒'+(rt?'📋':hf?'⚠':'')):'';th+='<th class="r"'+(fr?' title="Месяц утверждён (заморожен)'+(rt?': ретроспектива - план приравнен к факту, месяц не планировался':hf?' при известном факте':'')+'"':'')+'>'+MONS[m-1]+mark+'</th>';}return th+'<th class="r">ГОД</th></tr></thead>';})();
   // ячейка: факт крупно (цвет от утв. только для замороженного месяца) + утв. мелким под ним (только замороженный). inc=true → обратный цвет (перевыполнение зелёное)
   const mCellK=(fv,pv,fr,inc)=>{const over=fv>pv;const good=inc?over:!over;const col=(fr&&pv!=null&&Math.abs(fv-pv)>0.005)?(good?'#1e8a54':'#c0392b'):'#23272f';return '<td class="mx"><span class="mf" style="color:'+col+'">'+f(fv)+'</span>'+((fr&&pv!=null)?'<span class="mp">'+f(pv)+'</span>':'')+'</td>';};
   const mCell=(fv,pv,fr)=>mCellK(fv,pv,fr,false); // расходная (обратная совместимость)
@@ -9310,8 +9450,9 @@ window.cfoStatementGen=function(){
     });});
   const opsBlock=opsRows?('<h2>Операции по подстатьям с превышением (YTD)</h2><table class="ops"><colgroup><col style="width:14%"><col style="width:30%"><col style="width:16%"><col style="width:40%"></colgroup><thead><tr><th>Дата ОПиУ</th><th>Контрагент</th><th class="r">Сумма</th><th>Назначение</th></tr></thead><tbody>'+opsRows+'</tbody></table>'):'<p class="noover">Превышений по утверждённому плану нет.</p>';
   const _cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
-  const frozenListHtml=frozen.length?frozen.map(m=>{const mo=blMap[m],nm=_cap(MONF[m-1]);return (mo&&mo.hadFact)?('<span style="color:#b5651d;font-weight:600" title="Утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+f(mo.factAtApproval)+'">'+nm+' ⚠</span>'):nm;}).join(', '):'—';
-  const blStamp=hasBl?('<span class="ok">Заморожено месяцев: '+frozen.length+'</span> · '+frozenListHtml):'<span class="no">Ни один месяц не утверждён</span>';
+  const frozenListHtml=frozen.length?frozen.map(m=>{const mo=blMap[m],nm=_cap(MONF[m-1]);return (mo&&mo.retro)?('<span style="color:#6f7682;font-weight:600" title="Ретроспектива: план приравнен к факту, месяц не планировался">'+nm+' 📋</span>'):(mo&&mo.hadFact)?('<span style="color:#b5651d;font-weight:600" title="Утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+f(mo.factAtApproval)+'">'+nm+' ⚠</span>'):nm;}).join(', '):'—';
+  const _retroN=frozen.filter(m=>blMap[m]&&blMap[m].retro).length;
+  const blStamp=hasBl?('<span class="ok">Заморожено месяцев: '+frozen.length+'</span>'+(_retroN?(' <span style="color:#6f7682">· из них ретро: '+_retroN+'</span>'):'')+' · '+frozenListHtml):'<span class="no">Ни один месяц не утверждён</span>';
   const perLabel=allMonths?('все месяцы '+year+' (матрица) · факт крупно, утв. мелким - по замороженным месяцам'):('за '+MONF[M-1]+' '+year+' · YTD - по замороженным месяцам ≤ '+MONF[M-1]);
   // выбран текущий незакрытый месяц → колонки «за месяц»/Δ предварительные (полный план против неполного факта). Δ YTD не помечаем. В матрице предупреждения нет - показаны все 12 месяцев как есть
   const _now=new Date(),isCurUnclosed=(!allMonths&&year===_now.getFullYear()&&M===_now.getMonth()+1);
