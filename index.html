@@ -4335,6 +4335,13 @@ window.expMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getE
 window.expMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.expMultiChange(ddId,btnId,field,labelAll);};
 // БДР (planfact): мультивыбор Статья/Подстатья - применяется по закрытию дропдауна
 window.pfMultiToggle=function(ddId){const dd=document.getElementById(ddId);if(!dd)return;const open=dd.style.display!=='block';dd.style.display=open?'block':'none';if(!open)renderPlanFact(getFilters());};
+// меню «⚙ Действия» БДР: открытие по клику, закрытие по клику снаружи (без ре-рендера - пункты сами открывают модалы)
+window.pfActionsToggle=function(){const dd=document.getElementById('pf-actions-dd');if(!dd)return;
+  const open=dd.style.display!=='block';dd.style.display=open?'block':'none';
+  if(open)setTimeout(()=>{const h=function(e){const d=document.getElementById('pf-actions-dd'),b=document.getElementById('pf-actions-btn');
+    if(!d)return document.removeEventListener('click',h);
+    if(!d.contains(e.target)&&!(b&&b.contains(e.target))){d.style.display='none';document.removeEventListener('click',h);}};
+    document.addEventListener('click',h);},0);};
 window.pfMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.planfact[field]=checked;};
 window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.pfMultiChange(ddId,btnId,field,labelAll);};
 window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];_tabFilters.planfact.owners=[];renderPlanFact(getFilters());};
@@ -6229,7 +6236,13 @@ function renderPlanFact(f){
   // статус заморозки по месяцам + кнопка «Утвердить месяц» (админу)
   const frozenLbl=hasBaseline?_frozenMonthsLabel(year):'';
   const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются только по замороженным месяцам ('+frozenLbl+')'):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
-  const approveBtn=isAdmin?`<button onclick="planApproveMonthOpen(${year})" title="Заморозить план выбранного месяца ${year} года (изменить замороженный месяц нельзя)" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить месяц</button>`:'';
+  // действия БДР свёрнуты в одно меню «⚙ Действия» (админу); не-админ - одна кнопка просмотра планов
+  const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
+  const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
+  const actionsWrap=isAdmin?`<div style="position:relative;display:inline-block">
+      <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${_npHasA?'<span title="Есть факт без плана" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}</div>
+    </div>`:`<button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👁 Планы (просмотр)</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>${sel('dir',dirOpts)}
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label><select onchange="_tabFilters.planfact.year=+this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${yearOpts}</select>
@@ -6241,10 +6254,7 @@ function renderPlanFact(f){
     ${pfOwners.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">ЦФО:</label>
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${(selArt.size||selSub.size||selOwn.size)?`<button onclick="pfResetExtra()" style="font-size:10px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
-    ${baselineStatus}${approveBtn}
-    ${isAdmin?(()=>{const np=window._pfNoPlan||{N:0};const has=np.N>0;return`<button onclick="pfNoPlanOpen()" title="Подстатьи расходов, по которым идёт факт, но плана нет вообще - траты вне бюджета" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid ${has?'var(--outcome)':'var(--border)'};border-radius:6px;background:transparent;color:${has?'var(--outcome)':'var(--text2)'};cursor:pointer;font-family:var(--sans)">⚠ Факт без плана${has?' <span style="font-weight:700">('+np.N+')</span>':''}</button>`;})():''}
-    ${isAdmin?`<button onclick="cfoStatementOpen()" title="Персональная печатная выписка по бюджету для ответственного (ЦФО) - только его подстатьи" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">🖨 Выписка для ЦФО</button>`:''}
-    <button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">${isAdmin?'✏ Редактировать планы':'👁 Планы (просмотр)'}</button>
+    ${baselineStatus}${actionsWrap}
   </div>`;
 
   if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
