@@ -5894,10 +5894,10 @@ window.pfNoPlanOpen=function(){
   const expSec=(list.length||emp.cnt>0)
     ?secTitle('РАСХОДЫ без плана',expCnt,`<b style="color:var(--outcome)">${fmt(-expSum)}</b>`,NP.coverage)+tableWrap(emptyRow+list.map((it,i)=>dataRow(it,i,'exp',false)).join(''))
     :`<div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 6px">РАСХОДЫ без плана</div><div style="padding:16px 12px;text-align:center;color:var(--income);font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px">✓ Все расходы имеют план</div>`;
-  // ДОХОДЫ (только если есть; доходы планируются по подстатьям level='income')
+  // ДОХОДЫ (показываем всегда; доходы планируются по подстатьям level='income')
   const incSec=listInc.length
     ?secTitle('ДОХОДЫ без плана',listInc.length,`<b style="color:var(--income)">${fmt(NP.withoutIncSum||0)}</b>`,NP.coverageInc)+tableWrap(listInc.map((it,i)=>dataRow(it,i,'inc',true)).join(''))
-    :'';
+    :`<div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 6px">ДОХОДЫ без плана</div><div style="padding:16px 12px;text-align:center;color:var(--income);font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px">✓ Все доходы имеют план</div>`;
   const hasAny=list.length||emp.cnt>0||listInc.length;
   const ov=document.createElement('div');ov.id='pfNoPlanOverlay';
   ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto';
@@ -5910,7 +5910,7 @@ window.pfNoPlanOpen=function(){
       <button onclick="document.getElementById('pfNoPlanOverlay').remove()" title="Закрыть" style="font-size:16px;line-height:1;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer">×</button>
     </div>
     <div style="font-size:12px;color:var(--text2);margin:10px 0 4px;padding:8px 12px;background:var(--surface2);border-radius:8px">
-      Всего <b>${NP.N||0}</b> ${plur(NP.N||0,'подстатья','подстатьи','подстатей')} без плана. Покрытие считается отдельно по расходам и доходам.
+      Всего <b>${NP.N||0}</b> ${plur(NP.N||0,'подстатья','подстатьи','подстатей')} без плана. Покрытие расходов: <b>${pct(NP.coverage)}</b> · Покрытие доходов: <b>${pct(NP.coverageInc)}</b>.
     </div>
     ${expSec}
     ${incSec}
@@ -6487,19 +6487,48 @@ function renderPlanFact(f){
     });});
     const names=Object.keys(agg);
     if(names.length&&!(names.length===1&&names[0]===NOOWN)){ // показываем, только если ответственные вообще назначены
-      names.sort((a,b)=>{if(a===NOOWN)return 1;if(b===NOOWN)return -1;return((agg[b].base||agg[b].plan||agg[b].fact)-(agg[a].base||agg[a].plan||agg[a].fact));});
-      let tp=0,tf=0,tb=0,trp=null,trf=0,body='';const dash='<span style=color:var(--text3)>-</span>';
-      names.forEach(o=>{const A=agg[o];tp+=A.plan||0;tf+=A.fact;tb+=A.base||0;if(A.remPlan!=null)trp=(trp||0)+A.remPlan;trf+=A.remFact;
-        const d2=A.base!=null?A.fact-A.base:null; // Δ - от утверждённого (baseline)
-        const inT=A.base?Math.abs(d2)/Math.abs(A.base)<=PF_TOL:false;
-        const dc=A.base==null?'var(--text3)':inT?'var(--text2)':(A.fact>A.base?'var(--outcome)':'var(--income)');
-        body+=`<tr><td style="${td};text-align:left${o===NOOWN?';color:var(--text3)':''}">${esc(o)}</td>
-          <td style="${td};text-align:right">${A.base!=null?fmt(-A.base):dash}</td>
+      const dash='<span style=color:var(--text3)>-</span>';
+      // ИТОГО - по СЫРЫМ agg (листовые записи), не по свёрнутым строкам → факт ИТОГО не меняется при иерархии
+      let tp=0,tf=0,tb=0,trp=null,trf=0;
+      names.forEach(o=>{const A=agg[o];tp+=A.plan||0;tf+=A.fact;tb+=A.base||0;if(A.remPlan!=null)trp=(trp||0)+A.remPlan;trf+=A.remFact;});
+      // рендер 6 ячеек агрегата (Утв.|Прогноз|Факт|Δ|Остаток|Статус)
+      const cfoCells=A=>{const d2=A.base!=null?A.fact-A.base:null;const inT=A.base?Math.abs(d2)/Math.abs(A.base)<=PF_TOL:false;const dc=A.base==null?'var(--text3)':inT?'var(--text2)':(A.fact>A.base?'var(--outcome)':'var(--income)');
+        return `<td style="${td};text-align:right">${A.base!=null?fmt(-A.base):dash}</td>
           <td style="${td};text-align:right">${A.plan!=null?fmt(-A.plan):dash}</td>
           <td style="${td};text-align:right">${fmt(-A.fact)}</td>
           <td style="${td};text-align:right;color:${dc}">${d2!=null?((d2>0?'+':d2<0?'−':'')+fmt(Math.abs(d2))):'-'}</td>
           ${remTd(A.remPlan,A.remFact,true)}
-          <td style="${td};text-align:left">${hasBaseline?statusCell(A.base,A.fact,false):dash}</td></tr>`;});
+          <td style="${td};text-align:left">${hasBaseline?statusCell(A.base,A.fact,false):dash}</td>`;};
+      const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0});
+      const addA=(dst,src)=>{if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;return dst;};
+      const sizeA=A=>(A.base||A.plan||A.fact||0);
+      // дерево (строго один уровень; защита от цикла в _cfoMgrOf): подчинённый уходит под руководителя.
+      // Руководитель блока показывается ВСЕГДА (даже без своих подстатей - тогда его строка = только сумма подчинённых).
+      const persons=names.filter(o=>o!==NOOWN);
+      const childrenOf={};
+      persons.forEach(o=>{const m=_cfoMgrOf(o);if(m&&m!==o)(childrenOf[m]=childrenOf[m]||[]).push(o);});
+      const isMgr=x=>!!childrenOf[x];
+      const ownAgg=o=>agg[o]||emptyA(); // руководитель без agg-записи → нулевой агрегат
+      const kidsOf=o=>(childrenOf[o]||[]).filter(k=>!isMgr(k)); // руководитель-подчинённый рендерится своим верхним узлом (не вложить глубже 1 уровня)
+      // верхний уровень: руководители (с подчинёнными) + agg-персоны без руководителя
+      const topSet=new Set();
+      persons.forEach(o=>{if(isMgr(o)||!_cfoMgrOf(o))topSet.add(o);});
+      Object.keys(childrenOf).forEach(m=>topSet.add(m)); // руководитель, у которого нет собственной agg-записи
+      const blockSize=o=>{let s=sizeA(ownAgg(o));kidsOf(o).forEach(c=>s+=sizeA(ownAgg(c)));return s;};
+      const topNodes=[...topSet].sort((a,b)=>blockSize(b)-blockSize(a));
+      let body='',ci=0;
+      topNodes.forEach(o=>{const kids=kidsOf(o).slice().sort((a,b)=>sizeA(ownAgg(b))-sizeA(ownAgg(a)));
+        const own=ownAgg(o);
+        if(kids.length){ // руководитель блока: своя строка = свои + сумма подчинённых, раскрывается
+          const sum=addA(emptyA(),own);kids.forEach(c=>addA(sum,ownAgg(c)));
+          const gid='cfo'+(ci++);
+          body+=`<tr style="cursor:pointer" onclick="cfoToggleMgr('${gid}',this)"><td style="${td};text-align:left;font-weight:600"><span class="cfo-arr">▸</span> ${esc(o)} <span style="color:var(--text3);font-weight:400;font-size:10px">· ${kids.length} подч.</span></td>${cfoCells(sum)}</tr>`;
+          kids.forEach(c=>{body+=`<tr data-cfopar="${gid}" style="display:none"><td style="${td};text-align:left;padding-left:26px;color:var(--text2)">${esc(c)}</td>${cfoCells(ownAgg(c))}</tr>`;});
+        }else{ // ЦФО без подчинённых
+          body+=`<tr><td style="${td};text-align:left">${esc(o)}</td>${cfoCells(own)}</tr>`;
+        }
+      });
+      if(agg[NOOWN])body+=`<tr><td style="${td};text-align:left;color:var(--text3)">${esc(NOOWN)}</td>${cfoCells(agg[NOOWN])}</tr>`; // (не назначен) - внизу плоско
       body+=`<tr style="background:var(--total-bg)"><td style="${td};text-align:left;font-weight:700">ИТОГО</td><td style="${td};text-align:right;font-weight:700">${tb?fmt(-tb):'-'}</td><td style="${td};text-align:right;font-weight:700">${tp?fmt(-tp):'-'}</td><td style="${td};text-align:right;font-weight:700">${fmt(-tf)}</td><td style="${td}"></td>${remTd(trp,trf,true)}<td style="${td}">${hasBaseline?statusCell(tb||null,tf,false):dash}</td></tr>`;
       cfoHtml=`<details style="margin-top:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <summary style="padding:9px 14px;font-size:12px;font-weight:600;color:var(--text2);cursor:pointer;user-select:none">👥 Исполнение по ЦФО (ответственным) · расходы · ${periodLbl}</summary>
@@ -8060,7 +8089,7 @@ window.appLoginGoogle=function(){
   }catch(e){}
 };
 // HTML строки таблицы доступа (email + выбор вкладки/полного доступа)
-window._accessRowHtml=function(email,sheet,name){
+window._accessRowHtml=function(email,sheet,name,manager){
   const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const titles=window._accessTitles||[];
   const sel=sheet||'';
@@ -8068,32 +8097,51 @@ window._accessRowHtml=function(email,sheet,name){
   opts+='<option value="__full__"'+(sel==='__full__'?' selected':'')+'>- Полный доступ (RawData) -</option>';
   const all=(sel&&sel!=='__full__'&&titles.indexOf(sel)<0)?[sel].concat(titles):titles;
   all.forEach(t=>{opts+='<option value="'+esc(t)+'"'+(t===sel?' selected':'')+'>'+esc(t)+'</option>';});
+  // руководитель блока: список ФИО (кроме собственного) + текущее значение
+  const names=window._accessNames||[];const mgr=String(manager||'').trim(),selfN=String(name||'').trim();
+  let mopts='<option value="">(нет - верхний уровень)</option>';
+  names.forEach(n=>{if(String(n).trim()===selfN)return;mopts+='<option value="'+esc(n)+'"'+(n===mgr?' selected':'')+'>'+esc(n)+'</option>';});
+  if(mgr&&names.indexOf(mgr)<0&&mgr!==selfN)mopts+='<option value="'+esc(mgr)+'" selected>'+esc(mgr)+'</option>';
   const inp='width:100%;box-sizing:border-box;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans)';
   return `<tr>
     <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><input class="acc-email" value="${esc(email)}" placeholder="email@gmail.com" style="${inp}"></td>
     <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><input class="acc-name" value="${esc(name)}" placeholder="Фамилия Имя" style="${inp}"></td>
     <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><select class="acc-sheet" style="${inp}">${opts}</select></td>
+    <td style="padding:5px 8px;border-bottom:1px solid var(--border)"><select class="acc-mgr" title="Руководитель блока - видит подстатьи этого ЦФО в своей выписке" style="${inp}">${mopts}</select></td>
     <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:center"><button onclick="this.closest('tr').remove()" title="Удалить" style="border:none;background:none;color:#d35450;cursor:pointer;font-size:15px;line-height:1">✕</button></td>
   </tr>`;
 };
 window.accessAddRow=function(){
   const tb=document.getElementById('acc-tbody'); if(!tb)return;
-  tb.insertAdjacentHTML('beforeend',window._accessRowHtml('','',''));
+  tb.insertAdjacentHTML('beforeend',window._accessRowHtml('','','',''));
 };
 window.accessSavePanel=function(btn){
   const tb=document.getElementById('acc-tbody'); if(!tb)return;
   const allowed=[],sheetAcc=[],names=[],seen={};
+  const rowsData=[],renameMap={},oldBy=window._accessNameByEmail||{};
   let dup=false;
   [...tb.querySelectorAll('tr')].forEach(tr=>{
     const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();
     const sh=tr.querySelector('.acc-sheet').value;
     const nm=(tr.querySelector('.acc-name').value||'').trim();
+    const mgEl=tr.querySelector('.acc-mgr');const mg=mgEl?String(mgEl.value||'').trim():'';
     if(!em)return;
     if(seen[em]){dup=true;return;} seen[em]=1;
     if(sh==='__full__')allowed.push(em); else if(sh)sheetAcc.push({email:em,sheet:sh});
     if(nm||!sh)names.push({email:em,name:nm}); // контакт без доступа/вкладки тоже сохраняем в реестр имён, чтобы он не пропадал при сохранении
+    rowsData.push({em,nm,mg});
+    const oldNm=String(oldBy[em]||'').trim(); if(oldNm&&nm&&oldNm!==nm)renameMap[oldNm]=nm; // переименование ФИО (матч по email)
   });
   if(dup&&!confirm('Есть повторяющиеся email - будут учтены только первые. Сохранить?'))return;
+  // Миграция при переименовании ФИО: иерархия ЦФО (ключ=подчинённый, значение=руководитель) + ответственные по подстатьям (значение)
+  let ownersChanged=false;
+  if(Object.keys(renameMap).length){
+    const nh={};Object.keys(_cfoHierarchy||{}).forEach(k=>{let kk=renameMap[k]||k;let vv=String((_cfoHierarchy||{})[k]||'');if(renameMap[vv])vv=renameMap[vv];nh[kk]=vv;});_cfoHierarchy=nh;
+    Object.keys(_planOwners||{}).forEach(k=>{const v=String(_planOwners[k]||'').trim();if(renameMap[v]){_planOwners[k]=renameMap[v];ownersChanged=true;}});
+  }
+  // Применяем правки руководителя из панели (значения дропдаунов - через renameMap, если руководителя тоже переименовали)
+  rowsData.forEach(r=>{if(!r.nm)return;let mg=r.mg;if(mg&&renameMap[mg])mg=renameMap[mg];if(mg&&mg!==r.nm)_cfoHierarchy[r.nm]=mg;else delete _cfoHierarchy[r.nm];});
+  _cfoHierSave(); if(ownersChanged)_ownersSave();
   if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
   fbApp();const db=firebase.database();
   Promise.all([db.ref('config/allowedEmails').set(allowed),db.ref('config/sheetAccess').set(sheetAcc),db.ref('config/names').set(names)])
@@ -8127,11 +8175,14 @@ window.showAccessPanel=async function(){
   allowed.forEach(em=>{if(em)addE(em,'__full__');});
   names.forEach(x=>{if(x&&x.email)addE(x.email,'');}); // контакты из реестра имён без доступа/вкладки - тоже показываем (вкладка не обязательна)
   entries.sort((a,b)=>{const an=String(a.name||'').trim(),bn=String(b.name||'').trim();if(!an&&!bn)return 0;if(!an)return 1;if(!bn)return -1;return an.localeCompare(bn,'ru');}); // по ФИО по возрастанию (А→Я), без ФИО - в конце
-  const rows=entries.map(e=>window._accessRowHtml(e.email,e.sheet,e.name));
+  // справочник ФИО для дропдауна «Руководитель» + карта email→ФИО для миграции иерархии/ответственных при переименовании
+  window._accessNames=[...new Set([...entries.map(e=>String(e.name||'').trim()),...(_cfoList||[])].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  window._accessNameByEmail={};entries.forEach(e=>{const k=String(e.email||'').trim().toLowerCase();if(k)window._accessNameByEmail[k]=String(e.name||'').trim();});
+  const rows=entries.map(e=>window._accessRowHtml(e.email,e.sheet,e.name,_cfoMgrOf(e.name)));
   const body=rows.length?rows.join(''):'';
   const titleNote=titles.length?titles.length+' персональных вкладок найдено':'⚠ список вкладок не загрузился (проверьте подключение) - вкладку можно вписать вручную позже';
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='accessPanelOverlay';
-  overlay.innerHTML=`<div class="txn-card" style="max-width:720px;width:94vw">
+  overlay.innerHTML=`<div class="txn-card" style="width:1100px;max-width:96vw">
     <div class="txn-card-head"><h3>Управление доступом</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:16px 20px 20px">
       <p style="font-size:12px;color:var(--text2);margin:0 0 12px;line-height:1.6">
@@ -8139,11 +8190,13 @@ window.showAccessPanel=async function(){
         Вы (<b>${ADMIN_EMAIL}</b>) всегда админ с полным доступом. <b>ФИО</b> используются как ответственные (ЦФО) в БДР (бюджет доходов и расходов). <span style="color:var(--text3)">${titleNote}</span>
       </p>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:50vh;overflow-y:auto">
-        <table style="width:100%;border-collapse:collapse">
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+          <colgroup><col style="width:24%"><col style="width:24%"><col style="width:22%"><col style="width:26%"><col style="width:40px"></colgroup>
           <thead><tr>
             <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Email</th>
             <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">ФИО</th>
             <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)">Доступ / вкладка</th>
+            <th style="text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border)" title="Руководитель блока: видит подстатьи этого ЦФО и получает выписку по блоку">Руководитель</th>
             <th style="width:40px;background:var(--surface2);border-bottom:1px solid var(--border)"></th>
           </tr></thead>
           <tbody id="acc-tbody">${body}</tbody>
@@ -8317,6 +8370,35 @@ function startOwnersSync(){
       try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){}});
   }catch(e){console.warn('[owners] sync',e&&e.message);}
 }
+// ===== Иерархия ЦФО: руководитель блока → подчинённые - config/cfoHierarchy =====
+// Форма { "<ФИО подчинённого>":"<ФИО руководителя>" }. Один уровень вложенности; руководитель без записи = верхний уровень.
+// Ключи по ФИО (как _planOwners); при переименовании ФИО в панели «Доступ» записи мигрируют (accessSavePanel).
+let _cfoHierarchy=(()=>{try{const o=JSON.parse(localStorage.getItem('finCfoHierarchy')||'{}');return(o&&typeof o==='object'&&!Array.isArray(o))?o:{};}catch(e){return{};}})();
+function _cfoHierSave(){
+  try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){}
+  _fbSetSafe('config/cfoHierarchy',_cfoHierarchy,'Иерархия ЦФО');
+}
+function startCfoHierarchySync(){
+  if(window._cfoHierSyncStarted)return; window._cfoHierSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
+    firebase.database().ref('config/cfoHierarchy').on('value',s=>{const v=s.val();
+      _cfoHierarchy=(v&&typeof v==='object'&&!Array.isArray(v))?v:{};
+      try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){}
+      if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
+  }catch(e){console.warn('[cfoHier] sync',e&&e.message);}
+}
+// прямой руководитель ФИО (защита от самоссылки); '' = верхний уровень
+function _cfoMgrOf(fio){const f=String(fio||'').trim();if(!f)return '';const m=String((_cfoHierarchy||{})[f]||'').trim();return(m&&m!==f)?m:'';}
+// прямые подчинённые ФИО (защита от цикла: сам себе не подчинён)
+function _cfoSubsOf(fio){const f=String(fio||'').trim();if(!f)return [];return Object.keys(_cfoHierarchy||{}).filter(k=>String((_cfoHierarchy||{})[k]||'').trim()===f&&String(k||'').trim()!==f).sort((a,b)=>a.localeCompare(b,'ru'));}
+// разворот руководителя в своде ЦФО - чистый DOM-тоггл (не ре-рендер, чтобы <details> свода не схлопывался)
+window.cfoToggleMgr=function(gid,el){
+  const rows=document.querySelectorAll('tr[data-cfopar="'+gid+'"]');if(!rows.length)return;
+  const show=rows[0].style.display==='none';
+  rows.forEach(r=>{r.style.display=show?'':'none';});
+  const arr=el&&el.querySelector('.cfo-arr');if(arr)arr.textContent=show?'▾':'▸';
+};
 // Примечания к планам (текст по подстатье+направлению) - config/planNotes; ключ = `${dir}||${code}` (тот же _ownerKey)
 let _planNotes=(()=>{try{return JSON.parse(localStorage.getItem('finPlanNotes')||'{}')}catch(e){return{}}})();
 function _notesSave(){
@@ -9003,7 +9085,13 @@ window.cfoStatementOpen=function(){
     <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">🖨 Выписка для ЦФО</div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:16px">Персональная выписка по бюджету за ${year} год. В неё попадают ТОЛЬКО подстатьи выбранного ответственного.</div>
     <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">Ответственный (ЦФО)</label>
-    <select id="cfo-stmt-owner" style="width:100%;box-sizing:border-box;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);margin-bottom:14px">${ownOpts}</select>
+    <select id="cfo-stmt-owner" onchange="cfoStmtOwnerChange()" style="width:100%;box-sizing:border-box;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);margin-bottom:14px">${ownOpts}</select>
+    <div id="cfo-stmt-subwrap" style="display:none;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);cursor:pointer">
+        <input type="checkbox" id="cfo-stmt-subs" checked style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
+        Включить подчинённых (выписка по блоку: свои подстатьи + подстатьи подчинённых)
+      </label>
+    </div>
     <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">Отчётный месяц (в PDF: «за месяц» и «YTD январь-месяц»)</label>
     <select id="cfo-stmt-month" style="width:100%;box-sizing:border-box;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);margin-bottom:20px">${monOpts}</select>
     <div style="display:flex;justify-content:flex-end;gap:10px">
@@ -9013,6 +9101,14 @@ window.cfoStatementOpen=function(){
   </div>`;
   ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   document.body.appendChild(ov);
+  cfoStmtOwnerChange();
+};
+// показывать чекбокс «Включить подчинённых» только если у выбранного ответственного есть подчинённые
+window.cfoStmtOwnerChange=function(){
+  const owEl=document.getElementById('cfo-stmt-owner'),w=document.getElementById('cfo-stmt-subwrap');
+  if(!owEl||!w)return;
+  const fio=owEl.value;const has=fio&&fio!=='__none__'&&_cfoSubsOf(fio).length>0;
+  w.style.display=has?'block':'none';
 };
 window.cfoStatementGen=function(){
   const owEl=document.getElementById('cfo-stmt-owner'),mEl=document.getElementById('cfo-stmt-month');
@@ -9048,42 +9144,62 @@ window.cfoStatementGen=function(){
   // факт + операции: dir||ARTICLE_NAME → [13] месяцев и список строк (вывод прибыли исключён, как в отчёте)
   const factIdx={},opsIdx={};
   (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=parseNum(r[COL.OUTCOME]); if(!(out<0))return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIdx[key]=factIdx[key]||new Array(13).fill(0))[m]+=Math.abs(out); (opsIdx[key]=opsIdx[key]||[]).push(r); });
-  // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = выбранный (или пусто для «не назначен»)
+  // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = человек секции (пусто для «не назначен»)
   const ownerOf=(d,code)=>String((_planOwners||{})[d+'||'+code]||'').trim();
-  const ownMatch=(d,code)=>{const o=ownerOf(d,code);return isNoOwn?!o:(o===fio);};
-  const pairSet={}; // code → Set направлений (только совпавшие по владельцу)
-  blRecs.forEach(p=>{if(p.level!=='subarticle')return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatch(p.dir,p.code))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
-  Object.keys(factIdx).forEach(key=>{const i=key.indexOf('||'),d=key.slice(0,i),code=key.slice(i+2);if(!ownMatch(d,code))return;(pairSet[code]=pairSet[code]||new Set()).add(d);});
-  const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
-  const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanMD(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
-  const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=factIdx[d+'||'+code];if(a)s+=a[m]||0;});return s;};
-  // YTD - ТОЛЬКО по замороженным месяцам ≤ M (пропуски не заполняются); факт тоже гейтим frozenSet
-  const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;};
-  const factYTD=code=>{let s=0;frozen.forEach(m=>{if(m>M)return;s+=factMonth(code,m);});return s;};
+  const ownMatchP=(d,code,person,noOwn)=>{const o=ownerOf(d,code);return noOwn?!o:(o===person);};
   // цветная Δ-ячейка (перерасход красный, экономия зелёная)
   const dCell=(dv,bold)=>dv==null?'<td class="r'+(bold?' b':'')+'">-</td>':'<td class="r'+(bold?' b':'')+'" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#23272f')+';font-weight:700">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
-  let rows='',sBP=null,sFP=0,sBY=null,sFY=0;
-  codes.forEach(code=>{const bP=blMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),fY=factYTD(code);
-    if(bP!=null)sBP=(sBP||0)+bP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; sFY+=fY;
-    const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
-    rows+='<tr><td class="nm">'+esc(code)+'</td><td class="r">'+(bP!=null?f(bP):'-')+'</td><td class="r">'+f(fP)+'</td>'+dCell(dP)+'<td class="r">'+(bY!=null?f(bY):'-')+'</td><td class="r">'+f(fY)+'</td>'+dCell(dY)+'</tr>';});
-  const dSP=sBP!=null?sFP-sBP:null,dSY=sBY!=null?sFY-sBY:null;
-  const totRow=codes.length?'<tr class="tot"><td class="nm b">ИТОГО</td><td class="r b">'+(sBP!=null?f(sBP):'-')+'</td><td class="r b">'+f(sFP)+'</td>'+dCell(dSP,true)+'<td class="r b">'+(sBY!=null?f(sBY):'-')+'</td><td class="r b">'+f(sFY)+'</td>'+dCell(dSY,true)+'</tr>':'';
-  const tableBody=codes.length?(rows+totRow):'<tr><td colspan="7" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
-  // операции по подстатьям с превышением YTD (Δ YTD > 0), за диапазон январь-M
-  const overCodes=codes.filter(code=>{const bY=blYTD(code);return bY!=null&&(factYTD(code)-bY)>0;});
-  let opsBlock='';
-  if(overCodes.length){
-    let opsRows='';
-    overCodes.forEach(code=>{ let ops=[]; pairSet[code].forEach(d=>{const a=opsIdx[d+'||'+code];if(a)ops=ops.concat(a);});
-      ops=ops.filter(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return dt&&(dt.getMonth()+1)<=M;}).sort((x,y)=>{const a=parseDate(x[COL.DATE_OPIU]),b=parseDate(y[COL.DATE_OPIU]);return (a?a.getTime():0)-(b?b.getTime():0);});
-      opsRows+='<tr class="opsec"><td colspan="4">'+esc(code)+' · перерасход YTD +'+f(factYTD(code)-blYTD(code))+'</td></tr>';
-      opsRows+=ops.map(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return '<tr><td class="c">'+(dt?dt.toLocaleDateString('ru-RU'):'')+'</td><td>'+esc(r[COL.SECOND_SIDE])+'</td><td class="r">'+f(Math.abs(parseNum(r[COL.OUTCOME])||0))+'</td><td class="pp">'+esc(r[COL.PURPOSE])+'</td></tr>';}).join('');
-    });
-    opsBlock='<h2>Операции по подстатьям с превышением (YTD)</h2><table class="ops"><colgroup><col style="width:14%"><col style="width:30%"><col style="width:16%"><col style="width:40%"></colgroup><thead><tr><th>Дата ОПиУ</th><th>Контрагент</th><th class="r">Сумма</th><th>Назначение</th></tr></thead><tbody>'+opsRows+'</tbody></table>';
-  } else {
-    opsBlock='<p class="noover">Превышений по утверждённому плану нет.</p>';
+  // одна секция (один человек): подстатьи + суммы + список подстатей с перерасходом YTD. Жёсткий фильтр по владельцу сохранён - подчинённый не видит чужих подстатей.
+  const buildSection=(person,noOwn)=>{
+    const pairSet={}; // code → Set направлений (только совпавшие по владельцу)
+    blRecs.forEach(p=>{if(p.level!=='subarticle')return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
+    Object.keys(factIdx).forEach(key=>{const i=key.indexOf('||'),d=key.slice(0,i),code=key.slice(i+2);if(!ownMatchP(d,code,person,noOwn))return;(pairSet[code]=pairSet[code]||new Set()).add(d);});
+    const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
+    const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanMD(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
+    const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=factIdx[d+'||'+code];if(a)s+=a[m]||0;});return s;};
+    const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;}; // YTD - только замороженные месяцы ≤ M
+    const factYTD=code=>{let s=0;frozen.forEach(m=>{if(m>M)return;s+=factMonth(code,m);});return s;};
+    let rows='',sBP=null,sFP=0,sBY=null,sFY=0;
+    codes.forEach(code=>{const bP=blMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),fY=factYTD(code);
+      if(bP!=null)sBP=(sBP||0)+bP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; sFY+=fY;
+      const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
+      rows+='<tr><td class="nm">'+esc(code)+'</td><td class="r">'+(bP!=null?f(bP):'-')+'</td><td class="r">'+f(fP)+'</td>'+dCell(dP)+'<td class="r">'+(bY!=null?f(bY):'-')+'</td><td class="r">'+f(fY)+'</td>'+dCell(dY)+'</tr>';});
+    const overCodes=codes.filter(code=>{const bY=blYTD(code);return bY!=null&&(factYTD(code)-bY)>0;});
+    return {codes,rows,sBP,sFP,sBY,sFY,overCodes,pairSet,blYTD,factYTD};
+  };
+  const COLG='<colgroup><col style="width:22%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>';
+  const THEAD='<thead><tr><th>Подстатья</th><th class="r">Утв. мес.</th><th class="r">Факт мес.</th><th class="r">Δ мес.</th><th class="r">Утв. YTD</th><th class="r">Факт YTD</th><th class="r">Δ YTD</th></tr></thead>';
+  const secTable=(sec,totLabel)=>{const dSP=sec.sBP!=null?sec.sFP-sec.sBP:null,dSY=sec.sBY!=null?sec.sFY-sec.sBY:null;
+    const totRow=sec.codes.length?'<tr class="tot"><td class="nm b">'+esc(totLabel||'ИТОГО')+'</td><td class="r b">'+(sec.sBP!=null?f(sec.sBP):'-')+'</td><td class="r b">'+f(sec.sFP)+'</td>'+dCell(dSP,true)+'<td class="r b">'+(sec.sBY!=null?f(sec.sBY):'-')+'</td><td class="r b">'+f(sec.sFY)+'</td>'+dCell(dSY,true)+'</tr>':'';
+    const inner=sec.codes.length?(sec.rows+totRow):'<tr><td colspan="7" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
+    return '<table>'+COLG+THEAD+'<tbody>'+inner+'</tbody></table>';};
+  // состав выписки: свои + прямые подчинённые (если руководитель и галочка вкл). Один уровень, защита от цикла в _cfoSubsOf.
+  const subEl=document.getElementById('cfo-stmt-subs');const subsChecked=!!(subEl&&subEl.checked);
+  const subs=isNoOwn?[]:_cfoSubsOf(fio);const wantSubs=subsChecked&&subs.length>0;
+  let bodyHtml='';const opsList=[]; // {label, sec}
+  if(wantSubs){
+    const people=[{p:fio,label:'Свои подстатьи'}].concat(subs.map(s=>({p:s,label:s})));
+    let bBP=null,bFP=0,bBY=null,bFY=0;
+    people.forEach(pe=>{const sec=buildSection(pe.p,false);
+      bodyHtml+='<h2>'+esc(pe.label)+'</h2>'+secTable(sec,'Итого · '+pe.label);
+      if(sec.sBP!=null)bBP=(bBP||0)+sec.sBP; bFP+=sec.sFP; if(sec.sBY!=null)bBY=(bBY||0)+sec.sBY; bFY+=sec.sFY;
+      opsList.push({label:pe.label,sec});});
+    const dBP=bBP!=null?bFP-bBP:null,dBY=bBY!=null?bFY-bBY:null;
+    bodyHtml+='<h2>Итого по блоку · '+esc(fioLabel)+'</h2><table>'+COLG+THEAD+'<tbody><tr class="tot"><td class="nm b">ИТОГО ПО БЛОКУ</td><td class="r b">'+(bBP!=null?f(bBP):'-')+'</td><td class="r b">'+f(bFP)+'</td>'+dCell(dBP,true)+'<td class="r b">'+(bBY!=null?f(bBY):'-')+'</td><td class="r b">'+f(bFY)+'</td>'+dCell(dBY,true)+'</tr></tbody></table>';
+  }else{
+    const sec=buildSection(fio,isNoOwn);
+    bodyHtml=secTable(sec,'ИТОГО');
+    opsList.push({label:null,sec});
   }
+  // операции по подстатьям с превышением YTD (Δ YTD > 0), январь-M; в блок-режиме - по всем людям с меткой
+  let opsRows='';
+  opsList.forEach(item=>{const sec=item.sec;
+    sec.overCodes.forEach(code=>{ let ops=[]; sec.pairSet[code].forEach(d=>{const a=opsIdx[d+'||'+code];if(a)ops=ops.concat(a);});
+      ops=ops.filter(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return dt&&(dt.getMonth()+1)<=M;}).sort((x,y)=>{const a=parseDate(x[COL.DATE_OPIU]),b=parseDate(y[COL.DATE_OPIU]);return (a?a.getTime():0)-(b?b.getTime():0);});
+      opsRows+='<tr class="opsec"><td colspan="4">'+(item.label?esc(item.label)+' · ':'')+esc(code)+' · перерасход YTD +'+f(sec.factYTD(code)-sec.blYTD(code))+'</td></tr>';
+      opsRows+=ops.map(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return '<tr><td class="c">'+(dt?dt.toLocaleDateString('ru-RU'):'')+'</td><td>'+esc(r[COL.SECOND_SIDE])+'</td><td class="r">'+f(Math.abs(parseNum(r[COL.OUTCOME])||0))+'</td><td class="pp">'+esc(r[COL.PURPOSE])+'</td></tr>';}).join('');
+    });});
+  const opsBlock=opsRows?('<h2>Операции по подстатьям с превышением (YTD)</h2><table class="ops"><colgroup><col style="width:14%"><col style="width:30%"><col style="width:16%"><col style="width:40%"></colgroup><thead><tr><th>Дата ОПиУ</th><th>Контрагент</th><th class="r">Сумма</th><th>Назначение</th></tr></thead><tbody>'+opsRows+'</tbody></table>'):'<p class="noover">Превышений по утверждённому плану нет.</p>';
   const _cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
   const frozenListHtml=frozen.length?frozen.map(m=>{const mo=blMap[m],nm=_cap(MONF[m-1]);return (mo&&mo.hadFact)?('<span style="color:#b5651d;font-weight:600" title="Утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+f(mo.factAtApproval)+'">'+nm+' ⚠</span>'):nm;}).join(', '):'—';
   const blStamp=hasBl?('<span class="ok">Заморожено месяцев: '+frozen.length+'</span> · '+frozenListHtml):'<span class="no">Ни один месяц не утверждён</span>';
@@ -9112,12 +9228,11 @@ window.cfoStatementGen=function(){
     +'.warn{margin-top:8px;padding:7px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:6px;color:#b5651d;font-weight:600;font-size:11px}'
     +'.sign{margin-top:28px;font-size:11.5px;color:#333;line-height:2.4}'
     +'@media print{@page{size:A4 portrait;margin:12mm}body{padding:0 2mm}}';/* при печати body{padding:0} ставил правый край таблицы ровно на границу печатной области, и внешняя половина collapse-границы (центрирована на ребре) обрезалась браузером - правая замыкающая линия пропадала. Отступ 2мм по бокам держит левую/правую границы внутри печатной области (то же, что ручное расширение полей печати) */
+  const blockNote=wantSubs?(' &nbsp;·&nbsp; <b>Блок:</b> '+subs.length+' подч. ('+esc(subs.join(', '))+')'):'';
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+fileName+'</title><style>'+CSS+'</style></head><body>'
-    +'<div class="head"><div class="brand">Бюджет доходов и расходов (БДР)</div><h1>Выписка по бюджету · '+esc(fioLabel)+'</h1>'
-    +'<div class="meta"><b>Направление:</b> '+esc(dirLabel)+' &nbsp;·&nbsp; <b>Год:</b> '+year+' &nbsp;·&nbsp; <b>Период:</b> '+perLabel+'<br>'+blStamp+' &nbsp;·&nbsp; сформировано '+today+'</div>'+warnLine+'</div>'
-    +'<table><colgroup><col style="width:22%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>'
-    +'<thead><tr><th>Подстатья</th><th class="r">Утв. мес.</th><th class="r">Факт мес.</th><th class="r">Δ мес.</th><th class="r">Утв. YTD</th><th class="r">Факт YTD</th><th class="r">Δ YTD</th></tr></thead>'
-    +'<tbody>'+tableBody+'</tbody></table>'
+    +'<div class="head"><div class="brand">Бюджет доходов и расходов (БДР)</div><h1>Выписка по бюджету · '+esc(fioLabel)+(wantSubs?' (блок)':'')+'</h1>'
+    +'<div class="meta"><b>Направление:</b> '+esc(dirLabel)+' &nbsp;·&nbsp; <b>Год:</b> '+year+' &nbsp;·&nbsp; <b>Период:</b> '+perLabel+blockNote+'<br>'+blStamp+' &nbsp;·&nbsp; сформировано '+today+'</div>'+warnLine+'</div>'
+    +bodyHtml
     +opsBlock
     +'<div class="sign">Ответственный ____________________ / ____________<br>Дата ознакомления ____________</div>'
     +'</body></html>';
@@ -9278,7 +9393,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -9332,7 +9447,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
       });
     }else{
       if(gate)gate.style.display='flex';
