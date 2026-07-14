@@ -6009,13 +6009,12 @@ function renderPlanFact(f){
   const dataYears=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>b-a);
   const cy=new Date().getFullYear();
   const years=dataYears.includes(cy)?dataYears.slice():[cy,...dataYears].sort((a,b)=>b-a);
-  // дефолты: направление с данными (приоритет БФЛ); год - последний год С ДАННЫМИ (или текущий, если данных нет)
-  if(f.dir!=='__all__'&&(!f.dir||!dirs.includes(f.dir)))f.dir=dirs.find(d=>/^бфл/i.test(d))||dirs[0]||'';
+  // дефолт года - последний год С ДАННЫМИ (или текущий, если данных нет). Направление по умолчанию НЕ задаём: пусто = все (свод по компании)
   if(!f.year||!years.includes(f.year))f.year=dataYears.includes(cy)?cy:(dataYears[0]||cy);
-  const dir=f.dir,year=f.year,level='article',period=f.period||'year'; // режим зафиксирован на «Статья» (+ инлайн-разворот подстатей); селект «Уровень» убран из UI, ветка 'subarticle' оставлена в коде, но недостижима. Сохранённый f.level игнорируется
-  // ── мультивыбор направлений: f.dirs = массив; пусто → все. Миграция: если f.dirs не задан, берём старый f.dir ([dir] или все для __all__) ──
-  let selDirs=Array.isArray(f.dirs)?f.dirs.filter(d=>dirs.includes(d)):null;
-  if(selDirs===null){selDirs=(f.dir&&f.dir!=='__all__'&&dirs.includes(f.dir))?[f.dir]:[];f.dirs=selDirs.slice();}
+  const year=f.year,level='article',period=f.period||'year'; // режим зафиксирован на «Статья» (+ инлайн-разворот подстатей); селект «Уровень» убран из UI, ветка 'subarticle' оставлена в коде, но недостижима. Сохранённый f.level игнорируется
+  // ── мультивыбор направлений: f.dirs = массив; пусто → все (свод). Если f.dirs не задан - оставляем пустым (НЕ мигрируем из f.dir, чтобы при первом входе был свод, а не одиночное направление) ──
+  let selDirs=Array.isArray(f.dirs)?f.dirs.filter(d=>dirs.includes(d)):[];
+  f.dirs=selDirs.slice();
   const dirsToAgg=selDirs.length?selDirs:dirs; // выбранные направления; пусто → все (свод)
   const allSel=selDirs.length===0||selDirs.length>=dirs.length;
   const dirLabel=allSel?'Свод (все направления)':(selDirs.length<=3?selDirs.join(', '):selDirs.length+' направлений');
@@ -9465,6 +9464,12 @@ window.cfoStatementOpen=function(){
         Включить подчинённых (выписка по блоку: свои подстатьи + подстатьи подчинённых)
       </label>
     </div>
+    <div style="margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);cursor:pointer">
+        <input type="checkbox" id="cfo-stmt-detail" checked style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer">
+        Расшифровка по сотрудникам / объектам / контрагентам (ФОТ, аренда, консалтинг)
+      </label>
+    </div>
     <label style="display:block;font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">Период</label>
     <select id="cfo-stmt-period" onchange="cfoStmtPeriodChange()" style="width:100%;box-sizing:border-box;font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);margin-bottom:14px">
       <option value="all" selected>Все месяцы (матрица подстатья × 12)</option>
@@ -9531,12 +9536,66 @@ window.cfoStatementGen=function(){
   const blPlanMD=(d,code,m)=>{const recs=blRecs.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+blCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+blCvt(d,yr,0)/12;}});return tot;};
   // baseline-план ДОХОДОВ (level='income') - зеркало blPlanMD, тот же конвертер blCvt (доходный %-план = % от снимковой выручки)
   const blPlanIncMD=(d,code,m)=>{const recs=blRecs.filter(p=>p.dir===d&&p.level==='income'&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+blCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+blCvt(d,yr,0)/12;}});return tot;};
+  // ── ПРОГНОЗ (config/plans, _planRecords) - для НЕзамороженных месяцев в матрице «все месяцы» (зеркало blPlan*, но %-планы от прогнозной базы выручки) ──
+  const fcRecs=(_planRecords||[]).filter(p=>p&&p.year===year);
+  const fcRevBaseM=(d,m)=>{const r=fcRecs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;const ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,m):0;if(ip>0)return ip;return (ctx[d]?ctx[d].rev[m]:0)||0;};
+  const fcRevBaseY=d=>{const r=fcRecs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===0);if(r&&r.value>0)return r.value;let s=0;for(let m=1;m<=12;m++)s+=fcRevBaseM(d,m);return s;};
+  const fcNetM=(d,m)=>Math.max(0,(ctx[d]?ctx[d].rev[m]:0)-(ctx[d]?ctx[d].npExp[m]:0)); // pct_profit-база = факт (как в blNetM)
+  const fcNetY=d=>{let s=0;for(let m=1;m<=12;m++)s+=fcNetM(d,m);return s;};
+  const fcCvt=(d,r,m)=>r.mode==='pct'?r.value*(m?fcRevBaseM(d,m):fcRevBaseY(d)):r.mode==='pct_profit'?r.value*(m?fcNetM(d,m):fcNetY(d)):r.value;
+  const fcPlanF=lvl=>(d,code,m)=>{const recs=fcRecs.filter(p=>p.dir===d&&p.level===lvl&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+fcCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+fcCvt(d,yr,0)/12;}});return tot;};
+  const fcPlanMD=fcPlanF('subarticle'),fcPlanIncMD=fcPlanF('income');
   // факт + операции: dir||ARTICLE_NAME → [13] месяцев и список строк (вывод прибыли исключён, как в отчёте)
   const factIdx={},opsIdx={};
   (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=parseNum(r[COL.OUTCOME]); if(!(out<0))return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIdx[key]=factIdx[key]||new Array(13).fill(0))[m]+=Math.abs(out); (opsIdx[key]=opsIdx[key]||[]).push(r); });
   // факт ДОХОДОВ: dir||ARTICLE_NAME → [13] месяцев (поступления, тот же критерий что в ОПиУ/БДР; перемещения и начальный остаток исключены). Отдельный проход - расходный factIdx не трогаем
   const factIncIdx={};
   (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; if(!an)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
+  // ── Задача 5: 3-й уровень выписки - расшифровка sub-level РАСХОДНЫХ подстатей по стороне (ФОТ→сотрудник, аренда→объект, консалтинг→контрагент). Только визуальный разворот поверх посчитанных сумм - ИТОГО не меняет ──
+  const detEl=document.getElementById('cfo-stmt-detail');const wantDetail=!detEl||detEl.checked; // по умолчанию ВКЛ
+  const _c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
+  const isFotCode=code=>_c3(code)==='111',isRentCode=code=>_c3(code)==='223',isConsultCode=code=>/консалтинг/i.test(String(code));
+  const isSubLevel=code=>isFotCode(code)||isRentCode(code)||isConsultCode(code);
+  const sideIcon=code=>isRentCode(code)?'🏢':'👤';const UNALLOC='(не распределено)';
+  // факт по стороне: dir||ARTICLE_NAME → { side → [13] }; только списания sub-level подстатей (вывод прибыли исключён, как в основном проходе factIdx)
+  const sideFactIdx={};
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=parseNum(r[COL.OUTCOME]); if(!(out<0))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an||!isSubLevel(an))return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim(); const SK=(sideFactIdx[key]=sideFactIdx[key]||{}); (SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=Math.abs(out); });
+  // план по стороне (baseline/прогноз): записи уровня subarticle с данной стороной, тот же конвертер. Σ по всем сторонам = план кода (blPlanMD/fcPlanMD) → дочерние строки сходятся к строке-подстатье
+  const _planSideMD=(recsAll,cvt)=>(d,code,side,m)=>{const recs=recsAll.filter(p=>p.level==='subarticle'&&p.dir===d&&p.code===code&&String(p.side||'')===side);if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};
+  const blPlanSideMD=_planSideMD(blRecs,blCvt),fcPlanSideMD=_planSideMD(fcRecs,fcCvt);
+  // стороны по коду (по всем направлениям кода): факт ∪ baseline ∪ прогноз ∪ объекты аренды; hasUn - есть план/факт без стороны
+  const stmtSides=(dirsSet,code)=>{const named={};let hasUn=false;
+    dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});
+      blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});
+      fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});
+    if(isRentCode(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});
+    return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};};
+  const sideFactMonth=(dirsSet,code,side,m)=>{let s=0;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
+  const sideBlMonth=(dirsSet,code,side,m)=>{let s=null;dirsSet.forEach(d=>{const v=blPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
+  const sideFcMonth=(dirsSet,code,side,m)=>{let s=null;dirsSet.forEach(d=>{const v=fcPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
+  // строка стороны печатается ТОЛЬКО при реальном движении за год: Σ факта за 12 мес > 0 ИЛИ Σ плана (baseline+прогноз) за 12 мес > 0.
+  // Иначе объекты из справочника _rentObjects (и нулевые план-записи) засоряют таблицу. Общий фильтр для ФОТ/аренды/консалтинга.
+  const sideHasActivity=(dirsSet,code,side)=>{let fY=0,pY=0;for(let m=1;m<=12;m++){fY+=sideFactMonth(dirsSet,code,side,m);const b=sideBlMonth(dirsSet,code,side,m);if(b)pY+=b;const c=sideFcMonth(dirsSet,code,side,m);if(c)pY+=c;}return Math.abs(fY)>0.005||Math.abs(pY)>0.005;};
+  const sidesWithActivity=(dirsSet,code)=>{const S=stmtSides(dirsSet,code);const list=S.named.slice();if(S.hasUn)list.push('');return list.filter(side=>sideHasActivity(dirsSet,code,side));};
+  // дочерние строки, 7-колоночный режим (конкретный месяц). Приглушённые, факт без знак-цвета
+  const dcSub=dv=>dv==null?'<td class="r sub">-</td>':'<td class="r sub" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#6f7682')+'">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
+  const secSubRows=(dirsSet,code)=>{ if(!wantDetail||!isSubLevel(code))return '';
+    let out='';
+    sidesWithActivity(dirsSet,code).forEach(side=>{const bP=frozenSet.has(M)?sideBlMonth(dirsSet,code,side,M):null,fP=sideFactMonth(dirsSet,code,side,M);
+      let bY=null,fY=0;frozen.forEach(m=>{if(m>M)return;const v=sideBlMonth(dirsSet,code,side,m);if(v!=null)bY=(bY||0)+v;fY+=sideFactMonth(dirsSet,code,side,m);});
+      const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
+      out+='<tr class="secsub"><td class="nm sub">'+sideIcon(code)+' '+esc(side||UNALLOC)+'</td><td class="r sub">'+(bP!=null?f(bP):'-')+'</td><td class="r sub">'+f(fP)+'</td>'+dcSub(dP)+'<td class="r sub">'+(bY!=null?f(bY):'-')+'</td><td class="r sub">'+f(fY)+'</td>'+dcSub(dY)+'</tr>';});
+    return out;};
+  // дочерние строки, матрица (12 мес + ГОД). факт нейтрально + утв(замороженный)/прогноз(незамороженный) мелким
+  const mSubCell=(fv,pv,fr,fcv)=>{let sub='';if(fr&&pv!=null)sub='<span class="mp">'+f(pv)+'</span>';else if(!fr&&fcv!=null)sub='<span class="mpf">'+f(fcv)+'</span>';return '<td class="mx sub"><span class="mf">'+f(fv)+'</span>'+sub+'</td>';};
+  const mSubYear=(yf,ypf,yfc)=>'<td class="mx sub"><span class="mf">'+f(yf)+'</span>'+(ypf!=null?'<span class="mp">'+f(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+f(yfc)+'</span>':'')+'</td>';
+  const mSubRows=(sec,code)=>{ if(!wantDetail||sec.kind==='inc'||!isSubLevel(code))return '';
+    const dirsSet=sec.pairSet[code];let out='';
+    sidesWithActivity(dirsSet,code).forEach(side=>{let yf=0,ypf=null,yfc=null,cells='';
+      for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const fv=sideFactMonth(dirsSet,code,side,m);const pv=fr?sideBlMonth(dirsSet,code,side,m):null;const fcv=sideFcMonth(dirsSet,code,side,m);
+        yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;if(fcv!=null)yfc=(yfc||0)+fcv;cells+=mSubCell(fv,pv,fr,fr?null:fcv);}
+      out+='<tr class="mxsub"><td class="nm sub">'+sideIcon(code)+' '+esc(side||UNALLOC)+'</td>'+cells+mSubYear(yf,ypf,yfc)+'</tr>';});
+    return out;};
   // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = человек секции (пусто для «не назначен»)
   const ownerOf=(d,code)=>String((_planOwners||{})[d+'||'+code]||'').trim();
   const ownMatchP=(d,code,person,noOwn)=>{const o=ownerOf(d,code);return noOwn?!o:(o===person);};
@@ -9547,12 +9606,14 @@ window.cfoStatementGen=function(){
   // одна секция (один человек): подстатьи + суммы + список подстатей с перерасходом YTD. Жёсткий фильтр по владельцу сохранён - подчинённый не видит чужих подстатей.
   // kind: 'exp' (расходы, factIdx/level=subarticle - по умолчанию) | 'inc' (доходы, factIncIdx/level=income). При 'exp' поведение байт-в-байт прежнее.
   const buildSection=(person,noOwn,kind)=>{
-    const isInc=kind==='inc';const FI=isInc?factIncIdx:factIdx;const lvl=isInc?'income':'subarticle';const blPlanF=isInc?blPlanIncMD:blPlanMD;const dc=isInc?dCellInc:dCell;
+    const isInc=kind==='inc';const FI=isInc?factIncIdx:factIdx;const lvl=isInc?'income':'subarticle';const blPlanF=isInc?blPlanIncMD:blPlanMD;const fcPlanFF=isInc?fcPlanIncMD:fcPlanMD;const dc=isInc?dCellInc:dCell;
     const pairSet={}; // code → Set направлений (только совпавшие по владельцу)
     blRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
+    fcRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);}); // прогнозные-только подстатьи тоже показываем
     Object.keys(FI).forEach(key=>{const i=key.indexOf('||'),d=key.slice(0,i),code=key.slice(i+2);if(!ownMatchP(d,code,person,noOwn))return;(pairSet[code]=pairSet[code]||new Set()).add(d);});
     const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
     const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
+    const fcMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=fcPlanFF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
     const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=FI[d+'||'+code];if(a)s+=a[m]||0;});return s;};
     const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;}; // YTD - только замороженные месяцы ≤ M
     const factYTD=code=>{let s=0;frozen.forEach(m=>{if(m>M)return;s+=factMonth(code,m);});return s;};
@@ -9560,9 +9621,9 @@ window.cfoStatementGen=function(){
     codes.forEach(code=>{const bP=blMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),fY=factYTD(code);
       if(bP!=null)sBP=(sBP||0)+bP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; sFY+=fY;
       const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
-      rows+='<tr><td class="nm">'+esc(code)+'</td><td class="r">'+(bP!=null?f(bP):'-')+'</td><td class="r">'+f(fP)+'</td>'+dc(dP)+'<td class="r">'+(bY!=null?f(bY):'-')+'</td><td class="r">'+f(fY)+'</td>'+dc(dY)+'</tr>';});
+      rows+='<tr><td class="nm">'+esc(code)+'</td><td class="r">'+(bP!=null?f(bP):'-')+'</td><td class="r">'+f(fP)+'</td>'+dc(dP)+'<td class="r">'+(bY!=null?f(bY):'-')+'</td><td class="r">'+f(fY)+'</td>'+dc(dY)+'</tr>'+(isInc?'':secSubRows(pairSet[code],code));});
     const overCodes=codes.filter(code=>{const bY=blYTD(code);return bY!=null&&(factYTD(code)-bY)>0;});
-    return {kind:isInc?'inc':'exp',codes,rows,sBP,sFP,sBY,sFY,overCodes,pairSet,blYTD,factYTD,blMonth,factMonth};
+    return {kind:isInc?'inc':'exp',codes,rows,sBP,sFP,sBY,sFY,overCodes,pairSet,blYTD,factYTD,blMonth,factMonth,fcMonth};
   };
   // ── режим «конкретный месяц» (как раньше): 7 колонок ──
   const COLG='<colgroup><col style="width:22%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>';
@@ -9578,35 +9639,43 @@ window.cfoStatementGen=function(){
   const MONS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   const mColg=(()=>{let cg='<colgroup><col style="width:13%">';for(let i=0;i<12;i++)cg+='<col style="width:6.2%">';return cg+'<col style="width:6.6%"></colgroup>';})();
   const mHead=(()=>{let th='<thead><tr><th>Подстатья</th>';for(let m=1;m<=12;m++){const fr=frozenSet.has(m),mo=fr?blMap[m]:null,hf=mo&&mo.hadFact,rt=mo&&mo.retro;const mark=fr?(' 🔒'+(rt?'📋':hf?'⚠':'')):'';th+='<th class="r"'+(fr?' title="Месяц утверждён (заморожен)'+(rt?': ретроспектива - план приравнен к факту, месяц не планировался':hf?' при известном факте':'')+'"':'')+'>'+MONS[m-1]+mark+'</th>';}return th+'<th class="r">ГОД</th></tr></thead>';})();
-  // ячейка: факт крупно (цвет от утв. только для замороженного месяца) + утв. мелким под ним (только замороженный). inc=true → обратный цвет (перевыполнение зелёное)
-  const mCellK=(fv,pv,fr,inc)=>{const over=fv>pv;const good=inc?over:!over;const col=(fr&&pv!=null&&Math.abs(fv-pv)>0.005)?(good?'#1e8a54':'#c0392b'):'#23272f';return '<td class="mx"><span class="mf" style="color:'+col+'">'+f(fv)+'</span>'+((fr&&pv!=null)?'<span class="mp">'+f(pv)+'</span>':'')+'</td>';};
+  // ячейка: факт крупно (цвет от утв. только для замороженного месяца) + под ним: утв. (замороженный месяц, серым) ИЛИ прогноз (незамороженный, курсивом приглушённо). inc=true → обратный цвет (перевыполнение зелёное)
+  const mCellK=(fv,pv,fr,inc,fcv)=>{const over=fv>pv;const good=inc?over:!over;const col=(fr&&pv!=null&&Math.abs(fv-pv)>0.005)?(good?'#1e8a54':'#c0392b'):'#23272f';
+    let sub='';if(fr&&pv!=null)sub='<span class="mp">'+f(pv)+'</span>';else if(!fr&&fcv!=null)sub='<span class="mpf">'+f(fcv)+'</span>';
+    return '<td class="mx"><span class="mf" style="color:'+col+'">'+f(fv)+'</span>'+sub+'</td>';};
   const mCell=(fv,pv,fr)=>mCellK(fv,pv,fr,false); // расходная (обратная совместимость)
-  const mYearCell=(yf,ypf)=>'<td class="mx"><span class="mf">'+f(yf)+'</span>'+(ypf!=null?'<span class="mp">'+f(ypf)+'</span>':'')+'</td>'; // ГОД: факт нейтрально, под ним утв. по замороженным
-  // строка ИТОГО матрицы (для секции, блока, ЧП); inc → обратный цвет
-  const mTotRow=(label,totF,totP,yf,ypf,inc)=>{let cells='';for(let m=1;m<=12;m++)cells+=mCellK(totF[m],frozenSet.has(m)?totP[m]:null,frozenSet.has(m),!!inc);return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+mYearCell(yf,ypf)+'</tr>';};
+  const mYearCell=(yf,ypf,yfc)=>'<td class="mx"><span class="mf">'+f(yf)+'</span>'+(ypf!=null?'<span class="mp">'+f(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+f(yfc)+'</span>':'')+'</td>'; // ГОД: факт нейтрально · утв Σ (замороженные, серым) · прог Σ (прогноз 12 мес, курсивом)
+  // строка ИТОГО матрицы (для секции, блока, ЧП); inc → обратный цвет. totFC - помесячный прогноз, yfc - прогноз года
+  const mTotRow=(label,totF,totP,yf,ypf,inc,totFC,yfc)=>{let cells='';for(let m=1;m<=12;m++){const fr=frozenSet.has(m);cells+=mCellK(totF[m],fr?totP[m]:null,fr,!!inc,fr?null:(totFC?totFC[m]:null));}return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>';};
   const mTotTable=rowsHtml=>'<table class="mtx">'+mColg+mHead+'<tbody>'+rowsHtml+'</tbody></table>'; // отдельная матрица только с итоговыми строками (блок/ЧП)
   // матрица одной секции; возвращает html + помесячные итоги (для агрегирования блока). sec.kind → цвет ячеек
   const matrixTable=(sec,totLabel)=>{
     const inc=sec.kind==='inc';
-    const totF=new Array(13).fill(0),totP=new Array(13).fill(null);let yfT=0,ypfT=null,rows='';
-    sec.codes.forEach(code=>{let yf=0,ypf=null,cells='';
-      for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const fv=sec.factMonth(code,m);const pv=fr?sec.blMonth(code,m):null;
-        yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;totF[m]+=fv;if(pv!=null)totP[m]=(totP[m]||0)+pv;cells+=mCellK(fv,pv,fr,inc);}
-      yfT+=yf;if(ypf!=null)ypfT=(ypfT||0)+ypf;
-      rows+='<tr><td class="nm">'+esc(code)+'</td>'+cells+mYearCell(yf,ypf)+'</tr>';});
-    const inner=sec.codes.length?(rows+mTotRow(totLabel||'ИТОГО',totF,totP,yfT,ypfT,inc)):'<tr><td colspan="14" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
-    return {html:'<table class="mtx">'+mColg+mHead+'<tbody>'+inner+'</tbody></table>',totF,totP,yf:yfT,ypf:ypfT};
+    const totF=new Array(13).fill(0),totP=new Array(13).fill(null),totFC=new Array(13).fill(null);let yfT=0,ypfT=null,yfcT=null,rows='';
+    sec.codes.forEach(code=>{let yf=0,ypf=null,yfc=null,cells='';
+      for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const fv=sec.factMonth(code,m);const pv=fr?sec.blMonth(code,m):null;const fcv=sec.fcMonth(code,m); // прогноз считаем для всех 12 мес (год = прогноз 12 мес); в ячейке показываем только для незамороженных
+        yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;if(fcv!=null)yfc=(yfc||0)+fcv;
+        totF[m]+=fv;if(pv!=null)totP[m]=(totP[m]||0)+pv;if(fcv!=null)totFC[m]=(totFC[m]||0)+fcv;
+        cells+=mCellK(fv,pv,fr,inc,fr?null:fcv);}
+      yfT+=yf;if(ypf!=null)ypfT=(ypfT||0)+ypf;if(yfc!=null)yfcT=(yfcT||0)+yfc;
+      rows+='<tr><td class="nm">'+esc(code)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>'+mSubRows(sec,code);});
+    const inner=sec.codes.length?(rows+mTotRow(totLabel||'ИТОГО',totF,totP,yfT,ypfT,inc,totFC,yfcT)):'<tr><td colspan="14" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
+    return {html:'<table class="mtx">'+mColg+mHead+'<tbody>'+inner+'</tbody></table>',totF,totP,totFC,yf:yfT,ypf:ypfT,yfc:yfcT};
   };
   // строка ЧП/net в матрице из двух секций (доходы − расходы), по месяцам + ГОД. inc-семантика цвета (выше плана = зелёный)
-  const mNetRow=(label,incTotF,incTotP,incYf,incYpf,expTotF,expTotP,expYf,expYpf)=>{
-    // ЧП: ЗНАЧЕНИЕ красим по ЗНАКУ (прибыль зелёная / убыток красный), НЕ по отклонению от плана
+  const mNetRow=(label,incTotF,incTotP,incYf,incYpf,expTotF,expTotP,expYf,expYpf,incTotFC,expTotFC,incYfc,expYfc)=>{
+    // ЧП: ЗНАЧЕНИЕ красим по ЗНАКУ (прибыль зелёная / убыток красный), НЕ по отклонению от плана. Под ним: утв (замороженный) ИЛИ прогноз (незамороженный)
     let cells='';
     for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const nf=(incTotF[m]||0)-(expTotF[m]||0);const ip=incTotP[m],ep=expTotP[m];const np=(fr&&(ip!=null||ep!=null))?((ip||0)-(ep||0)):null;
+      const ifc=incTotFC&&incTotFC[m],efc=expTotFC&&expTotFC[m];const nfc=(!fr&&(ifc!=null||efc!=null))?((ifc||0)-(efc||0)):null;
       const col=nf>=-0.0001?'#1e8a54':'#c0392b';
-      cells+='<td class="mx"><span class="mf" style="color:'+col+'">'+f(nf)+'</span>'+(np!=null?'<span class="mp">'+f(np)+'</span>':'')+'</td>';}
+      let sub='';if(np!=null)sub='<span class="mp">'+f(np)+'</span>';else if(nfc!=null)sub='<span class="mpf">'+f(nfc)+'</span>';
+      cells+='<td class="mx"><span class="mf" style="color:'+col+'">'+f(nf)+'</span>'+sub+'</td>';}
     const nYf=(incYf||0)-(expYf||0),nYpf=(incYpf!=null||expYpf!=null)?((incYpf||0)-(expYpf||0)):null;
+    const nYfc=(incYfc!=null||expYfc!=null)?((incYfc||0)-(expYfc||0)):null;
     const ycol=nYf>=-0.0001?'#1e8a54':'#c0392b';
-    return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+'<td class="mx"><span class="mf" style="color:'+ycol+'">'+f(nYf)+'</span>'+(nYpf!=null?'<span class="mp">'+f(nYpf)+'</span>':'')+'</td></tr>';
+    let ysub=(nYpf!=null?'<span class="mp">'+f(nYpf)+'</span>':'')+(nYfc!=null?'<span class="mpf">'+f(nYfc)+'</span>':'');
+    return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+'<td class="mx"><span class="mf" style="color:'+ycol+'">'+f(nYf)+'</span>'+ysub+'</td></tr>';
   };
   // состав выписки: свои + прямые подчинённые (если руководитель и галочка вкл). Один уровень, защита от цикла в _cfoSubsOf.
   const subEl=document.getElementById('cfo-stmt-subs');const subsChecked=!!(subEl&&subEl.checked);
@@ -9619,7 +9688,7 @@ window.cfoStatementGen=function(){
     let html='',agg;
     if(allMonths){
       const im=matrixTable(incSec,'ИТОГО ДОХОДЫ'+sfx),em=matrixTable(expSec,'ИТОГО РАСХОДЫ'+sfx);
-      const netRow=mNetRow('ЧИСТАЯ ПРИБЫЛЬ'+sfx,im.totF,im.totP,im.yf,im.ypf,em.totF,em.totP,em.yf,em.ypf);
+      const netRow=mNetRow('ЧИСТАЯ ПРИБЫЛЬ'+sfx,im.totF,im.totP,im.yf,im.ypf,em.totF,em.totP,em.yf,em.ypf,im.totFC,em.totFC,im.yfc,em.yfc);
       html='<h2>'+pfx+'Доходы</h2>'+(incSec.codes.length?im.html:noIncNote)+'<h2>'+pfx+'Расходы</h2>'+em.html+'<h2>'+pfx+'Чистая прибыль</h2>'+mTotTable(netRow);
       agg={inc:im,exp:em};
     }else{
@@ -9636,13 +9705,13 @@ window.cfoStatementGen=function(){
     const people=[{p:fio,label:'Свои подстатьи'}].concat(subs.map(s=>({p:s,label:s})));
     if(allMonths){
       // блок-режим, матрица: помесячные итоги доходов/расходов блока агрегируем из посекционных totF/totP
-      const bIF=new Array(13).fill(0),bIP=new Array(13).fill(null);let bIYf=0,bIYpf=null;
-      const bEF=new Array(13).fill(0),bEP=new Array(13).fill(null);let bEYf=0,bEYpf=null;
+      const bIF=new Array(13).fill(0),bIP=new Array(13).fill(null),bIFC=new Array(13).fill(null);let bIYf=0,bIYpf=null,bIYfc=null;
+      const bEF=new Array(13).fill(0),bEP=new Array(13).fill(null),bEFC=new Array(13).fill(null);let bEYf=0,bEYpf=null,bEYfc=null;
       people.forEach(pe=>{const r=renderPerson(pe.p,false,pe.label);bodyHtml+=r.html;const im=r.agg.inc,em=r.agg.exp;
-        for(let m=1;m<=12;m++){bIF[m]+=im.totF[m]||0;if(im.totP[m]!=null)bIP[m]=(bIP[m]||0)+im.totP[m];bEF[m]+=em.totF[m]||0;if(em.totP[m]!=null)bEP[m]=(bEP[m]||0)+em.totP[m];}
-        bIYf+=im.yf||0;if(im.ypf!=null)bIYpf=(bIYpf||0)+im.ypf;bEYf+=em.yf||0;if(em.ypf!=null)bEYpf=(bEYpf||0)+em.ypf;
+        for(let m=1;m<=12;m++){bIF[m]+=im.totF[m]||0;if(im.totP[m]!=null)bIP[m]=(bIP[m]||0)+im.totP[m];if(im.totFC[m]!=null)bIFC[m]=(bIFC[m]||0)+im.totFC[m];bEF[m]+=em.totF[m]||0;if(em.totP[m]!=null)bEP[m]=(bEP[m]||0)+em.totP[m];if(em.totFC[m]!=null)bEFC[m]=(bEFC[m]||0)+em.totFC[m];}
+        bIYf+=im.yf||0;if(im.ypf!=null)bIYpf=(bIYpf||0)+im.ypf;if(im.yfc!=null)bIYfc=(bIYfc||0)+im.yfc;bEYf+=em.yf||0;if(em.ypf!=null)bEYpf=(bEYpf||0)+em.ypf;if(em.yfc!=null)bEYfc=(bEYfc||0)+em.yfc;
         opsList.push({label:pe.label,sec:r.expSec});});
-      const blkRows=mTotRow('ИТОГО ДОХОДЫ ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,true)+mTotRow('ИТОГО РАСХОДЫ ПО БЛОКУ',bEF,bEP,bEYf,bEYpf,false)+mNetRow('ЧИСТАЯ ПРИБЫЛЬ ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,bEF,bEP,bEYf,bEYpf);
+      const blkRows=mTotRow('ИТОГО ДОХОДЫ ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,true,bIFC,bIYfc)+mTotRow('ИТОГО РАСХОДЫ ПО БЛОКУ',bEF,bEP,bEYf,bEYpf,false,bEFC,bEYfc)+mNetRow('ЧИСТАЯ ПРИБЫЛЬ ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,bEF,bEP,bEYf,bEYpf,bIFC,bEFC,bIYfc,bEYfc);
       bodyHtml+='<h2>Итого по блоку · '+esc(fioLabel)+'</h2>'+mTotTable(blkRows);
     }else{
       let biBP=null,biFP=0,biBY=null,biFY=0,beBP=null,beFP=0,beBY=null,beFY=0;
@@ -9672,7 +9741,8 @@ window.cfoStatementGen=function(){
   const frozenListHtml=frozen.length?frozen.map(m=>{const mo=blMap[m],nm=_cap(MONF[m-1]);return (mo&&mo.retro)?('<span style="color:#6f7682;font-weight:600" title="Ретроспектива: план приравнен к факту, месяц не планировался">'+nm+' 📋</span>'):(mo&&mo.hadFact)?('<span style="color:#b5651d;font-weight:600" title="Утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+f(mo.factAtApproval)+'">'+nm+' ⚠</span>'):nm;}).join(', '):'—';
   const _retroN=frozen.filter(m=>blMap[m]&&blMap[m].retro).length;
   const blStamp=hasBl?('<span class="ok">Заморожено месяцев: '+frozen.length+'</span>'+(_retroN?(' <span style="color:#6f7682">· из них ретро: '+_retroN+'</span>'):'')+' · '+frozenListHtml):'<span class="no">Ни один месяц не утверждён</span>';
-  const perLabel=allMonths?('все месяцы '+year+' (матрица) · факт крупно, утв. мелким - по замороженным месяцам'):('за '+MONF[M-1]+' '+year+' · YTD - по замороженным месяцам ≤ '+MONF[M-1]);
+  const perLabel=allMonths?('все месяцы '+year+' (матрица) · факт крупно, план мелким (утв./прогноз)'):('за '+MONF[M-1]+' '+year+' · YTD - по замороженным месяцам ≤ '+MONF[M-1]);
+  const matrixLegend=allMonths?('<div class="mxleg">В ячейке: <b>крупное число</b> - факт · под ним <span class="lgp">серым</span> - утверждено (замороженный месяц 🔒), <span class="lgf">курсивом</span> - прогноз (незамороженный месяц). Столбец <b>ГОД</b>: факт · <span class="lgp">утв Σ</span> (сумма замороженных) · <span class="lgf">прог Σ</span> (прогноз на 12 месяцев). Цвет факта ЧП - по знаку (прибыль зелёная, убыток красный).'+(wantDetail?' Подстатьи ФОТ (👤), аренды (🏢) и консалтинга развёрнуты по сотрудникам/объектам/контрагентам - серые строки под подстатьёй.':'')+'</div>'):'';
   // выбран текущий незакрытый месяц → колонки «за месяц»/Δ предварительные (полный план против неполного факта). Δ YTD не помечаем. В матрице предупреждения нет - показаны все 12 месяцев как есть
   const _now=new Date(),isCurUnclosed=(!allMonths&&year===_now.getFullYear()&&M===_now.getMonth()+1);
   const _monCap=MONF[M-1].charAt(0).toUpperCase()+MONF[M-1].slice(1);
@@ -9702,12 +9772,18 @@ window.cfoStatementGen=function(){
     +'table.mtx td.mx{padding:3px 4px;font-variant-numeric:tabular-nums}'
     +'table.mtx .mf{display:block;font-size:9px;line-height:1.15;white-space:nowrap}'
     +'table.mtx .mp{display:block;font-size:7.5px;line-height:1.1;color:#8b919d;white-space:nowrap}'
+    +'table.mtx .mpf{display:block;font-size:7.5px;line-height:1.1;color:#9aa1ad;font-style:italic;white-space:nowrap}' /* прогноз (config/plans) - незамороженные месяцы, курсивом приглушённо, отличается от утв (.mp) */
+    +'.mxleg{margin:10px 0 2px;padding:8px 11px;background:#f5f6f8;border:1px solid #dfe3ea;border-radius:6px;color:#4a505c;font-size:10px;line-height:1.55}.mxleg b{color:#2b3145}.mxleg .lgp{color:#8b919d}.mxleg .lgf{color:#9aa1ad;font-style:italic}'
     +'table.mtx tr.tot .mf{font-weight:700}'
+    /* дочерние строки-расшифровки (3-й уровень: сотрудник/объект/контрагент) - приглушённые, факт без знак-цвета */
+    +'tr.secsub td.sub{color:#6f7682;font-weight:400;background:#fff}tr.secsub td.nm.sub{padding-left:24px;white-space:normal;font-weight:400}'
+    +'table.mtx tr.mxsub td{background:#fff}table.mtx tr.mxsub .mf{color:#6f7682;font-size:8px;font-weight:400}table.mtx tr.mxsub td.nm.sub{padding-left:20px;font-weight:400;color:#6f7682;font-size:8.5px;white-space:normal}'
     +'@media print{@page{size:A4 '+(allMonths?'landscape':'portrait')+';margin:'+(allMonths?'8mm':'12mm')+'}body{padding:0 2mm}}';/* матрица × 12 - альбомная A4; иначе портрет. При печати body{padding:0} ставил правый край таблицы ровно на границу печатной области, и внешняя половина collapse-границы (центрирована на ребре) обрезалась браузером - правая замыкающая линия пропадала. Отступ 2мм по бокам держит левую/правую границы внутри печатной области (то же, что ручное расширение полей печати) */
   const blockNote=wantSubs?(' &nbsp;·&nbsp; <b>Блок:</b> '+subs.length+' подч. ('+esc(subs.join(', '))+')'):'';
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+fileName+'</title><style>'+CSS+'</style></head><body>'
     +'<div class="head"><div class="brand">Бюджет доходов и расходов (БДР)</div><h1>Выписка по бюджету · '+esc(fioLabel)+(wantSubs?' (блок)':'')+'</h1>'
     +'<div class="meta"><b>Направление:</b> '+esc(dirLabel)+' &nbsp;·&nbsp; <b>Год:</b> '+year+' &nbsp;·&nbsp; <b>Период:</b> '+perLabel+blockNote+'<br>'+blStamp+' &nbsp;·&nbsp; сформировано '+today+'</div>'+warnLine+'</div>'
+    +matrixLegend
     +bodyHtml
     +opsBlock
     +'<div class="sign">Ответственный ____________________ / ____________<br>Дата ознакомления ____________</div>'
