@@ -649,6 +649,11 @@ const FOT_PREFIXES=['111_','226_','127_'];
 const REVENUE_PREFIX='120_';
 // «120_Ввод начального остатка» - это входящий остаток, НЕ выручка. Исключается ИЗ ВСЕХ расчётов выручки (ОПиУ, ПФХД, ФОТ, Структура расходов, Юнит-экономика) для единства. Прочие 120_ (вкл. реализацию имущества) - выручка.
 const isOpeningBalance=name=>{const x=String(name||'').toLowerCase();return x.includes('начальн')&&x.includes('остат');};
+// Категории аналитики ОПиУ (ТОЧНОЕ написание). ОПиУ включает списание в расходы только при точном совпадении аналитики
+// с одной из них; БДР берёт все списания кроме вывода 127 → списание с аналитикой вне списка (опечатка/регистр/пусто)
+// молча разводит «ИТОГО РАСХОДЫ» БДР и «РАСХОДЫ» ОПиУ. Сторожа брака: правило «ancat» в Аномалиях + «⚠ Аналитика вне ОПиУ» в БДР.
+// ЕДИНЫЙ источник списка - не дублировать в рендерах, иначе сторож разойдётся с расчётом.
+const OPIU_CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки','Вывод чистой прибыли'];
 let RAW=[];
 let activeTab='bank';
 
@@ -3357,7 +3362,7 @@ function renderOPIU(f){
   };
 
   // --- data aggregation ---
-  const CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки','Вывод чистой прибыли'];
+  const CATS=OPIU_CATS; // единый глобальный список (см. определение OPIU_CATS) - на нём же стоит сторож сверки БДР==ОПиУ
   const rev={perInc:{},arts:{}};
   const exp={};CATS.forEach(c=>exp[c]={perOut:{},arts:{}});
   const periodsSet=new Set();
@@ -5912,6 +5917,51 @@ window.pfNoPlanShowTxn=function(kind,idx){
   if(window.opiuShowTxnModal)opiuShowTxnModal('__pfnoplan');
 };
 // ── ⚠ Факт без плана: модал со списком подстатей ──
+// ── ⚠ Аналитика вне ОПиУ (сторож сверки БДР==ОПиУ): списания, которые БДР посчитал, а ОПиУ отбросит из-за аналитики
+// вне точного списка OPIU_CATS (опечатка/регистр/пустое поле). Расчёты НЕ трогает - только показывает брак данных,
+// из-за которого «ИТОГО РАСХОДЫ факт» БДР > «РАСХОДЫ» ОПиУ ровно на эту сумму. Чинить в источнике (колонка «Аналитика»). ──
+window.pfAnBadOpen=function(){
+  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  const AB=window._pfAnBad; if(!AB)return;
+  if(document.getElementById('pfAnBadOverlay'))return;
+  const rows=[...(AB.rows||[])].sort((a,b)=>{const da=parseDate(a[COL.DATE_OPIU]),db=parseDate(b[COL.DATE_OPIU]);return (da?da.getTime():0)-(db?db.getTime():0);});
+  window._pfAnBadRows=rows; // для onclick по индексу (карточка операции)
+  const LIM=400,shown=rows.slice(0,LIM); // защита от гигантского модала при массовом браке
+  const plur=(n,a,b,c)=>{const n10=n%10,n100=n%100;return(n10===1&&n100!==11)?a:(n10>=2&&n10<=4&&(n100<12||n100>14))?b:c;};
+  const th='padding:7px 10px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:2px solid var(--border);color:var(--text3);text-transform:uppercase;white-space:nowrap;text-align:left;position:sticky;top:0';
+  const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
+  const body=shown.map((r,i)=>{const d=parseDate(r[COL.DATE_OPIU]);const anv=String(r[COL.ANALYTICS]||'').trim();
+    return `<tr onclick="ddsShowRecordCard(window._pfAnBadRows[${i}])" style="cursor:pointer" title="Клик - карточка операции">
+    <td style="${td};white-space:nowrap;font-family:var(--mono)">${d?d.toLocaleDateString('ru-RU'):''}</td>
+    <td style="${td};color:var(--text2)">${_htmlEsc(r[COL.ACTIVITY_DIR])}</td>
+    <td style="${td}">${_htmlEsc(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE])}</td>
+    <td style="${td};font-weight:600;color:var(--outcome)">${anv?_htmlEsc(anv):'<span style="color:var(--text3);font-weight:400">(пусто)</span>'}</td>
+    <td style="${td};color:var(--text2)">${_htmlEsc(r[COL.SECOND_SIDE])}</td>
+    <td style="${td};text-align:right;font-family:var(--mono);color:var(--outcome);font-weight:600">${fmt(parseNum(r[COL.OUTCOME]))}</td></tr>`;}).join('');
+  const tableHtml=`<div style="overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:58vh">
+    <table style="width:100%;border-collapse:collapse;min-width:760px">
+      <thead><tr><th style="${th}">Дата ОПиУ</th><th style="${th}">Направление</th><th style="${th}">Подстатья</th><th style="${th}">Аналитика (как есть)</th><th style="${th}">Контрагент</th><th style="${th};text-align:right">Сумма</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>`;
+  const okHtml='<div style="padding:16px 12px;text-align:center;color:var(--income);font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px">✓ Вся аналитика распознана - БДР и ОПиУ считают расходы по одинаковой базе</div>';
+  const ov=document.createElement('div');ov.id='pfAnBadOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:8990;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto'; // 8990 < 9000 (.txn-card-overlay): карточка операции по клику обязана открыться ПОВЕРХ этого модала
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:920px;max-width:96vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:4px">
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:700;color:var(--text)">⚠ Аналитика вне ОПиУ · ${_htmlEsc(AB.dirLabel||'')} · ${AB.year||''}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Списания, у которых аналитика не совпадает точно ни с одной категорией ОПиУ (опечатка, регистр, лишний пробел, пустое поле). Они попадают в БДР, но НЕ попадают в ОПиУ - «ИТОГО РАСХОДЫ» двух отчётов расходятся ровно на эту сумму. Исправляется в источнике данных (колонка «Аналитика»).</div>
+      </div>
+      <button onclick="document.getElementById('pfAnBadOverlay').remove()" title="Закрыть" style="font-size:16px;line-height:1;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer">×</button>
+    </div>
+    ${AB.N?`<div style="font-size:12px;color:var(--text2);margin:10px 0 8px;padding:8px 12px;background:var(--surface2);border-radius:8px">Всего <b>${AB.N}</b> ${plur(AB.N,'списание','списания','списаний')} на <b style="color:var(--outcome)">${fmt(-AB.sum)}</b>${rows.length>LIM?' · показаны первые '+LIM+' (по дате)':''}</div>`+tableHtml:okHtml}
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      <button onclick="document.getElementById('pfAnBadOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Закрыть</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
 window.pfNoPlanOpen=function(){
   if(!_isAdmin()){alert('Доступно только администратору.');return;}
   const NP=window._pfNoPlan; if(!NP)return;
@@ -6067,6 +6117,7 @@ function renderPlanFact(f){
     const _npHasPlan=an=>(_planRecords||[]).some(p=>p&&p.year===year&&dirsToAgg.includes(p.dir)&&p.code===an);
     const _npExpAcc={},_npIncAcc={}; // ARTICLE_NAME → {sum,cnt,rows,dirs:Set}
     const _npEmpty={sum:0,cnt:0,rows:[]}; // пустая подстатья расхода - дефект данных (для доходов пустую не отслеживаем)
+    const _anBad={sum:0,cnt:0,rows:[]}; // сторож сверки БДР==ОПиУ: списания с аналитикой вне OPIU_CATS - БДР их считает, ОПиУ отбрасывает → отчёты расходятся ровно на _anBad.sum
     const _npBump=(acc,an,amt,rd,r)=>{let a=acc[an];if(!a)a=acc[an]={sum:0,cnt:0,rows:[],dirs:new Set()};a.sum+=amt;a.cnt++;a.rows.push(r);a.dirs.add(rd);};
     RAW.forEach(r=>{
       const rd=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!dirsToAgg.includes(rd))return;
@@ -6081,6 +6132,7 @@ function renderPlanFact(f){
           const av=Math.abs(out);
           if(!an){_npEmpty.sum+=av;_npEmpty.cnt++;_npEmpty.rows.push(r);}
           else _npBump(_npExpAcc,an,av,rd,r);
+          if(!OPIU_CATS.includes(String(r[COL.ANALYTICS]||'').trim())){_anBad.sum+=av;_anBad.cnt++;_anBad.rows.push(r);} // строка дошла сюда = БДР её посчитал; аналитика вне точного списка = ОПиУ отбросит
         }
       }
       // доходы (начальный остаток - не доход)
@@ -6103,6 +6155,7 @@ function renderPlanFact(f){
       empty:_npEmpty,
       N:_npE.list.length+_npI.list.length+(_npEmpty.cnt>0?1:0),
       dirLabel:dirLabel,year};
+    window._pfAnBad={N:_anBad.cnt,sum:_anBad.sum,rows:_anBad.rows,dirLabel:dirLabel,year}; // для pfAnBadOpen (модал «Аналитика вне ОПиУ»)
   }
   // ── ПЛАН из _planRecords ──
   const plans=(_planRecords||[]).filter(p=>p.year===year&&dirsToAgg.includes(p.dir));
@@ -6292,10 +6345,11 @@ function renderPlanFact(f){
   const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются по замороженным месяцам ('+frozenLbl+')'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'+(_retroN?(' · из них ретро: '+_retroN):'')):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
   // действия БДР свёрнуты в одно меню «⚙ Действия» (админу); не-админ - одна кнопка просмотра планов
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
+  const _abA=window._pfAnBad||{N:0},_abHasA=_abA.N>0; // сторож сверки БДР==ОПиУ (аналитика вне категорий)
   const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
   const actionsWrap=isAdmin?`<div style="position:relative;display:inline-block">
-      <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${_npHasA?'<span title="Есть факт без плана" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
-      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}</div>
+      <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}</div>
     </div>`:`<button onclick="pfCfoOpen()" title="Свод исполнения по ответственным" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👥 ЦФО</button><button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👁 Планы (просмотр)</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
@@ -7923,6 +7977,8 @@ function renderAnomaly(f){
     {id:'move',label:'Перемещение → Техническая операция',where:isMove,checks:[{field:COL.FIN_OP,fieldName:'Фин. операция',expect:'Техническая операция'}]},
     {id:'a300',label:'Статья 300 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='300',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
     {id:'a112',label:'Статья 112 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='112',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
+    // Сторож сверки БДР==ОПиУ: ОПиУ включает списание только при ТОЧНОМ совпадении аналитики с OPIU_CATS, БДР - все списания кроме вывода 127. Аналитика вне списка (опечатка/регистр/пусто) молча разводит отчёты
+    {id:'ancat',label:'Списание → аналитика из категорий ОПиУ (точное написание)',where:r=>!isMove(r)&&S(r[COL.TYPE]).toLowerCase()==='списание'&&parseNum(r[COL.OUTCOME])<0,checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'одна из категорий ОПиУ (точное написание)',ok:a=>OPIU_CATS.includes(String(a||'').trim())}]},
     {id:'sro',label:'112_Платежи в СРО → направление АУ/САУ',where:r=>!isMove(r)&&norm(r[COL.ARTICLE_NAME]).includes('сро'),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}}]},
     {id:'outsign',label:'Списание → только со знаком «−» (кроме возвратов)',where:r=>!isMove(r)&&!isRefund(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
     {id:'div',label:'Статья 127 → Вывод чистой прибыли · 002_Финансовая деятельность · контрагент',where:is127,checks:[
