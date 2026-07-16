@@ -9516,6 +9516,8 @@ window.cfoStatementGen=function(){
   const dirLabel=isAll?'Все направления':(_selD.length<=3?_selD.join(', '):_selD.length+' направлений');
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const f=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
+  // компактный форматтер ТОЛЬКО для матрицы ×12 (узкие колонки 6.2% альбомной A4): длинные суммы не влезали в ячейку - Safari при печати не режет overflow td и цифры вылезали за границы. ≥1 млн → «Х,ХХМ», ≥100 тыс → «ХХХК», меньше - полностью с копейками. Режим «месяц» (широкие колонки) остаётся на полном f
+  const fM=v=>{if(!(typeof v==='number'&&!isNaN(v)))return '-';const a=Math.abs(v);if(a>=1e6)return (v/1e6).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+'М';if(a>=1e5)return (v/1e3).toLocaleString('ru-RU',{maximumFractionDigits:0})+'К';return f(v);};
   const MONF=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
   const today=new Date().toLocaleDateString('ru-RU');
   // baseline ПО МЕСЯЦАМ: объединение запечённых записей замороженных месяцев (уже money)
@@ -9588,8 +9590,8 @@ window.cfoStatementGen=function(){
       out+='<tr class="secsub"><td class="nm sub">'+sideIcon(code)+' '+esc(side||UNALLOC)+'</td><td class="r sub">'+(bP!=null?f(bP):'-')+'</td><td class="r sub">'+f(fP)+'</td>'+dcSub(dP)+'<td class="r sub">'+(bY!=null?f(bY):'-')+'</td><td class="r sub">'+f(fY)+'</td>'+dcSub(dY)+'</tr>';});
     return out;};
   // дочерние строки, матрица (12 мес + ГОД). факт нейтрально + утв(замороженный)/прогноз(незамороженный) мелким
-  const mSubCell=(fv,pv,fr,fcv)=>{let sub='';if(fr&&pv!=null)sub='<span class="mp">'+f(pv)+'</span>';else if(!fr&&fcv!=null)sub='<span class="mpf">'+f(fcv)+'</span>';return '<td class="mx sub"><span class="mf">'+f(fv)+'</span>'+sub+'</td>';};
-  const mSubYear=(yf,ypf,yfc)=>'<td class="mx sub"><span class="mf">'+f(yf)+'</span>'+(ypf!=null?'<span class="mp">'+f(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+f(yfc)+'</span>':'')+'</td>';
+  const mSubCell=(fv,pv,fr,fcv)=>{let sub='';if(fr&&pv!=null)sub='<span class="mp">'+fM(pv)+'</span>';else if(!fr&&fcv!=null)sub='<span class="mpf">'+fM(fcv)+'</span>';return '<td class="mx sub"><span class="mf">'+fM(fv)+'</span>'+sub+'</td>';};
+  const mSubYear=(yf,ypf,yfc)=>'<td class="mx sub"><span class="mf">'+fM(yf)+'</span>'+(ypf!=null?'<span class="mp">'+fM(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+fM(yfc)+'</span>':'')+'</td>';
   const mSubRows=(sec,code)=>{ if(!wantDetail||sec.kind==='inc'||!isSubLevel(code))return '';
     const dirsSet=sec.pairSet[code];let out='';
     sidesWithActivity(dirsSet,code).forEach(side=>{let yf=0,ypf=null,yfc=null,cells='';
@@ -9638,14 +9640,14 @@ window.cfoStatementGen=function(){
   const secTotTable=rowsHtml=>'<table>'+COLG+THEAD+'<tbody>'+rowsHtml+'</tbody></table>';
   // ── режим «все месяцы» (матрица подстатья × 12 + Год) ──
   const MONS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
-  const mColg=(()=>{let cg='<colgroup><col style="width:13%">';for(let i=0;i<12;i++)cg+='<col style="width:6.2%">';return cg+'<col style="width:6.6%"></colgroup>';})();
+  const mColg=(()=>{let cg='<colgroup><col style="width:19%">';for(let i=0;i<12;i++)cg+='<col style="width:6.2%">';return cg+'<col style="width:6.6%"></colgroup>';})(); /* Σ ширин ровно 100% (19+12×6.2+6.6): при сумме <100% остаток табличной ширины Chrome и Safari распределяют по колонкам ПО-РАЗНОМУ - в Safari колонки чисел получались уже и цифры вылезали */
   const mHead=(()=>{let th='<thead><tr><th>Подстатья</th>';for(let m=1;m<=12;m++){const fr=frozenSet.has(m),mo=fr?blMap[m]:null,hf=mo&&mo.hadFact,rt=mo&&mo.retro;const mark=fr?(' 🔒'+(rt?'📋':hf?'⚠':'')):'';th+='<th class="r"'+(fr?' title="Месяц утверждён (заморожен)'+(rt?': ретроспектива - план приравнен к факту, месяц не планировался':hf?' при известном факте':'')+'"':'')+'>'+MONS[m-1]+mark+'</th>';}return th+'<th class="r">ГОД</th></tr></thead>';})();
   // ячейка: факт крупно (цвет от утв. только для замороженного месяца) + под ним: утв. (замороженный месяц, серым) ИЛИ прогноз (незамороженный, курсивом приглушённо). inc=true → обратный цвет (перевыполнение зелёное)
   const mCellK=(fv,pv,fr,inc,fcv)=>{const over=fv>pv;const good=inc?over:!over;const col=(fr&&pv!=null&&Math.abs(fv-pv)>0.005)?(good?'#1e8a54':'#c0392b'):'#23272f';
-    let sub='';if(fr&&pv!=null)sub='<span class="mp">'+f(pv)+'</span>';else if(!fr&&fcv!=null)sub='<span class="mpf">'+f(fcv)+'</span>';
-    return '<td class="mx"><span class="mf" style="color:'+col+'">'+f(fv)+'</span>'+sub+'</td>';};
+    let sub='';if(fr&&pv!=null)sub='<span class="mp">'+fM(pv)+'</span>';else if(!fr&&fcv!=null)sub='<span class="mpf">'+fM(fcv)+'</span>';
+    return '<td class="mx"><span class="mf" style="color:'+col+'">'+fM(fv)+'</span>'+sub+'</td>';};
   const mCell=(fv,pv,fr)=>mCellK(fv,pv,fr,false); // расходная (обратная совместимость)
-  const mYearCell=(yf,ypf,yfc)=>'<td class="mx"><span class="mf">'+f(yf)+'</span>'+(ypf!=null?'<span class="mp">'+f(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+f(yfc)+'</span>':'')+'</td>'; // ГОД: факт нейтрально · утв Σ (замороженные, серым) · прог Σ (прогноз 12 мес, курсивом)
+  const mYearCell=(yf,ypf,yfc)=>'<td class="mx"><span class="mf">'+fM(yf)+'</span>'+(ypf!=null?'<span class="mp">'+fM(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+fM(yfc)+'</span>':'')+'</td>'; // ГОД: факт нейтрально · утв Σ (замороженные, серым) · прог Σ (прогноз 12 мес, курсивом)
   // строка ИТОГО матрицы (для секции, блока, ЧП); inc → обратный цвет. totFC - помесячный прогноз, yfc - прогноз года
   const mTotRow=(label,totF,totP,yf,ypf,inc,totFC,yfc)=>{let cells='';for(let m=1;m<=12;m++){const fr=frozenSet.has(m);cells+=mCellK(totF[m],fr?totP[m]:null,fr,!!inc,fr?null:(totFC?totFC[m]:null));}return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>';};
   const mTotTable=rowsHtml=>'<table class="mtx">'+mColg+mHead+'<tbody>'+rowsHtml+'</tbody></table>'; // отдельная матрица только с итоговыми строками (блок/ЧП)
@@ -9670,13 +9672,13 @@ window.cfoStatementGen=function(){
     for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const nf=(incTotF[m]||0)-(expTotF[m]||0);const ip=incTotP[m],ep=expTotP[m];const np=(fr&&(ip!=null||ep!=null))?((ip||0)-(ep||0)):null;
       const ifc=incTotFC&&incTotFC[m],efc=expTotFC&&expTotFC[m];const nfc=(!fr&&(ifc!=null||efc!=null))?((ifc||0)-(efc||0)):null;
       const col=nf>=-0.0001?'#1e8a54':'#c0392b';
-      let sub='';if(np!=null)sub='<span class="mp">'+f(np)+'</span>';else if(nfc!=null)sub='<span class="mpf">'+f(nfc)+'</span>';
-      cells+='<td class="mx"><span class="mf" style="color:'+col+'">'+f(nf)+'</span>'+sub+'</td>';}
+      let sub='';if(np!=null)sub='<span class="mp">'+fM(np)+'</span>';else if(nfc!=null)sub='<span class="mpf">'+fM(nfc)+'</span>';
+      cells+='<td class="mx"><span class="mf" style="color:'+col+'">'+fM(nf)+'</span>'+sub+'</td>';}
     const nYf=(incYf||0)-(expYf||0),nYpf=(incYpf!=null||expYpf!=null)?((incYpf||0)-(expYpf||0)):null;
     const nYfc=(incYfc!=null||expYfc!=null)?((incYfc||0)-(expYfc||0)):null;
     const ycol=nYf>=-0.0001?'#1e8a54':'#c0392b';
-    let ysub=(nYpf!=null?'<span class="mp">'+f(nYpf)+'</span>':'')+(nYfc!=null?'<span class="mpf">'+f(nYfc)+'</span>':'');
-    return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+'<td class="mx"><span class="mf" style="color:'+ycol+'">'+f(nYf)+'</span>'+ysub+'</td></tr>';
+    let ysub=(nYpf!=null?'<span class="mp">'+fM(nYpf)+'</span>':'')+(nYfc!=null?'<span class="mpf">'+fM(nYfc)+'</span>':'');
+    return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+'<td class="mx"><span class="mf" style="color:'+ycol+'">'+fM(nYf)+'</span>'+ysub+'</td></tr>';
   };
   // состав выписки: свои + прямые подчинённые (если руководитель и галочка вкл). Один уровень, защита от цикла в _cfoSubsOf.
   const subEl=document.getElementById('cfo-stmt-subs');const subsChecked=!!(subEl&&subEl.checked);
@@ -9743,43 +9745,45 @@ window.cfoStatementGen=function(){
   const _retroN=frozen.filter(m=>blMap[m]&&blMap[m].retro).length;
   const blStamp=hasBl?('<span class="ok">Заморожено месяцев: '+frozen.length+'</span>'+(_retroN?(' <span style="color:#6f7682">· из них ретро: '+_retroN+'</span>'):'')+' · '+frozenListHtml):'<span class="no">Ни один месяц не утверждён</span>';
   const perLabel=allMonths?('все месяцы '+year+' (матрица) · факт крупно, план мелким (утв./прогноз)'):('за '+MONF[M-1]+' '+year+' · YTD - по замороженным месяцам ≤ '+MONF[M-1]);
-  const matrixLegend=allMonths?('<div class="mxleg">В ячейке: <b>крупное число</b> - факт · под ним <span class="lgp">серым</span> - утверждено (замороженный месяц 🔒), <span class="lgf">курсивом</span> - прогноз (незамороженный месяц). Столбец <b>ГОД</b>: факт · <span class="lgp">утв Σ</span> (сумма замороженных) · <span class="lgf">прог Σ</span> (прогноз на 12 месяцев). Цвет факта ЧП - по знаку (прибыль зелёная, убыток красный).'+(wantDetail?' Подстатьи ФОТ (👤), аренды (🏢) и консалтинга развёрнуты по сотрудникам/объектам/контрагентам - серые строки под подстатьёй.':'')+'</div>'):'';
+  const matrixLegend=allMonths?('<div class="mxleg">В ячейке: <b>крупное число</b> - факт · под ним <span class="lgp">серым</span> - утверждено (замороженный месяц 🔒), <span class="lgf">курсивом</span> - прогноз (незамороженный месяц). Столбец <b>ГОД</b>: факт · <span class="lgp">утв Σ</span> (сумма замороженных) · <span class="lgf">прог Σ</span> (прогноз на 12 месяцев). Цвет факта ЧП - по знаку (прибыль зелёная, убыток красный). Крупные суммы сокращены: <b>К</b> - тысячи ₽, <b>М</b> - миллионы ₽.'+(wantDetail?' Подстатьи ФОТ (👤), аренды (🏢) и консалтинга развёрнуты по сотрудникам/объектам/контрагентам - серые строки под подстатьёй.':'')+'</div>'):'';
   // выбран текущий незакрытый месяц → колонки «за месяц»/Δ предварительные (полный план против неполного факта). Δ YTD не помечаем. В матрице предупреждения нет - показаны все 12 месяцев как есть
   const _now=new Date(),isCurUnclosed=(!allMonths&&year===_now.getFullYear()&&M===_now.getMonth()+1);
   const _monCap=MONF[M-1].charAt(0).toUpperCase()+MONF[M-1].slice(1);
   const warnLine=isCurUnclosed?'<div class="warn">⚠ '+_monCap+' не закрыт - факт неполный, отклонение за месяц предварительное</div>':'';
   const _dn=new Date(),_iso=_dn.getFullYear()+'-'+String(_dn.getMonth()+1).padStart(2,'0')+'-'+String(_dn.getDate()).padStart(2,'0');
   const fileName=(_iso+'_Выписка_'+fioLabel+'_'+year).replace(/[\\/:*?"<>|]+/g,'-').replace(/[.\s]+$/,'');
-  const CSS='*{box-sizing:border-box}body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#23272f;margin:0;padding:22px;font-size:12px;background:#fff}'
+  /* Safari-фиксы печати: (1) шрифты таблиц в pt, не px - Safari при печати масштабирует px иначе, чем Chrome, и цифры вылезали за ячейки (pt = 0.75×px, привязан к физическому размеру листа); (2) @page на верхнем уровне с явными size/margin в мм, без дефолтов браузера (Safari size игнорирует - ориентацию там выбирают в диалоге печати, но margin применяет); (3) -webkit-print-color-adjust:exact - иначе Safari сбрасывает фон шапки/итогов */
+  const CSS='@page{size:A4 '+(allMonths?'landscape':'portrait')+';margin:'+(allMonths?'8mm':'12mm')+'}'
+    +'*{box-sizing:border-box}body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#23272f;margin:0;padding:22px;font-size:9pt;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
     +'.head{border-bottom:2px solid #2b3145;padding-bottom:10px;margin-bottom:14px}'
-    +'.brand{font-size:10.5px;letter-spacing:.02em;color:#6f7682;font-weight:600}h1{font-size:19px;margin:3px 0 6px;font-weight:700;color:#2b3145}'
-    +'.meta{font-size:11.5px;color:#4a505c;line-height:1.6}.meta b{color:#2b3145}'
+    +'.brand{font-size:8pt;letter-spacing:.02em;color:#6f7682;font-weight:600}h1{font-size:14pt;margin:3px 0 6px;font-weight:700;color:#2b3145}'
+    +'.meta{font-size:8.5pt;color:#4a505c;line-height:1.6}.meta b{color:#2b3145}'
     +'.ok{color:#1e8a54;font-weight:700}.no{color:#c0392b;font-weight:700}'
-    +'h2{font-size:13px;color:#2b3145;margin:20px 0 6px}'
+    +'h2{font-size:10pt;color:#2b3145;margin:20px 0 6px}'
     +'table{border-collapse:collapse;width:100%;table-layout:fixed;margin-top:4px;border:0.75pt solid #9aa1b0}' /* collapse надёжно рисует внутренние вертикали в этом рендерере; ширины/overflow ниже не дают контенту выйти за печатную область */
-    +'th,td{border:0.75pt solid #9aa1b0;padding:5px 7px;font-size:10.5px;text-align:left;white-space:nowrap;overflow:hidden}' /* overflow:hidden держит контент внутри ячейки (в collapse границы принадлежат таблице и не режутся) */
-    +'th{background:#2b3145;color:#fff;font-weight:600;font-size:9.5px;text-transform:uppercase;border-color:#6b7382}' /* граница светлее тёмного фона шапки - вертикали видны */
+    +'th,td{border:0.75pt solid #9aa1b0;padding:4pt 5pt;font-size:8pt;text-align:left;white-space:nowrap;overflow:hidden}' /* overflow:hidden держит контент внутри ячейки (в collapse границы принадлежат таблице и не режутся) */
+    +'th{background:#2b3145;color:#fff;font-weight:600;font-size:7pt;text-transform:uppercase;border-color:#6b7382}' /* граница светлее тёмного фона шапки - вертикали видны */
     +'th:first-child,td:first-child{border-left:0.75pt solid #9aa1b0}th:last-child,td:last-child{border-right:0.75pt solid #9aa1b0}' /* явные внешние левая/правая границы на крайних ячейках */
-    +'th.r,td.r{text-align:right;font-variant-numeric:tabular-nums;font-size:9.5px;padding-left:4px;padding-right:5px}.b{font-weight:700}td.c{text-align:center}' /* числовые колонки: мельче шрифт + плотнее поля, чтобы крупные суммы (−2 202 763,01) помещались в 6 колонок портретной A4 */
+    +'th.r,td.r{text-align:right;font-variant-numeric:tabular-nums;font-size:7pt;padding-left:3pt;padding-right:4pt}.b{font-weight:700}td.c{text-align:center}' /* числовые колонки: мельче шрифт + плотнее поля, чтобы крупные суммы (−2 202 763,01) помещались в 6 колонок портретной A4 */
     +'td.nm{font-weight:600;color:#2b3145;white-space:normal;overflow-wrap:anywhere;word-break:break-word}tr.tot td{background:#eef1f6;border-top:1.5pt solid #cdd3e0}'
-    +'table.ops td,table.ops th{white-space:normal;overflow-wrap:anywhere;word-break:break-word}table.ops td.pp{font-size:9.5px;color:#4a505c}' /* длинный текст без пробелов (назначение/контрагент) переносим ВНУТРИ фиксированной ячейки - иначе он вылезает за правый край и перекрывает границу на первой странице */
-    +'tr.opsec td{background:#f3f5f8;font-weight:700;color:#2b3145;font-size:10px;border:0.75pt solid #9aa1b0}' /* строка-заголовок подстатьи (colspan) - явная рамка */
-    +'.noover{margin:14px 0;padding:10px 12px;background:#eef7f0;border:1px solid #bfe3cd;border-radius:6px;color:#1e8a54;font-weight:600;font-size:11.5px}'
-    +'.noinc{margin:4px 0 8px;padding:9px 12px;background:#f5f6f8;border:1px solid #dfe3ea;border-radius:6px;color:#6f7682;font-weight:600;font-size:11px}'
-    +'.warn{margin-top:8px;padding:7px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:6px;color:#b5651d;font-weight:600;font-size:11px}'
-    +'.sign{margin-top:28px;font-size:11.5px;color:#333;line-height:2.4}'
+    +'table.ops td,table.ops th{white-space:normal;overflow-wrap:anywhere;word-break:break-word}table.ops td.pp{font-size:7pt;color:#4a505c}' /* длинный текст без пробелов (назначение/контрагент) переносим ВНУТРИ фиксированной ячейки - иначе он вылезает за правый край и перекрывает границу на первой странице */
+    +'tr.opsec td{background:#f3f5f8;font-weight:700;color:#2b3145;font-size:7.5pt;border:0.75pt solid #9aa1b0}' /* строка-заголовок подстатьи (colspan) - явная рамка */
+    +'.noover{margin:14px 0;padding:10px 12px;background:#eef7f0;border:1px solid #bfe3cd;border-radius:6px;color:#1e8a54;font-weight:600;font-size:8.5pt}'
+    +'.noinc{margin:4px 0 8px;padding:9px 12px;background:#f5f6f8;border:1px solid #dfe3ea;border-radius:6px;color:#6f7682;font-weight:600;font-size:8pt}'
+    +'.warn{margin-top:8px;padding:7px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:6px;color:#b5651d;font-weight:600;font-size:8pt}'
+    +'.sign{margin-top:28px;font-size:8.5pt;color:#333;line-height:2.4}'
     /* ── матрица подстатья × 12: две строки в ячейке (факт крупно + утв. мелким). Границы наследуются от общего table/td выше - модель не трогаем ── */
     +'table.mtx td.r,table.mtx th.r,table.mtx td.mx{text-align:right}'
-    +'table.mtx td.mx{padding:3px 4px;font-variant-numeric:tabular-nums}'
-    +'table.mtx .mf{display:block;font-size:9px;line-height:1.15;white-space:nowrap}'
-    +'table.mtx .mp{display:block;font-size:7.5px;line-height:1.1;color:#8b919d;white-space:nowrap}'
-    +'table.mtx .mpf{display:block;font-size:7.5px;line-height:1.1;color:#9aa1ad;font-style:italic;white-space:nowrap}' /* прогноз (config/plans) - незамороженные месяцы, курсивом приглушённо, отличается от утв (.mp) */
-    +'.mxleg{margin:10px 0 2px;padding:8px 11px;background:#f5f6f8;border:1px solid #dfe3ea;border-radius:6px;color:#4a505c;font-size:10px;line-height:1.55}.mxleg b{color:#2b3145}.mxleg .lgp{color:#8b919d}.mxleg .lgf{color:#9aa1ad;font-style:italic}'
+    +'table.mtx td.mx{padding:2pt 3pt;font-variant-numeric:tabular-nums}'
+    +'table.mtx .mf{display:block;font-size:6.75pt;line-height:1.15;white-space:nowrap}'
+    +'table.mtx .mp{display:block;font-size:5.5pt;line-height:1.1;color:#8b919d;white-space:nowrap}'
+    +'table.mtx .mpf{display:block;font-size:5.5pt;line-height:1.1;color:#9aa1ad;font-style:italic;white-space:nowrap}' /* прогноз (config/plans) - незамороженные месяцы, курсивом приглушённо, отличается от утв (.mp) */
+    +'.mxleg{margin:10px 0 2px;padding:8px 11px;background:#f5f6f8;border:1px solid #dfe3ea;border-radius:6px;color:#4a505c;font-size:7.5pt;line-height:1.55}.mxleg b{color:#2b3145}.mxleg .lgp{color:#8b919d}.mxleg .lgf{color:#9aa1ad;font-style:italic}'
     +'table.mtx tr.tot .mf{font-weight:700}'
     /* дочерние строки-расшифровки (3-й уровень: сотрудник/объект/контрагент) - приглушённые, факт без знак-цвета */
-    +'tr.secsub td.sub{color:#6f7682;font-weight:400;background:#fff}tr.secsub td.nm.sub{padding-left:24px;white-space:normal;font-weight:400}'
-    +'table.mtx tr.mxsub td{background:#fff}table.mtx tr.mxsub .mf{color:#6f7682;font-size:8px;font-weight:400}table.mtx tr.mxsub td.nm.sub{padding-left:20px;font-weight:400;color:#6f7682;font-size:8.5px;white-space:normal}'
-    +'@media print{@page{size:A4 '+(allMonths?'landscape':'portrait')+';margin:'+(allMonths?'8mm':'12mm')+'}body{padding:0 2mm}}';/* матрица × 12 - альбомная A4; иначе портрет. При печати body{padding:0} ставил правый край таблицы ровно на границу печатной области, и внешняя половина collapse-границы (центрирована на ребре) обрезалась браузером - правая замыкающая линия пропадала. Отступ 2мм по бокам держит левую/правую границы внутри печатной области (то же, что ручное расширение полей печати) */
+    +'tr.secsub td.sub{color:#6f7682;font-weight:400;background:#fff}tr.secsub td.nm.sub{padding-left:18pt;white-space:normal;font-weight:400}'
+    +'table.mtx tr.mxsub td{background:#fff}table.mtx tr.mxsub .mf{color:#6f7682;font-size:6pt;font-weight:400}table.mtx tr.mxsub td.nm.sub{padding-left:15pt;font-weight:400;color:#6f7682;font-size:6.5pt;white-space:normal}'
+    +'@media print{body{padding:0 2mm}}';/* матрица × 12 - альбомная A4; иначе портрет (см. @page выше). При печати body{padding:0} ставил правый край таблицы ровно на границу печатной области, и внешняя половина collapse-границы (центрирована на ребре) обрезалась браузером - правая замыкающая линия пропадала. Отступ 2мм по бокам держит левую/правую границы внутри печатной области (то же, что ручное расширение полей печати) */
   const blockNote=wantSubs?(' &nbsp;·&nbsp; <b>Блок:</b> '+subs.length+' подч. ('+esc(subs.join(', '))+')'):'';
   const html='<!doctype html><html><head><meta charset="utf-8"><title>'+fileName+'</title><style>'+CSS+'</style></head><body>'
     +'<div class="head"><div class="brand">Бюджет доходов и расходов (БДР)</div><h1>Выписка по бюджету · '+esc(fioLabel)+(wantSubs?' (блок)':'')+'</h1>'
