@@ -659,8 +659,8 @@ function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='
 function _htmlEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 // Текущий пользователь - админ? (ADMIN_EMAIL). Для UI-гейтинга и решения «писать ли общие config/*»
 function _isAdmin(){try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}}
-function fmt(v){if(typeof v!=='number'||isNaN(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function fmtPct(v){if(typeof v!=='number'||isNaN(v))return'-';return(v*100).toFixed(1)+'%';}
+function fmt(v){if(typeof v!=='number'||!isFinite(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});} // !isFinite гасит и NaN, и Infinity (x/0) - иначе в отчёте появлялось «∞»
+function fmtPct(v){if(typeof v!=='number'||!isFinite(v))return'-';return(v*100).toFixed(1)+'%';}
 function numClass(v){if(typeof v!=='number')return'';return v>0?'num-positive':v<0?'num-negative':'';}
 const RU_MONTHS={'января':0,'февраля':1,'марта':2,'апреля':3,'мая':4,'июня':5,'июля':6,'августа':7,'сентября':8,'октября':9,'ноября':10,'декабря':11,'январь':0,'февраль':1,'март':2,'апрель':3,'май':4,'июнь':5,'июль':6,'август':7,'сентябрь':8,'октябрь':9,'ноябрь':10,'декабрь':11};
 function parseDate(v){
@@ -1436,7 +1436,7 @@ window.auditPrintReport=function(){
       <div class="kpi"><div class="l">${dim==='acc'?'Касс':'Контрагентов'}</div><div class="v">${list.length}</div></div>
       <div class="kpi"><div class="l">Операций</div><div class="v">${ops}</div></div>
       <div class="kpi"><div class="l">С красными флагами</div><div class="v" style="color:#c0392f">${flagged.length}</div></div>
-      <div class="kpi"><div class="l">Доля топ-1</div><div class="v">${list.length?(list[0].sum/total*100).toFixed(1):0}%</div></div>
+      <div class="kpi"><div class="l">Доля топ-1</div><div class="v">${(list.length&&total)?(list[0].sum/total*100).toFixed(1):0}%</div></div>
     </div>
     <h2>1. Сводка по ${dim==='acc'?'кассам-плательщикам':'контрагентам'}</h2>
     <table>${sumHead}${sumRows}<tr style="font-weight:700;background:#eef1f6"><td class="l">ИТОГО</td><td class="n">${fmtR(total)}</td><td class="n">100%</td><td class="n">${ops}</td><td colspan="6"></td></tr></table>
@@ -8055,7 +8055,7 @@ window.anomShowCard=function(idx){
   // агрегированная строка (повтор ID_Offer) - список операций в формате окна ДДС
   const mv=[...(it.rows||[])].sort((a,b)=>(parseDate(a[COL.DATE_DDS])||0)-(parseDate(b[COL.DATE_DDS])||0));
   window._anomMoves=mv;
-  const esc=s=>String(s||'').replace(/</g,'&lt;'),c=v=>String(v||'').trim();
+  const esc=s=>_htmlEsc(s),c=v=>_htmlEsc(String(v||'').trim()); /* c обязан эскейпить: RAW-ячейки (контрагент, назначение, статья...) идут в innerHTML - без _htmlEsc это хранимый XSS через ячейку Sheets */
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const TH=(l,w,al='left',col='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${al};${col?'color:'+col:''}">${l}</th>`;
@@ -8227,7 +8227,7 @@ window.depMultiAll=function(id,bid,field,labelAll,s){const dd=document.getElemen
 // Движения по депозиту (ID_Offer) в формате окна ДДС
 window.depShowDetail=function(idx){
   const x=(window._depRows||[])[idx];if(!x)return;
-  const esc=s=>String(s||'').replace(/</g,'&lt;'),c=v=>String(v||'').trim();
+  const esc=s=>_htmlEsc(s),c=v=>_htmlEsc(String(v||'').trim()); /* c обязан эскейпить: RAW-ячейки (контрагент, назначение, статья...) идут в innerHTML - без _htmlEsc это хранимый XSS через ячейку Sheets */
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const mv=[...x.rows].sort((a,b)=>(parseDate(a[COL.DATE_DDS])||0)-(parseDate(b[COL.DATE_DDS])||0));
@@ -9925,7 +9925,9 @@ function resolveAccess(user){
 // «Рубильник»: ставим метку времени - все сессии, вошедшие раньше неё, разлогинятся (включая текущую)
 window.appLogoutAll=function(){
   if(!confirm('Выйти всех пользователей (включая вас)?\nВсе открытые сессии вернутся на экран входа. Войти заново можно сразу.'))return;
-  try{ fbApp(); firebase.database().ref('config/forceLogoutAfter').set(firebase.database.ServerValue.TIMESTAMP); }
+  /* .set() возвращает промис - отказ правил БД/офлайн НЕ ловится внешним try/catch. Раньше запись молча падала: админ был уверен, что сессии сброшены, а метка не записалась. _fbSetSafe не подходит - его alert «сохранено только локально» здесь врал бы (локально рубильник не живёт) */
+  try{ fbApp(); firebase.database().ref('config/forceLogoutAfter').set(firebase.database.ServerValue.TIMESTAMP)
+    .catch(e=>{ alert('Сброс сессий НЕ выполнен - запись отклонена (правила БД/офлайн): '+((e&&e.message)||e)); }); }
   catch(e){ alert('Не удалось: '+((e&&e.message)||e)); }
 };
 // слежение за рубильником: если метка позже времени входа этой сессии - выходим
