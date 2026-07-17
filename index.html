@@ -8983,13 +8983,14 @@ function _planFillTrFactCore(tr,snapAcc){
   const num=v=>{const n=parseFloat(String(v||'').replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
   const months=[...tr.querySelectorAll('input.plan-val')].filter(i=>i.getAttribute('data-month')!=='0');
   if(!months.length)return {applied:false,kept:0};
-  [...tr.querySelectorAll('input.plan-val')].forEach(i=>snapAcc.push({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,title:i.title}));
+  [...tr.querySelectorAll('input.plan-val')].forEach(i=>snapAcc.push({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,bord:i.style.borderColor,title:i.title}));
   let kept=0;
   months.forEach(i=>{
     const f=num(i.getAttribute('data-fact'))||0,cur=num(i.value);
-    i.style.background='var(--surface)';
+    i.style.background='var(--surface)';i.style.borderColor='var(--border)';
     if(cur!=null){ // введено вручную - НЕ перезаписываем (ни больше, ни меньше факта)
-      if(Math.abs(cur-f)>0.005){kept++;i.style.background='#fff3e0';i.title='План отличается от факта. Факт: '+fmt(f)+' - при необходимости правьте вручную';_planFactHintSet(i,f);}
+      // маркер расхождения - только когда факт РЕАЛЬНО есть: будущие месяцы (факт 0) не шумят «факт 0,00» под каждой ячейкой
+      if(Math.abs(f)>0.005&&Math.abs(cur-f)>0.005){kept++;i.style.background='#fffdf6';i.style.borderColor='#d9a94d';i.title='План отличается от факта. Факт: '+fmt(f)+' - при необходимости правьте вручную';_planFactHintSet(i,f);}
       else{i.title='Факт: '+fmt(f);_planFactHintClear(i);}
       return;
     }
@@ -9033,8 +9034,8 @@ window.planClearRow=function(btn){
   if(!ins.length)return;
   if(!ins.some(i=>String(i.value||'').trim()!=='')){_planFillToast('Строка уже пуста');return;} // нечего очищать
   if(!confirm('Очистить все значения этой строки?\n(план по этим ячейкам будет удалён - можно «Отменить»)'))return;
-  const snap=ins.map(i=>({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,title:i.title}));
-  ins.forEach(i=>{i.value='';i.style.background='var(--surface)';_planFactHintClear(i);if(i.getAttribute('data-month')==='0'){i.dataset.auto='1';i.style.color='var(--text3)';}});
+  const snap=ins.map(i=>({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,bord:i.style.borderColor,title:i.title}));
+  ins.forEach(i=>{i.value='';i.style.background='var(--surface)';i.style.borderColor=(i.getAttribute('data-month')==='0'?'var(--accent)':'var(--border)');_planFactHintClear(i);if(i.getAttribute('data-month')==='0'){i.dataset.auto='1';i.style.color='var(--text3)';}});
   if(window.planSumFromEl)planSumFromEl(btn);
   window._planFillUndo={snap}; window._planDirty=true; _planFillToast('Строка очищена');
 };
@@ -9050,7 +9051,7 @@ function _planFillToast(msg){
 }
 window.planUndoFill=function(){
   const s=window._planFillUndo; if(!s||!s.snap){_planFillToastHide();return;}
-  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';o.el.style.background=o.bg||'';if(o.title!=null)o.el.title=o.title;_planFactHintClear(o.el);});
+  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';o.el.style.background=o.bg||'';o.el.style.borderColor=o.bord||'';if(o.title!=null)o.el.title=o.title;_planFactHintClear(o.el);});
   const first=s.snap.find(o=>o.el&&o.el.isConnected); if(first&&window.planSumFromEl)planSumFromEl(first.el);
   window._planFillUndo=null; window._planDirty=true; _planFillToastHide();
 };
@@ -9157,6 +9158,7 @@ function _planRenderMatrix(){
   // помесячный план направления (из сохранённых записей, с разрешением %/%ЧП) и сумма по группе - для свёрнутой шапки
   const dirMonthPlan=(rl,code,d,m)=>{const recs=eRecs(d,rl,code).filter(p=>p.month===m);if(!recs.length)return null;const F=FAD[d];let s=0;recs.forEach(r=>{s+=r.mode==='pct'?r.value*revM(d,m):r.mode==='pct_profit'?r.value*Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):r.value;});return s;};
   const subMonthPlan=(rl,code,m)=>{let s=null;dirsShown.forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: итоги при фильтре направления
+  const _n0=v=>{const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}; // число из значения ячейки/факта (пусто → 0)
   const rowHtml=(rdir,rl,code,label,rev,sub,key)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
     const _recs=eRecs(rdir,rl,code);
@@ -9165,7 +9167,8 @@ function _planRenderMatrix(){
     const allowP=!moneyOnly&&c3(code)==='127'; const md=_planModeDisp(mode);
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,rl,code,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=factOf(rdir,rl,code,i+1);return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" data-rb="${revM(rdir,i+1)}" data-nb="${netM(rdir,i+1)}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" title="Факт:${fmt(fv)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const moFacts=[...Array(12)].map((_,i)=>factOf(rdir,rl,code,i+1));
+    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" data-rb="${revM(rdir,i+1)}" data-nb="${netM(rdir,i+1)}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" title="Факт:${fmt(fv)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
     const yrExpl=cellVal(rdir,rl,code,0); // явный годовой план (если задан)
     const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
     const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
@@ -9184,7 +9187,8 @@ function _planRenderMatrix(){
     const labCell=sub
       ?`<td title="${esc(label)}" style="padding:4px 8px 4px 22px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять галочку - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer">${esc(label)}</td>`
       :`<td title="${esc(label)}" style="padding:4px 8px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:${rev?'#e9f0fb':'var(--surface)'};font-weight:${rev?700:400};z-index:1">${expBtn}${esc(label)}</td>`;
-    return `<tr data-code="${esc(code)}" data-level="${rl}" data-dir="${esc(rdir)}" data-key="${esc(rl+'|'+code)}">
+    const rowEmpty=moVals.every(v=>!_n0(v))&&!_n0(yrExpl)&&moFacts.every(fv=>Math.abs(_n0(fv))<=0.005)&&Math.abs(_n0(yrFact))<=0.005; // план по нулям и факта нет - на второй план (.plan-row-empty)
+    return `<tr${rowEmpty?' class="plan-row-empty"':''} data-code="${esc(code)}" data-level="${rl}" data-dir="${esc(rdir)}" data-key="${esc(rl+'|'+code)}">
       ${labCell}
       <td style="padding:2px 4px;text-align:center;white-space:nowrap">${modeBtn}<button type="button" onclick="planFillRow(this)" title="Заполнить все месяцы значением первого заполненного" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">⇉</button><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом (поступления/расходы по этой подстатье)" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button><button type="button" onclick="planClearRow(this)" title="Очистить все месяцы строки" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--outcome);vertical-align:middle">⌫</button></td>${cells}${yr}${ownerCell}${noteCell}</tr>`;
   };
@@ -9224,12 +9228,14 @@ function _planRenderMatrix(){
   // строка сотрудника (3-й уровень, 111-ФОТ): ввод по месяцам/году (только ₽); без ответственного/примечания (они на строке направления)
   const empRowHtml=(rdir,code,side,label,key)=>{
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,level,code,i+1,side));
-    const cells=moVals.map((mv,i)=>{const fv=factSideOf(rdir,code,side,i+1);return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" title="Факт:${fmt(fv)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const moFacts=[...Array(12)].map((_,i)=>factSideOf(rdir,code,side,i+1));
+    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" title="Факт:${fmt(fv)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
     const yrExpl=cellVal(rdir,level,code,0,side);
     const autoY=moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0);
     const yrIsAuto=(yrExpl===''); const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):''); const yrFact=factSideYr(rdir,code,side);
     const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" title="${yrIsAuto?'Авто: сумма месяцев. Факт за год:'+fmt(yrFact):'Годовой план. Факт за год:'+fmt(yrFact)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
-    return `<tr data-code="${esc(code)}" data-level="${level}" data-dir="${esc(rdir)}" data-side="${esc(side)}" data-key="${esc(level+'|'+code)}">
+    const rowEmpty=moVals.every(v=>!_n0(v))&&!_n0(yrExpl)&&moFacts.every(fv=>Math.abs(_n0(fv))<=0.005)&&Math.abs(_n0(yrFact))<=0.005;
+    return `<tr${rowEmpty?' class="plan-row-empty"':''} data-code="${esc(code)}" data-level="${level}" data-dir="${esc(rdir)}" data-side="${esc(side)}" data-key="${esc(level+'|'+code)}">
       <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">${isRentCode(code)?'🏢':'👤'}</span>${esc(label)}</td>
       <td style="padding:2px 4px;text-align:center;white-space:nowrap"><span style="font-size:11px;color:var(--text3)">₽</span><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button><button type="button" onclick="planClearRow(this)" title="Очистить все месяцы строки" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--outcome);vertical-align:middle">⌫</button></td>${cells}${yr}<td></td><td></td></tr>`;};
   // строка направления для 111-ФОТ: read-only ИТОГО по сотрудникам (plan-dirtotal, ▸ разворот) + ответственный/примечание (по направлению+коду)
@@ -9913,7 +9919,8 @@ window.showPlansPanel=async function(){
           <button type="button" onclick="planExpandCmd('none')" title="Свернуть все подстатьи" style="font-size:11px;padding:5px 10px;border:0;background:var(--surface);color:var(--text2);cursor:pointer">⊟ Свернуть</button>
         </span>
         <input type="hidden" id="plan-level" value="subarticle">
-        <style>.plan-flt-list .psub-opt,.plan-flt-list .powner-opt{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:12px;border-radius:5px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plan-flt-list .psub-opt:hover,.plan-flt-list .powner-opt:hover{background:var(--accent-light)}.plan-flt-list .psub-cb,.plan-flt-list .powner-cb{margin:0;cursor:pointer}</style>
+        <style>.plan-flt-list .psub-opt,.plan-flt-list .powner-opt{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:12px;border-radius:5px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plan-flt-list .psub-opt:hover,.plan-flt-list .powner-opt:hover{background:var(--accent-light)}.plan-flt-list .psub-cb,.plan-flt-list .powner-cb{margin:0;cursor:pointer}
+        .plan-row-empty td{opacity:.5}.plan-row-empty:hover td,.plan-row-empty:focus-within td{opacity:1}/* пустые строки (нет ни плана, ни факта) приглушены; оживают при наведении/вводе */</style>
         <div id="plan-subart-wrap" style="position:relative">
           <button type="button" id="plan-subart-btn" onclick="planSubartToggle()" title="Выбрать одну или несколько подстатей для планирования" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:320px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Все подстатьи ▾</button>
           <div id="plan-subart-list" class="plan-flt-list" style="display:none;position:absolute;top:34px;left:0;z-index:60;width:360px;max-height:340px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(20,25,40,.16);padding:6px">
@@ -9957,7 +9964,7 @@ window.showPlansPanel=async function(){
   overlay.addEventListener('click',e=>{if(e.target===overlay)planPanelClose();});
   overlay.querySelector('.txn-card-close').addEventListener('click',()=>planPanelClose());
   // правка в матрице → несохранённые изменения (защита от потери при закрытии)
-  overlay.addEventListener('input',e=>{if(e.target&&e.target.closest&&e.target.closest('#plan-matrix'))window._planDirty=true;});
+  overlay.addEventListener('input',e=>{if(e.target&&e.target.closest&&e.target.closest('#plan-matrix')){window._planDirty=true;const tr=e.target.closest('tr');if(tr)tr.classList.remove('plan-row-empty');}});
   overlay.addEventListener('change',e=>{if(e.target&&e.target.closest&&e.target.closest('#plan-matrix'))window._planDirty=true;});
   // экселевская навигация по ячейкам: Enter/↓ - к тому же месяцу строкой ниже, Shift+Enter/↑ - выше (← → остаются курсору в тексте)
   overlay.addEventListener('keydown',e=>{
