@@ -311,6 +311,18 @@
   .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:199;}
   .mflt-toggle{display:none;} /* тумблер «Фильтры» виден только на мобильном */
 
+  /* БДР (planfact): вкладка фиксированной высоты - скроллится ТОЛЬКО тело таблицы,
+     фильтр-бар/KPI/заголовок стоят, шапка таблицы держится sticky внутри .table-scroll.
+     Только десктоп: мобила (≤820px) живёт обычным потоком со своими карточками-хелперами. */
+  @media (min-width:821px){
+    #tabPlanfact{display:flex;flex-direction:column;height:calc(100vh - 104px);overflow:hidden;min-height:420px;} /* 104px = топбар 56 + вертикальные паддинги .content 24+24 */
+    #tabPlanfact>*{flex-shrink:0;}
+    #tabPlanfact>.table-wrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+    #tabPlanfact>.table-wrap>.table-scroll{flex:1 1 auto;min-height:0;max-height:none!important;} /* инлайн max-height остаётся как fallback вне этого layout */
+    #tabPlanfact #pfChartsBody{max-height:44vh;overflow:auto;} /* развёрнутые графики не забирают у таблицы больше ~половины экрана */
+  }
+  @media print{#tabPlanfact:not(.hidden){height:auto;overflow:visible;display:block;}} /* Cmd+P не обрезает вкладку; :not(.hidden) - чтобы не проявить её при печати другой вкладки */
+
   /* Маркетинг: 4 графика в ряд → 2 на узких десктопах/планшетах */
   @media (max-width:1100px){
     .chart-row-4{grid-template-columns:repeat(2,minmax(0,1fr)) !important;}
@@ -5868,6 +5880,12 @@ window.pfShowTxn=function(kind,code,m){
 };
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
 window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
+// После разворота details «Графики» (БДР) чарты создавались при display:none (размер 0) - подтолкнуть ресайз.
+// Вызывается только из ontoggle самого details; глобальных слушателей/observer'ов не добавляет.
+window.pfChartsResize=function(open){
+  if(!open)return;
+  requestAnimationFrame(()=>{['_pfChartNP','_pfChartDev','_pfCollectChart'].forEach(k=>{const c=window[k];if(c&&c.resize)try{c.resize();}catch(e){}});});
+};
 // ── Увеличение графика БДР на весь экран: билдер (fn,title) хранится в window._pfEnl[key], перерисовывается на новом canvas в модале ──
 window.pfEnlarge=function(key){
   const E=window._pfEnl&&window._pfEnl[key]; if(!E||!E.fn||!window.Chart)return;
@@ -6587,7 +6605,7 @@ function renderPlanFact(f){
       const mark=fr?(' 🔒'+(rt?'<span title="Ретроспектива: план приравнен к факту, месяц не планировался">📋</span>':hf?'<span title="План утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+fmt(mo.factAtApproval)+'">⚠</span>':'')):''; // ретроспектива приоритетнее пометки о факте
       return `<th style="${mth};position:sticky;top:0;z-index:2"${fr?` title="Месяц утверждён (заморожен)${rt?' · ретроспектива (не планировался)':hf?' при известном факте':''}"`:''}>${MS[m-1]}${mark}<div style="font-size:7.5px;font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;margin-top:1px;font-family:var(--mono)">утв · прог · %</div></th>`;}).join('');
     monthlyHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${esc(dirLabel)} · все месяцы ${year}</span><span class="table-count">факт + план по месяцам</span></div>
-      <div class="table-scroll" style="overflow:auto;max-height:72vh"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
+      <div class="table-scroll" style="overflow:auto;max-height:min(75vh,calc(100vh - 170px))"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:separate;border-spacing:0">
         <thead><tr><th style="text-align:left;${mth};position:sticky;top:0;left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th>${ths}<th style="${mth};border-left:2px solid var(--border);position:sticky;top:0;z-index:2">Год<div style="font-size:7.5px;font-weight:500;color:var(--text3);text-transform:none;letter-spacing:0;margin-top:1px;font-family:var(--mono)">утв · прог · %</div></th></tr></thead>
         <tbody>${rh}</tbody></table></div></div>`;
   }
@@ -6672,7 +6690,7 @@ function renderPlanFact(f){
     }
   }
   const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${esc(dirLabel)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.${level==='article'?' · ▸ клик по статье - подстатьи':''}</span></div>
-    <div class="table-scroll" style="overflow:auto;max-height:75vh"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:collapse">
+    <div class="table-scroll" style="overflow:auto;max-height:min(75vh,calc(100vh - 170px))"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:separate;border-spacing:0">
       <thead><tr><th style="text-align:left;${th};left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий прогноз (рабочий план)">Прогноз</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита на текущий месяц: утверждённый план месяца − факт месяца">Остаток (месяц)</th><th style="text-align:left;${th}">Статус</th></tr></thead>
       <tbody>${pfTbody}</tbody></table></div></div>`;
 
@@ -6707,7 +6725,12 @@ function renderPlanFact(f){
       <div style="height:300px;cursor:zoom-in" title="Клик - увеличить" onclick="pfEnlarge('collect')"><canvas id="pfCollectChart"></canvas></div>
       <div id="pfCollectConcl" style="font-size:13px;font-weight:700;margin-top:10px;line-height:1.4"></div>
       <div id="pfCollectNote" style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px">Факт - по дате ДДС, план - месячный из БДР. Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев.</div></div>`:`<div style="${_cardCss}"><div style="font-size:12px;font-weight:600;color:var(--text2)">📈 Динамика сбора</div><div style="height:300px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:12px">Нет доходных подстатей</div></div>`;
-  const chartHtml=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;margin-top:14px">
+  // Графики - сворачиваемый блок: в фиксированном layout вкладки (десктоп) места под таблицей нет,
+  // свёрнутый details даёт таблице всю высоту; состояние переживает ре-рендер через _tabFilters.planfact
+  const chartsOpen=!!f.chartsOpen;
+  const chartHtml=`<details id="pfCharts"${chartsOpen?' open':''} ontoggle="_tabFilters.planfact.chartsOpen=this.open;pfChartsResize(this.open)" style="margin-top:10px">
+    <summary style="cursor:pointer;user-select:none;font-size:12px;font-weight:600;color:var(--text2);padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px">📊 Графики: ЧП накопительно · отклонения по статьям · динамика сбора</summary>
+    <div id="pfChartsBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;margin-top:10px">
     <div style="${_cardCss}">${_enlBtn('np')}
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px;padding-right:30px">Чистая прибыль - накопительно · ${year}</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">${npLegend}</div>
@@ -6719,7 +6742,7 @@ function renderPlanFact(f){
       <div id="pfDevWrap" style="height:300px" title="Клик по бару - операции; по пустому полю - увеличить"><canvas id="pfChartDev"></canvas></div>
       <div id="pfDevConcl" style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px"></div></div>
     ${collectCard}
-  </div>`;
+  </div></details>`;
 
   const noPlans=!plans.some(p=>p.level==='subarticle'||p.level==='revenue'||p.level==='income');
   const banner=noPlans?`<div style="margin:8px var(--secpx) 0;padding:8px 12px;background:var(--accent-light);border:1px solid #d6d2f2;border-radius:8px;font-size:12px;color:var(--accent-hover)">Планы на «${esc(dirLabel)}» за ${year} (уровень ${level==='article'?'статья':'подстатья'}) ещё не заданы. ${isAdmin?'Нажмите «✏ Редактировать планы».':'Их задаёт администратор.'} Пока показан только факт.</div>`:'';
