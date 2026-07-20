@@ -923,7 +923,7 @@ const _tabFilters={
   osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'direction',noOpening:false},
   debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffOn:true,dateSort:''},
   loans:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyDebt:false},
-  anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9'},
+  anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9',showAcked:false},
   depau:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyOpen:false,statuses:[]},
   audit:{sub:'300_Лидогенарация',year:'',account:'',dir:'',dim:'cp'},
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
@@ -7971,8 +7971,22 @@ function renderAnomaly(f){
   // СберБанк-1638 (Елисеев) исключён - используется в любых направлениях (по решению пользователя)
   const AU_CARDS=['сбербанк8572','альфабанк6170','совкомбанк1673','тинькофф9930','кмкасса'];
   const isAuCard=r=>{const a=norm(r[COL.ACCOUNT]);return AU_CARDS.some(k=>a.includes(k));};
-  // Возврат: списание законно положительное (+), не считается ошибкой знака - подстатья/назначение содержит «возврат»
-  const isRefund=r=>norm(r[COL.ARTICLE_NAME]).includes('возврат')||norm(r[COL.PURPOSE]).includes('возврат');
+  // Возврат: положительное списание НЕ прячем автоматически, а помечаем подсказкой (лексический признак ИЛИ парное зеркало).
+  const isRefund=r=>norm(r[COL.ARTICLE_NAME]).includes('возврат')||norm(r[COL.PURPOSE]).includes('возврат'); // подстатья/назначение содержит «возврат»
+  // ── Возвраты: подсказка вместо авто-гашения ──────────────────────────────
+  // Идентификатор операции для отметки «проверено» (ack): хэш стабильных полей строки (философия «Дублей» - вся строка).
+  // Ключ безопасен для RTDB (base36, без .#$[]/). Две идентичные строки-дубли делят хэш - ack снимет обе (приемлемо).
+  const _rowHash=r=>{const s=[COL.DATE_DDS,COL.DATE_OPIU,COL.TYPE,COL.OFFER_ID,COL.INCOME,COL.OUTCOME,COL.ACCOUNT,COL.ARTICLE_CODE,COL.ARTICLE_NAME,COL.ANALYTICS,COL.SECOND_SIDE,COL.PURPOSE,COL.ACTIVITY_DIR,COL.FIN_OP].map(i=>S(r[i])).join('');let h=5381;for(let i=0;i<s.length;i++)h=((h*33)^s.charCodeAt(i))>>>0;return h.toString(36);};
+  const _ackKey=r=>'outsign:'+_rowHash(r); // scope по правилу: отметка «возврат» не гасит другое нарушение той же строки
+  // Индекс отрицательных списаний для поиска зеркала (контрагент+подстатья+|сумма|). По ВСЕМУ RAW - зеркало может лежать вне фильтра дат.
+  const _mDate=r=>parseDate(r[COL.DATE_OPIU])||parseDate(r[COL.DATE_DDS]); // учётная дата пары
+  const _daysB=(a,b)=>Math.round((Date.UTC(b.getFullYear(),b.getMonth(),b.getDate())-Date.UTC(a.getFullYear(),a.getMonth(),a.getDate()))/86400000); // календарные дни (как в Займах/Депозитах)
+  const _mKey=r=>norm(r[COL.SECOND_SIDE])+'|'+norm(r[COL.ARTICLE_NAME])+'|'+Math.round(Math.abs(parseNum(r[COL.OUTCOME])));
+  const _negIdx={};
+  (RAW||[]).forEach(r=>{if(isMove(r))return;const o=parseNum(r[COL.OUTCOME]);if(!(o<0))return;const d=_mDate(r);if(!d)return;(_negIdx[_mKey(r)]=_negIdx[_mKey(r)]||[]).push({d,row:r});});
+  const MIRROR_WIN=366; // окно поиска зеркала, дн. - широкое (до года): ложная пара не прячет строку, только подсказывает; неверную подсказку отвергаем ack-ом
+  // Ближайшее по дате зеркало (не первое в массиве). Требуем непустого контрагента - иначе пустой ключ даёт шумные совпадения.
+  const _findMirror=r=>{const o=parseNum(r[COL.OUTCOME]);const d=_mDate(r);if(!(o>0)||!d||!norm(r[COL.SECOND_SIDE]))return null;const list=_negIdx[_mKey(r)];if(!list)return null;let best=null,bd=1e9;list.forEach(x=>{const dd=Math.abs(_daysB(x.d,d));if(dd<=MIRROR_WIN&&dd<bd){bd=dd;best=x;}});return best?{date:best.d,amt:o,days:bd}:null;};
   // Справочник сделок Bitrix24 (RawData_BFL) для сверки ID_Offer - логика как в Дебиторке БФЛ
   const BFL_DIR='БФЛ - Банкротство физических лиц';
   const refOffer=new Set(),refLead={},refContract=new Set(),refName=new Set();
@@ -8003,7 +8017,7 @@ function renderAnomaly(f){
     // Сторож сверки БДР==ОПиУ: ОПиУ включает списание только при ТОЧНОМ совпадении аналитики с OPIU_CATS, БДР - все списания кроме вывода 127. Аналитика вне списка (опечатка/регистр/пусто) молча разводит отчёты
     {id:'ancat',label:'Списание → аналитика из категорий ОПиУ (точное написание)',where:r=>!isMove(r)&&S(r[COL.TYPE]).toLowerCase()==='списание'&&parseNum(r[COL.OUTCOME])<0,checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'одна из категорий ОПиУ (точное написание)',ok:a=>OPIU_CATS.includes(String(a||'').trim())}]},
     {id:'sro',label:'112_Платежи в СРО → направление АУ/САУ',where:r=>!isMove(r)&&norm(r[COL.ARTICLE_NAME]).includes('сро'),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}}]},
-    {id:'outsign',label:'Списание → только со знаком «−» (кроме возвратов)',where:r=>!isMove(r)&&!isRefund(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
+    {id:'outsign',label:'Списание → должно быть со знаком «−» (возвраты помечаются)',where:r=>!isMove(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
     {id:'div',label:'Статья 127 → Вывод чистой прибыли · 002_Финансовая деятельность · контрагент',where:is127,checks:[
       {field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Вывод чистой прибыли'},
       {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'002_Финансовая деятельность',ok:okFin002},
@@ -8065,18 +8079,23 @@ function renderAnomaly(f){
     aitems.push({...x,rows:[x.row]});
   });
   Object.values(offAgg).forEach(g=>{g.count=g.rows.length;g.got=S(g.row[COL.OFFER_ID]);aitems.push(g);});
-  const shown=f.field?aitems.filter(x=>x.rule===f.field):aitems;
+  // Возвраты: помечаем положительные списания зеркалом/лексикой + ключ ack. Проверенные (config/anomalyAck) убираем, если не включён показ.
+  aitems.forEach(x=>{if(x.rule!=='outsign')return;x.mirror=_findMirror(x.row);x.lexRefund=isRefund(x.row);x.ackKey=_ackKey(x.row);x.acked=!!(_anomalyAck&&_anomalyAck[x.ackKey]);});
+  const ackedN=aitems.filter(x=>x.rule==='outsign'&&x.acked).length;
+  const visible=f.showAcked?aitems:aitems.filter(x=>!(x.rule==='outsign'&&x.acked));
+  const shown=f.field?visible.filter(x=>x.rule===f.field):visible;
 
   const lbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
   const ruleOpts=[['','Все правила']].concat(RULES.map(rl=>[rl.id,rl.label]));
   const filterBar=`<div class="tab-filters" style="flex-wrap:wrap">
     <div class="date-range"><input type="date" value="${f.dateFrom}" onchange="_tabFilters.anomaly.dateFrom=this.value;renderAnomaly(getFilters())"><span class="date-range-sep">-</span><input type="date" value="${f.dateTo}" onchange="_tabFilters.anomaly.dateTo=this.value;renderAnomaly(getFilters())"></div>
     ${lbl('Правило:')}<select class="filter-extra-sel" onchange="_tabFilters.anomaly.field=this.value;renderAnomaly(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);max-width:280px">${ruleOpts.map(([v,t])=>`<option value="${v}"${f.field===v?' selected':''}>${t}</option>`).join('')}</select>
+    ${ackedN?`<label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text3);cursor:pointer"><input type="checkbox" ${f.showAcked?'checked':''} onchange="_tabFilters.anomaly.showAcked=this.checked;renderAnomaly(getFilters())">Показать проверенные (${ackedN})</label>`:''}
   </div>`;
 
-  const kpiCards=RULES.map(rl=>{const n=aitems.filter(x=>x.rule===rl.id).length;return `<div class="kpi-card ${n?'orange':'green'}"><div class="kpi-label">${rl.label}</div><div class="kpi-value ${n?'':'positive'}">${n}</div></div>`;}).join('');
+  const kpiCards=RULES.map(rl=>{const n=visible.filter(x=>x.rule===rl.id).length;return `<div class="kpi-card ${n?'orange':'green'}"><div class="kpi-label">${rl.label}</div><div class="kpi-value ${n?'':'positive'}">${n}</div></div>`;}).join('');
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card ${aitems.length?'red':'green'}"><div class="kpi-label">Нарушений всего</div><div class="kpi-value ${aitems.length?'negative':'positive'}">${aitems.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">жёсткие правила (без статистики)</div></div>
+    <div class="kpi-card ${visible.length?'red':'green'}"><div class="kpi-label">Нарушений всего</div><div class="kpi-value ${visible.length?'negative':'positive'}">${visible.length.toLocaleString('ru-RU')}</div><div class="kpi-sub">жёсткие правила (без статистики)</div></div>
     ${kpiCards}
   </div>`;
 
@@ -8087,18 +8106,25 @@ function renderAnomaly(f){
   const thS='background:var(--surface2);position:sticky;top:0;z-index:2;padding:7px 10px;font-size:10px;font-weight:600;border-bottom:2px solid var(--border);white-space:nowrap;color:var(--text3);text-transform:uppercase';
   const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
   const LIMIT=2000;
-  const rows=shown.slice(0,LIMIT).map((x,i)=>`<tr class="anom-row" style="cursor:pointer" onclick="anomShowCard(${i})" title="Карточка операции">
-    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:${x.soft?'var(--orange)':'var(--accent)'};background:color-mix(in srgb,${x.soft?'var(--orange)':'var(--accent)'} 12%,transparent)">${esc(x.ruleLabel)}${x.soft?' · мягкое':''}</span></td>
+  const isAdm=_isAdmin();
+  const dsD=d=>d instanceof Date?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:''; // дата-объект зеркала (не серийник)
+  const fmtRub=v=>Math.round(Math.abs(v)).toLocaleString('ru-RU'); // полное число без копеек (правило проекта - не сокращать)
+  const rows=shown.slice(0,LIMIT).map((x,i)=>{
+    // Подсказка о возврате: парное зеркало (приоритет) или лексический признак. Только для правила outsign.
+    const rf=x.rule!=='outsign'?'':(x.mirror?`↩ похоже на возврат · парное списание −${fmtRub(x.mirror.amt)} от ${dsD(x.mirror.date)}`:(x.lexRefund?'↩ подстатья/назначение содержит «возврат»':''));
+    const ackBtn=(x.rule==='outsign'&&isAdm)?(x.acked?`<button onclick="event.stopPropagation();anomAck('${x.ackKey}',true)" style="font-size:9px;padding:1px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text3);cursor:pointer">↺ снять отметку</button>`:`<button onclick="event.stopPropagation();anomAck('${x.ackKey}')" style="font-size:9px;padding:1px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">✓ проверено</button>`):'';
+    return `<tr class="anom-row" style="cursor:pointer;${x.acked?'opacity:.55;':''}" onclick="anomShowCard(${i})" title="Карточка операции">
+    <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:${x.soft?'var(--orange)':'var(--accent)'};background:color-mix(in srgb,${x.soft?'var(--orange)':'var(--accent)'} 12%,transparent)">${esc(x.ruleLabel)}${x.soft?' · мягкое':''}</span>${x.acked?' <span style="font-size:9px;color:var(--text3)">✓ проверено</span>':''}</td>
     <td style="${td};font-size:10px;color:var(--text3)">${esc(x.fieldName)}</td>
     <td style="${td};color:var(--income);font-weight:600">${esc(x.expect)}</td>
-    <td style="${td};color:${x.soft?'var(--orange)':'var(--outcome)'};font-weight:700;background:${x.soft?'#fff4e6':'#fdecea'}">${esc(x.got)}${x.agg?` <span style="color:var(--text3);font-weight:400">· ${x.count} оп. ↗</span>`:''}</td>
+    <td style="${td};color:${x.soft?'var(--orange)':'var(--outcome)'};font-weight:700;background:${x.soft?'#fff4e6':'#fdecea'}">${esc(x.got)}${x.agg?` <span style="color:var(--text3);font-weight:400">· ${x.count} оп. ↗</span>`:''}${rf?`<div style="margin-top:3px;font-size:10px;font-weight:400;color:#b26a00">${esc(rf)}</div>`:''}${ackBtn?`<div style="margin-top:4px">${ackBtn}</div>`:''}</td>
     <td style="${td};text-align:center;font-size:10px;white-space:nowrap">${x.agg?'разные':dsF(x.row[COL.DATE_DDS])}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.SECOND_SIDE]))}</td>
     <td style="${td};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.ARTICLE_NAME]))}</td>
     <td style="${td}">${esc(S(x.row[COL.ARTICLE_CODE]))}</td>
     <td style="${td};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.ANALYTICS]))||'<span style="color:var(--text3)">-</span>'}</td>
     <td style="${td};max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(S(x.row[COL.FIN_OP]))||'<span style="color:var(--text3)">-</span>'}</td>
-  </tr>`).join('');
+  </tr>`;}).join('');
   const trunc=shown.length>LIMIT?`<div style="padding:8px 12px;font-size:11px;color:var(--text3);font-style:italic">Показаны первые ${LIMIT} из ${shown.length.toLocaleString('ru-RU')}</div>`:'';
 
   el.innerHTML=`<style>#tabAnomaly .anom-row:hover{background:var(--surface2)}</style>`+filterBar+kpiHtml+`
@@ -8152,6 +8178,14 @@ window.anomShowCard=function(idx){
   </div>`;
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
   document.body.appendChild(overlay);
+};
+// Отметка положительного списания как проверенного (похоже на возврат). Только админ (запись config/anomalyAck = ADMIN_EMAIL).
+window.anomAck=function(key,undo){
+  if(!key)return;
+  if(!_isAdmin()){alert('Отмечать проверенным может только администратор.');return;}
+  if(undo)delete _anomalyAck[key];else _anomalyAck[key]=1;
+  _anomAckSave();
+  renderAnomaly(getFilters());
 };
 
 // ── Депозиты АУ (Контроль) ──────────────────────────────────────────────────
@@ -8865,6 +8899,22 @@ function startNotesSync(){
       _planNotes=(v&&typeof v==='object')?v:{};
       try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}});
   }catch(e){console.warn('[notes] sync',e&&e.message);}
+}
+// Проверенные аномалии (положительные списания, отмеченные как возврат) - config/anomalyAck; ключ = `outsign:<хэш строки>`. Запись = только админ.
+let _anomalyAck=(()=>{try{const o=JSON.parse(localStorage.getItem('finAnomalyAck')||'{}');return(o&&typeof o==='object')?o:{}}catch(e){return{}}})();
+function _anomAckSave(){
+  try{localStorage.setItem('finAnomalyAck',JSON.stringify(_anomalyAck));}catch(e){}
+  _fbSetSafe('config/anomalyAck',_anomalyAck,'Проверенные аномалии');
+}
+function startAnomalyAckSync(){
+  if(window._anomAckSyncStarted)return; window._anomAckSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
+    firebase.database().ref('config/anomalyAck').on('value',s=>{const v=s.val();
+      _anomalyAck=(v&&typeof v==='object')?v:{};
+      try{localStorage.setItem('finAnomalyAck',JSON.stringify(_anomalyAck));}catch(e){}
+      if(activeTab==='anomaly')try{renderAnomaly(getFilters());}catch(e){}});
+  }catch(e){console.warn('[anomAck] sync',e&&e.message);}
 }
 // ЦФО / ответственные = люди с доступом (их ФИО из config/names, задаются в «Управление доступом»). Список идёт в подсказки поля «Ответственный» планов.
 let _cfoList=(()=>{try{const a=JSON.parse(localStorage.getItem('finCfo')||'[]');return Array.isArray(a)?a:[]}catch(e){return[]}})();
@@ -10038,7 +10088,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -10092,7 +10142,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
       });
     }else{
       if(gate)gate.style.display='flex';
