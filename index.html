@@ -6321,20 +6321,25 @@ function renderPlanFact(f){
   if(PB){if(level==='subarticle')PB.R.forEach(p=>{if(p.level==='subarticle'&&isVyvodCode(p.code))vyvodSet[p.code]=1;});else PB.R.forEach(p=>{if(p.level==='subarticle'&&isVyvodCode(p.code)){const t=c3(p.code);if(t)vyvodSet[t]=1;}});} // baseline всегда порождает строку вывода
   Object.keys(vyvodSet).forEach(c=>{if(!codePasses(c))delete vyvodSet[c];});
   const vyvodArr=Object.keys(vyvodSet).map(code=>({code,plan:planExp(code),fact:factVyvodOf(code),base:bPlanExp(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
-  const sumVyvodPlan=vyvodArr.reduce((s,r)=>s+(r.plan||0),0),sumVyvodFact=vyvodArr.reduce((s,r)=>s+r.fact,0),sumVyvodBase=hasBaseline?vyvodArr.reduce((s,r)=>s+(r.base||0),0):null;
+  // Σ по строкам с СОХРАНЕНИЕМ «плана нет». ⚠ Нельзя reduce((s,r)=>s+(r.plan||0),0): сумма пустых схлопывается в 0, и Δ итога
+  // считается ОТ НУЛЯ - незамороженный месяц без утверждённого плана давал «Утверждено -0,00» и красный перерасход на весь факт.
+  // План, равный НУЛЮ, - валидное значение и обязан дойти до итога как 0 (это не «плана нет»). Слой planMonth/planYear/planAgg
+  // эту дисциплину уже соблюдает (tot=null, tot=(tot||0)+v только при v!=null) - здесь она просто не была продолжена.
+  const sumOrNull=(arr,get)=>{let s=null;arr.forEach(r=>{const v=get(r);if(v!=null)s=(s||0)+v;});return s;};
+  const sumVyvodPlan=sumOrNull(vyvodArr,r=>r.plan),sumVyvodFact=vyvodArr.reduce((s,r)=>s+r.fact,0),sumVyvodBase=hasBaseline?sumOrNull(vyvodArr,r=>r.base):null;
   const revRow={plan:planOf('revenue','__rev__'),fact:revFact(),base:bPlanRev()};
-  const sumPlan=rowsArr.reduce((s,r)=>s+(r.plan||0),0),sumFact=rowsArr.reduce((s,r)=>s+r.fact,0),sumBase=hasBaseline?rowsArr.reduce((s,r)=>s+(r.base||0),0):null;
+  const sumPlan=sumOrNull(rowsArr,r=>r.plan),sumFact=rowsArr.reduce((s,r)=>s+r.fact,0),sumBase=hasBaseline?sumOrNull(rowsArr,r=>r.base):null;
   // ── ДОХОДЫ по кодам (симметрично расходам) ──
   const incFactOf=code=>{const a=incByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const incSet={};Object.keys(incByCode).forEach(c=>incSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='income'){const t=c3(p.code);if(t)incSet[t]=1;}});
   if(PB){if(level==='subarticle')PB.R.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});else PB.R.forEach(p=>{if(p.level==='income'){const t=c3(p.code);if(t)incSet[t]=1;}});} // baseline всегда порождает доходную строку
   Object.keys(incSet).forEach(c=>{if(!codePasses(c))delete incSet[c];});
   const incRowsArr=Object.keys(incSet).map(code=>({code,plan:planInc(code),fact:incFactOf(code),base:bPlanInc(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
-  const sumIncPlan=incRowsArr.reduce((s,r)=>s+(r.plan||0),0),sumIncFact=incRowsArr.reduce((s,r)=>s+r.fact,0),sumIncBase=hasBaseline?incRowsArr.reduce((s,r)=>s+(r.base||0),0):null;
-  const incTotalPlan=sumIncPlan>0?sumIncPlan:revRow.plan; // нет доходных кодов - берём общий план «Выручка»
-  const incTotalBase=hasBaseline?((sumIncBase>0)?sumIncBase:revRow.base):null;
-  const netFactV=revRow.fact-sumFact, netPlanV=(incTotalPlan!=null||sumPlan)?((incTotalPlan||0)-(sumPlan||0)):null;
-  const netBaseV=hasBaseline?(((incTotalBase!=null)||sumBase)?((incTotalBase||0)-(sumBase||0)):null):null;
+  const sumIncPlan=sumOrNull(incRowsArr,r=>r.plan),sumIncFact=incRowsArr.reduce((s,r)=>s+r.fact,0),sumIncBase=hasBaseline?sumOrNull(incRowsArr,r=>r.base):null;
+  const incTotalPlan=sumIncPlan!=null?sumIncPlan:revRow.plan; // ни у одной доходной строки нет плана - берём общий план «Выручка» (проверка на null, а не >0: доходный план 0 - это план)
+  const incTotalBase=hasBaseline?(sumIncBase!=null?sumIncBase:revRow.base):null;
+  const netFactV=revRow.fact-sumFact, netPlanV=(incTotalPlan!=null||sumPlan!=null)?((incTotalPlan||0)-(sumPlan||0)):null; // !=null, а не truthiness: 0 - валидный план
+  const netBaseV=hasBaseline?((incTotalBase!=null||sumBase!=null)?((incTotalBase||0)-(sumBase||0)):null):null;
 
   // фильтр-бар
   const sel=(id,opts)=>`<select onchange="_tabFilters.planfact.${id}=this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${opts}</select>`;
@@ -6429,7 +6434,7 @@ function renderPlanFact(f){
     :'';
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Доходы факт</div><div class="kpi-value positive">${fmt(revRow.fact)}</div><div class="kpi-sub">${utvLbl} ${incTotalBase!=null?fmt(incTotalBase):'-'} · прог. ${incTotalPlan!=null?fmt(incTotalPlan):'-'}</div></div>
-    <div class="kpi-card red"><div class="kpi-label">Расходы факт</div><div class="kpi-value negative">${fmt(-sumFact)}</div><div class="kpi-sub">${utvLbl} ${sumBase!=null?fmt(-sumBase):'-'} · прог. ${sumPlan?fmt(-sumPlan):'-'}</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Расходы факт</div><div class="kpi-value negative">${fmt(-sumFact)}</div><div class="kpi-sub">${utvLbl} ${sumBase!=null?fmt(-sumBase):'-'} · прог. ${sumPlan!=null?fmt(-sumPlan):'-'}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${netCol}"><div class="kpi-label">Чистая прибыль факт</div><div class="kpi-value" style="color:${netCol}">${fmt(netFactV)}</div><div class="kpi-sub">${utvLbl} ${netBaseV!=null?fmt(netBaseV):'-'} · прог. ${netPlanV!=null?fmt(netPlanV):'-'}</div></div>
     ${ytdCard}
     ${ytdIncCard}
@@ -6455,17 +6460,17 @@ function renderPlanFact(f){
   const remTd=(planM,factM,applic)=>{
     if(!showRem||!applic)return remDash;
     factM=factM||0;
-    const hasP=planM!=null&&Math.abs(planM)>0.0001;
+    const hasP=planM!=null; // план, равный НУЛЮ, - валидный лимит (остаток = −факт), а не «плана нет»
     const mName=MONR[curM-1];
     const tipBase=`Остаток лимита на ${mName}: план ${fmt(hasP?planM:0)} − факт ${fmt(factM)}. Считается от утверждённого плана.`;
     if(!hasP){ // плана месяца нет
       if(Math.abs(factM)>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);font-weight:600" title="${tipBase}">нет плана</td>`;
       return remDash; // ни плана, ни факта
     }
-    const rem=planM-factM,ratio=rem/Math.abs(planM);
+    const rem=planM-factM;
     let col,txt,tip=tipBase;
-    if(rem<0){col='var(--outcome)';txt='−'+fmt(Math.abs(rem));}
-    else if(ratio<=0.20){col='var(--orange)';txt=fmt(rem);tip=tipBase+' · лимит на исходе';}
+    if(rem<-0.0001){col='var(--outcome)';txt='−'+fmt(Math.abs(rem));}
+    else if(Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=0.20){col='var(--orange)';txt=fmt(rem);tip=tipBase+' · лимит на исходе';} // guard: при плане 0 деление дало бы Infinity
     else{col='var(--income)';txt=fmt(rem);}
     return`<td style="${td};text-align:right;color:${col};font-weight:600" title="${tip}">${txt}</td>`;
   };
@@ -6544,10 +6549,10 @@ function renderPlanFact(f){
   const incBodyRows=incRowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
   const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalBase,incTotalPlan,revRow.fact,true,true);
   const bodyRows=rowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
-  const totalRow=dRow('ИТОГО РАСХОДЫ',sumBase,sumPlan||null,sumFact,false,true,null,null,{rem:remSum(rowsArr,c=>factExpM(c,curM))});
+  const totalRow=dRow('ИТОГО РАСХОДЫ',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,c=>factExpM(c,curM))});
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netBaseV,netPlanV,netFactV,true,true,null,null,{signColor:true});
   const vyvodBody=vyvodArr.length?vyvodArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'vyv')).join(''):'';
-  const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan||null,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,c=>factVyvodM(c,curM))})):'';
+  const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,c=>factVyvodM(c,curM))})):'';
   // при активном фильтре по статье/подстатье/ЦФО - показываем только отфильтрованные строки без строк-итогов (ИТОГО/ЧП не нужны)
   const pfFilterOn=selArt.size||selSub.size||selOwn.size;
   const pfTbody=pfFilterOn
