@@ -6469,7 +6469,24 @@ function renderPlanFact(f){
     else{col='var(--income)';txt=fmt(rem);}
     return`<td style="${td};text-align:right;color:${col};font-weight:600" title="${tip}">${txt}</td>`;
   };
-  // колонки: Утверждено (baseline) | Прогноз (текущий план) | Факт | Δ к утв. | Остаток (месяц) | Статус. Δ и статус считаются ТОЛЬКО от baseline.
+  // ── «Ответственный»: тот, кто стоит при ПЛАНИРОВАНИИ (_planOwners по ключу «направление||подстатья», как в редакторе планов) ──
+  // ⚠ _planOwners ключуется ПОДСТАТЬЁЙ, а строка в режиме «Статья» - это c3-группа (см. CLAUDE.md), поэтому статья агрегирует
+  //   своих подстатей через subsOfArt. В своде по всем направлениям одна подстатья может иметь РАЗНЫХ владельцев по направлениям -
+  //   тогда несколько ФИО появится даже на строке-подстатье; это честно, а не дефект.
+  const _fioInit=fio=>{const p=String(fio||'').trim().split(/\s+/); // «Черновский Александр Борисович» → «Черновский А.Б.»; 1 слово отдаём как есть
+    return p.length<2?String(fio||'').trim():p[0]+' '+p.slice(1).map(x=>x.charAt(0).toUpperCase()+'.').join('');};
+  const ownersOfRow=(kind,code,isChild)=>{
+    const s=new Set(),add=set=>set.forEach(o=>{const t=String(o||'').trim();if(t)s.add(t);});
+    if(isChild||level!=='article')add(ownersOfSub(code)); else subsOfArt(kind,code).forEach(sub=>add(ownersOfSub(sub)));
+    return [...s].sort((a,b)=>a.localeCompare(b,'ru'));};
+  const ownerTd=(kind,code,isChild)=>{
+    if(!kind||!code)return `<td style="${td}"></td>`; // ИТОГО/ЧП/ИТОГО ВЫВОД зовут dRow с kind=null - ячейка пустая
+    const os=ownersOfRow(kind,code,isChild);
+    if(!os.length)return `<td style="${td};text-align:left;color:var(--text3)" title="Ответственный не назначен в редакторе планов">-</td>`;
+    // владельцев может быть несколько - перечисляем ВСЕХ через запятую (фамилия с инициалами), полные ФИО в title
+    return `<td style="${td};text-align:left" title="${esc(os.join(', '))}">${esc(os.map(_fioInit).join(', '))}</td>`;
+  };
+  // колонки: Ответственный | Утверждено (baseline) | Прогноз (текущий план) | Факт | Δ к утв. | Остаток (месяц) | Статус. Δ и статус считаются ТОЛЬКО от baseline.
   const dRow=(label,base,plan,fact,revenue,bold,kind,code,opts)=>{
     opts=opts||{};
     const d=base!=null?fact-base:null;
@@ -6483,6 +6500,7 @@ function renderPlanFact(f){
     const statusHtml=hasBaseline?statusCell(base,fact,revenue):dash;
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}"${labClick}>${tog}${esc(label)}</td>
+      ${ownerTd(kind,code,opts.child)}
       <td style="${td};text-align:right${bold?';font-weight:700':''}" title="Утверждённый (замороженный) план">${base!=null?fmt(revenue?base:-base):dash}</td>
       <td style="${td};text-align:right" title="Текущий прогноз (рабочий план)">${plan!=null?fmt(revenue?plan:-plan):dash}</td>
       <td style="${td};text-align:right;${bold?'font-weight:700':''}${opts.signColor?';color:'+(fact>=-0.0001?'var(--income)':'var(--outcome)'):''}">${fmt(revenue?fact:-fact)}</td>
@@ -6491,7 +6509,7 @@ function renderPlanFact(f){
       <td style="${td};text-align:left">${statusHtml}</td>
     </tr>`;
   };
-  const secRow=t=>`<tr><td colspan="7" style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
+  const secRow=t=>`<tr><td colspan="8" style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
   // ── инлайн-разворот статья → подстатьи (только в режиме «Статья») ──
   const artExp=(level==='article')?(window._pfArtExp||(window._pfArtExp=new Set())):null;
   const _sumNP=(mp,name)=>{const a=mp[name];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
@@ -6533,7 +6551,7 @@ function renderPlanFact(f){
   // при активном фильтре по статье/подстатье/ЦФО - показываем только отфильтрованные строки без строк-итогов (ИТОГО/ЧП не нужны)
   const pfFilterOn=selArt.size||selSub.size||selOwn.size;
   const pfTbody=pfFilterOn
-    ? ((incBodyRows?secRow('Доходы')+incBodyRows:'')+(bodyRows?secRow('Расходы')+bodyRows:'')+(vyvodBody?secRow('Распределение прибыли (вывод)')+vyvodBody:''))||`<tr><td colspan="7" style="padding:14px 12px;color:var(--text3);font-size:12px">По фильтру строк нет</td></tr>`
+    ? ((incBodyRows?secRow('Доходы')+incBodyRows:'')+(bodyRows?secRow('Расходы')+bodyRows:'')+(vyvodBody?secRow('Распределение прибыли (вывод)')+vyvodBody:''))||`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По фильтру строк нет</td></tr>`
     : (secRow('Доходы')+incBodyRows+incTotalRow+secRow('Расходы')+bodyRows+totalRow+netRow+vyvodRows);
   const periodLbl=period==='monthly'?('все месяцы '+year):isYear?('Весь год '+year):(MON[+period-1]+' '+year);
   // ── Матрица «все месяцы (план/факт)»: строки статьи/подстатьи, колонки месяцы, в ячейке факт (цвет по отклонению) + план мелким ──
@@ -6710,7 +6728,7 @@ function renderPlanFact(f){
   }
   const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${esc(dirLabel)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.${level==='article'?' · ▸ клик по статье - подстатьи':''}</span></div>
     <div class="table-scroll" style="overflow:auto;max-height:min(75vh,calc(100vh - 170px))"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:separate;border-spacing:0">
-      <thead><tr><th style="text-align:left;${th};left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий прогноз (рабочий план)">Прогноз</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита на текущий месяц: утверждённый план месяца − факт месяца">Остаток (месяц)</th><th style="text-align:left;${th}">Статус</th></tr></thead>
+      <thead><tr><th style="text-align:left;${th};left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th><th style="text-align:left;${th};width:1%" title="Ответственный за планирование (из редактора планов). Строка-статья агрегирует своих подстатей">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий прогноз (рабочий план)">Прогноз</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита на текущий месяц: утверждённый план месяца − факт месяца">Остаток (месяц)</th><th style="text-align:left;${th}">Статус</th></tr></thead>
       <tbody>${pfTbody}</tbody></table></div></div>`;
 
   // ── Динамика сбора: список доходных подстатей (нужен ДО сборки карточки, т.к. select встроен в ряд графиков) ──
