@@ -9203,6 +9203,25 @@ window.planFillCodeFact=function(btn){
   window._planFillUndo={snap}; window._planDirty=true;
   _planFillToast(filled?('Заполнено фактом направлений: '+filled+(kept?' · оставлено вручную (отличается): '+kept:'')+(skipped?' · пропущено (режим %): '+skipped:'')):'Нет строк в режиме ₽ для заполнения');
 };
+// Заполнить фактом ВСЕ видимые строки редактора (все 12 месяцев каждой) - массовый эквивалент построчного ⤓ по всем строкам сразу.
+// Переиспускает _planFillTrFactCore (пусто→факт; введённое и отличное от факта - не трогает, помечает; режим % - пропускает). Один общий снимок → одно «↶ Отменить». Только админ (кнопка гейтится в шапке).
+window.planFillAllFact=function(){
+  const mx=document.getElementById('plan-matrix'); if(!mx)return;
+  // видимые РЕДАКТИРУЕМЫЕ строки (после активных фильтров редактора - _planRenderMatrix уже отрисовал только прошедшие): есть input.plan-val, не строки-итоги
+  const rows=[...mx.querySelectorAll('tr[data-key]')].filter(x=>x.querySelector('input.plan-val')&&!x.classList.contains('plan-total')&&!x.classList.contains('plan-dirtotal'));
+  if(!rows.length){alert('Нет строк для заполнения.');return;}
+  const isMoney=x=>{const mb=x.querySelector('.plan-mode');return (mb?mb.getAttribute('data-mode'):'money')==='money';};
+  const N=rows.filter(isMoney).length;
+  if(!N){alert('Нет строк в режиме ₽ - все видимые строки в режиме %выр/%ЧП (факт в рублях не вставить).');return;}
+  if(!confirm('Заполнить фактом '+N+' строк (все 12 месяцев)? Введённые значения, отличные от факта, останутся и будут помечены.'))return;
+  const snap=[]; let filled=0,kept=0,skipped=0;
+  rows.forEach(x=>{const r=_planFillTrFactCore(x,snap);if(r.applied){filled++;kept+=r.kept;}else if(!isMoney(x))skipped++;}); // core сам пропускает % и пишет снимок только реально изменённых ячеек
+  // пересчёт всех итогов: сначала ИТОГО направлений (111-ФОТ), затем ИТОГО кодов
+  mx.querySelectorAll('tr.plan-dirtotal').forEach(t=>{const k=t.getAttribute('data-key'),d=t.getAttribute('data-dir');if(window.planSumDir&&k)planSumDir(k,d);});
+  [...new Set([...mx.querySelectorAll('tr[data-key]')].map(t=>t.getAttribute('data-key')))].forEach(k=>{if(window.planSumBlock&&k)planSumBlock(k);});
+  window._planFillUndo={snap}; window._planDirty=true;
+  _planFillToast('Заполнено строк: '+filled+' · оставлено вручную: '+kept+' · пропущено (режим %): '+skipped);
+};
 // Очистить все значения строки (месяцы + Год); с возможностью «Отменить»
 window.planClearRow=function(btn){
   const tr=btn.closest('tr'); if(!tr)return;
@@ -10094,6 +10113,7 @@ window.showPlansPanel=async function(){
           <button type="button" onclick="planExpandCmd('all')" title="Развернуть все подстатьи" style="font-size:11px;padding:5px 10px;border:0;border-right:1px solid var(--border);background:var(--surface);color:var(--text2);cursor:pointer">⊞ Развернуть все</button>
           <button type="button" onclick="planExpandCmd('none')" title="Свернуть все подстатьи" style="font-size:11px;padding:5px 10px;border:0;background:var(--surface);color:var(--text2);cursor:pointer">⊟ Свернуть</button>
         </span>
+        ${isAdmin?`<button type="button" onclick="planFillAllFact()" title="Заполнить фактом все 12 месяцев ВСЕХ видимых строк (режим ₽): пустые ячейки → факт; введённые и отличные от факта останутся и будут помечены. Один общий «↶ Отменить». Учитывает активные фильтры." style="font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⤓ Заполнить всё фактом</button>`:''}
         <input type="hidden" id="plan-level" value="subarticle">
         <style>.plan-flt-list .psub-opt,.plan-flt-list .powner-opt{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:12px;border-radius:5px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.plan-flt-list .psub-opt:hover,.plan-flt-list .powner-opt:hover{background:var(--accent-light)}.plan-flt-list .psub-cb,.plan-flt-list .powner-cb{margin:0;cursor:pointer}
         .plan-row-empty td{opacity:.5}.plan-row-empty:hover td,.plan-row-empty:focus-within td{opacity:1}/* пустые строки (нет ни плана, ни факта) приглушены; оживают при наведении/вводе */</style>
