@@ -6424,7 +6424,12 @@ function renderPlanFact(f){
   // ── YTD и прогноз года: истёкшие ПОЛНЫЕ месяцы (текущий не берём - факт неполный); годовые планы без помесячной разбивки распределяются равномерно /12 ──
   const nowD=new Date();
   const curY=nowD.getFullYear(),curM=nowD.getMonth()+1; // текущий календарный месяц - для колонки «Остаток лимита»
-  const showRem=year===curY&&frozenSet.has(curM); // остаток лимита - только если ТЕКУЩИЙ месяц заморожен (иначе обязательства по нему нет); период отчёта не влияет
+  const showRem=year===curY&&frozenSet.has(curM); // (устар.) флаг «текущий месяц заморожен» - больше НЕ гейтит остаток; оставлен на случай внешних ссылок
+  // ── Остаток лимита считается за ВЫБРАННЫЙ период отчёта (месяц/год), а не за текущий календарный месяц ──
+  // База = devBase (заморожен месяц → утверждённое, иначе → прогноз; фолбэк на другую сторону) - та же, что красит матрицу. Факт - за тот же период.
+  // Источник базы ('utv'/'prog'/'mix') определяется по РЕАЛЬНО давшей число стороне (не по frozen(m): замороженный месяц без baseline берёт прогноз - фолбэк). remTd приглушает и подписывает по этому источнику.
+  const remMonths=isYear?[1,2,3,4,5,6,7,8,9,10,11,12]:[+period];
+  const remPerLbl=isYear?('год '+year):MON[+period-1];
   const L=year<nowD.getFullYear()?12:(year>nowD.getFullYear()?0:nowD.getMonth()); // число истёкших полных месяцев
   const planSeries=(codes,pm,py)=>{const arr=new Array(13).fill(0);codes.forEach(c=>{const ms=[];let has=false;for(let m=1;m<=12;m++){const v=pm(c,m);ms.push(v);if(v!=null)has=true;}if(has){for(let m=1;m<=12;m++)arr[m]+=ms[m-1]||0;}else{const y=py(c);if(y!=null)for(let m=1;m<=12;m++)arr[m]+=y/12;}});return arr;};
   const expPlanArrY=planSeries(Object.keys(codeSet),(c,m)=>planExpM(c,m),c=>planExp(c));
@@ -6487,33 +6492,35 @@ function renderPlanFact(f){
   };
   // Остаток лимита за ТЕКУЩИЙ месяц: planM(baseline) − factM. Цвет по остатку относительно месячного плана. applic=false (доходы/ЧП) или !showRem → прочерк.
   const remDash=`<td style="${td};text-align:right"><span style=color:var(--text3)>-</span></td>`;
-  const remTd=(planM,factM,applic,kind)=>{
-    if(!showRem||!applic)return remDash;
+  const remTd=(planM,factM,applic,kind,src)=>{
+    if(!applic)return remDash; // гейт showRem снят: остаток считается за ВЫБРАННЫЙ период (месяц/год), а не «только если текущий месяц заморожен»
     factM=factM||0;
-    const hasP=planM!=null; // план, равный НУЛЮ, - валидный лимит (остаток = −факт), а не «плана нет»
-    const mName=MONR[curM-1];
+    const hasP=planM!=null; // база, равная НУЛЮ, - валидный лимит (остаток = −факт), а не «плана нет»
+    const pst=(src&&src!=='utv')?';font-style:italic;opacity:.72':''; // база прогнозная или смешанная (правится свободно) - приглушаем, чтобы главбух не принял за лимит-обязательство
+    const srcLbl=src==='utv'?'утверждено':src==='prog'?'прогноз (не утверждён)':src==='mix'?'смешанная (утв. + прогноз)':'-'; // источник по РЕАЛЬНО давшей число стороне (см. #2)
+    const baseNote=' База: '+srcLbl+' · '+remPerLbl+'.';
     if(kind==='vyv'){ // вывод прибыли (127) - без светофора, нейтрально (остаток показываем серым)
       if(!hasP)return remDash;
-      return`<td style="${td};text-align:right;color:var(--text2)" title="Остаток (вывод, нейтрально) на ${mName}: план ${fmt(planM)} − факт ${fmt(factM)}">${fmt(planM-factM)}</td>`;
+      return`<td style="${td};text-align:right;color:var(--text2)${pst}" title="Остаток (вывод, нейтрально) за ${remPerLbl}: база ${fmt(planM)} − факт ${fmt(factM)}.${baseNote}">${fmt(planM-factM)}</td>`;
     }
     if(kind==='inc'){ // доход - ЗЕРКАЛЬНЫЙ светофор: «осталось собрать до плана»; недобор красный, выполнение зелёное
       if(!hasP)return remDash; // без цели недобор не измерить
       const rem=planM-factM; // >0 недобор, ≤0 план выполнен/перевыполнен
-      const tip=`Осталось собрать до плана на ${mName}: план ${fmt(planM)} − факт ${fmt(factM)}.`;
-      if(rem>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);font-weight:600" title="${tip} Недобор.">${fmt(rem)}</td>`;
-      return`<td style="${td};text-align:right;color:var(--income);font-weight:600" title="${tip} План выполнен.">${rem<-0.0001?'+'+fmt(-rem):fmt(0)}</td>`;
+      const tip=`Осталось собрать за ${remPerLbl}: база ${fmt(planM)} − факт ${fmt(factM)}.${baseNote}`;
+      if(rem>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);font-weight:600${pst}" title="${tip} Недобор.">${fmt(rem)}</td>`;
+      return`<td style="${td};text-align:right;color:var(--income);font-weight:600${pst}" title="${tip} План выполнен.">${rem<-0.0001?'+'+fmt(-rem):fmt(0)}</td>`;
     }
-    const tipBase=`Остаток лимита на ${mName}: план ${fmt(hasP?planM:0)} − факт ${fmt(factM)}. Считается от утверждённого плана.`;
-    if(!hasP){ // плана месяца нет
-      if(Math.abs(factM)>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);font-weight:600" title="${tipBase}">нет плана</td>`;
-      return remDash; // ни плана, ни факта
+    const tipBase=`Остаток лимита за ${remPerLbl}: база ${fmt(hasP?planM:0)} − факт ${fmt(factM)}.${baseNote}`;
+    if(!hasP){ // базы за период нет
+      if(Math.abs(factM)>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);font-weight:600${pst}" title="${tipBase}">нет плана</td>`;
+      return remDash; // ни базы, ни факта
     }
     const rem=planM-factM;
     let col,txt,tip=tipBase;
     if(rem<-0.0001){col='var(--outcome)';txt='−'+fmt(Math.abs(rem));}
-    else if(Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=0.20){col='var(--orange)';txt=fmt(rem);tip=tipBase+' · лимит на исходе';} // guard: при плане 0 деление дало бы Infinity
+    else if(Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=0.20){col='var(--orange)';txt=fmt(rem);tip=tipBase+' · лимит на исходе';} // guard: при базе 0 деление дало бы Infinity
     else{col='var(--income)';txt=fmt(rem);}
-    return`<td style="${td};text-align:right;color:${col};font-weight:600" title="${tip}">${txt}</td>`;
+    return`<td style="${td};text-align:right;color:${col};font-weight:600${pst}" title="${tip}">${txt}</td>`;
   };
   // ── «Ответственный»: тот, кто стоит при ПЛАНИРОВАНИИ (_planOwners по ключу «направление||подстатья», как в редакторе планов) ──
   // ⚠ _planOwners ключуется ПОДСТАТЬЁЙ, а строка в режиме «Статья» - это c3-группа (см. CLAUDE.md), поэтому статья агрегирует
@@ -6553,7 +6560,7 @@ function renderPlanFact(f){
       <td style="${td};text-align:right" title="Текущий прогноз (рабочий план)">${plan!=null?fmt(revenue?plan:-plan):dash}</td>
       <td style="${td};text-align:right;${bold?'font-weight:700':''}${opts.signColor?';color:'+(fact>=-0.0001?'var(--income)':'var(--outcome)'):''}">${fmt(revenue?fact:-fact)}</td>
       <td style="${td};text-align:right;color:${dCol}" title="Отклонение факта от утверждённого плана">${d!=null?((d>0?'+':d<0?'−':'')+fmt(Math.abs(d))):'-'}</td>
-      ${opts.rem?remTd(opts.rem.pM,opts.rem.fM,true,opts.rem.kind):remDash}
+      ${opts.rem?remTd(opts.rem.pM,opts.rem.fM,true,opts.rem.kind,opts.rem.src):remDash}
       <td style="${td};text-align:left">${statusHtml}</td>
     </tr>`;
   };
@@ -6577,10 +6584,22 @@ function renderPlanFact(f){
   const childFactM=(kind,sub)=>{const mp=kind==='inc'?incSubN:kind==='vyv'?vyvodSubN:factSubN;const a=mp[sub];return a?(a[curM]||0):0;};
   // лейбл строки-статьи «c3 · представитель» (представитель = ARTICLE_CODE с макс. оборотом в c3-группе, без ведущего кода); code теперь c3
   const artLabel=c3v=>{const base=c3v||'(без кода)';const m=artRepAmt[c3v];if(!m)return base;let best='',bv=-1;Object.keys(m).forEach(k=>{if(m[k]>bv){bv=m[k];best=k;}});const rest=String(best).replace(c3v,'').replace(/^[_\s.\-–—]+/,'').trim();return rest?base+' · '+rest:base;};
-  // остаток лимита для строки: только расходы/вывод (доходы - прочерк); pM=baseline план месяца, fM=факт месяца
-  const artRemFor=(kind,c)=>kind==='inc'?undefined:{pM:bPlanExpM(c,curM),fM:(kind==='vyv'?factVyvodM(c,curM):factExpM(c,curM))};
-  const subRemFor=(kind,s)=>kind==='inc'?undefined:{pM:childBaseM(kind,s),fM:childFactM(kind,s)};
-  const remSum=(arr,factFn)=>{let pM=null,fM=0;arr.forEach(r=>{const p=bPlanExpM(r.code,curM);if(p!=null)pM=(pM||0)+p;fM+=factFn(r.code);});return{pM,fM};};
+  // остаток лимита строки за ВЫБРАННЫЙ период: база = devBase (заморожен → baseline, иначе прогноз; фолбэк на другую сторону), факт - за тот же период.
+  // Считается на уровне ПОДСТАТЬИ и суммируется по owner-passing подстатьям → Σ подстатей = статья ТОЧНО, и совпадает с devBase−факт ячейки матрицы.
+  // #1: факт берём ТОЛЬКО за месяцы, где ЕСТЬ база (иначе Год смешивал бы базу за часть года с фактом за весь год → занижение, ложный перерасход).
+  // #2: src ('utv'/'prog') - по РЕАЛЬНО давшей число стороне; при смешении по месяцам → 'mix'.  #3/#4: kind несём в объекте (inc - зеркальный светофор везде, vyv - нейтрально).
+  const _subDevBaseM=(lvl,sub,m)=>{const fr=frozenSet.has(m);const b=PB?PB.planMonth(lvl,sub,m):null,p=planMonth(lvl,sub,m);
+    if(fr){if(b!=null)return{v:b,src:'utv'};if(p!=null)return{v:p,src:'prog'};} else {if(p!=null)return{v:p,src:'prog'};if(b!=null)return{v:b,src:'utv'};}
+    return{v:null,src:null};};
+  const _remFactSubM=(kind,sub,m)=>{const mp=kind==='inc'?incSubN:kind==='vyv'?vyvodSubN:factSubN;const a=mp[sub];return a?(a[m]||0):0;};
+  const _remSrc=(su,sp)=>su&&sp?'mix':su?'utv':sp?'prog':null;
+  const remOfSub=(kind,sub)=>{const lvl=kind==='inc'?'income':'subarticle';let pM=null,fM=0,su=0,sp=0;
+    remMonths.forEach(m=>{const r=_subDevBaseM(lvl,sub,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=_remFactSubM(kind,sub,m);if(r.src==='utv')su++;else sp++;}); // факт ТОЛЬКО там, где есть база (#1)
+    return{pM,fM,kind,src:_remSrc(su,sp)};};
+  const _remMerge=(kind,parts)=>{let pM=null,fM=0,su=0,sp=0;parts.forEach(r=>{if(!r||r.pM==null)return;pM=(pM||0)+r.pM;fM+=r.fM;if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind,src:_remSrc(su,sp)};};
+  const artRemFor=(kind,c)=>_remMerge(kind,subsOfArt(kind,c).filter(subOwnerPass).map(sub=>remOfSub(kind,sub)));
+  const subRemFor=(kind,s)=>remOfSub(kind,s);
+  const remSum=(arr,kind)=>_remMerge(kind,arr.map(r=>artRemFor(kind,r.code)));
   // строка статьи + (если развёрнута) её подстатьи
   const artRow=(code,base,plan,fact,revenue,kind)=>{
     if(level!=='article')return dRow(code,base,plan,fact,revenue,false,kind,code,{rem:artRemFor(kind,code)});
@@ -6591,12 +6610,12 @@ function renderPlanFact(f){
     return h;
   };
   const incBodyRows=incRowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
-  const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalBase,incTotalPlan,revRow.fact,true,true);
+  const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalBase,incTotalPlan,revRow.fact,true,true,null,null,{rem:remSum(incRowsArr,'inc')}); // доходы теперь тоже показывают остаток «осталось собрать» (#3 - единое поведение с «по направлениям»)
   const bodyRows=rowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
-  const totalRow=dRow('ИТОГО РАСХОДЫ',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,c=>factExpM(c,curM))});
+  const totalRow=dRow('ИТОГО РАСХОДЫ',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,'exp')});
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netBaseV,netPlanV,netFactV,true,true,null,null,{signColor:true});
   const vyvodBody=vyvodArr.length?vyvodArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'vyv')).join(''):'';
-  const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,c=>factVyvodM(c,curM))})):'';
+  const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv')})):'';
   // ── Режим «по направлениям»: строки = направления по ОДНОЙ выбранной подстатье (значения - по этой подстатье в направлении) ──
   // Доступен только при ровно одной выбранной подстатье; иначе измерение молча = «по статьям». Матрицу «все месяцы» не трогает.
   const dirMode=(selSub.size===1)&&(_tabFilters.planfact.rowDim==='dir')&&!isMonthly;
@@ -6624,15 +6643,20 @@ function renderPlanFact(f){
       else if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');const isV=anl.includes('вывод')&&anl.includes('прибыл');if(sKind==='vyv'?isV:!isV)arr[m]+=Math.abs(out);}});
     const factOf=d=>{const a=dirFact[d];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
     const factMonth=(d,m)=>{const a=dirFact[d];return a?(a[m]||0):0;};
-    const remFor=d=>({pM:baseDirM(d,curM),fM:factMonth(d,curM),kind:sKind});
+    // прогноз (направление) помесячно - аналог baseDirM, но из прогноза (plans+cvtD); для devBase остатка незамороженного месяца
+    const planDirM=(d,m)=>{const all=plans.filter(p=>p.dir===d&&p.level===sLvl&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;};
+    const devBaseDirM=(d,m)=>{const fr=frozenSet.has(m);const b=baseDirM(d,m),p=planDirM(d,m); // источник по реально давшей стороне (#2)
+      if(fr){if(b!=null)return{v:b,src:'utv'};if(p!=null)return{v:p,src:'prog'};} else {if(p!=null)return{v:p,src:'prog'};if(b!=null)return{v:b,src:'utv'};} return{v:null,src:null};};
+    const remDirOf=d=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=devBaseDirM(d,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factMonth(d,m);if(r.src==='utv')su++;else sp++;});return{pM,fM,kind:sKind,src:_remSrc(su,sp)};}; // Σ_m devBase − Σ_m факт; факт только где есть база (#1)
+    const remFor=d=>remDirOf(d);
     // строки = направления с планом ИЛИ фактом (объединение, никого не прячем)
     const dirOwnPass=d=>{if(!selOwn.size)return true;const o=(_planOwners||{})[d+'||'+sub];return o?selOwn.has(o):selOwn.has(NOOWN);}; // «по направлениям»: при фильтре ЦФО показываем только направления, где ответственный этой подстатьи прошёл фильтр
     const dirRows=dirsToAgg.filter(d=>{if(!dirOwnPass(d))return false;const fv=factOf(d),pv=planDir(d),bv=baseDir(d);return fv||pv!=null||bv!=null;}).sort((a,b)=>a.localeCompare(b,'ru'));
     const body=dirRows.map(d=>dRow(d,baseDir(d),planDir(d),factOf(d),isRev,false,sKind,sub,{dir:d,rem:remFor(d)})).join('');
     // ИТОГО по направлениям - контроль: обязан совпасть со строкой этой подстатьи в режиме «по статьям». sumOrNull: «плана нет» ≠ 0
     const tB=sumOrNull(dirRows,d=>baseDir(d)),tP=sumOrNull(dirRows,d=>planDir(d)),tF=dirRows.reduce((s,d)=>s+factOf(d),0);
-    const tRemP=sumOrNull(dirRows,d=>baseDirM(d,curM)),tRemF=dirRows.reduce((s,d)=>s+factMonth(d,curM),0);
-    const totalDir=dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:{pM:tRemP,fM:tRemF,kind:sKind}});
+    const _tRem=_remMerge(sKind,dirRows.map(remDirOf)); // ИТОГО остаток за период = Σ по направлениям (совпадает со строкой подстатьи в «по статьям»); src агрегируется
+    const totalDir=dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:_tRem});
     dirTbody=(dirRows.length?secRow((isRev?'Доход':sKind==='vyv'?'Вывод':'Расход')+' · '+esc(sub)+' - по направлениям')+body+totalDir:`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По подстатье «${esc(sub)}» нет ни плана, ни факта в выбранных направлениях</td></tr>`);
   }
   // при активном фильтре по статье/подстатье/ЦФО - показываем только отфильтрованные строки без строк-итогов (ИТОГО/ЧП не нужны)
@@ -6752,6 +6776,7 @@ function renderPlanFact(f){
     const basePlanDirSub=(d,sub)=>PB?planDirSubFrom(PB.R,PB.cvtD,d,sub):null;
     // baseline-план (d,подстатья) за КОНКРЕТНЫЙ месяц - для остатка лимита (аналог planMonth по одному направлению)
     const basePlanDirSubM=(d,sub,m)=>{if(!PB)return null;const all=PB.R.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
+    const planDirSubM=(d,sub,m)=>{const all=plans.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;}; // прогноз (напр./подстатья) помесячно - для devBase остатка незамороженного месяца
     const subsExp=new Set();Object.keys(expByDirSub).forEach(K=>subsExp.add(K.split('||')[1]));
     plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))subsExp.add(p.code);});
     if(PB)PB.R.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))subsExp.add(p.code);}); // подстатьи из baseline тоже дают строку ЦФО
@@ -6761,26 +6786,29 @@ function renderPlanFact(f){
       const fv=perOf(expByDirSub[d+'||'+sub]),pv=planDirSub(d,sub),bv=basePlanDirSub(d,sub);
       if(!fv&&pv==null&&bv==null)return;
       const o=(_planOwners||{})[d+'||'+sub]||NOOWN;
-      const A=agg[o]||(agg[o]={plan:null,fact:0,base:null,remPlan:null,remFact:0});
+      const A=agg[o]||(agg[o]={plan:null,fact:0,base:null,remPlan:null,remFact:0,remSu:0,remSp:0});
       if(pv!=null)A.plan=(A.plan||0)+pv; if(bv!=null)A.base=(A.base||0)+bv; A.fact+=fv;
-      if(showRem){const rpm=basePlanDirSubM(d,sub,curM);if(rpm!=null)A.remPlan=(A.remPlan||0)+rpm;const fm=expByDirSub[d+'||'+sub];A.remFact+=fm?(fm[curM]||0):0;} // остаток лимита - только текущий месяц/год
+      // остаток за ВЫБРАННЫЙ период: devBase помесячно (заморожен→baseline, иначе прогноз; источник по реально давшей стороне), факт ТОЛЬКО где есть база (#1)
+      remMonths.forEach(m=>{const fr=frozenSet.has(m);const b=basePlanDirSubM(d,sub,m),p=planDirSubM(d,sub,m);let v=null,sc=null;
+        if(fr){if(b!=null){v=b;sc='utv';}else if(p!=null){v=p;sc='prog';}}else{if(p!=null){v=p;sc='prog';}else if(b!=null){v=b;sc='utv';}}
+        if(v==null)return;A.remPlan=(A.remPlan||0)+v;const fm=expByDirSub[d+'||'+sub];A.remFact+=fm?(fm[m]||0):0;if(sc==='utv')A.remSu++;else A.remSp++;});
     });});
     const names=Object.keys(agg);
     if(names.length&&!(names.length===1&&names[0]===NOOWN)){ // показываем, только если ответственные вообще назначены
       const dash='<span style=color:var(--text3)>-</span>';
       // ИТОГО - по СЫРЫМ agg (листовые записи), не по свёрнутым строкам → факт ИТОГО не меняется при иерархии
-      let tp=0,tf=0,tb=0,trp=null,trf=0;
-      names.forEach(o=>{const A=agg[o];tp+=A.plan||0;tf+=A.fact;tb+=A.base||0;if(A.remPlan!=null)trp=(trp||0)+A.remPlan;trf+=A.remFact;});
+      let tp=0,tf=0,tb=0,trp=null,trf=0,tSu=0,tSp=0;
+      names.forEach(o=>{const A=agg[o];tp+=A.plan||0;tf+=A.fact;tb+=A.base||0;if(A.remPlan!=null)trp=(trp||0)+A.remPlan;trf+=A.remFact;tSu+=A.remSu||0;tSp+=A.remSp||0;});
       // рендер 6 ячеек агрегата (Утв.|Прогноз|Факт|Δ|Остаток|Статус)
       const cfoCells=A=>{const d2=A.base!=null?A.fact-A.base:null;const inT=A.base?Math.abs(d2)/Math.abs(A.base)<=PF_TOL:false;const dc=A.base==null?'var(--text3)':inT?'var(--text2)':(A.fact>A.base?'var(--outcome)':'var(--income)');
         return `<td style="${td};text-align:right">${A.base!=null?fmt(-A.base):dash}</td>
           <td style="${td};text-align:right">${A.plan!=null?fmt(-A.plan):dash}</td>
           <td style="${td};text-align:right">${fmt(-A.fact)}</td>
           <td style="${td};text-align:right;color:${dc}">${d2!=null?((d2>0?'+':d2<0?'−':'')+fmt(Math.abs(d2))):'-'}</td>
-          ${remTd(A.remPlan,A.remFact,true)}
+          ${remTd(A.remPlan,A.remFact,true,'exp',_remSrc(A.remSu,A.remSp))}
           <td style="${td};text-align:left">${hasBaseline?statusCell(A.base,A.fact,false):dash}</td>`;};
-      const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0});
-      const addA=(dst,src)=>{if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;return dst;};
+      const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0,remSu:0,remSp:0});
+      const addA=(dst,src)=>{if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;dst.remSu+=src.remSu||0;dst.remSp+=src.remSp||0;return dst;};
       const sizeA=A=>(A.base||A.plan||A.fact||0);
       // дерево (строго один уровень; защита от цикла в _cfoMgrOf): подчинённый уходит под руководителя.
       // Руководитель блока показывается ВСЕГДА (даже без своих подстатей - тогда его строка = только сумма подчинённых).
@@ -6809,15 +6837,15 @@ function renderPlanFact(f){
         }
       });
       if(agg[NOOWN])body+=`<tr><td style="${td};text-align:left;color:var(--text3)">${esc(NOOWN)}</td>${cfoCells(agg[NOOWN])}</tr>`; // (не назначен) - внизу плоско
-      body+=`<tr style="background:var(--total-bg)"><td style="${td};text-align:left;font-weight:700">ИТОГО</td><td style="${td};text-align:right;font-weight:700">${tb?fmt(-tb):'-'}</td><td style="${td};text-align:right;font-weight:700">${tp?fmt(-tp):'-'}</td><td style="${td};text-align:right;font-weight:700">${fmt(-tf)}</td><td style="${td}"></td>${remTd(trp,trf,true)}<td style="${td}">${hasBaseline?statusCell(tb||null,tf,false):dash}</td></tr>`;
+      body+=`<tr style="background:var(--total-bg)"><td style="${td};text-align:left;font-weight:700">ИТОГО</td><td style="${td};text-align:right;font-weight:700">${tb?fmt(-tb):'-'}</td><td style="${td};text-align:right;font-weight:700">${tp?fmt(-tp):'-'}</td><td style="${td};text-align:right;font-weight:700">${fmt(-tf)}</td><td style="${td}"></td>${remTd(trp,trf,true,'exp',_remSrc(tSu,tSp))}<td style="${td}">${hasBaseline?statusCell(tb||null,tf,false):dash}</td></tr>`;
       window._pfCfoModal={has:true,title:'Исполнение по ЦФО · '+dirLabel+' · '+periodLbl,inner:`<div style="overflow:auto"><table class="report-table" style="width:100%;border-collapse:collapse;white-space:nowrap">
-          <thead><tr><th style="text-align:left;${th}">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий прогноз">Прогноз</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита на текущий месяц">Остаток (месяц)</th><th style="text-align:left;${th}">Статус</th></tr></thead>
+          <thead><tr><th style="text-align:left;${th}">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий прогноз">Прогноз</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита за ${remPerLbl}: база (утв., если заморожено, иначе прогноз) − факт за тот же период. Курсив/приглушение = база прогнозная (не утверждена).">Остаток · ${remPerLbl}</th><th style="text-align:left;${th}">Статус</th></tr></thead>
           <tbody>${body}</tbody></table></div>`};
     }
   }
   const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${esc(dirLabel)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.${level==='article'?' · ▸ клик по статье - подстатьи':''}</span></div>
     <div class="table-scroll" style="overflow:auto;max-height:min(75vh,calc(100vh - 170px))"><table class="report-table" style="white-space:nowrap;width:100%;border-collapse:separate;border-spacing:0">
-      <thead><tr><th style="text-align:left;${th};left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th><th style="text-align:left;${th};width:1%" title="Ответственный за планирование (из редактора планов). Строка-статья агрегирует своих подстатей">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий прогноз (рабочий план)">Прогноз</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита на текущий месяц: утверждённый план месяца − факт месяца">Остаток (месяц)</th><th style="text-align:left;${th}">Статус</th></tr></thead>
+      <thead><tr><th style="text-align:left;${th};left:0;z-index:3">${level==='article'?'Статья':'Подстатья'}</th><th style="text-align:left;${th};width:1%" title="Ответственный за планирование (из редактора планов). Строка-статья агрегирует своих подстатей">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий прогноз (рабочий план)">Прогноз</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита за ${remPerLbl}: база (утв. по замороженным месяцам, иначе прогноз) − факт за тот же период. Курсив/приглушение = база прогнозная (не утверждена), правится свободно.">Остаток · ${remPerLbl}</th><th style="text-align:left;${th}">Статус</th></tr></thead>
       <tbody>${pfTbody}</tbody></table></div></div>`;
 
   // ── Динамика сбора: список доходных подстатей (нужен ДО сборки карточки, т.к. select встроен в ряд графиков) ──
