@@ -6642,21 +6642,23 @@ function renderPlanFact(f){
       if(dv)rows.push([rubSgn(dv.d)+' ('+dv.pct+'%)',dv.col]);
       return rows.map(([t,c],i)=>`<div style="font-size:10px;line-height:1.05;font-family:var(--mono);color:${c}${i?'':';border-top:1px solid var(--divider);margin-top:1px'}">${t}</div>`).join('');
     };
-    const cellHtml=(base,plan,fact,devBase,dbLbl,kind,click)=>{
-      const dv=devOf(devBase,fact,kind); let col='var(--text)';
+    const cellHtml=(base,plan,fact,devBase,dbLbl,kind,click,closed)=>{
+      const dv=closed?devOf(devBase,fact,kind):null; let col='var(--text)'; // незакрытый месяц (текущий/будущий) - факт неполный: отклонение не считаем (строки 4 нет), факт нейтральный
       if(kind==='net')col=(fact>=-0.0001)?'var(--income)':'var(--outcome)'; // ЧП - цвет по ЗНАКУ (правило «цвет = знак значения»), не по отклонению
       else if(dv)col=dv.col;
       else if(devBase==null&&fact)col='var(--text2)'; // факт без всякого плана - приглушён
       const tp=[];if(base!=null)tp.push('Утв: '+fmt(base));if(plan!=null)tp.push('Прог: '+fmt(plan));tp.push('Факт: '+fmt(fact));
-      if(devBase!=null&&Math.abs(devBase)>0.0001&&kind!=='net'&&kind!=='vyv')tp.push('Откл: '+rubSgn(fact-devBase)+' ('+(fact/devBase*100).toFixed(1)+'%) от '+dbLbl); // в тултипе точный % и база - всегда, порог только для рисованной строки
+      if(closed&&devBase!=null&&Math.abs(devBase)>0.0001&&kind!=='net'&&kind!=='vyv')tp.push('Откл: '+rubSgn(fact-devBase)+' ('+(fact/devBase*100).toFixed(1)+'%) от '+dbLbl); // в тултипе точный % и база - только для закрытого месяца
+      else if(!closed&&kind!=='net'&&kind!=='vyv')tp.push('Месяц не закрыт - отклонение не считается');
       return `<td style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}" title="${tp.join(' · ')}${click?' · клик - операции месяца':''}"${click?` onclick="${click}"`:''}><div style="color:${col};font-weight:600;font-size:12px;line-height:1.1;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${subLines(base,plan,dv)}</td>`;
     };
     const mrow=(label,getBase,getPlan,getFact,kind,bold,tk,code,opts)=>{ // tk/code - расшифровка по клику (tk: inc/exp/vyv); opts.expandable/expanded/child - инлайн-разворот статья→подстатьи
       opts=opts||{};
       let cells='',yb=null,yp=null,yf=0,ydb=null; // ydb - база отклонения ГОДА: сумма помесячных devBase (утв по замороженным, прогноз по остальным)
       monthsOn.forEach(m=>{const b=getBase(m),p=getPlan(m),fa=getFact(m)||0,fr=frozenSet.has(m),db=devBaseOf(b,p,fr);
+        const closed=(year<curY)||(year===curY&&m<curM); // месяц полностью в прошлом; ТЕКУЩИЙ и будущие - факт неполный, отклонение не считаем. Колонка «Год» (ydv) - по всем месяцам, не трогаем
         if(b!=null)yb=(yb||0)+b;if(p!=null)yp=(yp||0)+p;yf+=fa;if(db!=null)ydb=(ydb||0)+db;
-        cells+=cellHtml(b,p,fa,db,(fr?(b!=null?'утверждённого':'прогноза'):(p!=null?'прогноза':'утверждённого')),kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null);});
+        cells+=cellHtml(b,p,fa,db,(fr?(b!=null?'утверждённого':'прогноза'):(p!=null?'прогноза':'утверждённого')),kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null,closed);});
       const ydv=devOf(ydb,yf,kind);
       const ycol=kind==='net'?(yf>=-0.0001?'var(--income)':'var(--outcome)'):(ydv?ydv.col:(ydb==null&&yf?'var(--text2)':'var(--text)'));
       const ytp=[];if(yb!=null)ytp.push('Утв: '+fmt(yb));if(yp!=null)ytp.push('Прог: '+fmt(yp));ytp.push('Факт: '+fmt(yf));
