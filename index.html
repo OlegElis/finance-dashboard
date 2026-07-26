@@ -6342,6 +6342,7 @@ function renderPlanFact(f){
   const isVyvodCode=code=>!!vyvodCodes[code]||c3(code)==='127'; // распределение прибыли (вывод) - отдельно от расходов
   const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code)){const t=c3(p.code);if(t)codeSet[t]=1;}}); // режим «Статья»: план-only c3-группы (нет факта) тоже дают строку-статью
   if(PB){if(level==='subarticle')PB.R.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});else PB.R.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code)){const t=c3(p.code);if(t)codeSet[t]=1;}});} // baseline ВСЕГДА порождает строку - иначе неисполнение утв. плана по убранной из прогноза статье было бы невидимо
+  const _codeAll=Object.keys(codeSet); // полный набор расходных кодов ДО фильтра статьи/подстатьи/ЦФО - для KPI «по компании» (Часть A)
   Object.keys(codeSet).forEach(c=>{if(!codePasses(c))delete codeSet[c];});
   const rowsArr=Object.keys(codeSet).map(code=>{const plan=planExpOwn(code),fact=factExp(code);return{code,plan,fact,base:bPlanExpOwn(code)};}).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   // ── РАСПРЕДЕЛЕНИЕ ПРИБЫЛИ (вывод, код 127) - ниже линии ЧП, как в ОПиУ; в расходы и ЧП НЕ входит ──
@@ -6362,6 +6363,7 @@ function renderPlanFact(f){
   const incFactOf=code=>{if(level==='article'&&selOwn.size)return _factSubOwnSum(incSubN,code);const a=incByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const incSet={};Object.keys(incByCode).forEach(c=>incSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='income'){const t=c3(p.code);if(t)incSet[t]=1;}});
   if(PB){if(level==='subarticle')PB.R.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});else PB.R.forEach(p=>{if(p.level==='income'){const t=c3(p.code);if(t)incSet[t]=1;}});} // baseline всегда порождает доходную строку
+  const _incAll=Object.keys(incSet); // полный набор доходных кодов ДО фильтра - для KPI «по компании»
   Object.keys(incSet).forEach(c=>{if(!codePasses(c))delete incSet[c];});
   const incRowsArr=Object.keys(incSet).map(code=>({code,plan:planIncOwn(code),fact:incFactOf(code),base:bPlanIncOwn(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   const sumIncPlan=sumOrNull(incRowsArr,r=>r.plan),sumIncFact=incRowsArr.reduce((s,r)=>s+r.fact,0),sumIncBase=hasBaseline?sumOrNull(incRowsArr,r=>r.base):null;
@@ -6369,6 +6371,16 @@ function renderPlanFact(f){
   const incTotalBase=hasBaseline?(sumIncBase!=null?sumIncBase:revRow.base):null;
   const netFactV=revRow.fact-sumFact, netPlanV=(incTotalPlan!=null||sumPlan!=null)?((incTotalPlan||0)-(sumPlan||0)):null; // !=null, а не truthiness: 0 - валидный план
   const netBaseV=hasBaseline?((incTotalBase!=null||sumBase!=null)?((incTotalBase||0)-(sumBase||0)):null):null;
+  // ── KPI «по компании» (Часть A): суммы по ПОЛНЫМ наборам (dir/year/period), фильтр статьи/подстатьи/ЦФО на них не влияет. Факт - из полных карт (revByMonth/npExpMonth); утв/прог - planExp/bPlanExp (не-owner) по _codeAll/_incAll. Без фильтра идентично строкам таблицы.
+  const pfFilterOn=selArt.size||selSub.size||selOwn.size;
+  const sumFactFull=isYear?(()=>{let s=0;for(let m=1;m<=12;m++)s+=npExpMonth[m];return s;})():(npExpMonth[+period]||0);
+  const sumPlanFull=sumOrNull(_codeAll,c=>planExp(c)),sumBaseFull=hasBaseline?sumOrNull(_codeAll,c=>bPlanExp(c)):null;
+  const sumIncPlanFull=sumOrNull(_incAll,c=>planInc(c)),sumIncBaseFull=hasBaseline?sumOrNull(_incAll,c=>bPlanInc(c)):null;
+  const incTotalPlanFull=sumIncPlanFull!=null?sumIncPlanFull:revRow.plan;
+  const incTotalBaseFull=hasBaseline?(sumIncBaseFull!=null?sumIncBaseFull:revRow.base):null;
+  const netFactVFull=revRow.fact-sumFactFull;
+  const netPlanVFull=(incTotalPlanFull!=null||sumPlanFull!=null)?((incTotalPlanFull||0)-(sumPlanFull||0)):null;
+  const netBaseVFull=hasBaseline?((incTotalBaseFull!=null||sumBaseFull!=null)?((incTotalBaseFull||0)-(sumBaseFull||0)):null):null;
 
   // фильтр-бар
   const sel=(id,opts)=>`<select onchange="_tabFilters.planfact.${id}=this.value;renderPlanFact(getFilters())" style="font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${opts}</select>`;
@@ -6432,28 +6444,28 @@ function renderPlanFact(f){
   const remPerLbl=isYear?('год '+year):MON[+period-1];
   const L=year<nowD.getFullYear()?12:(year>nowD.getFullYear()?0:nowD.getMonth()); // число истёкших полных месяцев
   const planSeries=(codes,pm,py)=>{const arr=new Array(13).fill(0);codes.forEach(c=>{const ms=[];let has=false;for(let m=1;m<=12;m++){const v=pm(c,m);ms.push(v);if(v!=null)has=true;}if(has){for(let m=1;m<=12;m++)arr[m]+=ms[m-1]||0;}else{const y=py(c);if(y!=null)for(let m=1;m<=12;m++)arr[m]+=y/12;}});return arr;};
-  const expPlanArrY=planSeries(Object.keys(codeSet),(c,m)=>planExpM(c,m),c=>planExp(c));
-  const incPlanArrY=incRowsArr.length?planSeries(incRowsArr.map(r=>r.code),(c,m)=>planIncM(c,m),c=>planInc(c)):planSeries(['__rev__'],(c,m)=>planMonth('revenue','__rev__',m),c=>planYear('revenue','__rev__'));
-  const factExpArrY=new Array(13).fill(0);for(let m=1;m<=12;m++){let s=0;Object.keys(codeSet).forEach(c=>{const a=factByCode[c];if(a)s+=a[m]||0;});factExpArrY[m]=s;}
+  const expPlanArrY=planSeries(_codeAll,(c,m)=>planExpM(c,m),c=>planExp(c)); // YTD/прогноз - по ПОЛНЫМ наборам (KPI «по компании»), фильтр статьи/подстатьи/ЦФО не влияет
+  const incPlanArrY=_incAll.length?planSeries(_incAll,(c,m)=>planIncM(c,m),c=>planInc(c)):planSeries(['__rev__'],(c,m)=>planMonth('revenue','__rev__',m),c=>planYear('revenue','__rev__'));
+  const factExpArrY=new Array(13).fill(0);for(let m=1;m<=12;m++){let s=0;_codeAll.forEach(c=>{const a=factByCode[c];if(a)s+=a[m]||0;});factExpArrY[m]=s;}
   const sumR=(a,f,t)=>{let s=0;for(let m=f;m<=t;m++)s+=a[m]||0;return s;};
   const ytdPlanExp=sumR(expPlanArrY,1,L),ytdFactExp=sumR(factExpArrY,1,L);
   const ytdFactInc=sumR(revByMonth,1,L);
   const fcExp=ytdFactExp+sumR(expPlanArrY,L+1,12),fcInc=ytdFactInc+sumR(incPlanArrY,L+1,12),fcNet=fcInc-fcExp;
   const MONR=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
   // YTD «Исполнение расходов» - от BASELINE, ТОЛЬКО по ЗАМОРОЖЕННЫМ месяцам (пропуски не заполняются); прогноз года ЧП - от прогноза (планирование)
-  const basePlanArrY=planSeries(Object.keys(codeSet),(c,m)=>bPlanExpM(c,m),c=>bPlanExp(c)); // незамороженные месяцы = 0 (записей нет)
+  const basePlanArrY=planSeries(_codeAll,(c,m)=>bPlanExpM(c,m),c=>bPlanExp(c)); // незамороженные месяцы = 0 (записей нет); полный набор (KPI по компании)
   // YTD-исполнение считаем ТОЛЬКО по ПЛАНИРУЕМЫМ замороженным месяцам (ретроспективные исключены - их план=факт, дал бы фальшивые ~100%)
   let ytdPlanBase=0,ytdFactFrozen=0; _planableFr.forEach(m=>{ytdPlanBase+=basePlanArrY[m]||0;ytdFactFrozen+=factExpArrY[m]||0;});
   const showYtd=hasBaseline&&isYear&&ytdPlanBase>0;
   // YTD «Исполнение доходов» - симметрично расходам: факт доходов (revByMonth) vs baseline доходов, только по ПЛАНИРУЕМЫМ месяцам
-  const baseIncArrY=hasBaseline?(incRowsArr.length?planSeries(incRowsArr.map(r=>r.code),(c,m)=>bPlanIncM(c,m),c=>bPlanInc(c)):planSeries(['__rev__'],(c,m)=>PB.planMonth('revenue','__rev__',m),c=>PB.planYear('revenue','__rev__'))):new Array(13).fill(0);
+  const baseIncArrY=hasBaseline?(_incAll.length?planSeries(_incAll,(c,m)=>bPlanIncM(c,m),c=>bPlanInc(c)):planSeries(['__rev__'],(c,m)=>PB.planMonth('revenue','__rev__',m),c=>PB.planYear('revenue','__rev__'))):new Array(13).fill(0);
   let ytdPlanBaseInc=0,ytdFactFrozenInc=0; _planableFr.forEach(m=>{ytdPlanBaseInc+=baseIncArrY[m]||0;ytdFactFrozenInc+=revByMonth[m]||0;});
   const showYtdInc=hasBaseline&&isYear&&ytdPlanBaseInc>0;
   const _allRetro=hasBaseline&&_frozen.length>0&&_planableFr.length===0; // все замороженные - ретроспектива → исполнение считать не по чему
   const _ytdEmptySub=_allRetro?'нет планируемых месяцев':(hasBaseline?'нет плана по планируемым':'месяцы не утверждены');
-  const showFc=isYear&&year===nowD.getFullYear()&&L<=11&&(sumPlan>0||(incTotalPlan||0)>0);
+  const showFc=isYear&&year===nowD.getFullYear()&&L<=11&&(sumPlanFull>0||(incTotalPlanFull||0)>0);
   // KPI
-  const netCol=netFactV>=0?'var(--income)':'var(--outcome)';
+  const netCol=netFactVFull>=0?'var(--income)':'var(--outcome)';
   const utvLbl=(hasBaseline&&frozenLbl)?('утв. ('+frozenLbl+')'):'утв.'; // «утв.» = baseline ТОЛЬКО по замороженным месяцам - подписываем период, чтобы не сравнивать годовой факт с планом части года
   const ytdDone=ytdPlanBase?ytdFactFrozen/ytdPlanBase:0;
   const _retroTip=_retroN?(' Ретроспективные месяцы ('+_retroN+') исключены.'):'';
@@ -6467,10 +6479,12 @@ function renderPlanFact(f){
   const fcCard=showFc
     ?`<div class="kpi-card" style="border-left:3px solid ${fcNet>=0?'var(--income)':'var(--outcome)'}" title="Прогноз до конца года (от текущего прогноза): факт истёкших месяцев + план оставшихся. Годовые планы без помесячной разбивки распределены равномерно."><div class="kpi-label">Прогноз года · ЧП</div><div class="kpi-value" style="color:${fcNet>=0?'var(--income)':'var(--outcome)'}">${fmt(fcNet)}</div><div class="kpi-sub">доходы ${fmt(fcInc)} · расходы ${fmt(-fcExp)}</div></div>`
     :'';
-  const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card green"><div class="kpi-label">Доходы факт</div><div class="kpi-value positive">${fmt(revRow.fact)}</div><div class="kpi-sub">${utvLbl} ${incTotalBase!=null?fmt(incTotalBase):'-'} · прог. ${incTotalPlan!=null?fmt(incTotalPlan):'-'}</div></div>
-    <div class="kpi-card red"><div class="kpi-label">Расходы факт</div><div class="kpi-value negative">${fmt(-sumFact)}</div><div class="kpi-sub">${utvLbl} ${sumBase!=null?fmt(-sumBase):'-'} · прог. ${sumPlan!=null?fmt(-sumPlan):'-'}</div></div>
-    <div class="kpi-card" style="border-left:3px solid ${netCol}"><div class="kpi-label">Чистая прибыль факт</div><div class="kpi-value" style="color:${netCol}">${fmt(netFactV)}</div><div class="kpi-sub">${utvLbl} ${netBaseV!=null?fmt(netBaseV):'-'} · прог. ${netPlanV!=null?fmt(netPlanV):'-'}</div></div>
+  // KPI - ВСЕГДА по компании (полные наборы), фильтр статьи/подстатьи/ЦФО на них не влияет (Часть A). ЧП = настоящая ЧП компании.
+  const kpiBadge=pfFilterOn?`<div style="font-size:11px;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="color:var(--accent);font-weight:700">ℹ</span>KPI - по компании (направление/год/период); фильтр статьи/подстатьи/ЦФО на них не влияет.</div>`:'';
+  const kpiHtml=`${kpiBadge}<div class="kpi-grid">
+    <div class="kpi-card green"><div class="kpi-label">Доходы факт</div><div class="kpi-value positive">${fmt(revRow.fact)}</div><div class="kpi-sub">${utvLbl} ${incTotalBaseFull!=null?fmt(incTotalBaseFull):'-'} · прог. ${incTotalPlanFull!=null?fmt(incTotalPlanFull):'-'}</div></div>
+    <div class="kpi-card red"><div class="kpi-label">Расходы факт</div><div class="kpi-value negative">${fmt(-sumFactFull)}</div><div class="kpi-sub">${utvLbl} ${sumBaseFull!=null?fmt(-sumBaseFull):'-'} · прог. ${sumPlanFull!=null?fmt(-sumPlanFull):'-'}</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${netCol}"><div class="kpi-label">Чистая прибыль факт</div><div class="kpi-value" style="color:${netCol}">${fmt(netFactVFull)}</div><div class="kpi-sub">${utvLbl} ${netBaseVFull!=null?fmt(netBaseVFull):'-'} · прог. ${netPlanVFull!=null?fmt(netPlanVFull):'-'}</div></div>
     ${ytdCard}
     ${ytdIncCard}
     ${fcCard}
@@ -6660,8 +6674,7 @@ function renderPlanFact(f){
     const totalDir=dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:_tRem});
     dirTbody=(dirRows.length?secRow((isRev?'Доход':sKind==='vyv'?'Вывод':'Расход')+' · '+esc(sub)+' - по направлениям')+body+totalDir:`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По подстатье «${esc(sub)}» нет ни плана, ни факта в выбранных направлениях</td></tr>`);
   }
-  // при активном фильтре по статье/подстатье/ЦФО - показываем только отфильтрованные строки без строк-итогов (ИТОГО/ЧП не нужны)
-  const pfFilterOn=selArt.size||selSub.size||selOwn.size;
+  // при активном фильтре по статье/подстатье/ЦФО - показываем только отфильтрованные строки (pfFilterOn определён выше, у KPI)
   const pfTbody=dirMode?dirTbody:(pfFilterOn
     ? ((incBodyRows?secRow('Доходы')+incBodyRows:'')+(bodyRows?secRow('Расходы')+bodyRows:'')+(vyvodBody?secRow('Распределение прибыли (вывод)')+vyvodBody:''))||`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По фильтру строк нет</td></tr>`
     : (secRow('Доходы')+incBodyRows+incTotalRow+secRow('Расходы')+bodyRows+totalRow+netRow+vyvodRows));
