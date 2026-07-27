@@ -5984,6 +5984,49 @@ window.pfAnBadOpen=function(){
   ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   document.body.appendChild(ov);
 };
+// ── ⚠ Поступление вне 120_ (сторож фантомных доходов): поступления с подстатьёй НЕ 120_* фантомно попадают в ДОХОДЫ БДР/ОПиУ и завышают выручку. Расчёт НЕ трогает - только показывает брак. Чинить в источнике (подстатья должна быть 120_). ──
+window.pfIncBadOpen=function(){
+  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  const AB=window._pfIncBad; if(!AB)return;
+  if(document.getElementById('pfIncBadOverlay'))return;
+  const rows=[...(AB.rows||[])].sort((a,b)=>{const da=parseDate(a[COL.DATE_OPIU]),db=parseDate(b[COL.DATE_OPIU]);return (da?da.getTime():0)-(db?db.getTime():0);});
+  window._pfIncBadRows=rows;
+  const LIM=400,shown=rows.slice(0,LIM);
+  const plur=(n,a,b,c)=>{const n10=n%10,n100=n%100;return(n10===1&&n100!==11)?a:(n10>=2&&n10<=4&&(n100<12||n100>14))?b:c;};
+  const th='padding:7px 10px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:2px solid var(--border);color:var(--text3);text-transform:uppercase;white-space:nowrap;text-align:left;position:sticky;top:0';
+  const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
+  const body=shown.map((r,i)=>{const d=parseDate(r[COL.DATE_OPIU]);const anv=String(r[COL.ARTICLE_NAME]||'').trim();
+    return `<tr onclick="ddsShowRecordCard(window._pfIncBadRows[${i}])" style="cursor:pointer" title="Клик - карточка операции">
+    <td style="${td};white-space:nowrap;font-family:var(--mono)">${d?d.toLocaleDateString('ru-RU'):''}</td>
+    <td style="${td};color:var(--text2)">${_htmlEsc(r[COL.ACTIVITY_DIR])}</td>
+    <td style="${td};font-weight:600;color:var(--outcome)">${anv?_htmlEsc(anv):'<span style="color:var(--text3);font-weight:400">(пусто)</span>'}</td>
+    <td style="${td};color:var(--text2)">${_htmlEsc(r[COL.SECOND_SIDE])}</td>
+    <td style="${td};color:var(--text2)">${_htmlEsc(r[COL.PURPOSE])}</td>
+    <td style="${td};text-align:right;font-family:var(--mono);color:var(--income);font-weight:600">${fmt(parseNum(r[COL.INCOME]))}</td></tr>`;}).join('');
+  const tableHtml=`<div style="overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:58vh">
+    <table style="width:100%;border-collapse:collapse;min-width:760px">
+      <thead><tr><th style="${th}">Дата ОПиУ</th><th style="${th}">Направление</th><th style="${th}">Подстатья (как есть)</th><th style="${th}">Контрагент</th><th style="${th}">Назначение</th><th style="${th};text-align:right">Поступление</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>`;
+  const okHtml='<div style="padding:16px 12px;text-align:center;color:var(--income);font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:8px">✓ Все поступления с подстатьёй 120_ - фантомных доходов нет</div>';
+  const ov=document.createElement('div');ov.id='pfIncBadOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:8990;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:920px;max-width:96vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:4px">
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:700;color:var(--text)">⚠ Поступление вне 120_ · ${_htmlEsc(AB.dirLabel||'')} · ${AB.year||''}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Поступления (доход>0), у которых подстатья НЕ начинается с 120_. По типу «поступление» они всё равно попадают в ДОХОДЫ БДР и ОПиУ и завышают выручку (часто это парные возвраты/возмещения к списанию). Расчёт не меняется - брак исправляется в источнике (подстатья поступления должна быть 120_*).</div>
+      </div>
+      <button onclick="document.getElementById('pfIncBadOverlay').remove()" title="Закрыть" style="font-size:16px;line-height:1;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer">×</button>
+    </div>
+    ${AB.N?`<div style="font-size:12px;color:var(--text2);margin:10px 0 8px;padding:8px 12px;background:var(--surface2);border-radius:8px">Всего <b>${AB.N}</b> ${plur(AB.N,'поступление','поступления','поступлений')} на <b style="color:var(--income)">${fmt(AB.sum)}</b> - на столько завышены ДОХОДЫ${rows.length>LIM?' · показаны первые '+LIM+' (по дате)':''}</div>`+tableHtml:okHtml}
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      <button onclick="document.getElementById('pfIncBadOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Закрыть</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
 window.pfNoPlanOpen=function(){
   if(!_isAdmin()){alert('Доступно только администратору.');return;}
   const NP=window._pfNoPlan; if(!NP)return;
@@ -6141,6 +6184,7 @@ function renderPlanFact(f){
     const _npExpAcc={},_npIncAcc={}; // ARTICLE_NAME → {sum,cnt,rows,dirs:Set}
     const _npEmpty={sum:0,cnt:0,rows:[]}; // пустая подстатья расхода - дефект данных (для доходов пустую не отслеживаем)
     const _anBad={sum:0,cnt:0,rows:[]}; // сторож сверки БДР==ОПиУ: списания с аналитикой вне OPIU_CATS - БДР их считает, ОПиУ отбрасывает → отчёты расходятся ровно на _anBad.sum
+    const _incBad={sum:0,cnt:0,rows:[]}; // сторож: поступление с подстатьёй НЕ 120_ - фантомно попадает в ДОХОДЫ и завышает выручку (брак данных, чинить в источнике)
     const _npBump=(acc,an,amt,rd,r)=>{let a=acc[an];if(!a)a=acc[an]={sum:0,cnt:0,rows:[],dirs:new Set()};a.sum+=amt;a.cnt++;a.rows.push(r);a.dirs.add(rd);};
     RAW.forEach(r=>{
       const rd=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!dirsToAgg.includes(rd))return;
@@ -6161,6 +6205,8 @@ function renderPlanFact(f){
       // доходы (начальный остаток - не доход)
       if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)&&an)
         _npBump(_npIncAcc,an,inc,rd,r);
+      // сторож «поступление вне 120_»: тип «поступление», доход>0, подстатья НЕ начинается с 120_ (начальный остаток 120_* сюда не попадает - он с префиксом)
+      if(t==='поступление'&&inc>0&&!an.startsWith(REVENUE_PREFIX)){_incBad.sum+=inc;_incBad.cnt++;_incBad.rows.push(r);}
     });
     const _npBuild=acc=>{const listNP=[];let withPlan=0;
       Object.keys(acc).forEach(an=>{const a=acc[an];
@@ -6179,6 +6225,7 @@ function renderPlanFact(f){
       N:_npE.list.length+_npI.list.length+(_npEmpty.cnt>0?1:0),
       dirLabel:dirLabel,year};
     window._pfAnBad={N:_anBad.cnt,sum:_anBad.sum,rows:_anBad.rows,dirLabel:dirLabel,year}; // для pfAnBadOpen (модал «Аналитика вне ОПиУ»)
+    window._pfIncBad={N:_incBad.cnt,sum:_incBad.sum,rows:_incBad.rows,dirLabel:dirLabel,year}; // для pfIncBadOpen (модал «Поступление вне 120_»)
   }
   // ── ПЛАН из _planRecords ──
   const plans=(_planRecords||[]).filter(p=>p.year===year&&dirsToAgg.includes(p.dir));
@@ -6424,10 +6471,11 @@ function renderPlanFact(f){
   // действия БДР свёрнуты в одно меню «⚙ Действия» (админу); не-админ - одна кнопка просмотра планов
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
   const _abA=window._pfAnBad||{N:0},_abHasA=_abA.N>0; // сторож сверки БДР==ОПиУ (аналитика вне категорий)
+  const _ibA=window._pfIncBad||{N:0},_ibHasA=_ibA.N>0; // сторож «поступление вне 120_» (фантомные доходы)
   const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
   const actionsWrap=isAdmin?`<div style="position:relative;display:inline-block">
-      <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
-      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}</div>
+      <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}</div>
     </div>`:`<button onclick="pfCfoOpen()" title="Свод исполнения по ответственным" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👥 ЦФО</button><button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👁 Планы (просмотр)</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
@@ -8213,6 +8261,7 @@ function renderAnomaly(f){
     {id:'ancat',label:'Списание → аналитика из категорий ОПиУ (точное написание)',where:r=>!isMove(r)&&S(r[COL.TYPE]).toLowerCase()==='списание'&&parseNum(r[COL.OUTCOME])<0,checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'одна из категорий ОПиУ (точное написание)',ok:a=>OPIU_CATS.includes(String(a||'').trim())}]},
     {id:'sro',label:'112_Платежи в СРО → направление АУ/САУ',where:r=>!isMove(r)&&norm(r[COL.ARTICLE_NAME]).includes('сро'),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}}]},
     {id:'outsign',label:'Списание → должно быть со знаком «−» (возвраты помечаются)',where:r=>!isMove(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
+    {id:'incsub',label:'Поступление → подстатья 120_* (доход)',where:r=>!isMove(r)&&S(r[COL.TYPE]).toLowerCase()==='поступление'&&parseNum(r[COL.INCOME])>0,checks:[{field:COL.ARTICLE_NAME,fieldName:'Подстатья',expect:'начинается с 120_ (доход)',ok:a=>String(a||'').trim().startsWith('120_')}]}, // не-120 поступление фантомно попадает в ДОХОДЫ БДР/ОПиУ и завышает выручку - брак данных, чинить в источнике
     {id:'div',label:'Статья 127 → Вывод чистой прибыли · 002_Финансовая деятельность · контрагент',where:is127,checks:[
       {field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Вывод чистой прибыли'},
       {field:COL.FIN_OP,fieldName:'Фин. операция',expect:'002_Финансовая деятельность',ok:okFin002},
