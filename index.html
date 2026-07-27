@@ -6027,6 +6027,146 @@ window.pfIncBadOpen=function(){
   ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   document.body.appendChild(ov);
 };
+// ═══════════ Архив настроек БДР (config/*) - скачивание / восстановление / лог ═══════════
+// Транзакции (Google Sheets) НЕ трогаем. Бэкапим config/* ЦЕЛИКОМ по чёрному списку (новые ветки попадают автоматически).
+const BACKUP_FORMAT='opora-config-backup',BACKUP_VERSION=1;
+const BACKUP_EXCLUDE=['sheets','forceLogoutAfter','backupLog']; // реквизиты подключения / оперативный рубильник сессий / сам лог - в архив НЕ кладём
+let _backupLog=(()=>{try{return JSON.parse(localStorage.getItem('finBackupLog')||'null');}catch(e){return null;}})();
+function startBackupLogSync(){
+  if(window._backupLogSyncStarted)return;window._backupLogSyncStarted=true;
+  try{if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;fbApp();
+    firebase.database().ref('config/backupLog').on('value',s=>{const v=s.val();_backupLog=(v&&typeof v==='object')?v:null;try{localStorage.setItem('finBackupLog',JSON.stringify(_backupLog));}catch(e){}
+      try{if(activeTab==='planfact')renderActiveTab();}catch(e){}});
+  }catch(e){console.warn('[backupLog] sync',e&&e.message);}
+}
+function _backupStaleDays(){const t=_backupLog&&_backupLog.lastExportAt;if(!t)return null;const d=(Date.now()-new Date(t).getTime())/86400000;return d<0?0:Math.floor(d);}
+// Скачать config/* (кроме чёрного списка). Promise<bool>. Пишет отметку config/backupLog.
+window.pfBackupDownload=async function(){
+  if(!_isAdmin()){alert('Доступно только администратору.');return false;}
+  try{
+    fbApp();
+    const s=await firebase.database().ref('config').once('value');
+    const full=s.val()||{},config={};
+    Object.keys(full).forEach(k=>{if(BACKUP_EXCLUDE.indexOf(k)<0)config[k]=full[k];});
+    let by='';try{by=(firebase.auth().currentUser.email||'');}catch(e){}
+    const data={format:BACKUP_FORMAT,version:BACKUP_VERSION,exportedAt:new Date().toISOString(),by,branches:Object.keys(config).sort(),config};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download='opora-settings_'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1500);
+    _fbSetSafe('config/backupLog',{lastExportAt:data.exportedAt,by},'Отметка бэкапа настроек');
+    return true;
+  }catch(e){alert('Не удалось сформировать архив настроек: '+((e&&e.message)||e));return false;}
+};
+// Модал скачивания (с предупреждением о персональных данных)
+window.pfBackupDownloadOpen=function(){
+  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  if(document.getElementById('pfDlOv'))return;
+  const bt='font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)';
+  const ov=document.createElement('div');ov.id='pfDlOv';
+  ov.style.cssText='position:fixed;inset:0;z-index:9997;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:460px;max-width:94vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">💾 Скачать архив настроек</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Все настройки (config/*, кроме реквизитов подключения и служебных веток) в JSON-файл с датой и версией формата. Транзакции (Google Sheets) в архив не входят.</div>
+    <div style="font-size:11.5px;color:var(--outcome);font-weight:600;background:color-mix(in srgb,var(--outcome) 8%,transparent);border:1px solid color-mix(in srgb,var(--outcome) 30%,transparent);border-radius:8px;padding:8px 11px;margin-bottom:16px">🔒 Файл содержит персональные данные (почты сотрудников из allowedEmails, ФИО ответственных). Храните его в приватном месте.</div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button onclick="document.getElementById('pfDlOv').remove()" style="${bt}">Отмена</button>
+      <button onclick="pfBackupDownload().then(()=>{var o=document.getElementById('pfDlOv');if(o)o.remove();})" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">💾 Скачать</button>
+    </div></div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
+// Диалог «скачать архив перед необратимой операцией?» - НЕ блокирует; next() при «продолжить»
+window.pfBackupPrompt=function(next){
+  if(!_isAdmin()){next&&next();return;}
+  if(document.getElementById('pfBkPromptOv'))return;
+  const bt='font-size:12px;padding:8px 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer';
+  const ov=document.createElement('div');ov.id='pfBkPromptOv';
+  ov.style.cssText='position:fixed;inset:0;z-index:9998;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:440px;max-width:94vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">💾 Скачать архив настроек перед операцией?</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px">Операция изменит настройки необратимо. Рекомендуется сначала скачать архив текущего состояния - чтобы можно было откатиться.</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">
+      <button data-a="cancel" style="${bt}">Отмена</button>
+      <button data-a="skip" style="${bt}">Продолжить без архива</button>
+      <button data-a="dl" style="font-size:12px;font-weight:700;padding:8px 16px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer">Скачать и продолжить</button>
+    </div></div>`;
+  ov.addEventListener('click',async e=>{
+    if(e.target===ov){ov.remove();return;}
+    const a=e.target&&e.target.getAttribute&&e.target.getAttribute('data-a');if(!a)return;
+    if(a==='cancel'){ov.remove();return;}
+    if(a==='dl'){await pfBackupDownload();}
+    ov.remove();if(next)next();
+  });
+  document.body.appendChild(ov);
+};
+// Восстановление из архива: превью → слово ВОССТАНОВИТЬ → авто-скачивание текущего → запись веток
+window.pfBackupRestoreOpen=function(){
+  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  if(document.getElementById('pfRestoreOv'))return;
+  window._pfRestoreData=null;
+  const bt='font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)';
+  const ov=document.createElement('div');ov.id='pfRestoreOv';
+  ov.style.cssText='position:fixed;inset:0;z-index:9997;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:640px;max-width:96vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:4px">
+      <div style="flex:1"><div style="font-size:15px;font-weight:700;color:var(--text)">📥 Восстановить настройки из архива</div>
+      <div style="font-size:11px;color:var(--outcome);margin-top:4px;font-weight:600">⚠ Восстановление ЗАТРЁТ текущие настройки ветками из файла. Перед записью автоматически скачается архив текущего состояния (страховка для отката).</div></div>
+      <button onclick="document.getElementById('pfRestoreOv').remove()" style="font-size:16px;line-height:1;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer">×</button>
+    </div>
+    <input type="file" id="pfRestoreFile" accept="application/json,.json" style="margin:12px 0;font-size:12px">
+    <div id="pfRestorePreview" style="font-size:12px;color:var(--text2)"></div>
+    <div id="pfRestoreConfirm" style="display:none;margin-top:14px">
+      <div style="font-size:12px;color:var(--text);margin-bottom:6px">Для подтверждения введите слово <b>ВОССТАНОВИТЬ</b> (в верхнем регистре):</div>
+      <input type="text" id="pfRestoreWord" autocomplete="off" oninput="pfRestoreWordCheck()" style="font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);width:240px">
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+      <button onclick="document.getElementById('pfRestoreOv').remove()" style="${bt}">Отмена</button>
+      <button id="pfRestoreBtn" disabled onclick="pfBackupRestoreApply()" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--outcome);color:#fff;cursor:pointer;opacity:.5">Восстановить</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+  document.getElementById('pfRestoreFile').addEventListener('change',pfRestoreFilePicked);
+};
+async function pfRestoreFilePicked(e){
+  const prev=document.getElementById('pfRestorePreview'),cf=document.getElementById('pfRestoreConfirm'),btn=document.getElementById('pfRestoreBtn');
+  window._pfRestoreData=null;if(cf)cf.style.display='none';if(btn){btn.disabled=true;btn.style.opacity='.5';}
+  const f=e.target.files&&e.target.files[0];if(!f){prev.innerHTML='';return;}
+  let data;try{data=JSON.parse(await f.text());}catch(err){prev.innerHTML='<div style="color:var(--outcome);font-weight:600">Не удалось прочитать файл: это не JSON.</div>';return;}
+  if(!data||data.format!==BACKUP_FORMAT){prev.innerHTML='<div style="color:var(--outcome);font-weight:600">Это не архив настроек ОПОРА (format ≠ '+BACKUP_FORMAT+'). Восстановление отменено.</div>';return;}
+  if(!(typeof data.version==='number'&&data.version<=BACKUP_VERSION)){prev.innerHTML='<div style="color:var(--outcome);font-weight:600">Версия архива ('+_htmlEsc(String(data.version))+') новее поддерживаемой ('+BACKUP_VERSION+'). Обновите дашборд. Восстановление отменено.</div>';return;}
+  const cfg=data.config||{},fileBranches=Object.keys(cfg).sort();
+  let dbBranches=[];try{fbApp();const s=await firebase.database().ref('config').once('value');const full=s.val()||{};dbBranches=Object.keys(full).filter(k=>BACKUP_EXCLUDE.indexOf(k)<0).sort();}catch(err){}
+  const onlyDb=dbBranches.filter(b=>fileBranches.indexOf(b)<0);
+  const _cnt=v=>Array.isArray(v)?v.filter(Boolean).length:(v&&typeof v==='object'?Object.keys(v).length:0);
+  const plansN=_cnt(cfg.plans);
+  const presetsN=cfg.presets?Object.values(cfg.presets).reduce((sm,a)=>sm+_cnt(a),0):0;
+  const fm=[];const pb=cfg.plansBaseline;if(pb&&typeof pb==='object'){Object.keys(pb).forEach(y=>{const yo=pb[y];if(yo&&typeof yo==='object'){const ms=Object.keys(yo).filter(k=>{const e2=yo[k];return +k>=1&&+k<=12&&e2&&typeof e2==='object'&&e2.approvedAt;}).map(Number).sort((a,b)=>a-b);if(ms.length)fm.push(y+': '+_monthsRangeLabel(ms));}});}
+  window._pfRestoreData=cfg;
+  prev.innerHTML=`<div style="padding:10px 12px;background:var(--surface2);border-radius:8px;line-height:1.7">
+    <div>Формат: <b>${_htmlEsc(data.format)}</b> · версия ${_htmlEsc(String(data.version))}</div>
+    <div>Экспортирован: <b>${data.exportedAt?new Date(data.exportedAt).toLocaleString('ru-RU'):'-'}</b>${data.by?' · '+_htmlEsc(data.by):''}</div>
+    <div>Веток в файле (<b>${fileBranches.length}</b>): ${_htmlEsc(fileBranches.join(', '))||'<span style="color:var(--text3)">нет</span>'}</div>
+    <div>Записей планов: <b>${plansN}</b> · пресетов: <b>${presetsN}</b></div>
+    <div>Замороженные месяцы: ${fm.length?_htmlEsc(fm.join(' · ')):'<span style="color:var(--text3)">нет</span>'}</div>
+    ${onlyDb.length?`<div style="color:#b5651d;margin-top:6px">⚠ В базе есть, но в файле НЕТ (эти ветки восстановление НЕ тронет): <b>${_htmlEsc(onlyDb.join(', '))}</b></div>`:''}
+  </div>`;
+  if(fileBranches.length)cf.style.display='block';
+}
+window.pfRestoreWordCheck=function(){const w=document.getElementById('pfRestoreWord'),btn=document.getElementById('pfRestoreBtn');if(!w||!btn)return;const ok=w.value==='ВОССТАНОВИТЬ'&&!!window._pfRestoreData;btn.disabled=!ok;btn.style.opacity=ok?'1':'.5';};
+window.pfBackupRestoreApply=async function(){
+  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  const cfg=window._pfRestoreData;if(!cfg){alert('Файл не выбран или невалиден.');return;}
+  const w=document.getElementById('pfRestoreWord');if(!w||w.value!=='ВОССТАНОВИТЬ'){alert('Введите слово ВОССТАНОВИТЬ (точный регистр).');return;}
+  const btn=document.getElementById('pfRestoreBtn');if(btn){btn.disabled=true;btn.textContent='Скачиваю страховку…';}
+  const ok=await pfBackupDownload(); // авто-скачивание ТЕКУЩЕГО состояния - чтобы было чем откатить
+  if(!ok&&!confirm('Не удалось скачать архив текущего состояния (страховку). Всё равно восстановить? Откатывать будет нечем.')){if(btn){btn.disabled=false;btn.textContent='Восстановить';}return;}
+  if(btn)btn.textContent='Восстанавливаю…';
+  let n=0;Object.keys(cfg).forEach(k=>{if(BACKUP_EXCLUDE.indexOf(k)>=0)return;_fbSetSafe('config/'+k,cfg[k],'Восстановление: '+k);n++;});
+  const ov=document.getElementById('pfRestoreOv');if(ov)ov.remove();
+  alert('Восстановлено веток: '+n+'. Настройки применяются из облака (может занять секунду). Если что-то не так - восстановите из только что скачанного архива текущего состояния.');
+};
 window.pfNoPlanOpen=function(){
   if(!_isAdmin()){alert('Доступно только администратору.');return;}
   const NP=window._pfNoPlan; if(!NP)return;
@@ -6468,6 +6608,9 @@ function renderPlanFact(f){
   const planableLbl=hasBaseline?_monthsRangeLabel(_planableFr):'';
   const _retroN=_frozen.length-_planableFr.length;
   const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются по замороженным месяцам ('+frozenLbl+')'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'+(_retroN?(' · из них ретро: '+_retroN):'')):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
+  // бейдж устаревания архива настроек (админу): архив не скачивали >30 дней или никогда
+  const _bkStale=_backupStaleDays();
+  const backupBadge=(isAdmin&&(_bkStale===null||_bkStale>30))?`<span onclick="pfBackupDownloadOpen()" title="Архив настроек давно не скачивался - config/* (планы, baseline, ЦФО и т.д.) не защищён. Кликните, чтобы скачать." style="cursor:pointer;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;color:#fff;background:var(--outcome)">💾 Архив настроек: ${_bkStale===null?'не скачивался':(_bkStale+' дн. назад')}</span>`:'';
   // действия БДР свёрнуты в одно меню «⚙ Действия» (админу); не-админ - одна кнопка просмотра планов
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
   const _abA=window._pfAnBad||{N:0},_abHasA=_abA.N>0; // сторож сверки БДР==ОПиУ (аналитика вне категорий)
@@ -6475,7 +6618,7 @@ function renderPlanFact(f){
   const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
   const actionsWrap=isAdmin?`<div style="position:relative;display:inline-block">
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
-      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}</div>
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)')}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)')}</div>
     </div>`:`<button onclick="pfCfoOpen()" title="Свод исполнения по ответственным" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👥 ЦФО</button><button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👁 Планы (просмотр)</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
@@ -6490,7 +6633,7 @@ function renderPlanFact(f){
     ${pfOwners.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">ЦФО:</label>
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${(selArt.size||selSub.size||selOwn.size)?`<button onclick="pfResetExtra()" style="font-size:10px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
-    ${baselineStatus}${actionsWrap}
+    ${baselineStatus}${backupBadge}${actionsWrap}
   </div>`;
 
   if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
@@ -9042,11 +9185,12 @@ window.planApproveMonth=function(year,month){
   alert(MONTH_FULL_RU[month-1]+' '+year+' заморожен. Отклонения по этому месяцу считаются от утверждённого плана.');
 };
 // Модал заморозки месяца (админу): выбор месяца, план/факт месяца, предупреждение о факте
-window.planApproveMonthOpen=function(year){
+window.planApproveMonthOpen=function(year,_skipBk){
   if(!_isAdmin()){alert('Утверждать план может только администратор.');return;}
   if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
   if(window._planDirty){alert('Есть несохранённые правки плана. Сначала сохраните план, затем замораживайте месяц.');return;}
   if(document.getElementById('cfoApproveOverlay'))return;
+  if(!_skipBk){pfBackupPrompt(()=>planApproveMonthOpen(year,true));return;} // необратимая заморозка - сначала предложить архив
   year=+year;
   const frozen=new Set(_frozenMonths(year));
   const plan=new Array(13).fill(0),factS=new Array(13).fill(0),factC=new Array(13).fill(0);
@@ -9323,7 +9467,7 @@ window.planFillCodeFact=function(btn){
 };
 // Заполнить фактом ВСЕ видимые строки редактора (все 12 месяцев каждой) - массовый эквивалент построчного ⤓ по всем строкам сразу.
 // Переиспускает _planFillTrFactCore (пусто→факт; введённое и отличное от факта - не трогает, помечает; режим % - пропускает). Один общий снимок → одно «↶ Отменить». Только админ (кнопка гейтится в шапке).
-window.planFillAllFact=function(){
+window.planFillAllFact=function(_skipBk){
   const mx=document.getElementById('plan-matrix'); if(!mx)return;
   // видимые РЕДАКТИРУЕМЫЕ строки (после активных фильтров редактора - _planRenderMatrix уже отрисовал только прошедшие): есть input.plan-val, не строки-итоги
   const rows=[...mx.querySelectorAll('tr[data-key]')].filter(x=>x.querySelector('input.plan-val')&&!x.classList.contains('plan-total')&&!x.classList.contains('plan-dirtotal'));
@@ -9331,6 +9475,7 @@ window.planFillAllFact=function(){
   const isMoney=x=>{const mb=x.querySelector('.plan-mode');return (mb?mb.getAttribute('data-mode'):'money')==='money';};
   const N=rows.filter(isMoney).length;
   if(!N){alert('Нет строк в режиме ₽ - все видимые строки в режиме %выр/%ЧП (факт в рублях не вставить).');return;}
+  if(!_skipBk){pfBackupPrompt(()=>planFillAllFact(true));return;} // массовая правка планов - сначала предложить архив
   if(!confirm('Заполнить фактом '+N+' строк (все 12 месяцев)? Введённые значения, отличные от факта, останутся и будут помечены.'))return;
   const snap=[]; let filled=0,kept=0,skipped=0;
   rows.forEach(x=>{const r=_planFillTrFactCore(x,snap);if(r.applied){filled++;kept+=r.kept;}else if(!isMoney(x))skipped++;}); // core сам пропускает % и пишет снимок только реально изменённых ячеек
@@ -10352,7 +10497,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -10406,7 +10551,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync();
       });
     }else{
       if(gate)gate.style.display='flex';
