@@ -6576,13 +6576,14 @@ function renderPlanFact(f){
     opts=opts||{};
     const d=base!=null?fact-base:null;
     const inTol=base!=null&&base!==0&&Math.abs(d)/Math.abs(base)<=PF_TOL;
-    const dCol=base==null?'var(--text3)':inTol?'var(--text2)':revenue?(fact>=base?'var(--income)':'var(--outcome)'):(fact>base?'var(--outcome)':'var(--income)');
+    const _sk=kind||opts.skind; // семантический kind для Δ/статуса: у итоговых строк kind=null (не кликабельны), но net/vyv-семантика - через opts.skind
+    const dCol=base==null?'var(--text3)':_sk==='vyv'?'var(--text2)':inTol?'var(--text2)':(_sk==='net'||revenue)?(fact>=base?'var(--income)':'var(--outcome)'):(fact>base?'var(--outcome)':'var(--income)'); // vyv - нейтрально; net - по знаку (net выше плана = зелёный)
     const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
     const labStyle=`${td};text-align:left${opts.expandable?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${bold?'font-weight:700':''};position:sticky;left:0;z-index:1;background:${bold?'var(--surface2)':'var(--surface)'}`;
     // клик по лейблу: у статьи - разворот/сворачивание подстатей; у подстатьи/листа - гасим (не открываем расшифровку). Расшифровка - по клику на ячейки значений (строка сохраняет onclick)
     const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:(kind?` onclick="event.stopPropagation()"`:'');
     const dash='<span style=color:var(--text3)>-</span>';
-    const statusHtml=hasBaseline?statusCell(base,fact,revenue):dash;
+    const statusHtml=(!hasBaseline||_sk==='net'||_sk==='vyv')?dash:statusCell(base,fact,revenue); // ЧП/вывод 127 - без % исполнения и «экономия/перерасход» (нейтрально), как в матрице/остатке
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}"${labClick}>${tog}${esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
@@ -6649,9 +6650,9 @@ function renderPlanFact(f){
   const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalBase,incTotalPlan,revRow.fact,true,true,null,null,{rem:remSum(incRowsArr,'inc')}); // доходы теперь тоже показывают остаток «осталось собрать» (#3 - единое поведение с «по направлениям»)
   const bodyRows=rowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,'exp')});
-  const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netBaseV,netPlanV,netFactV,true,true,null,null,{signColor:true});
+  const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netBaseV,netPlanV,netFactV,true,true,null,null,{signColor:true,skind:'net'});
   const vyvodBody=vyvodArr.length?vyvodArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'vyv')).join(''):'';
-  const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv')})):'';
+  const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv'),skind:'vyv'})):'';
   // ── Режим «по направлениям»: строки = направления по ОДНОЙ выбранной подстатье (значения - по этой подстатье в направлении) ──
   // Доступен только при ровно одной выбранной подстатье; иначе измерение молча = «по статьям». Матрицу «все месяцы» не трогает.
   const dirMode=(selSub.size===1)&&(_tabFilters.planfact.rowDim==='dir')&&!isMonthly;
@@ -6692,13 +6693,13 @@ function renderPlanFact(f){
     // ИТОГО по направлениям - контроль: обязан совпасть со строкой этой подстатьи в режиме «по статьям». sumOrNull: «плана нет» ≠ 0
     const tB=sumOrNull(dirRows,d=>baseDir(d)),tP=sumOrNull(dirRows,d=>planDir(d)),tF=dirRows.reduce((s,d)=>s+factOf(d),0);
     const _tRem=_remMerge(sKind,dirRows.map(remDirOf)); // ИТОГО остаток за период = Σ по направлениям (совпадает со строкой подстатьи в «по статьям»); src агрегируется
-    const totalDir=dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:_tRem});
+    const totalDir=dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:_tRem,skind:sKind}); // статус/Δ по типу выбранной подстатьи (vyv - нейтрально)
     dirTbody=(dirRows.length?secRow((isRev?'Доход':sKind==='vyv'?'Вывод':'Расход')+' · '+esc(sub)+' - по направлениям')+body+totalDir:`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По подстатье «${esc(sub)}» нет ни плана, ни факта в выбранных направлениях</td></tr>`);
   }
   // при активном фильтре по статье/подстатье/ЦФО - показываем отфильтрованные строки + ИТОГО ПО ФИЛЬТРУ (по отфильтрованному набору, per-dir-точные). ЧП под фильтром не показываем (ЧП подмножества бессмысленна; настоящая ЧП - в KPI).
   const incTotalRowF=dRow('ИТОГО ДОХОДЫ по фильтру',sumIncBase,sumIncPlan,sumIncFact,true,true,null,null,{rem:remSum(incRowsArr,'inc')});
   const totalRowF=dRow('ИТОГО РАСХОДЫ по фильтру',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,'exp')});
-  const vyvodTotalF=dRow('ИТОГО ВЫВОД по фильтру',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv')});
+  const vyvodTotalF=dRow('ИТОГО ВЫВОД по фильтру',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv'),skind:'vyv'});
   const pfTbody=dirMode?dirTbody:(pfFilterOn
     ? ((incBodyRows?secRow('Доходы')+incBodyRows+incTotalRowF:'')+(bodyRows?secRow('Расходы')+bodyRows+totalRowF:'')+(vyvodBody?secRow('Распределение прибыли (вывод)')+vyvodBody+vyvodTotalF:''))||`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По фильтру строк нет</td></tr>`
     : (secRow('Доходы')+incBodyRows+incTotalRow+secRow('Расходы')+bodyRows+totalRow+netRow+vyvodRows));
