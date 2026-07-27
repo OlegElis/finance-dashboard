@@ -6054,18 +6054,27 @@ function startBackupLogSync(){
 }
 function _backupStaleDays(){const t=_backupLog&&_backupLog.lastExportAt;if(!t)return null;const d=(Date.now()-new Date(t).getTime())/86400000;return d<0?0:Math.floor(d);}
 // Скачать config/* (кроме чёрного списка). Promise<bool>. Пишет отметку config/backupLog.
-window.pfBackupDownload=async function(){
+const BACKUP_REASONS={manual:{tag:'',ru:'ручное скачивание'},freeze:{tag:'_ПЕРЕД-ЗАМОРОЗКОЙ',ru:'перед заморозкой месяца'},fill:{tag:'_ПЕРЕД-ЗАПОЛНЕНИЕМ',ru:'перед «Заполнить всё фактом»'},'restore-safety':{tag:'_СТРАХОВКА-ПЕРЕД-ВОССТАНОВЛЕНИЕМ',ru:'страховка перед восстановлением'}};
+window.pfBackupDownload=async function(reason){
   if(!_isAdmin()){alert('Доступно только администратору.');return false;}
+  const R=BACKUP_REASONS[reason]||BACKUP_REASONS.manual;
   try{
     fbApp();
     const s=await firebase.database().ref('config').once('value');
     const full=s.val()||{},config={};
     Object.keys(full).forEach(k=>{if(BACKUP_EXCLUDE.indexOf(k)<0)config[k]=full[k];});
     let by='';try{by=(firebase.auth().currentUser.email||'');}catch(e){}
-    const data={format:BACKUP_FORMAT,version:BACKUP_VERSION,exportedAt:new Date().toISOString(),by,branches:Object.keys(config).sort(),config};
+    // planCount / frozenMonths - толерантно к массиву/объекту (RTDB превращает числовые ключи в массив)
+    const _cnt=v=>Array.isArray(v)?v.filter(Boolean).length:(v&&typeof v==='object'?Object.keys(v).length:0);
+    const planCount=_cnt(full.plans);
+    const cy=new Date().getFullYear();const _pby=full.plansBaseline&&full.plansBaseline[cy];
+    const frozenMonths=(_pby&&typeof _pby==='object')?Object.keys(_pby).filter(k=>{const e=_pby[k];return +k>=1&&+k<=12&&e&&typeof e==='object'&&e.approvedAt;}).length:0;
+    const data={format:BACKUP_FORMAT,version:BACKUP_VERSION,exportedAt:new Date().toISOString(),by,reason:R.ru,planCount,frozenMonths,branches:Object.keys(config).sort(),config};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob),a=document.createElement('a');
-    a.href=url;a.download='opora-settings_'+new Date().toISOString().slice(0,10)+'.json';
+    const now=new Date(),p2=n=>String(n).padStart(2,'0'); // ЛОКАЛЬНОЕ время (не UTC) - чтобы выгрузки одного дня не сливались
+    const stamp=now.getFullYear()+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate())+'_'+p2(now.getHours())+'-'+p2(now.getMinutes());
+    a.href=url;a.download='ОПОРА-БДР_архив_'+stamp+'_планов'+planCount+'_замор'+frozenMonths+R.tag+'.json';
     document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1500);
     _fbSetSafe('config/backupLog',{lastExportAt:data.exportedAt,by},'Отметка бэкапа настроек');
     return true;
@@ -6090,7 +6099,7 @@ window.pfBackupDownloadOpen=function(){
   document.body.appendChild(ov);
 };
 // Диалог «скачать архив перед необратимой операцией?» - НЕ блокирует; next() при «продолжить»
-window.pfBackupPrompt=function(next){
+window.pfBackupPrompt=function(next,reason){
   if(!_isAdmin()){next&&next();return;}
   if(document.getElementById('pfBkPromptOv'))return;
   const bt='font-size:12px;padding:8px 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer';
@@ -6108,7 +6117,7 @@ window.pfBackupPrompt=function(next){
     if(e.target===ov){ov.remove();return;}
     const a=e.target&&e.target.getAttribute&&e.target.getAttribute('data-a');if(!a)return;
     if(a==='cancel'){ov.remove();return;}
-    if(a==='dl'){await pfBackupDownload();}
+    if(a==='dl'){await pfBackupDownload(reason);}
     ov.remove();if(next)next();
   });
   document.body.appendChild(ov);
@@ -6173,7 +6182,7 @@ window.pfBackupRestoreApply=async function(){
   const cfg=window._pfRestoreData;if(!cfg){alert('Файл не выбран или невалиден.');return;}
   const w=document.getElementById('pfRestoreWord');if(!w||w.value!=='ВОССТАНОВИТЬ'){alert('Введите слово ВОССТАНОВИТЬ (точный регистр).');return;}
   const btn=document.getElementById('pfRestoreBtn');if(btn){btn.disabled=true;btn.textContent='Скачиваю страховку…';}
-  const ok=await pfBackupDownload(); // авто-скачивание ТЕКУЩЕГО состояния - чтобы было чем откатить
+  const ok=await pfBackupDownload('restore-safety'); // авто-скачивание ТЕКУЩЕГО состояния - чтобы было чем откатить
   if(!ok&&!confirm('Не удалось скачать архив текущего состояния (страховку). Всё равно восстановить? Откатывать будет нечем.')){if(btn){btn.disabled=false;btn.textContent='Восстановить';}return;}
   if(btn)btn.textContent='Восстанавливаю…';
   let n=0;Object.keys(cfg).forEach(k=>{if(BACKUP_EXCLUDE.indexOf(k)>=0)return;_fbSetSafe('config/'+k,cfg[k],'Восстановление: '+k);n++;});
@@ -9227,7 +9236,7 @@ window.planApproveMonthOpen=function(year,_skipBk){
   if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
   if(window._planDirty){alert('Есть несохранённые правки плана. Сначала сохраните план, затем замораживайте месяц.');return;}
   if(document.getElementById('cfoApproveOverlay'))return;
-  if(!_skipBk){pfBackupPrompt(()=>planApproveMonthOpen(year,true));return;} // необратимая заморозка - сначала предложить архив
+  if(!_skipBk){pfBackupPrompt(()=>planApproveMonthOpen(year,true),'freeze');return;} // необратимая заморозка - сначала предложить архив
   year=+year;
   const frozen=new Set(_frozenMonths(year));
   const plan=new Array(13).fill(0),factS=new Array(13).fill(0),factC=new Array(13).fill(0);
@@ -9512,7 +9521,7 @@ window.planFillAllFact=function(_skipBk){
   const isMoney=x=>{const mb=x.querySelector('.plan-mode');return (mb?mb.getAttribute('data-mode'):'money')==='money';};
   const N=rows.filter(isMoney).length;
   if(!N){alert('Нет строк в режиме ₽ - все видимые строки в режиме %выр/%ЧП (факт в рублях не вставить).');return;}
-  if(!_skipBk){pfBackupPrompt(()=>planFillAllFact(true));return;} // массовая правка планов - сначала предложить архив
+  if(!_skipBk){pfBackupPrompt(()=>planFillAllFact(true),'fill');return;} // массовая правка планов - сначала предложить архив
   if(!confirm('Заполнить фактом '+N+' строк (все 12 месяцев)? Введённые значения, отличные от факта, останутся и будут помечены.'))return;
   const snap=[]; let filled=0,kept=0,skipped=0;
   rows.forEach(x=>{const r=_planFillTrFactCore(x,snap);if(r.applied){filled++;kept+=r.kept;}else if(!isMoney(x))skipped++;}); // core сам пропускает % и пишет снимок только реально изменённых ячеек
