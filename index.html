@@ -5874,7 +5874,8 @@ window.pfShowTxn=function(kind,code,m,dir){
   if(dir)all=all.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===dir); // режим «по направлениям»: тот же _pfTxn, фильтр по направлению (второй ключ не заводим)
   const MONS=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   let rows=all,plbl='';
-  if(m){rows=all.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&(d.getMonth()+1)===+m;});plbl=' · '+MONS[m-1];}
+  const mset=Array.isArray(m)?m.filter(x=>x).map(Number):(m?[+m]:null); // m: число (месяц), массив месяцев (напр. бар отклонений = планируемые месяцы), или 0/null (весь год)
+  if(mset&&mset.length){rows=all.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&mset.includes(d.getMonth()+1);});plbl=' · '+(mset.length===1?MONS[mset[0]-1]:mset.map(x=>MONS[x-1].slice(0,3)).join(', '));}
   if(!rows.length)return;
   const meta=window._pfTxnMeta||{};
   window._opiuTxnMap=window._opiuTxnMap||{};
@@ -7016,7 +7017,7 @@ function renderPlanFact(f){
     if(devConcl)devConcl.textContent='';
   }else{
     const devAll=[];let devTot=0;
-    Object.keys(codeSet).forEach(code=>{let d=0,b=0;devMonths.forEach(m=>{d+=(factExpM(code,m)||0)-(bPlanExpM(code,m)||0);b+=(bPlanExpM(code,m)||0);});if(Math.abs(d)>0.5){devAll.push({code,d,b,lbl:level==='article'?artLabel(code):code});devTot+=d;}});
+    Object.keys(codeSet).forEach(code=>{let d=0,b=0;devMonths.forEach(m=>{d+=(factExpMOwn(code,m)||0)-(bPlanExpMOwn(code,m)||0);b+=(bPlanExpMOwn(code,m)||0);});if(Math.abs(d)>0.5){devAll.push({code,d,b,lbl:level==='article'?artLabel(code):code});devTot+=d;}}); // owner-cut (per-dir) под фильтром ЦФО - бар совпадает со строками и с модалом
     devAll.sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
     const top=devAll.slice(0,10),rest=devAll.slice(10);let restD=0;rest.forEach(r=>restD+=r.d);
     const rows=top.slice();if(rest.length)rows.push({code:null,d:restD,b:0,lbl:'Прочие ('+rest.length+')'});
@@ -7030,7 +7031,7 @@ function renderPlanFact(f){
       return new Chart(canvas,{type:'bar',plugins:[devLabels],
         data:{labels:devLbls,datasets:[{data:devData,backgroundColor:devCol,borderRadius:3,maxBarThickness:big?30:22}]},
         options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,layout:{padding:{left:big?12:8,right:big?110:70}},
-          onClick:(e,els)=>{if(els.length){const r=rows[els[0].index];if(r&&r.code)pfShowTxn('exp',r.code,0);}else if(!big)pfEnlarge('dev');}, // клик по бару - операции; по пустому полю - увеличение (только inline)
+          onClick:(e,els)=>{if(els.length){const r=rows[els[0].index];if(r&&r.code)pfShowTxn('exp',r.code,devMonths);}else if(!big)pfEnlarge('dev');}, // клик по бару - операции за ТЕ ЖЕ месяцы, что в баре (devMonths), не весь год; под ЦФО - owner-cut (совпадает с числом бара)
           onHover:(e,els)=>{const r=els.length?rows[els[0].index]:null;e.native.target.style.cursor=(r&&r.code)?'pointer':(big?'default':'zoom-in');},
           plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>{const r=rows[c.dataIndex],pct=r.b?Math.round(r.d/Math.abs(r.b)*100):null;return (r.d>0?'Перерасход +':'Экономия -')+fmt(Math.abs(r.d))+(pct!=null?' ('+(r.d>0?'+':'-')+Math.abs(pct)+'%)':'');},afterLabel:c=>rows[c.dataIndex].code?'Клик - операции по статье':''}}},
           scales:{x:{grid:{color:'#ebebeb'},ticks:{font:{size:big?12:9},callback:moneyTick}},y:{grid:{display:false},ticks:{font:{size:big?12:9.5},autoSkip:false}}}}});
