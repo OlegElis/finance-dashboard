@@ -6747,15 +6747,16 @@ function renderPlanFact(f){
     };
     const mrow=(label,getBase,getPlan,getFact,kind,bold,tk,code,opts)=>{ // tk/code - расшифровка по клику (tk: inc/exp/vyv); opts.expandable/expanded/child - инлайн-разворот статья→подстатьи
       opts=opts||{};
-      let cells='',yb=null,yp=null,yf=0,ydb=null; // ydb - база отклонения ГОДА: сумма помесячных devBase (утв по замороженным, прогноз по остальным)
+      let cells='',yb=null,yp=null,yf=0,ydbC=null,yfC=0;const closedM=[]; // yb/yp/yf - утв/прог/факт по ВСЕМ месяцам (уровни 1-3); ydbC/yfC - база/факт ТОЛЬКО закрытых месяцев (для годового отклонения)
       monthsOn.forEach(m=>{const b=getBase(m),p=getPlan(m),fa=getFact(m)||0,fr=frozenSet.has(m),db=devBaseOf(b,p,fr);
-        const closed=(year<curY)||(year===curY&&m<curM); // месяц полностью в прошлом; ТЕКУЩИЙ и будущие - факт неполный, отклонение не считаем. Колонка «Год» (ydv) - по всем месяцам, не трогаем
-        if(b!=null)yb=(yb||0)+b;if(p!=null)yp=(yp||0)+p;yf+=fa;if(db!=null)ydb=(ydb||0)+db;
+        const closed=(year<curY)||(year===curY&&m<curM); // месяц полностью в прошлом; ТЕКУЩИЙ и будущие - факт неполный, в отклонение не входят
+        if(b!=null)yb=(yb||0)+b;if(p!=null)yp=(yp||0)+p;yf+=fa;
+        if(closed){if(db!=null)ydbC=(ydbC||0)+db;yfC+=fa;closedM.push(m);} // годовое отклонение - только закрытые месяцы (иначе база полного года завышала недобор, как в незакрытой ячейке)
         cells+=cellHtml(b,p,fa,db,(fr?(b!=null?'утверждённого':'прогноза'):(p!=null?'прогноза':'утверждённого')),kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null,closed);});
-      const ydv=devOf(ydb,yf,kind);
-      const ycol=kind==='net'?(yf>=-0.0001?'var(--income)':'var(--outcome)'):(ydv?ydv.col:(ydb==null&&yf?'var(--text2)':'var(--text)'));
-      const ytp=[];if(yb!=null)ytp.push('Утв: '+fmt(yb));if(yp!=null)ytp.push('Прог: '+fmt(yp));ytp.push('Факт: '+fmt(yf));
-      if(ydb!=null&&Math.abs(ydb)>0.0001&&kind!=='net'&&kind!=='vyv')ytp.push('Откл: '+rubSgn(yf-ydb)+' ('+(yf/ydb*100).toFixed(1)+'%) от плана года (утв по замороженным месяцам, прогноз по остальным)');
+      const ydv=devOf(ydbC,yfC,kind); // отклонение «Год» = Σ факта закрытых − Σ devBase закрытых (уровни 1-3 остаются по всем месяцам)
+      const ycol=kind==='net'?(yf>=-0.0001?'var(--income)':'var(--outcome)'):(ydv?ydv.col:(ydbC==null&&yf?'var(--text2)':'var(--text)'));
+      const ytp=[];if(yb!=null)ytp.push('Утв: '+fmt(yb));if(yp!=null)ytp.push('Прог: '+fmt(yp));ytp.push('Факт: '+fmt(yf)+' (за год)');
+      if(ydbC!=null&&Math.abs(ydbC)>0.0001&&kind!=='net'&&kind!=='vyv'&&closedM.length)ytp.push('Откл: '+rubSgn(yfC-ydbC)+' ('+(yfC/ydbC*100).toFixed(1)+'%) за '+_monthsRangeLabel(closedM)+', '+closedM.length+' мес (незакрытые месяцы в отклонение не входят)');
       const yc=`<td title="${ytp.join(' · ')}" style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:700;font-size:12px;line-height:1.1;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${subLines(yb,yp,ydv)}</td>`;
       const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
       const labPad=opts.child?'padding:4px 10px 4px 26px':'padding:5px 10px',labFont=opts.child?'font-size:10px;color:var(--text2)':'font-size:11px';
