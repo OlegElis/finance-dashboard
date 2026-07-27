@@ -6868,10 +6868,13 @@ function renderPlanFact(f){
       if(fr){if(b!=null){vv=b;sc='utv';}else if(p!=null){vv=p;sc='prog';}}else{if(p!=null){vv=p;sc='prog';}else if(b!=null){vv=b;sc='utv';}}
       if(vv==null)return;v=(v||0)+vv;if(sc==='utv')su++;else sp++;});return{v,src:v==null?null:(su&&sp?'mix':su?'utv':'prog')};};
   const sideRemFor=(sub,side)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=_sideDevBaseM(sub,side,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=sideFactM(sub,side,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind:'exp',src:_remSrc(su,sp)};};
+  // мёртвая строка: за ВЫБРАННЫЙ период НЕТ ничего (|факт|=|утв|=|прог|=0, по модулю). Нулевой план+живой факт или план без факта - НЕ мёртвые. Фильтруем на РЕНДЕРЕ; суммы берутся из полных массивов (скрытые дают 0) → ИТОГО не меняется. Как sideHasActivity в выписке.
+  const _rowDead=(fact,plan,base)=>Math.abs(fact||0)<0.005&&Math.abs(plan||0)<0.005&&Math.abs(base||0)<0.005;
+  const _subAlive=(kind,sub)=>!_rowDead(childFact(kind,sub),childPlan(kind,sub),childBase(kind,sub)); // подстатья с движением за период (childFact/Plan/Base - period-aware, в матрице = год)
   // строка статьи + (если развёрнута) её подстатьи
   const artRow=(code,base,plan,fact,revenue,kind)=>{
     if(level!=='article')return dRow(code,base,plan,fact,revenue,false,kind,code,{rem:artRemFor(kind,code)});
-    const subs=subsOfArt(kind,code).filter(subOwnerPass),has=subs.length>0,key=kind+'|'+code,open=has&&artExp.has(key); // при фильтре ЦФО разворачиваем только подстатьи выбранного ответственного (Σ детей = число статьи)
+    const subs=subsOfArt(kind,code).filter(subOwnerPass).filter(sub=>_subAlive(kind,sub)),has=subs.length>0,key=kind+'|'+code,open=has&&artExp.has(key); // ЦФО-фильтр + скрытие мёртвых подстатей (за период пусто со всех сторон)
     if(selOwn.size){const _ent=subs.map(sub=>({sub,dirs:ownDirsOf(sub)}));window._pfOwnSubs[kind+'|'+code]=_ent;_ent.forEach(e=>{window._pfOwnSubs[kind+'|'+e.sub]=[e];});} // модал статьи/подстатьи под ЦФО = операции прошедших подстатей ТОЛЬКО по owner-passing направлениям
     let h=dRow(artLabel(code),base,plan,fact,revenue,false,kind,code,{expandable:has,expanded:open,rem:artRemFor(kind,code)});
     if(open)subs.forEach(sub=>{
@@ -6881,12 +6884,12 @@ function renderPlanFact(f){
     });
     return h;
   };
-  const incBodyRows=incRowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
+  const incBodyRows=incRowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
   const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalBase,incTotalPlan,revRow.fact,true,true,null,null,{rem:remSum(incRowsArr,'inc')}); // доходы теперь тоже показывают остаток «осталось собрать» (#3 - единое поведение с «по направлениям»)
-  const bodyRows=rowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
+  const bodyRows=rowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,'exp')});
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netBaseV,netPlanV,netFactV,true,true,null,null,{signColor:true,skind:'net'});
-  const vyvodBody=vyvodArr.length?vyvodArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'vyv')).join(''):'';
+  const vyvodBody=vyvodArr.length?vyvodArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'vyv')).join(''):'';
   const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv'),skind:'vyv'})):'';
   // ── Режим «по направлениям»: строки = направления по ОДНОЙ выбранной подстатье (значения - по этой подстатье в направлении) ──
   // Доступен только при ровно одной выбранной подстатье; иначе измерение молча = «по статьям». Матрицу «все месяцы» не трогает.
@@ -7007,7 +7010,7 @@ function renderPlanFact(f){
     const childPlanMon=(k,sub,m)=>_subPlanM(recsOf,cvtD,planMonth,k==='inc'?'income':'subarticle',sub,m);
     // строка статьи + (если развёрнута) дочерние подстатьи; tk: inc/exp/vyv, цвет-kind для вывода = exp; состояние разворота - общий artExp (_pfArtExp)
     const artMrow=(r,tk,ck,getBase,getPlan,getFact)=>{
-      const subs=subsOfArt(tk,r.code).filter(subOwnerPass),open=subs.length&&artExp&&artExp.has(tk+'|'+r.code); // при фильтре ЦФО в матрице разворачиваем только подстатьи выбранного ответственного (Σ детей = число статьи)
+      const subs=subsOfArt(tk,r.code).filter(subOwnerPass).filter(sub=>_subAlive(tk,sub)),open=subs.length&&artExp&&artExp.has(tk+'|'+r.code); // ЦФО-фильтр + скрытие мёртвых подстатей (за год пусто со всех сторон)
       if(selOwn.size){const _ent=subs.map(sub=>({sub,dirs:ownDirsOf(sub)}));window._pfOwnSubs[tk+'|'+r.code]=_ent;_ent.forEach(e=>{window._pfOwnSubs[tk+'|'+e.sub]=[e];});} // модал ячейки матрицы под ЦФО = per-dir операции
       let h=mrow(artLabel(r.code),getBase,getPlan,getFact,ck,false,tk,r.code,{expandable:subs.length>0,expanded:!!open});
       if(open)subs.forEach(sub=>{h+=mrow(sub,m=>childBaseMon(tk,sub,m),m=>childPlanMon(tk,sub,m),m=>childFactMon(tk,sub,m),ck,false,tk,sub,{child:true});});
@@ -7016,15 +7019,15 @@ function renderPlanFact(f){
     // при активном фильтре - только отфильтрованные строки без ИТОГО/ЧП и без пустых секций
     let rh='';
     if(!pfFilterOn||incRowsArr.length){rh+=secR('Доходы');
-      incRowsArr.forEach(r=>{rh+=artMrow(r,'inc','inc',m=>bPlanIncMOwn(r.code,m),m=>planIncMOwn(r.code,m),m=>incFactMOwn(r.code,m));});
+      incRowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).forEach(r=>{rh+=artMrow(r,'inc','inc',m=>bPlanIncMOwn(r.code,m),m=>planIncMOwn(r.code,m),m=>incFactMOwn(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО ДОХОДЫ',m=>sumP(incRowsArr,bPlanIncM,m),m=>sumP(incRowsArr,planIncM,m),m=>revByMonth[m]||0,'inc',true);}
     if(!pfFilterOn||rowsArr.length){rh+=secR('Расходы');
-      rowsArr.forEach(r=>{rh+=artMrow(r,'exp','exp',m=>bPlanExpMOwn(r.code,m),m=>planExpMOwn(r.code,m),m=>factExpMOwn(r.code,m));});
+      rowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).forEach(r=>{rh+=artMrow(r,'exp','exp',m=>bPlanExpMOwn(r.code,m),m=>planExpMOwn(r.code,m),m=>factExpMOwn(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО РАСХОДЫ',m=>sumP(rowsArr,bPlanExpM,m),m=>sumP(rowsArr,planExpM,m),m=>{let s=0;rowsArr.forEach(r=>{s+=factExpM(r.code,m);});return s;},'exp',true);}
     if(!pfFilterOn)rh+=mrow('ЧИСТАЯ ПРИБЫЛЬ',m=>{const ib=sumP(incRowsArr,bPlanIncM,m),eb=sumP(rowsArr,bPlanExpM,m);return (ib==null&&eb==null)?null:((ib||0)-(eb||0));},m=>{const ip=sumP(incRowsArr,planIncM,m),ep=sumP(rowsArr,planExpM,m);return (ip==null&&ep==null)?null:((ip||0)-(ep||0));},m=>{let ef=0;rowsArr.forEach(r=>{ef+=factExpM(r.code,m);});return (revByMonth[m]||0)-ef;},'net',true);
     if(vyvodArr.length){
       rh+=secR('Распределение прибыли (вывод)');
-      vyvodArr.forEach(r=>{rh+=artMrow(r,'vyv','vyv',m=>bPlanExpMOwn(r.code,m),m=>planExpMOwn(r.code,m),m=>factVyvodMOwn(r.code,m));});
+      vyvodArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).forEach(r=>{rh+=artMrow(r,'vyv','vyv',m=>bPlanExpMOwn(r.code,m),m=>planExpMOwn(r.code,m),m=>factVyvodMOwn(r.code,m));});
       if(!pfFilterOn)rh+=mrow('ИТОГО ВЫВОД ПРИБЫЛИ',m=>sumP(vyvodArr,bPlanExpM,m),m=>sumP(vyvodArr,planExpM,m),m=>{let s=0;vyvodArr.forEach(r=>{s+=factVyvodM(r.code,m);});return s;},'vyv',true);
     }
     const ths=monthsOn.map(m=>{const fr=frozenSet.has(m),mo=fr?_blMap[m]:null,hf=mo&&mo.hadFact,rt=mo&&mo.retro;
