@@ -1147,6 +1147,7 @@ async function connectAndLoad(){
       }
     }catch(e){}
     RAW=rows.slice(1).map(r=>{while(r.length<15)r.push('');return r.map((v,i)=>{if(i===COL.INCOME||i===COL.OUTCOME)return parseNum(v);return v;});});
+    try{const _tset=new Set();RAW.forEach(r=>{_tset.add(r[COL.ARTICLE_NAME]);_tset.add(r[COL.ACTIVITY_DIR]);_tset.add(r[COL.ACCOUNT]);});_rtdbTildeGuard(Array.from(_tset),'подстатьи/направления/счета RawData');}catch(e){} // escape-символ кодирования ключей RTDB не должен встречаться в данных
     localStorage.setItem('fin_sheetId',sheetId);
     localStorage.setItem('fin_apiKey',apiKey);
     if(_isAdmin())_fbSetSafe('config/sheets',{sheetId,apiKey},'Реквизиты подключения'); // реквизиты в облако пишет ТОЛЬКО админ (сотрудники их читают через startConfigSync); иначе при правиле «запись - админ» каждый вход сотрудника ловил бы отказ
@@ -1539,19 +1540,46 @@ function _filterSig(tab){const f=_tabFilters[tab]||{};const ks=['preset','period
 function _presetActive(tab){if(_activePreset[tab]&&_filterSig(tab)!==_activePresetSig[tab])_activePreset[tab]='';return _activePreset[tab]||'';}
 try{const _ls=JSON.parse(localStorage.getItem('reportPresets')||'null');if(_ls&&typeof _ls==='object')_presets=Object.assign({bank:[],opiu:[],dds:[],osv:[],fot:[]},_ls);}catch(e){}
 function _presetsNormalize(v){const out={bank:[],opiu:[],dds:[],osv:[],fot:[]};if(v&&typeof v==='object'){['bank','opiu','dds','osv','fot'].forEach(t=>{const a=v[t];out[t]=Array.isArray(a)?a.filter(Boolean):(a&&typeof a==='object'?Object.values(a).filter(Boolean):[]);});}return out;}
+// ── Кодирование ключей RTDB ─────────────────────────────────────────────────
+// Realtime Database ЗАПРЕЩАЕТ в ключах символы . $ # [ ] / - при их наличии .set(ВСЕГО объекта) падает целиком
+// («set failed: contains an invalid key»), т.е. один плохой ключ отменяет запись всех остальных. Это молча ломало
+// сохранение по веткам, где ключ строится из пользовательской строки: planOwners/planNotes (`dir||подстатья` - слэш
+// в «244_Услуги связи / интернет» и др.), kassaLimits (имя счёта - «р/с»), cfoHierarchy (ФИО). Значения при этом легальны.
+// Решение: на ЗАПИСЬ кодируем ключи, на ЧТЕНИЕ декодируем. Escape-символ ~ (в данных не встречается - см. _rtdbTildeGuard);
+// сам ~ тоже экранируется, поэтому отображение обратимо и без коллизий. Разделитель `||` - легальные символы, не трогается.
+// Кодировщик ТОЖДЕСТВЕН на всех существующих ключах (в них нет ни ~, ни запрещённых), поэтому миграция не нужна.
+const _RTDB_ENC={'~':'~t','.':'~d','$':'~s','#':'~h','[':'~o',']':'~c','/':'~f'};
+const _RTDB_DEC={t:'~',d:'.',s:'$',h:'#',o:'[',c:']',f:'/'};
+function _rtdbKeyEnc(k){return String(k==null?'':k).replace(/[~.$#\[\]/]/g,c=>_RTDB_ENC[c]);}
+function _rtdbKeyDec(k){return String(k==null?'':k).replace(/~([tdshocf])/g,(m,c)=>_RTDB_DEC[c]);}
+function _rtdbEncObj(o){const out={};if(o&&typeof o==='object')Object.keys(o).forEach(k=>{out[_rtdbKeyEnc(k)]=o[k];});return out;} // копия объекта с закодированными ключами (для записи) - ЕДИНСТВЕННАЯ точка кодирования
+function _rtdbDecObj(o,branch){const out={};let bad=null;if(o&&typeof o==='object')Object.keys(o).forEach(k=>{if(branch&&/[.$#\[\]/]/.test(k))(bad||(bad=[])).push(k);out[_rtdbKeyDec(k)]=o[k];});if(bad)console.warn('[rtdb-key] в облаке ('+branch+') есть ключи с запрещёнными символами (. $ # [ ] /) - значит запись прошла МИМО кодировщика: '+bad.slice(0,10).join(' , ')+(bad.length>10?' …':''));return out;} // копия с раскодированными ключами (для чтения) - ЕДИНСТВЕННАЯ точка декодирования; при branch попутно ловит некодированную запись
+// Разовая проверка: если ~ появится в данных, кодирование перестанет быть тождественным на старых (некодированных) ключах.
+// Не чиним автоматически - только предупреждаем в консоль, чтобы заметить и решить.
+window._rtdbTildeChecked=false;
+function _rtdbTildeGuard(strings,where){
+  if(window._rtdbTildeChecked)return; // проверяем один раз за сессию, по первому источнику с данными
+  try{
+    const bad=[];(strings||[]).forEach(s=>{if(s!=null&&String(s).indexOf('~')>=0)bad.push(String(s));});
+    if(bad.length)console.warn('[rtdb-key] символ «~» найден в данных ('+where+') - он служит escape для кодирования ключей RTDB; на старых (некодированных) ключах декодирование таких строк даст неверный результат. Затронуто: '+bad.slice(0,20).join(' | ')+(bad.length>20?' …':''));
+    window._rtdbTildeChecked=true;
+  }catch(e){}
+}
 // Запись в облако с предупреждением при отказе (правила БД / офлайн): раньше set() без .catch - «✓ Сохранено» показывалось,
 // а правки жили только в localStorage и затирались старым облаком при следующей загрузке (тихая потеря данных)
-function _fbSetSafe(path,val,label){
+function _fbSetSafe(path,val,label){ // возвращает Promise<bool> (true=записано в облако) - чтобы вызывающий мог показать честное подтверждение; старые вызовы результат игнорируют
   try{
-    if(!(window.firebase&&FIREBASE_CONFIG.databaseURL))return;
+    if(!(window.firebase&&FIREBASE_CONFIG.databaseURL))return Promise.resolve(false);
     fbApp();
-    firebase.database().ref(path).set(val).catch(e=>{
-      console.warn('[cloud-save] '+path+':',e&&e.message||e);
+    return firebase.database().ref(path).set(val).then(()=>true).catch(e=>{
+      let badKeys='';try{if(val&&typeof val==='object'&&!Array.isArray(val)){const bk=Object.keys(val).filter(k=>/[.$#\[\]/]/.test(k));if(bk.length)badKeys='\n\nЗапрещённые символы (. $ # [ ] /) в ключах: '+bk.slice(0,10).join(' , ')+(bk.length>10?' …':'')+'\n(ключ должен кодироваться через _rtdbKeyEnc перед записью).';}}catch(_){}
+      console.warn('[cloud-save] '+path+':',e&&e.message||e,badKeys);
       window._fbSetWarned=window._fbSetWarned||{};
       if(!window._fbSetWarned[path]){window._fbSetWarned[path]=1;
-        alert('⚠ Не удалось сохранить «'+label+'» в облако:\n'+((e&&e.message)||e)+'\n\nИзменения сохранены только на этом устройстве и могут быть потеряны. Проверьте правила Realtime Database (запись '+path+').');}
+        alert('⚠ Не удалось сохранить «'+label+'» в облако:\n'+((e&&e.message)||e)+badKeys+'\n\nИзменения сохранены только на этом устройстве и могут быть потеряны. Проверьте правила Realtime Database (запись '+path+').');}
+      return false;
     });
-  }catch(e){}
+  }catch(e){return Promise.resolve(false);}
 }
 function _presetsSave(){
   try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){}
@@ -7495,7 +7523,7 @@ let _mktDirKey='__all__'; // текущее направление (устана
 let _kassaLimits=(()=>{try{return JSON.parse(localStorage.getItem('kassaLimits')||'{}')}catch(e){return{}}})();
 function _kassaSaveLimits(){
   try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}
-  _fbSetSafe('config/kassaLimits',_kassaLimits,'Лимиты счетов');
+  _fbSetSafe('config/kassaLimits',_rtdbEncObj(_kassaLimits),'Лимиты счетов'); // ключ = имя счёта («р/с …», «…/CL») - кодируем, иначе .set падал целиком
 }
 // Синхронизация реквизитов подключения (ID таблицы + API Key) между устройствами через config/sheets
 function startConfigSync(){
@@ -7532,13 +7560,13 @@ function startLimitsSync(){
     firebase.database().ref('config/kassaLimits').on('value',s=>{
       const v=s.val();
       if(v&&typeof v==='object'){
-        _kassaLimits=v;
-        try{localStorage.setItem('kassaLimits',JSON.stringify(v));}catch(e){}
+        _kassaLimits=_rtdbDecObj(v,'kassaLimits'); // декодируем ключи-имена счетов
+        try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}
         if(activeTab==='bank')renderBank(getFilters()); // обновить карточку/контроль лимитов
       }else if(!window._limitsMigrated&&_kassaLimits&&Object.keys(_kassaLimits).length){
         // в облаке ещё нет лимитов - один раз переносим локальные «вверх»
         window._limitsMigrated=true;
-        firebase.database().ref('config/kassaLimits').set(_kassaLimits).catch(e=>console.warn('[limits] миграция в облако не удалась:',e&&e.message));
+        firebase.database().ref('config/kassaLimits').set(_rtdbEncObj(_kassaLimits)).catch(e=>console.warn('[limits] миграция в облако не удалась:',e&&e.message));
       }
     });
   }catch(e){console.warn('[limits] синхронизация не активна:',e&&e.message);}
@@ -9136,7 +9164,7 @@ window.showAccessPanel=async function(){
 let _planRecords=(()=>{try{return JSON.parse(localStorage.getItem('finPlans')||'[]')}catch(e){return[]}})();
 function _plansSave(){
   try{localStorage.setItem('finPlans',JSON.stringify(_planRecords));}catch(e){}
-  _fbSetSafe('config/plans',_planRecords,'Планы БДР');
+  return _fbSetSafe('config/plans',_planRecords,'Планы БДР');
 }
 function startPlansSync(){
   if(window._plansSyncStarted)return; window._plansSyncStarted=true;
@@ -9282,14 +9310,14 @@ let _planOwners=(()=>{try{return JSON.parse(localStorage.getItem('finPlanOwners'
 const _ownerKey=(dir,code)=>String(dir||'')+'||'+String(code||'');
 function _ownersSave(){
   try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){}
-  _fbSetSafe('config/planOwners',_planOwners,'Ответственные по планам');
+  return _fbSetSafe('config/planOwners',_rtdbEncObj(_planOwners),'Ответственные по планам'); // ключ dir||подстатья кодируем (слэш в подстатьях ломал .set всего объекта)
 }
 function startOwnersSync(){
   if(window._ownersSyncStarted)return; window._ownersSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
-    firebase.database().ref('config/planOwners').on('value',s=>{const v=s.val();
-      _planOwners=(v&&typeof v==='object')?v:{};
+    firebase.database().ref('config/planOwners').on('value',s=>{if(window._planEditorOpen)return; // пока открыт редактор - не затираем несохранённые локальные правки владельцев (правки пишутся сразу через onchange; на закрытии слушатель подхватит облако)
+      const v=s.val();_planOwners=_rtdbDecObj((v&&typeof v==='object')?v:{},'planOwners'); // декодируем ключи обратно в dir||подстатья
       try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){}});
   }catch(e){console.warn('[owners] sync',e&&e.message);}
 }
@@ -9299,14 +9327,14 @@ function startOwnersSync(){
 let _cfoHierarchy=(()=>{try{const o=JSON.parse(localStorage.getItem('finCfoHierarchy')||'{}');return(o&&typeof o==='object'&&!Array.isArray(o))?o:{};}catch(e){return{};}})();
 function _cfoHierSave(){
   try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){}
-  _fbSetSafe('config/cfoHierarchy',_cfoHierarchy,'Иерархия ЦФО');
+  _fbSetSafe('config/cfoHierarchy',_rtdbEncObj(_cfoHierarchy),'Иерархия ЦФО'); // ключ = ФИО - кодируем на случай запрещённых символов
 }
 function startCfoHierarchySync(){
   if(window._cfoHierSyncStarted)return; window._cfoHierSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
     firebase.database().ref('config/cfoHierarchy').on('value',s=>{const v=s.val();
-      _cfoHierarchy=(v&&typeof v==='object'&&!Array.isArray(v))?v:{};
+      _cfoHierarchy=_rtdbDecObj((v&&typeof v==='object'&&!Array.isArray(v))?v:{},'cfoHierarchy'); // декодируем ключи-ФИО
       try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){}
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[cfoHier] sync',e&&e.message);}
@@ -9326,14 +9354,14 @@ window.cfoToggleMgr=function(gid,el){
 let _planNotes=(()=>{try{return JSON.parse(localStorage.getItem('finPlanNotes')||'{}')}catch(e){return{}}})();
 function _notesSave(){
   try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}
-  _fbSetSafe('config/planNotes',_planNotes,'Примечания к планам');
+  return _fbSetSafe('config/planNotes',_rtdbEncObj(_planNotes),'Примечания к планам'); // тот же ключ dir||подстатья - кодируем
 }
 function startNotesSync(){
   if(window._notesSyncStarted)return; window._notesSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
-    firebase.database().ref('config/planNotes').on('value',s=>{const v=s.val();
-      _planNotes=(v&&typeof v==='object')?v:{};
+    firebase.database().ref('config/planNotes').on('value',s=>{if(window._planEditorOpen)return; // как у владельцев - не затираем несохранённые правки, пока редактор открыт
+      const v=s.val();_planNotes=_rtdbDecObj((v&&typeof v==='object')?v:{},'planNotes'); // декодируем ключи
       try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}});
   }catch(e){console.warn('[notes] sync',e&&e.message);}
 }
@@ -9595,11 +9623,12 @@ function _planStage(){
       const rec={dir:rdir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val}; if(side)rec.side=side; // side - сотрудник (111-ФОТ); без side - план на всю подстатью
       _planRecords.push(rec);
     });
-    // ответственный (ФИО) и примечание - по подстатье+направлению
+    // ответственный/примечание пишутся СРАЗУ через onchange (planOwnerPick/planNotePick). Здесь - только страховочная ДОзапись непустого значения; НИКОГДА не удаляем (сброшенный ре-рендером селект не должен затирать сохранённого владельца - это и был баг). Ключ тримируем, чтобы совпасть с чтением таблицы (dir||sub из RAW через trim).
+    const _okd=String(rdir).trim(),_okc=String(code).trim();
     const ow=tr.querySelector('.plan-owner');
-    if(ow){const fio=String(ow.value||'').trim();const k=_ownerKey(rdir,code);if(fio)_planOwners[k]=fio;else delete _planOwners[k];}
+    if(ow){const fio=String(ow.value||'').trim();if(fio)_planOwners[_ownerKey(_okd,_okc)]=fio;}
     const nt=tr.querySelector('input.plan-note');
-    if(nt){const txt=String(nt.value||'').trim();const k=_ownerKey(rdir,code);if(txt)_planNotes[k]=txt;else delete _planNotes[k];}
+    if(nt){const txt=String(nt.value||'').trim();if(txt)_planNotes[_ownerKey(_okd,_okc)]=txt;}
   });
 }
 function _planRenderMatrix(){
@@ -9687,8 +9716,8 @@ function _planRenderMatrix(){
     const note=isExp?(_planNotes[_ownerKey(rdir,code)]||''):'';
     const ownOpts=['<option value="">- не выбран -</option>'].concat((_cfoList||[]).map(n=>`<option value="${esc(n)}"${n===owner?' selected':''}>${esc(n)}</option>`));
     if(owner&&!(_cfoList||[]).includes(owner))ownOpts.push(`<option value="${esc(owner)}" selected>${esc(owner)} (вне ЦФО)</option>`);
-    const ownerCell=isExp?`<td style="padding:2px 3px"><select class="plan-owner" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`:'<td></td>';
-    const noteCell=isExp?`<td style="padding:2px 3px;width:100%"><input class="plan-note" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`:'<td style="width:100%"></td>';
+    const ownerCell=isExp?`<td style="padding:2px 3px"><select class="plan-owner" onchange="planOwnerPick(this)" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`:'<td></td>';
+    const noteCell=isExp?`<td style="padding:2px 3px;width:100%"><input class="plan-note" onchange="planNotePick(this)" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`:'<td style="width:100%"></td>';
     const canExp=!!key&&!sub&&!rev; // разворачивать можно доходные/расходные коды (не «выручка всего»)
     const expBtn=canExp?`<button type="button" onclick="planToggleExpand('${jesc(key)}')" title="Развернуть и заполнить по направлениям" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">▸</button>`:'';
     const labCell=sub
@@ -9753,8 +9782,8 @@ function _planRenderMatrix(){
     const owner=_planOwners[_ownerKey(d,code)]||'',note=_planNotes[_ownerKey(d,code)]||'';
     const ownOpts=['<option value="">- не выбран -</option>'].concat((_cfoList||[]).map(n=>`<option value="${esc(n)}"${n===owner?' selected':''}>${esc(n)}</option>`));
     if(owner&&!(_cfoList||[]).includes(owner))ownOpts.push(`<option value="${esc(owner)}" selected>${esc(owner)} (вне ЦФО)</option>`);
-    const ownerCell=`<td style="padding:2px 3px"><select class="plan-owner" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`;
-    const noteCell=`<td style="padding:2px 3px;width:100%"><input class="plan-note" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`;
+    const ownerCell=`<td style="padding:2px 3px"><select class="plan-owner" onchange="planOwnerPick(this)" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`;
+    const noteCell=`<td style="padding:2px 3px;width:100%"><input class="plan-note" onchange="planNotePick(this)" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`;
     const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer"><span onclick="planToggleExpand('${jesc(dkey)}')" title="${isRentCode(code)?'Развернуть объекты аренды':'Развернуть сотрудников'}" style="display:inline-block;width:16px;color:var(--text2);cursor:pointer">${dopen?'▾':'▸'}</span>${esc(d)}</td>`;
     return `<tr class="plan-dirtotal" data-key="${esc(key)}" data-dir="${esc(d)}" data-code="${esc(code)}" data-level="${rl}">${lab}<td></td>${mc}${yrCell}${ownerCell}${noteCell}</tr>`;};
   const empAddRow=(d,code,key)=>`<tr><td colspan="17" style="padding:3px 8px 6px 40px;position:sticky;left:0;background:var(--surface)"><button type="button" onclick="planAddEmp('${jesc(d)}','${jesc(code)}','${jesc(key)}')" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">${isRentCode(code)?'+ добавить объект аренды':isConsultCode(code)?'+ добавить контрагента':'+ добавить сотрудника'}</button></td></tr>`;
@@ -9891,6 +9920,9 @@ window.planSubartUpdateBtn=function(){const b=document.getElementById('plan-suba
 window._planOwnerSel=window._planOwnerSel||new Set();
 window.planOwnerToggle=function(){const l=document.getElementById('plan-owner-list');if(!l)return;l.style.display=(l.style.display==='none'||!l.style.display)?'block':'none';if(l.style.display==='block'){const q=document.getElementById('plan-owner-q');if(q){planOwnerFilter();q.focus();}}};
 window.planOwnerFilter=function(){const q=String((document.getElementById('plan-owner-q')||{}).value||'').trim().toLowerCase();const l=document.getElementById('plan-owner-list');if(!l)return;l.querySelectorAll('label.powner-opt').forEach(function(o){const t=o.getAttribute('data-l')||'';o.style.display=(!q||t.includes(q))?'':'none';});};
+// ── Назначение владельца/примечания подстатье: пишем СРАЗУ в _planOwners/_planNotes и в облако (не зависим от _planStage/выживания DOM-значения). Ключ тримируем - совпасть с чтением таблицы (dir||sub из RAW). ──
+window.planOwnerPick=function(el){const tr=el&&el.closest&&el.closest('tr');if(!tr)return;const d=String(tr.getAttribute('data-dir')||'').trim(),c=String(tr.getAttribute('data-code')||'').trim();if(!c)return;const k=_ownerKey(d,c),fio=String(el.value||'').trim();if(fio)_planOwners[k]=fio;else delete _planOwners[k];window._planDirty=true;try{_ownersSave();}catch(e){}};
+window.planNotePick=function(el){const tr=el&&el.closest&&el.closest('tr');if(!tr)return;const d=String(tr.getAttribute('data-dir')||'').trim(),c=String(tr.getAttribute('data-code')||'').trim();if(!c)return;const k=_ownerKey(d,c),txt=String(el.value||'').trim();if(txt)_planNotes[k]=txt;else delete _planNotes[k];window._planDirty=true;try{_notesSave();}catch(e){}};
 window.planOwnerCb=function(cb){const s=window._planOwnerSel||(window._planOwnerSel=new Set());if(cb.checked)s.add(cb.value);else s.delete(cb.value);planOwnerUpdateBtn();planOnControlChange();};
 window.planOwnerAll=function(){const s=window._planOwnerSel||(window._planOwnerSel=new Set());s.clear();const l=document.getElementById('plan-owner-list');if(l)l.querySelectorAll('.powner-cb').forEach(function(c){c.checked=false;});planOwnerUpdateBtn();planOnControlChange();};
 window.planOwnerUpdateBtn=function(){const b=document.getElementById('plan-owner-btn');if(!b)return;const s=window._planOwnerSel;b.textContent=(!s||!s.size)?'Все ответственные ▾':('Ответств. '+s.size+' ▾');};
@@ -9918,10 +9950,21 @@ window.planAddEmp=function(dir,code,key){
   const S=window._planExpanded||(window._planExpanded=new Set()); S.add(key); S.add(key+'|'+dir);
   _planRenderMatrix();
 };
-window.planSave=function(btn){_planStage();if(btn){btn.disabled=true;btn.textContent='Сохранение…';}try{_plansSave();}catch(e){}try{_ownersSave();}catch(e){}try{_notesSave();}catch(e){}if(activeTab==='planfact')try{renderActiveTab();}catch(e){}
-  window._planDirty=false; try{window._planSnapshot=JSON.stringify(_planRecords||[]);}catch(e){} // сохранено - правок нет, новый снимок для отката
-  // окно НЕ закрываем - даём продолжить редактирование; показываем подтверждение на кнопке
-  if(btn){btn.textContent='✓ Сохранено';btn.style.background='var(--income)';setTimeout(function(){try{btn.disabled=false;btn.textContent='Сохранить';btn.style.background='var(--accent)';}catch(e){}},1600);}};
+window.planSave=async function(btn){
+  _planStage();
+  window._planDirty=false; try{window._planSnapshot=JSON.stringify(_planRecords||[]);}catch(e){} // ставим dirty=false СРАЗУ (синхронно, до await): «✓ Утвердить месяц» = planSave();planApproveMonthOpen() - freeze не должен споткнуться о dirty-гейт
+  if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
+  const nP=(_planRecords||[]).length,nO=Object.keys(_planOwners||{}).length,nN=Object.keys(_planNotes||{}).length;
+  // сами записи стартуют сразу (localStorage + облако); ждём результат облака, чтобы подтверждение отражало реальность
+  const proms=[_plansSave(),_ownersSave(),_notesSave()].map(p=>Promise.resolve(p).catch(()=>false));
+  if(activeTab==='planfact')try{renderActiveTab();}catch(e){}
+  const [okP,okO,okN]=await Promise.all(proms);
+  // окно НЕ закрываем - даём продолжить редактирование; подтверждение на кнопке отражает реальность (сколько и записалось ли в облако)
+  if(btn){const allOk=okP&&okO&&okN;
+    if(allOk){btn.textContent='✓ '+nP+' планов · '+nO+' влад. · '+nN+' прим.';btn.style.background='var(--income)';}
+    else{btn.textContent='⚠ В облако НЕ записалось (локально сохранено)';btn.style.background='var(--outcome)';}
+    setTimeout(function(){try{btn.disabled=false;btn.textContent='Сохранить';btn.style.background='var(--accent)';}catch(e){}},allOk?2800:5000);}
+};
 // Закрытие редактора планов с защитой от потери несохранённых правок (крестик / клик мимо / «Отмена»)
 window.planPanelClose=function(){
   const o=document.getElementById('plansPanelOverlay'); if(!o)return;
@@ -9930,7 +9973,7 @@ window.planPanelClose=function(){
     try{if(window._planSnapshot)_planRecords=JSON.parse(window._planSnapshot);}catch(e){} // откат staged-правок, чтобы отчёт не показывал несохранённое
     if(activeTab==='planfact')try{renderActiveTab();}catch(e){}
   }
-  window._planDirty=false; o.remove();
+  window._planDirty=false; window._planEditorOpen=false; o.remove(); // возобновляем синк владельцев/примечаний (правки уже в облаке через onchange)
 };
 // Печать: расходы с планом (год), фактом (год) и ответственными ФИО - по ВСЕМ направлениям (секция на каждое)
 window.planPrintOwners=function(){
@@ -10381,6 +10424,7 @@ window.cfoStatementGen=function(){
 window.showPlansPanel=async function(){
   if(document.getElementById('plansPanelOverlay'))return;
   if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
+  window._planEditorOpen=true; // пауза startOwnersSync/startNotesSync - не затирать несохранённые правки владельцев/примечаний пока открыт редактор
   try{ if(window.firebase&&FIREBASE_CONFIG.databaseURL){ fbApp(); const s=await firebase.database().ref('config/plans').once('value'); const v=s.val(); if(Array.isArray(v))_planRecords=v; else if(v&&typeof v==='object')_planRecords=Object.values(v); } }catch(e){}
   const esc=s=>String(s||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const dirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
