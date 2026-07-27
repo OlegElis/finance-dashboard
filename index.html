@@ -668,6 +668,18 @@ const isOpeningBalance=name=>{const x=String(name||'').toLowerCase();return x.in
 const OPIU_CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки','Вывод чистой прибыли'];
 let RAW=[];
 let activeTab='bank';
+// ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи по стороне (ФОТ→сотрудник 👤, аренда→объект 🏢, консалтинг→контрагент 👤). ЕДИНЫЙ источник для Выписки ЦФО, редактора планов и сводной БДР - иначе две копии классификации разъедутся (как было бы с OPIU_CATS). Матрицу «все месяцы» это не касается.
+function _slC3(c){const x=String(c).match(/\d{3}/);return x?x[0]:'';}
+const _slFot=c=>_slC3(c)==='111',_slRent=c=>_slC3(c)==='223',_slConsult=c=>/консалтинг/i.test(String(c));
+const _slSub=c=>_slFot(c)||_slRent(c)||_slConsult(c);
+const _slIcon=c=>_slRent(c)?'🏢':'👤';
+const _SL_UNALLOC='(не распределено)';
+// факт по стороне: {dir||ARTICLE_NAME → {сторона → [13 мес]}} - списания sub-level подстатей (вывод прибыли исключён), за год+направления
+function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const out=parseNum(r[COL.OUTCOME]);if(!(out<0))return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(!an||!_slSub(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=Math.abs(out);});return idx;}
+// план по стороне: записи level='subarticle' с этой стороной, конвертер cvt(d,rec,m). Σ по сторонам = план кода → дочерние строки сходятся к строке-подстатье.
+function _planSideMD(recsAll,cvt){return (d,code,side,m)=>{const recs=recsAll.filter(p=>p.level==='subarticle'&&p.dir===d&&p.code===code&&String(p.side||'')===side);if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};}
+// стороны кода: факт ∪ baseline ∪ прогноз ∪ объекты аренды (для 223); hasUn - есть план/факт без стороны
+function _sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code){const named={};let hasUn=false;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});if(_slRent(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};}
 
 const TAB_TITLES={bank:'Реестр банковских и кассовых операций (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ - план от обратного (сколько тратить под целевую прибыль)',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Контроль - Дубли записей',incomplete:'Контроль - Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ - задолженность по договорам',bflmodel:'Модель БФЛ - юнит-экономика и сценарии',registry:'Реестр операций - поиск по любому полю',audit:'Аудит закупа - контрагенты и кассы по подстатье'};
 
@@ -5884,6 +5896,7 @@ window.pfShowTxn=function(kind,code,m,dir){
 };
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
 window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
+window.pfToggleSub=function(kind,code){const S=window._pfSubExp||(window._pfSubExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());}; // разворот подстатьи → третий уровень (стороны)
 // После разворота details «Графики» (БДР) чарты создавались при display:none (размер 0) - подтолкнуть ресайз.
 // Вызывается только из ontoggle самого details; глобальных слушателей/observer'ов не добавляет.
 window.pfChartsResize=function(open){
@@ -6769,14 +6782,14 @@ function renderPlanFact(f){
     const inTol=base!=null&&base!==0&&Math.abs(d)/Math.abs(base)<=PF_TOL;
     const _sk=kind||opts.skind; // семантический kind для Δ/статуса: у итоговых строк kind=null (не кликабельны), но net/vyv-семантика - через opts.skind
     const dCol=base==null?'var(--text3)':_sk==='vyv'?'var(--text2)':inTol?'var(--text2)':(_sk==='net'||revenue)?(fact>=base?'var(--income)':'var(--outcome)'):(fact>base?'var(--outcome)':'var(--income)'); // vyv - нейтрально; net - по знаку (net выше плана = зелёный)
-    const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
-    const labStyle=`${td};text-align:left${opts.expandable?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${bold?'font-weight:700':''};position:sticky;left:0;z-index:1;background:${bold?'var(--surface2)':'var(--surface)'}`;
-    // клик по лейблу: у статьи - разворот/сворачивание подстатей; у подстатьи/листа - гасим (не открываем расшифровку). Расшифровка - по клику на ячейки значений (строка сохраняет onclick)
-    const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:(kind?` onclick="event.stopPropagation()"`:'');
+    const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:opts.subExpandable?`<span title="${opts.subExpanded?'Свернуть расшифровку':'Показать расшифровку (сотрудники / объекты / контрагенты)'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.subExpanded?'▾':'▸'}</span>`:(opts.child||opts.grand?'<span style="display:inline-block;width:15px"></span>':'');
+    const labStyle=`${td};text-align:left${(opts.expandable||opts.subExpandable)?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${opts.grand?'padding-left:46px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${bold?'font-weight:700':''};position:sticky;left:0;z-index:1;background:${bold?'var(--surface2)':'var(--surface)'}`;
+    // клик по лейблу: у статьи - разворот подстатей; у подстатьи с 3-м уровнем - разворот сторон; у листа - гасим. Расшифровка операций - по клику на ячейки значений (строка сохраняет onclick)
+    const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:opts.subExpandable?` onclick="event.stopPropagation();pfToggleSub('${kind}','${jesc2(code)}')" title="Клик - расшифровка по сторонам"`:(kind?` onclick="event.stopPropagation()"`:'');
     const dash='<span style=color:var(--text3)>-</span>';
     const statusHtml=(!hasBaseline||_sk==='net'||_sk==='vyv')?dash:statusCell(base,fact,revenue); // ЧП/вывод 127 - без % исполнения и «экономия/перерасход» (нейтрально), как в матрице/остатке
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
-      <td style="${labStyle}"${labClick}>${tog}${esc(label)}</td>
+      <td style="${labStyle}"${opts.grand?` title="${esc(label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
       <td style="${td};text-align:right${bold?';font-weight:700':''}" title="Утверждённый (замороженный) план">${base!=null?fmt(revenue?base:-base):dash}</td>
       <td style="${td};text-align:right" title="Текущий прогноз (рабочий план)">${plan!=null?fmt(revenue?plan:-plan):dash}</td>
@@ -6828,13 +6841,35 @@ function renderPlanFact(f){
   const artRemFor=(kind,c)=>_remMerge(kind,subsOfArt(kind,c).filter(subOwnerPass).map(sub=>remOfSub(kind,sub)));
   const subRemFor=(kind,s)=>remOfSub(kind,s);
   const remSum=(arr,kind)=>_remMerge(kind,arr.map(r=>artRemFor(kind,r.code)));
+  // ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи (111 сотрудники / 223 объекты / консалтинг контрагенты) по стороне. Переиспускает модульные примитивы (_buildSideFactIdx/_planSideMD/_sideUniverse). Per-dir по ownDirsOf(sub) - Σ сторон = подстатья и под фильтром ЦФО. Матрицу «все месяцы» НЕ трогает.
+  const subExp=(level==='article')?(window._pfSubExp||(window._pfSubExp=new Set())):null; // разворот подстатьи → стороны; переживает ре-рендер (как _pfArtExp)
+  const _sfIdx=_buildSideFactIdx(year,dirsToAgg);
+  const _fcSideMD=_planSideMD(plans,(d,r,m)=>cvtD(r,m)),_blSideMD=PB?_planSideMD(PB.R,(d,r,m)=>PB.cvtD(r,m)):null;
+  const sideFactM=(sub,side,m)=>{let s=0;ownDirsOf(sub).forEach(d=>{const SK=_sfIdx[d+'||'+sub];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
+  const _sidePer=(fn,sub,side)=>{if(isYear){let s=null;for(let m=1;m<=12;m++){const v=fn(sub,side,m);if(v!=null)s=(s||0)+v;}return s;}return fn(sub,side,+period);};
+  const _fcSideM=(sub,side,m)=>{let s=null;ownDirsOf(sub).forEach(d=>{const v=_fcSideMD(d,sub,side,m);if(v!=null)s=(s||0)+v;});return s;};
+  const _blSideM=(sub,side,m)=>{if(!_blSideMD)return null;let s=null;ownDirsOf(sub).forEach(d=>{const v=_blSideMD(d,sub,side,m);if(v!=null)s=(s||0)+v;});return s;};
+  const sideFactP=(sub,side)=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=sideFactM(sub,side,m);return s;}return sideFactM(sub,side,+period);};
+  const sidePlanP=(sub,side)=>_sidePer(_fcSideM,sub,side);
+  const sideBaseP=(sub,side)=>_blSideMD?_sidePer(_blSideM,sub,side):null;
+  const sidesOfSub=sub=>{const U=_sideUniverse(_sfIdx,PB?PB.R:[],plans,ownDirsOf(sub),sub);const list=U.named.slice();if(U.hasUn)list.push('');
+    return list.filter(side=>{const f=sideFactP(sub,side),p=sidePlanP(sub,side),b=sideBaseP(sub,side);return Math.abs(f)>0.005||(p!=null&&Math.abs(p)>0.005)||(b!=null&&Math.abs(b)>0.005);});}; // пустые стороны (нет факта/плана за период) не печатаем
+  // devBase стороны per-(dir,сторона) - как _subDevBaseM, но с полем side; остаток стороны, Σ = остаток подстатьи
+  const _sideDevBaseM=(sub,side,m)=>{const fr=frozenSet.has(m);let v=null,su=0,sp=0;ownDirsOf(sub).forEach(d=>{const b=_blSideMD?_blSideMD(d,sub,side,m):null,p=_fcSideMD(d,sub,side,m);let vv=null,sc=null;
+      if(fr){if(b!=null){vv=b;sc='utv';}else if(p!=null){vv=p;sc='prog';}}else{if(p!=null){vv=p;sc='prog';}else if(b!=null){vv=b;sc='utv';}}
+      if(vv==null)return;v=(v||0)+vv;if(sc==='utv')su++;else sp++;});return{v,src:v==null?null:(su&&sp?'mix':su?'utv':'prog')};};
+  const sideRemFor=(sub,side)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=_sideDevBaseM(sub,side,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=sideFactM(sub,side,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind:'exp',src:_remSrc(su,sp)};};
   // строка статьи + (если развёрнута) её подстатьи
   const artRow=(code,base,plan,fact,revenue,kind)=>{
     if(level!=='article')return dRow(code,base,plan,fact,revenue,false,kind,code,{rem:artRemFor(kind,code)});
     const subs=subsOfArt(kind,code).filter(subOwnerPass),has=subs.length>0,key=kind+'|'+code,open=has&&artExp.has(key); // при фильтре ЦФО разворачиваем только подстатьи выбранного ответственного (Σ детей = число статьи)
     if(selOwn.size){const _ent=subs.map(sub=>({sub,dirs:ownDirsOf(sub)}));window._pfOwnSubs[kind+'|'+code]=_ent;_ent.forEach(e=>{window._pfOwnSubs[kind+'|'+e.sub]=[e];});} // модал статьи/подстатьи под ЦФО = операции прошедших подстатей ТОЛЬКО по owner-passing направлениям
     let h=dRow(artLabel(code),base,plan,fact,revenue,false,kind,code,{expandable:has,expanded:open,rem:artRemFor(kind,code)});
-    if(open)subs.forEach(sub=>{h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub)});});
+    if(open)subs.forEach(sub=>{
+      const _isSub=(kind==='exp')&&_slSub(sub),_subOpen=_isSub&&subExp&&subExp.has(kind+'|'+sub); // третий уровень - только у расходных ФОТ/аренда/консалтинг подстатей
+      h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_isSub,subExpanded:_subOpen});
+      if(_subOpen)sidesOfSub(sub).forEach(side=>{h+=dRow(_slIcon(sub)+' '+(side||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),sideFactP(sub,side),false,false,null,null,{grand:true,rem:sideRemFor(sub,side)});});
+    });
     return h;
   };
   const incBodyRows=incRowsArr.map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
@@ -10100,22 +10135,10 @@ window.cfoStatementGen=function(){
   // ── Задача 5: 3-й уровень выписки - расшифровка sub-level РАСХОДНЫХ подстатей по стороне (ФОТ→сотрудник, аренда→объект, консалтинг→контрагент). Только визуальный разворот поверх посчитанных сумм - ИТОГО не меняет ──
   const detEl=document.getElementById('cfo-stmt-detail');const wantDetail=!detEl||detEl.checked; // по умолчанию ВКЛ
   const _c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
-  const isFotCode=code=>_c3(code)==='111',isRentCode=code=>_c3(code)==='223',isConsultCode=code=>/консалтинг/i.test(String(code));
-  const isSubLevel=code=>isFotCode(code)||isRentCode(code)||isConsultCode(code);
-  const sideIcon=code=>isRentCode(code)?'🏢':'👤';const UNALLOC='(не распределено)';
-  // факт по стороне: dir||ARTICLE_NAME → { side → [13] }; только списания sub-level подстатей (вывод прибыли исключён, как в основном проходе factIdx)
-  const sideFactIdx={};
-  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=parseNum(r[COL.OUTCOME]); if(!(out<0))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an||!isSubLevel(an))return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim(); const SK=(sideFactIdx[key]=sideFactIdx[key]||{}); (SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=Math.abs(out); });
-  // план по стороне (baseline/прогноз): записи уровня subarticle с данной стороной, тот же конвертер. Σ по всем сторонам = план кода (blPlanMD/fcPlanMD) → дочерние строки сходятся к строке-подстатье
-  const _planSideMD=(recsAll,cvt)=>(d,code,side,m)=>{const recs=recsAll.filter(p=>p.level==='subarticle'&&p.dir===d&&p.code===code&&String(p.side||'')===side);if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};
+  const isFotCode=_slFot,isRentCode=_slRent,isConsultCode=_slConsult,isSubLevel=_slSub,sideIcon=_slIcon,UNALLOC=_SL_UNALLOC; // общие примитивы 3-го уровня - модульный уровень, не дублируем (вариант A)
+  const sideFactIdx=_buildSideFactIdx(year,dirsScope);
   const blPlanSideMD=_planSideMD(blRecs,blCvt),fcPlanSideMD=_planSideMD(fcRecs,fcCvt);
-  // стороны по коду (по всем направлениям кода): факт ∪ baseline ∪ прогноз ∪ объекты аренды; hasUn - есть план/факт без стороны
-  const stmtSides=(dirsSet,code)=>{const named={};let hasUn=false;
-    dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});
-      blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});
-      fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});
-    if(isRentCode(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});
-    return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};};
+  const stmtSides=(dirsSet,code)=>_sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code);
   const sideFactMonth=(dirsSet,code,side,m)=>{let s=0;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
   const sideBlMonth=(dirsSet,code,side,m)=>{let s=null;dirsSet.forEach(d=>{const v=blPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
   const sideFcMonth=(dirsSet,code,side,m)=>{let s=null;dirsSet.forEach(d=>{const v=fcPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
