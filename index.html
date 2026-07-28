@@ -785,84 +785,7 @@ function bankApplyFilter(){
   bankRebuildChartData();
 }
 
-const TXN_PAGE=500;
-const dsOpiu=v=>{const d=parseDate(v);return d?`${MONTHS_FULL[d.getMonth()].slice(0,3)} ${d.getFullYear()}`:'';};
-function bankFillTxn(reset){
-  if(reset)window._bankTxnOffset=0;
-  const all=window._bankTxnData||[];
-  const offset=window._bankTxnOffset||0;
-  const slice=all.slice(offset,offset+TXN_PAGE);
-  const body=document.getElementById('txnBody');
-  if(!body)return;
-  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const c=v=>_htmlEsc(v||''); // данные Sheets в innerHTML - только через эскейп (XSS через ячейку)
-  const html=slice.map((r,i)=>{
-    const idx=offset+i;
-    const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
-    return`<tr style="cursor:pointer" onclick="bankShowCard(${idx})">`+
-      `<td class="center">${ds(r[COL.DATE_DDS])}</td>`+
-      `<td class="center">${dsOpiu(r[COL.DATE_OPIU])}</td>`+
-      `<td class="center">${c(r[COL.TYPE])}</td>`+
-      `<td>${c(r[COL.OFFER_ID])}</td>`+
-      `<td class="${inc>0?'num-positive':''} num">${inc?fmt(inc):''}</td>`+
-      `<td class="${out<0?'num-negative':''} num">${out?fmt(out):''}</td>`+
-      `<td class="center">${c(r[COL.FNS])}</td>`+
-      `<td>${c(r[COL.ACCOUNT])}</td>`+
-      `<td>${c(r[COL.ARTICLE_CODE])}</td>`+
-      `<td>${c(r[COL.ARTICLE_NAME])}</td>`+
-      `<td class="center">${c(r[COL.ANALYTICS])}</td>`+
-      `<td>${c(r[COL.SECOND_SIDE])}</td>`+
-      `<td>${c(r[COL.PURPOSE])}</td>`+
-      `<td>${c(r[COL.ACTIVITY_DIR])}</td>`+
-      `<td>${c(r[COL.FIN_OP])}</td>`+
-      `</tr>`;
-  }).join('');
-  if(reset){body.innerHTML=html;}else{body.insertAdjacentHTML('beforeend',html);}
-  window._bankTxnOffset=offset+slice.length;
-  const moreEl=document.getElementById('txnMore');
-  const lbl=document.getElementById('txnMoreLabel');
-  if(moreEl){moreEl.style.display=window._bankTxnOffset<all.length?'block':'none';}
-  if(lbl){const rem=all.length-window._bankTxnOffset;lbl.textContent=rem>0?`ещё ${rem.toLocaleString('ru-RU')}`:'';}
-}
-window.bankLoadMoreTxn=function(){bankFillTxn(false);};
-
-// Фильтр таблицы операций
-let _bankTxnFilter={accs:null,date:null}; // accs: массив счетов, date: {y,m,d}
-function bankApplyTxnFilter(){
-  const all=window._bankTxnData||[];
-  const f=_bankTxnFilter;
-  const bf=_tabFilters.bank;
-  window._bankTxnDataFiltered=all.filter(r=>{
-    if(f.accs&&!f.accs.includes(String(r[COL.ACCOUNT]||'').trim()))return false;
-    if(f.date){
-      const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
-      if(!d)return false;
-      if(d.getFullYear()!==f.date.y||d.getMonth()+1!==f.date.m||d.getDate()!==f.date.d)return false;
-    }
-    if(bf.offerIds&&bf.offerIds.length&&!bf.offerIds.includes(String(r[COL.OFFER_ID]||'').trim()))return false;
-    if(bf.articles&&bf.articles.length&&!bf.articles.includes(String(r[COL.ARTICLE_CODE]||'').trim()))return false;
-    if(bf.subarticles&&bf.subarticles.length&&!bf.subarticles.includes(String(r[COL.ARTICLE_NAME]||'').trim()))return false;
-    if(bf.finOps&&bf.finOps.length&&!bf.finOps.includes(String(r[COL.FIN_OP]||'').trim()))return false;
-    if(bf.secondSides&&bf.secondSides.length&&!bf.secondSides.includes(String(r[COL.SECOND_SIDE]||'').trim()))return false;
-    return true;
-  });
-  // Сохраняем оригинал и подменяем на отфильтрованный
-  const orig=window._bankTxnData;
-  window._bankTxnData=window._bankTxnDataFiltered;
-  bankFillTxn(true);
-  window._bankTxnData=orig;
-  // Обновляем счётчик
-  const cnt=document.getElementById('txnCount');
-  if(cnt)cnt.textContent=(window._bankTxnDataFiltered.length.toLocaleString('ru-RU'))+' транзакций'+(f.accs||f.date?' (фильтр)':'');
-  // Показываем/скрываем кнопку сброса фильтра таблицы
-  const btn=document.getElementById('txnFilterReset');
-  if(btn)btn.style.display=(f.accs||f.date)?'inline-flex':'none';
-}
-window.bankTxnFilterByDay=function(yr,mo,day){
-  const same=_bankTxnFilter.date&&_bankTxnFilter.date.y===yr&&_bankTxnFilter.date.m===mo&&_bankTxnFilter.date.d===day;
-  _bankTxnFilter.date=same?null:{y:yr,m:mo,d:day};
-  bankApplyTxnFilter();
-};
+const dsOpiu=v=>{const d=parseDate(v);return d?`${MONTHS_FULL[d.getMonth()].slice(0,3)} ${d.getFullYear()}`:'';}; // общий форматтер даты ОПиУ (используется многими вкладками)
 // Клик по столбику дня в графике Банка -> операции этого дня в Реестре (таблицы операций на вкладке Банк больше нет).
 // Ставим диапазон дат ДДС Реестра ровно на этот день и переключаемся; renderRegistry применит фильтр.
 window.bankDayToRegistry=function(yr,mo,day){
@@ -874,63 +797,13 @@ window.bankDayToRegistry=function(yr,mo,day){
   window._regLimit=500;
   if(window.switchTab)switchTab('registry');
 };
-window.bankTxnResetFilter=function(){
-  _bankTxnFilter={accs:null,date:null};
-  _tabFilters.bank.offerIds=[];
-  _tabFilters.bank.articles=[];
-  _tabFilters.bank.subarticles=[];
-  _tabFilters.bank.finOps=[];
-  _tabFilters.bank.secondSides=[];
-  renderBank(getFilters());
-};
 window.bankResetAllFilters=function(){
-  _bankTxnFilter={accs:null,date:null};
   const b=_tabFilters.bank;
   b.offerIds=[];b.accounts=[];b.secondSides=[];b.activityDirs=[];b.includeFuture=true;b.articles=[];b.subarticles=[];b.finOps=[]; // articles/subarticles/finOps фильтры убраны из UI - гасим на случай старых значений
   if(typeof _activePreset==='object')_activePreset.bank=''; setPreset('bank','all'); // полный сброс, включая период/пресет
   renderBank(getFilters());
 };
 
-window.bankShowCard=function(idx){
-  const r=window._bankTxnData[idx];if(!r)return;
-  const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';};
-  const c=v=>_htmlEsc(String(v||'').trim())||'-'; // XSS через ячейку Sheets
-  const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
-  const incHtml=inc?`<span class="pos">${fmt(inc)}</span>`:`<span>-</span>`;
-  const outHtml=out?`<span class="neg">${fmt(out)}</span>`:`<span>-</span>`;
-  const field=(lbl,val,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label><span>${val}</span></div>`;
-  const fieldRaw=(lbl,html,full=false)=>`<div class="txn-field${full?' full':''}"><label>${lbl}</label>${html}</div>`;
-  const overlay=document.createElement('div');
-  overlay.className='txn-card-overlay';
-  overlay.innerHTML=`<div class="txn-card">
-    <div class="txn-card-head">
-      <h3>Карточка операции</h3>
-      <button class="txn-card-close" onclick="this.closest('.txn-card-overlay').remove()">✕</button>
-    </div>
-    <div class="txn-card-body">
-      ${field('Дата ДДС',ds(r[COL.DATE_DDS]))}
-      ${field('Дата ОПиУ',dsOpiu(r[COL.DATE_OPIU]))}
-      ${field('Тип операции',c(r[COL.TYPE]))}
-      ${field('ID Offer',c(r[COL.OFFER_ID]))}
-      <hr class="txn-card-divider">
-      ${fieldRaw('Поступление',incHtml)}
-      ${fieldRaw('Списание',outHtml)}
-      ${field('ФНС',c(r[COL.FNS]))}
-      ${field('Реквизиты счёта',c(r[COL.ACCOUNT]))}
-      <hr class="txn-card-divider">
-      ${field('Статья',c(r[COL.ARTICLE_CODE]))}
-      ${field('Подстатья',c(r[COL.ARTICLE_NAME]))}
-      ${field('Аналитика',c(r[COL.ANALYTICS]))}
-      ${field('Контрагент (SecondSide)',c(r[COL.SECOND_SIDE]))}
-      <hr class="txn-card-divider">
-      ${field('Назначение платежа',c(r[COL.PURPOSE]),true)}
-      ${field('Направление деятельности',c(r[COL.ACTIVITY_DIR]))}
-      ${field('Финансовая операция',c(r[COL.FIN_OP]))}
-    </div>
-  </div>`;
-  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
-  document.body.appendChild(overlay);
-};
 
 function bankRebuildChartData(){
   const d=window._bankChartData;
@@ -2331,7 +2204,6 @@ window.ddsTgl=function(nodeId){
   }
 };
 
-// Карточка записи ДДС (как bankShowCard)
 // Cash Runway popup
 window.showCashRunwayPopup=function(){
   const d=window._cashRunwayData;
@@ -2550,18 +2422,6 @@ window.bankOfferSelectAll=function(s){_bankExtraSelectAll('bank-offer-dd','bank-
 window.bankAccToggle=function(){_bankExtraToggle('bank-acc-dd');}; // фильтр «Реквизиты счёта» (мультивыбор, как Направление/ID)
 window.bankAccChange=function(){_bankExtraUpdateBtn('bank-acc-btn','bank-acc-dd');_tabFilters.bank.accounts=_bankExtraGetChecked('bank-acc-dd');};
 window.bankAccSelectAll=function(s){_bankExtraSelectAll('bank-acc-dd','bank-acc-btn',s);_tabFilters.bank.accounts=_bankExtraGetChecked('bank-acc-dd');};
-
-window.bankArtToggle=function(){_bankExtraToggle('bank-art-dd');};
-window.bankArtChange=function(){_bankExtraUpdateBtn('bank-art-btn','bank-art-dd');_tabFilters.bank.articles=_bankExtraGetChecked('bank-art-dd');};
-window.bankArtSelectAll=function(s){_bankExtraSelectAll('bank-art-dd','bank-art-btn',s);_tabFilters.bank.articles=_bankExtraGetChecked('bank-art-dd');};
-
-window.bankSubToggle=function(){_bankExtraToggle('bank-sub-dd');};
-window.bankSubChange=function(){_bankExtraUpdateBtn('bank-sub-btn','bank-sub-dd');_tabFilters.bank.subarticles=_bankExtraGetChecked('bank-sub-dd');};
-window.bankSubSelectAll=function(s){_bankExtraSelectAll('bank-sub-dd','bank-sub-btn',s);_tabFilters.bank.subarticles=_bankExtraGetChecked('bank-sub-dd');};
-
-window.bankFinOpToggle=function(){_bankExtraToggle('bank-finop-dd');};
-window.bankFinOpChange=function(){_bankExtraUpdateBtn('bank-finop-btn','bank-finop-dd');_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');};
-window.bankFinOpSelectAll=function(s){_bankExtraSelectAll('bank-finop-dd','bank-finop-btn',s);_tabFilters.bank.finOps=_bankExtraGetChecked('bank-finop-dd');};
 
 window.bankSecondToggle=function(){_bankExtraToggle('bank-second-dd');};
 window.bankSecondChange=function(){_bankExtraUpdateBtn('bank-second-btn','bank-second-dd');_tabFilters.bank.secondSides=_bankExtraGetChecked('bank-second-dd');};
