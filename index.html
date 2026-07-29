@@ -6831,12 +6831,12 @@ function renderPlanFact(f){
       return {col:kind==='inc'?(over?'var(--income)':'var(--outcome)'):(over?'var(--outcome)':'var(--orange)'),d:fact-devBase,pct:Math.round(r*100)};
     };
     const rubSgn=v=>(v<0?'−':'+')+fmt(Math.abs(v)); // типографский минус U+2212, не дефис (toLocaleString отдаёт дефис-минус)
-    const subLines=(base,plan,dv,w)=>{ // уровни 2-4; строка 4 приходит готовой из devOf (её же цвет красит факт - ячейка не противоречит себе). w - вес по уровню агрегации строки
+    const subLines=(base,plan,dv)=>{ // уровни 2-4; строка 4 приходит готовой из devOf (её же цвет красит факт - ячейка не противоречит себе). Вес ВСЕГДА 400: планы и отклонение не выделяются нигде, включая итоговые строки
       const rows=[];
       if(base!=null)rows.push([fmt(base),'var(--text3)']);
       if(plan!=null)rows.push([fmt(plan),'var(--text3)']);
       if(dv)rows.push([rubSgn(dv.d)+' ('+dv.pct+'%)',dv.col]);
-      return rows.map(([t,c],i)=>`<div style="font-size:11px;line-height:1.05;font-family:var(--mono);font-weight:${w};color:${c}${i?'':';border-top:1px solid var(--divider);margin-top:1px'}">${t}</div>`).join('');
+      return rows.map(([t,c],i)=>`<div style="font-size:11px;line-height:1.05;font-family:var(--mono);font-weight:400;color:${c}${i?'':';border-top:1px solid var(--divider);margin-top:1px'}">${t}</div>`).join('');
     };
     const cellHtml=(base,plan,fact,devBase,dbLbl,kind,click,closed,w)=>{
       const dv=closed?devOf(devBase,fact,kind):null; let col='var(--text)'; // незакрытый месяц (текущий/будущий) - факт неполный: отклонение не считаем (строки 4 нет), факт нейтральный
@@ -6846,13 +6846,14 @@ function renderPlanFact(f){
       const tp=[];if(base!=null)tp.push('Утв: '+fmt(base));if(plan!=null)tp.push('Прог: '+fmt(plan));tp.push('Факт: '+fmt(fact));
       if(closed&&devBase!=null&&Math.abs(devBase)>0.0001&&kind!=='net'&&kind!=='vyv')tp.push('Откл: '+rubSgn(fact-devBase)+' ('+(fact/devBase*100).toFixed(1)+'%) от '+dbLbl); // в тултипе точный % и база - только для закрытого месяца
       else if(!closed&&kind!=='net'&&kind!=='vyv')tp.push('Месяц не закрыт - отклонение не считается');
-      return `<td style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}" title="${tp.join(' · ')}${click?' · клик - операции месяца':''}"${click?` onclick="${click}"`:''}><div style="color:${col};font-weight:${w};font-size:12px;line-height:1.1;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${subLines(base,plan,dv,w)}</td>`;
+      return `<td style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}" title="${tp.join(' · ')}${click?' · клик - операции месяца':''}"${click?` onclick="${click}"`:''}><div style="color:${col};font-weight:${w};font-size:12px;line-height:1.1;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${subLines(base,plan,dv)}</td>`;
     };
     const mrow=(label,getBase,getPlan,getFact,kind,bold,tk,code,opts)=>{ // tk/code - расшифровка по клику (tk: inc/exp/vyv); opts.expandable/expanded/child - инлайн-разворот статья→подстатьи
       opts=opts||{};
-      // Вес = уровень агрегации (как в своде БДР и в Банке): итоги 700, статьи 600, подстатьи 400.
-      // Убирая жирность, число теряет присутствие - это компенсировано кеглем подстрок (10→11px), кегль факта уже был 12px.
-      const w=bold?700:(opts.child?400:600);
+      // Жирным ТОЛЬКО: факт на итоговых строках + колонка «Год» целиком. Всё остальное - 400.
+      // Статьи и подстатьи в месячных колонках больше не различаются весом: их разводит отступ, треугольник и цвет лейбла.
+      // Подстроки (утв/прог/откл) идут 400 ВЕЗДЕ, включая итоговые строки - выделяется факт, а не план.
+      const w=bold?700:400;
       let cells='',yb=null,yp=null,yf=0,ydbC=null,yfC=0;const closedM=[]; // yb/yp/yf - утв/прог/факт по ВСЕМ месяцам (уровни 1-3); ydbC/yfC - база/факт ТОЛЬКО закрытых месяцев (для годового отклонения)
       monthsOn.forEach(m=>{const b=getBase(m),p=getPlan(m),fa=getFact(m)||0,fr=frozenSet.has(m),db=devBaseOf(b,p,fr);
         const closed=(year<curY)||(year===curY&&m<curM); // месяц полностью в прошлом; ТЕКУЩИЙ и будущие - факт неполный, в отклонение не входят
@@ -6863,7 +6864,7 @@ function renderPlanFact(f){
       const ycol=kind==='net'?(yf>=-0.0001?'var(--income)':'var(--outcome)'):(ydv?ydv.col:(ydbC==null&&yf?'var(--text2)':'var(--text)'));
       const ytp=[];if(yb!=null)ytp.push('Утв: '+fmt(yb));if(yp!=null)ytp.push('Прог: '+fmt(yp));ytp.push('Факт: '+fmt(yf)+' (за год)');
       if(ydbC!=null&&Math.abs(ydbC)>0.0001&&kind!=='net'&&kind!=='vyv'&&closedM.length)ytp.push('Откл: '+rubSgn(yfC-ydbC)+' ('+(yfC/ydbC*100).toFixed(1)+'%) за '+_monthsRangeLabel(closedM)+', '+closedM.length+' мес (незакрытые месяцы в отклонение не входят)');
-      const yc=`<td title="${ytp.join(' · ')}" style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:${w};font-size:12px;line-height:1.1;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${subLines(yb,yp,ydv,w)}</td>`;
+      const yc=`<td title="${ytp.join(' · ')}" style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:700;font-size:12px;line-height:1.1;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${subLines(yb,yp,ydv)}</td>`;
       const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
       const labPad=opts.child?'padding:4px 10px 4px 26px':'padding:5px 10px',labFont=opts.child?'font-size:10px;color:var(--text2)':'font-size:11px';
       // клик по лейблу статьи = разворот подстатей; расшифровка - только по ячейкам месяцев (cellHtml). У подстатей/итогов лейбл некликабелен
