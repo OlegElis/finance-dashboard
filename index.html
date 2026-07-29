@@ -804,7 +804,7 @@ window.bankDayToRegistry=function(yr,mo,day){
 };
 window.bankResetAllFilters=function(){
   const b=_tabFilters.bank;
-  b.offerIds=[];b.accounts=[];b.secondSides=[];b.activityDirs=[];b.includeFuture=true;b.articles=[];b.subarticles=[];b.finOps=[]; // articles/subarticles/finOps фильтры убраны из UI - гасим на случай старых значений
+  b.offerIds=[];b.accounts=[];b.secondSides=[];b.activityDirs=[];b.fns='';b.includeFuture=true;b.articles=[];b.subarticles=[];b.finOps=[]; // articles/subarticles/finOps фильтры убраны из UI - гасим на случай старых значений
   if(typeof _activePreset==='object')_activePreset.bank=''; setPreset('bank','all'); // полный сброс, включая период/пресет
   renderBank(getFilters());
 };
@@ -848,7 +848,7 @@ function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const 
 function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${day}`;}
 // ── Per-tab filter state ──
 const _tabFilters={
-  bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],includeFuture:true},
+  bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],offerIds:[],articles:[],subarticles:[],finOps:[],secondSides:[],fns:'',includeFuture:true},
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',activityDir:'БФЛ - Банкротство физических лиц',years:[new Date().getFullYear()],months:[]},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics',articles:[],subarticles:[],years:[],months:[]},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
@@ -1405,6 +1405,8 @@ const PRESET_FIELDS={
   bank:[
     {k:'preset',t:'select',l:'Период (всегда относительно сегодня)',o:[['all','Всё время'],['today','Сегодня'],['week','Эта неделя'],['month','Этот месяц'],['prev_month','Прош. месяц'],['quarter','Этот квартал'],['prev_quarter','Прош. квартал'],['year','Этот год (с 1 января по сегодня)'],['prev_year','Прош. год']]},
     {k:'activityDirs',t:'dirs',l:'Направление'},
+    {k:'accounts',t:'accounts',l:'Реквизиты счёта (пусто = все)'},
+    {k:'fns',t:'select',l:'ФНС (пусто = все)',o:[['','Все'],['da','Да'],['net','Нет'],['unk','без признака']]},
     {k:'includeFuture',t:'toggle',l:'Будущие оплаты'}
   ],
   opiu:[
@@ -1506,6 +1508,7 @@ function startPresetsSync(){
   }catch(e){}
 }
 function _presetAvailYears(){return [...new Set((typeof RAW!=='undefined'?RAW:[]).map(getYear).filter(Boolean))].sort((a,b)=>b-a);}
+function _presetAvailAccounts(){return [...new Set((typeof RAW!=='undefined'?RAW:[]).map(r=>String(r[COL.ACCOUNT]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));}
 function _presetAvailDirs(){return [...new Set((typeof RAW!=='undefined'?RAW:[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));}
 // Списки статей/подстатей/сотрудников ФОТ (только строки ФОТ - по префиксам FOT_PREFIXES)
 function _presetFotList(col){const s=new Set();(typeof RAW!=='undefined'?RAW:[]).forEach(r=>{const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();if(!FOT_PREFIXES.some(p=>ac.startsWith(p)||an.startsWith(p)))return;const v=String(r[col]||'').trim();if(v)s.add(v);});return [...s].sort((a,b)=>a.localeCompare(b,'ru'));}
@@ -1652,6 +1655,18 @@ function _presetFormHtml(tab,p){
     else if(fd.t==='years'){const ys=_presetAvailYears();const sel=(f[fd.k]||[]).map(Number);ctrl=`<div class="preset-fld-multi" data-k="${fd.k}">${ys.length?ys.map(y=>`<label><input type="checkbox" value="${y}" ${sel.includes(y)?'checked':''}>${y}</label>`).join(''):'<span style="font-size:11px;color:var(--text3)">нет данных (пусто = все)</span>'}</div>`;}
     else if(fd.t==='months'){const sel=(f[fd.k]||[]).map(Number);ctrl=`<div class="preset-fld-multi" data-k="${fd.k}">${PRESET_MONTHS.map((mn,i)=>`<label><input type="checkbox" value="${i+1}" ${sel.includes(i+1)?'checked':''}>${mn}</label>`).join('')}</div>`;}
     else if(fd.t==='dirs'||fd.t==='articles'||fd.t==='subarticles'||fd.t==='counterparties'){const ds=fd.t==='dirs'?_presetAvailDirs():fd.t==='articles'?_presetFotArticles():fd.t==='subarticles'?_presetFotSubarticles():_presetFotCounterparties();const sel=f[fd.k]||[];ctrl=`<div class="preset-fld-multi" data-k="${fd.k}" style="max-height:130px;overflow:auto">${ds.length?ds.map(d=>`<label><input type="checkbox" value="${_pesc(d)}" ${sel.includes(d)?'checked':''}>${_pesc(d)}</label>`).join(''):'<span style="font-size:11px;color:var(--text3)">нет данных (пусто = все)</span>'}</div>`;}
+    else if(fd.t==='accounts'){ // список и механика как у фильтра «Реквизиты счёта» на вкладке: поиск, выбрать/снять все, счётчик. Счетов ~52 - без поиска неудобно.
+      const list=_presetAvailAccounts(),sel=(f[fd.k]||[]).map(String),wid='presetAccDD';
+      // data-str="1": имена счетов НИКОГДА не приводить к числу (счёт из одних цифр стал бы Number и перестал совпадать со строкой фильтра)
+      ctrl=`<div class="preset-fld-multi" data-k="${fd.k}" data-str="1" id="${wid}" style="display:block;padding:0;overflow:hidden">
+        <div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${wid}')" placeholder="Поиск по счетам..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></div>
+        <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)">
+          <button type="button" onclick="_presetAccAll('${wid}',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button>
+          <button type="button" onclick="_presetAccAll('${wid}',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button>
+          <span id="${wid}-cnt" style="margin-left:auto;font-size:10.5px;color:var(--text3)">${sel.length?sel.length+' выбрано':'все счета'}</span>
+        </div>
+        <div class="bank-dd-list" style="max-height:180px;overflow-y:auto">${list.length?list.map(a=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11.5px;white-space:nowrap"><input type="checkbox" value="${_pesc(a)}" ${sel.includes(a)?'checked':''} onchange="_presetAccCnt('${wid}')"> <span>${_pesc(a)}</span></label>`).join(''):'<div style="padding:8px 10px;font-size:11px;color:var(--text3)">нет данных (пусто = все)</div>'}</div>
+      </div>`;}
     return `<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">${fd.l}</div>${ctrl}</div>`;
   }).join('');
   return `<input type="hidden" id="presetEditId" value="${p?p.id:''}">
@@ -1664,6 +1679,12 @@ function _presetFormHtml(tab,p){
       ${p?`<button class="btn btn-secondary" onclick="_presetRenderBody('${tab}')">Отмена</button>`:''}
     </div>`;
 }
+window._presetAccAll=function(wid,on){const dd=document.getElementById(wid);if(!dd)return;
+  dd.querySelectorAll('.bank-dd-list input[type=checkbox]').forEach(c=>c.checked=on); // как _bankExtraSelectAll на вкладке - ВСЕ, а не только видимые поиском
+  _presetAccCnt(wid);};
+window._presetAccCnt=function(wid){const dd=document.getElementById(wid);if(!dd)return;
+  const n=dd.querySelectorAll('.bank-dd-list input[type=checkbox]:checked').length,el=document.getElementById(wid+'-cnt');
+  if(el)el.textContent=n?n+' выбрано':'все счета';};
 window._presetEdit=function(tab,id){
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
   const t=document.getElementById('presetFormTitle'); if(t)t.textContent='Изменение пресета';
@@ -1679,7 +1700,10 @@ window._presetSave=function(tab){
   if(!name){alert('Введите название пресета');return;}
   const f={};
   document.querySelectorAll('#presetForm .preset-fld').forEach(el=>{const k=el.dataset.k;f[k]=(el.type==='checkbox')?el.checked:el.value;});
-  document.querySelectorAll('#presetForm .preset-fld-multi').forEach(el=>{const k=el.dataset.k;f[k]=[...el.querySelectorAll('input:checked')].map(i=>/^\d+$/.test(i.value)?Number(i.value):i.value);});
+  // ⚠ Значения мультиполей ложатся в config/presets ЗНАЧЕНИЯМИ МАССИВА, а не ключами объекта - имена счетов содержат «/»,
+  //   ключом это уронило бы запись всей ветки RTDB (та же ловушка, что была с planOwners).
+  document.querySelectorAll('#presetForm .preset-fld-multi').forEach(el=>{const k=el.dataset.k,asStr=el.dataset.str==='1';
+    f[k]=[...el.querySelectorAll('input:checked')].map(i=>(!asStr&&/^\d+$/.test(i.value))?Number(i.value):i.value);});
   const idEl=document.getElementById('presetEditId'); const id=(idEl&&idEl.value)||('p'+Date.now()+Math.floor(Math.random()*1000));
   if(!Array.isArray(_presets[tab]))_presets[tab]=[];
   const rec={id,name,f}; const idx=_presets[tab].findIndex(x=>x.id===id);
@@ -1842,6 +1866,8 @@ function toggleSubGroup(hdrEl,groupId){
   rows.forEach(r=>r.style.display=collapsed?'none':'');
 }
 
+const BANK_FNS_OPTS=[['','Все'],['da','Да'],['net','Нет'],['unk','без признака']]; // один источник для фильтр-бара и для поля пресета
+window.bankFnsChange=function(v){_tabFilters.bank.fns=v;renderBank(getFilters());};
 function renderBank(f){
   const el=document.getElementById('tabBank');
   const allBankDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
@@ -1882,9 +1908,13 @@ function renderBank(f){
   // Живые кассы с оборотом и нулевым ИТОГО (inc=-out) НЕ скрываются - проверку итого НЕ добавляем.
   const hasMove=a=>Math.abs(a.inc)>=0.005||Math.abs(a.out)>=0.005;
   const gDa=[],gNet=[],gAlloc=[];
+  // Фильтр ФНС режет СЧЕТА по их признаку (не строки): суммы внутри счёта не меняются, меняется состав видимых счетов.
+  // Признак счёта берётся из его строк выше (первое распознанное «да»/«нет» выигрывает; ни одного → -1 «без признака»).
+  const fnsPass=a=>!f.fns||(f.fns==='da'?a.fns===1:f.fns==='net'?a.fns===0:f.fns==='unk'?a.fns===-1:true);
   map.forEach(a=>{
     a.total=a.inc+a.out;
     if(!hasMove(a))return; // счёт без движения - скрыт
+    if(!fnsPass(a))return;
     if(a.raw==='')gAlloc.push(a); // нет реквизитов → на распределение
     else if(a.fns===1)gDa.push(a);
     else gNet.push(a);
@@ -2071,6 +2101,8 @@ function renderBank(f){
       <button id="bank-acc-btn" onclick="bankAccToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:90px;text-align:left">${mkBtnLabel(selAccounts,'Все')}</button>
       ${mkBankDD('bank-acc-dd',allAccounts,selAccounts,'bankAcc')}
     </div>
+    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">ФНС:</label>
+    <select id="bank-fns-sel" onchange="bankFnsChange(this.value)" title="Признак ФНС у счёта. Режет состав счетов, суммы внутри счёта не меняются." style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);cursor:pointer;outline:none">${BANK_FNS_OPTS.map(([v,l])=>`<option value="${v}"${(f.fns||'')===v?' selected':''}>${l}</option>`).join('')}</select>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">ID Offer:</label>
     <div style="position:relative;display:inline-block">
       <button id="bank-offer-btn" onclick="bankOfferToggle()" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${mkBtnLabel(selOfferIds,'Все')}</button>
@@ -2096,6 +2128,7 @@ function renderBank(f){
   const fSumm=[];
   [['Направление',bankSelDirs],['Реквизиты счёта',selAccounts],['ID Offer',selOfferIds],['Контрагент',selSecondSides]]
     .forEach(([n,a])=>{const s=fmtSel(n,a);if(s)fSumm.push(s);});
+  if(f.fns){const L=(BANK_FNS_OPTS.find(x=>x[0]===f.fns)||[])[1]||f.fns;fSumm.push('<b style="color:var(--text2);font-weight:600">ФНС:</b> '+L);}
   if(!f.includeFuture)fSumm.push('<b style="color:var(--text2);font-weight:600">Будущие оплаты:</b> выкл');
   if(f.preset&&f.preset!=='all'){
     const PL={today:'Сегодня',yesterday:'Вчера',week:'Эта неделя',month:'Этот месяц',prev_month:'Прош. месяц',quarter:'Этот квартал',prev_quarter:'Прош. квартал',year:'Этот год',prev_year:'Прош. год'};
@@ -6798,14 +6831,14 @@ function renderPlanFact(f){
       return {col:kind==='inc'?(over?'var(--income)':'var(--outcome)'):(over?'var(--outcome)':'var(--orange)'),d:fact-devBase,pct:Math.round(r*100)};
     };
     const rubSgn=v=>(v<0?'−':'+')+fmt(Math.abs(v)); // типографский минус U+2212, не дефис (toLocaleString отдаёт дефис-минус)
-    const subLines=(base,plan,dv)=>{ // уровни 2-4; строка 4 приходит готовой из devOf (её же цвет красит факт - ячейка не противоречит себе)
+    const subLines=(base,plan,dv,w)=>{ // уровни 2-4; строка 4 приходит готовой из devOf (её же цвет красит факт - ячейка не противоречит себе). w - вес по уровню агрегации строки
       const rows=[];
       if(base!=null)rows.push([fmt(base),'var(--text3)']);
       if(plan!=null)rows.push([fmt(plan),'var(--text3)']);
       if(dv)rows.push([rubSgn(dv.d)+' ('+dv.pct+'%)',dv.col]);
-      return rows.map(([t,c],i)=>`<div style="font-size:10px;line-height:1.05;font-family:var(--mono);color:${c}${i?'':';border-top:1px solid var(--divider);margin-top:1px'}">${t}</div>`).join('');
+      return rows.map(([t,c],i)=>`<div style="font-size:11px;line-height:1.05;font-family:var(--mono);font-weight:${w};color:${c}${i?'':';border-top:1px solid var(--divider);margin-top:1px'}">${t}</div>`).join('');
     };
-    const cellHtml=(base,plan,fact,devBase,dbLbl,kind,click,closed)=>{
+    const cellHtml=(base,plan,fact,devBase,dbLbl,kind,click,closed,w)=>{
       const dv=closed?devOf(devBase,fact,kind):null; let col='var(--text)'; // незакрытый месяц (текущий/будущий) - факт неполный: отклонение не считаем (строки 4 нет), факт нейтральный
       if(kind==='net')col=(fact>=-0.0001)?'var(--income)':'var(--outcome)'; // ЧП - цвет по ЗНАКУ (правило «цвет = знак значения»), не по отклонению
       else if(dv)col=dv.col;
@@ -6813,21 +6846,24 @@ function renderPlanFact(f){
       const tp=[];if(base!=null)tp.push('Утв: '+fmt(base));if(plan!=null)tp.push('Прог: '+fmt(plan));tp.push('Факт: '+fmt(fact));
       if(closed&&devBase!=null&&Math.abs(devBase)>0.0001&&kind!=='net'&&kind!=='vyv')tp.push('Откл: '+rubSgn(fact-devBase)+' ('+(fact/devBase*100).toFixed(1)+'%) от '+dbLbl); // в тултипе точный % и база - только для закрытого месяца
       else if(!closed&&kind!=='net'&&kind!=='vyv')tp.push('Месяц не закрыт - отклонение не считается');
-      return `<td style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}" title="${tp.join(' · ')}${click?' · клик - операции месяца':''}"${click?` onclick="${click}"`:''}><div style="color:${col};font-weight:600;font-size:12px;line-height:1.1;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${subLines(base,plan,dv)}</td>`;
+      return `<td style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}" title="${tp.join(' · ')}${click?' · клик - операции месяца':''}"${click?` onclick="${click}"`:''}><div style="color:${col};font-weight:${w};font-size:12px;line-height:1.1;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${subLines(base,plan,dv,w)}</td>`;
     };
     const mrow=(label,getBase,getPlan,getFact,kind,bold,tk,code,opts)=>{ // tk/code - расшифровка по клику (tk: inc/exp/vyv); opts.expandable/expanded/child - инлайн-разворот статья→подстатьи
       opts=opts||{};
+      // Вес = уровень агрегации (как в своде БДР и в Банке): итоги 700, статьи 600, подстатьи 400.
+      // Убирая жирность, число теряет присутствие - это компенсировано кеглем подстрок (10→11px), кегль факта уже был 12px.
+      const w=bold?700:(opts.child?400:600);
       let cells='',yb=null,yp=null,yf=0,ydbC=null,yfC=0;const closedM=[]; // yb/yp/yf - утв/прог/факт по ВСЕМ месяцам (уровни 1-3); ydbC/yfC - база/факт ТОЛЬКО закрытых месяцев (для годового отклонения)
       monthsOn.forEach(m=>{const b=getBase(m),p=getPlan(m),fa=getFact(m)||0,fr=frozenSet.has(m),db=devBaseOf(b,p,fr);
         const closed=(year<curY)||(year===curY&&m<curM); // месяц полностью в прошлом; ТЕКУЩИЙ и будущие - факт неполный, в отклонение не входят
         if(b!=null)yb=(yb||0)+b;if(p!=null)yp=(yp||0)+p;yf+=fa;
         if(closed){if(db!=null)ydbC=(ydbC||0)+db;yfC+=fa;closedM.push(m);} // годовое отклонение - только закрытые месяцы (иначе база полного года завышала недобор, как в незакрытой ячейке)
-        cells+=cellHtml(b,p,fa,db,(fr?(b!=null?'утверждённого':'прогноза'):(p!=null?'прогноза':'утверждённого')),kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null,closed);});
+        cells+=cellHtml(b,p,fa,db,(fr?(b!=null?'утверждённого':'прогноза'):(p!=null?'прогноза':'утверждённого')),kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null,closed,w);});
       const ydv=devOf(ydbC,yfC,kind); // отклонение «Год» = Σ факта закрытых − Σ devBase закрытых (уровни 1-3 остаются по всем месяцам)
       const ycol=kind==='net'?(yf>=-0.0001?'var(--income)':'var(--outcome)'):(ydv?ydv.col:(ydbC==null&&yf?'var(--text2)':'var(--text)'));
       const ytp=[];if(yb!=null)ytp.push('Утв: '+fmt(yb));if(yp!=null)ytp.push('Прог: '+fmt(yp));ytp.push('Факт: '+fmt(yf)+' (за год)');
       if(ydbC!=null&&Math.abs(ydbC)>0.0001&&kind!=='net'&&kind!=='vyv'&&closedM.length)ytp.push('Откл: '+rubSgn(yfC-ydbC)+' ('+(yfC/ydbC*100).toFixed(1)+'%) за '+_monthsRangeLabel(closedM)+', '+closedM.length+' мес (незакрытые месяцы в отклонение не входят)');
-      const yc=`<td title="${ytp.join(' · ')}" style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:700;font-size:12px;line-height:1.1;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${subLines(yb,yp,ydv)}</td>`;
+      const yc=`<td title="${ytp.join(' · ')}" style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:${w};font-size:12px;line-height:1.1;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${subLines(yb,yp,ydv,w)}</td>`;
       const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
       const labPad=opts.child?'padding:4px 10px 4px 26px':'padding:5px 10px',labFont=opts.child?'font-size:10px;color:var(--text2)':'font-size:11px';
       // клик по лейблу статьи = разворот подстатей; расшифровка - только по ячейкам месяцев (cellHtml). У подстатей/итогов лейбл некликабелен
