@@ -352,6 +352,14 @@
   }
   @media print{#tabPlanfact:not(.hidden){height:auto;overflow:visible;display:block;}} /* Cmd+P не обрезает вкладку; :not(.hidden) - чтобы не проявить её при печати другой вкладки */
   @media print{#tabBank:not(.hidden){height:auto;overflow:visible;display:block;}}
+  /* Графики Банка в печати: рядом на A4 они нечитаемы (подписи месяцев и дней сливаются), поэтому ОДИН ПОД ДРУГИМ на всю ширину листа.
+     ⚠ Сетка 1fr 1fr приходит из @media (min-width:821px) - лист A4 в пикселях шире порога, поэтому она применяется и на печати; отсюда !important. */
+  @media print{
+    #tabBank>.bank-charts{grid-template-columns:1fr!important;}
+    #tabBank>.bank-charts>.chart-card{break-inside:avoid;page-break-inside:avoid;} /* переносить график целиком, но не разрывать пополам */
+    #tabBank .bank-charts canvas{max-width:100%!important;height:auto!important;} /* страховка: если resize не успел отработать, холст всё равно не вылезет за поля */
+    #tabBank .bank-charts{-webkit-print-color-adjust:exact;print-color-adjust:exact;} /* линии и столбики не должны потерять цвет */
+  }
   /* Карточки Банка (обе платформы): имя влево sans, подытог жирный; ВСЕ числовые строго вправо (перекрывает .report-table td/th:nth-child(2){left}) */
   .bank-flat td.bank-name{text-align:left;font-family:var(--sans);font-weight:400;}
   /* Жирным - ТОЛЬКО горизонтальные итоговые строки (Итого Налоговая выручка / ДС до налогового оформления / на распределение).
@@ -5705,6 +5713,29 @@ window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtE
 window.pfToggleSub=function(kind,code){const S=window._pfSubExp||(window._pfSubExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());}; // разворот подстатьи → третий уровень (стороны)
 // После разворота details «Графики» (БДР) чарты создавались при display:none (размер 0) - подтолкнуть ресайз.
 // Вызывается только из ontoggle самого details; глобальных слушателей/observer'ов не добавляет.
+// ── Печать Банка: графики ОБЯЗАНЫ попасть в PDF и влезть в ширину листа (скрывать их в @media print нельзя - это визуализация всего отчёта) ──
+// Причина поломки: Chart.js фиксирует размер холста в ПИКСЕЛЯХ при отрисовке под ширину ЭКРАНА; при печати макет ужимается до листа, а холст остаётся прежним и вылезает за поля.
+// Три слоя, поодиночке ненадёжен каждый: (1) явный resize по событиям печати - здесь; (2) раскладка в одну колонку в @media print; (3) CSS-страховка max-width на canvas.
+const BANK_PRINT_FONT=1.35; // подписи Chart.js заданы в px ЯВНО (9/10 в опциях), Chart.defaults их не перебивает - поднимаем сами, иначе на листе они нечитаемы
+const _BANK_CHARTS=['_bankChartMain','_bankChartMonth'];
+// собираем ТОЛЬКО известные узлы шрифта (легенда + тики шкал), без рекурсии по options: там есть колбэки и ссылки на внутренние объекты Chart.js
+function _bankFontNodes(c){const out=[];if(!c||!c.options)return out;
+  const lg=c.options.plugins&&c.options.plugins.legend&&c.options.plugins.legend.labels;
+  if(lg&&lg.font)out.push(lg.font);
+  const sc=c.options.scales||{};Object.keys(sc).forEach(k=>{const t=sc[k]&&sc[k].ticks;if(t&&t.font)out.push(t.font);});
+  return out;}
+function _bankPrintResize(toPrint){
+  _BANK_CHARTS.forEach(k=>{const c=window[k];if(!c)return;
+    _bankFontNodes(c).forEach(f=>{ // _psz делает вызов идемпотентным: beforeprint и matchMedia могут прийти оба
+      if(toPrint){if(f._psz==null&&typeof f.size==='number'){f._psz=f.size;f.size=Math.round(f.size*BANK_PRINT_FONT);}}
+      else if(f._psz!=null){f.size=f._psz;delete f._psz;}});
+    try{c.resize();c.update('none');}catch(e){}});
+}
+window.addEventListener('beforeprint',()=>_bankPrintResize(true));
+window.addEventListener('afterprint',()=>_bankPrintResize(false)); // без этого графики остались бы на экране с печатным кеглем и сжатым холстом
+// Safari печатает иначе и beforeprint может прийти не в тот момент (или не прийти) - дублируем сменой медиа-состояния
+try{const _mqp=window.matchMedia('print');const _hp=e=>_bankPrintResize(!!e.matches);
+  if(_mqp.addEventListener)_mqp.addEventListener('change',_hp);else if(_mqp.addListener)_mqp.addListener(_hp);}catch(e){}
 window.pfChartsResize=function(open){
   if(!open)return;
   requestAnimationFrame(()=>{['_pfChartNP','_pfChartDev','_pfCollectChart'].forEach(k=>{const c=window[k];if(c&&c.resize)try{c.resize();}catch(e){}});});
