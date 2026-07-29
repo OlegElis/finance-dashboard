@@ -363,6 +363,10 @@
     .topbar{position:static!important;height:auto!important;padding:0 0 6px!important;box-shadow:none!important;}
   }
   @media print{
+    /* Свод - в ОДНУ колонку: рядом на A4 каждой карточке достаётся ~530px, и подытоги (до 121px на число) не помещаются в пять колонок. */
+    #tabBank>.bank-cols{grid-template-columns:1fr!important;}
+    #tabBank>.bank-cols>.bank-col-left,#tabBank>.bank-cols>.bank-col-right{min-height:0;}
+    #tabBank .bank-card{break-inside:avoid;page-break-inside:avoid;}
     #tabBank>.bank-charts{grid-template-columns:1fr!important;}
     #tabBank>.bank-charts>.chart-card{break-inside:avoid;page-break-inside:avoid;} /* переносить график целиком, но не разрывать пополам */
     /* ⚠ Было height:auto - холст брал СВОЮ битмап-высоту и вылезал за карточку фиксированной высоты, из-за чего заголовок
@@ -382,6 +386,19 @@
   .bank-flat tbody td.bank-num{font-weight:400;}
   .bank-flat tfoot td.bank-name{font-weight:600;}
   .bank-flat td.bank-num,.bank-flat th.bank-num{text-align:right!important;font-variant-numeric:tabular-nums;}
+  /* Ширины колонок свода. По умолчанию проценты (Σ = 24 + 4×19 = 100.0): на узкой карточке и на ПЕЧАТИ (лист A4 ~1123px → карточка ~530px)
+     числовые получают ~100px - впритык, но читаемо, а имени остаётся достаточно. */
+  .bank-flat col.c-name{width:24%;}
+  .bank-flat col.c-num{width:19%;}
+  /* На широком экране 19% дают 158px при нужных 105px - около 55px пустоты слева от каждого числа. Фиксируем 128px (замер по самому длинному подытогу + запас на рост сумм),
+     остаток забирает имя. Порог 1600px: ниже него 19% и так не превышают ~128px, фиксировать нечего. */
+  @media screen and (min-width:1600px){
+    .bank-flat col.c-name{width:auto;}
+    .bank-flat col.c-num{width:128px;} /* 128, а не 120: замер показал, что подытог «-118 382 486,10» занимает 121px - на 120 он вылезал бы */
+  }
+  /* «Перемещения» - тот же янтарь, что у одноимённого ряда на графиках: читается как одна сущность. !important перебивает num-positive/num-negative из td() */
+  .bank-flat td.bank-mov{color:rgba(168,107,26,1)!important;}
+  .bank-grand-nums b.bank-grand-mov{color:#f0c07a;}
   /* Тёмные шапки карточек: белый заголовок, светлый счётчик (контраст на #2B3145) */
   .bank-card>.table-header .table-title{color:#fff;font-size:11.5px;font-weight:600;}
   .bank-card>.table-header .table-count{color:#c7ccd4;font-size:11px;opacity:1;}
@@ -764,6 +781,14 @@ function _htmlEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/
 function _isAdmin(){try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}}
 function fmt(v){if(typeof v!=='number'||!isFinite(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});} // !isFinite гасит и NaN, и Infinity (x/0) - иначе в отчёте появлялось «∞»
 function fmtPct(v){if(typeof v!=='number'||!isFinite(v))return'-';return(v*100).toFixed(1)+'%';}
+// Перемещение между своими счетами. Уход записан как ПОСТУПЛЕНИЕ СО ЗНАКОМ МИНУС, поэтому в общем ряду «Поступления»
+// зелёные столбики уходили вниз. Выносим в отдельный ряд - проблема снимается по построению, а не подавляется.
+const BANK_MOVE_COLOR='#a86b1a'; // тёмный янтарь. НЕ брать --orange (#e8862b) - им нарисована линия «Остаток ДС» на том же графике и светофор остатка в таблице
+function isMoveRow(r){return String(r[COL.TYPE]||'').trim().toLowerCase()==='перемещение';}
+// Разложение строки на три ряда. Σ трёх рядов = прежней сумме двух: (inc−out) при inc=Σ INCOME, out=Σ|OUTCOME| по всем строкам
+// равно (inc'−out'+mov), где штрих - только не-перемещения, а mov - чистое сальдо перемещений. Поэтому «Остаток ДС» не меняется.
+function bankSplit(row){const i=parseNum(row[COL.INCOME]),o=Math.abs(parseNum(row[COL.OUTCOME]));
+  return isMoveRow(row)?{inc:0,out:0,mov:i-o}:{inc:i,out:o,mov:0};}
 function numClass(v){if(typeof v!=='number')return'';return v>0?'num-positive':v<0?'num-negative':'';}
 const RU_MONTHS={'января':0,'февраля':1,'марта':2,'апреля':3,'мая':4,'июня':5,'июля':6,'августа':7,'сентября':8,'октября':9,'ноября':10,'декабря':11,'январь':0,'февраль':1,'март':2,'апрель':3,'май':4,'июнь':5,'июль':6,'август':7,'сентябрь':8,'октябрь':9,'ноябрь':10,'декабрь':11};
 function parseDate(v){
@@ -850,22 +875,24 @@ function bankRebuildChartData(){
   const baseRaw=window._bankFilteredData||(bankDirs.length?RAW.filter(r=>bankDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):RAW);
   const src=_bankFilter.accs?baseRaw.filter(r=>_bankFilter.accs.includes(String(r[COL.ACCOUNT]||'').trim())):baseRaw;
 
-  const allYearsInc=d.allYears.map(()=>0),allYearsOut=d.allYears.map(()=>0);
+  const allYearsInc=d.allYears.map(()=>0),allYearsOut=d.allYears.map(()=>0),allYearsMov=d.allYears.map(()=>0);
   const yearDataByYear={};
-  d.allYears.forEach(yr=>yearDataByYear[yr]={inc:new Array(12).fill(0),out:new Array(12).fill(0)});
+  d.allYears.forEach(yr=>yearDataByYear[yr]={inc:new Array(12).fill(0),out:new Array(12).fill(0),mov:new Array(12).fill(0)});
 
   src.forEach(row=>{
     const dt=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
     if(!dt)return;
-    const inc=parseNum(row[COL.INCOME]),out=Math.abs(parseNum(row[COL.OUTCOME]));
+    const {inc,out,mov}=bankSplit(row);
     const yi=d.allYears.indexOf(dt.getFullYear());
-    if(yi>=0){allYearsInc[yi]+=inc;allYearsOut[yi]+=out;}
+    if(yi>=0){allYearsInc[yi]+=inc;allYearsOut[yi]+=out;allYearsMov[yi]+=mov;}
     const yd=yearDataByYear[dt.getFullYear()];
-    if(yd){yd.inc[dt.getMonth()]+=inc;yd.out[dt.getMonth()]+=Math.abs(parseNum(row[COL.OUTCOME]));}
+    if(yd){yd.inc[dt.getMonth()]+=inc;yd.out[dt.getMonth()]+=out;yd.mov[dt.getMonth()]+=mov;}
   });
 
-  d.allYearsInc=allYearsInc;d.allYearsOut=allYearsOut;d.yearDataByYear=yearDataByYear;
+  d.allYearsInc=allYearsInc;d.allYearsOut=allYearsOut;d.allYearsMov=allYearsMov;d.yearDataByYear=yearDataByYear;
   bankChartSwitch(document.getElementById('btnMonths')?.classList.contains('active')?'months':'years');
+  // и ДНЕВНОЙ график тем же срезом - он строится отдельной функцией и сам о смене выбранного счёта не узнаёт
+  bankUpdateDays(d.curYear,d._currentMonth||d.curMonth);
 }
 
 function setStatus(state,text){
@@ -1819,23 +1846,27 @@ function mobileCardify(scope){
 function bankUpdateDays(yr,mo){
   if(window._bankChartData)window._bankChartData._currentMonth=mo;
   const daysInMonth=new Date(yr,mo,0).getDate();
-  const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0);
-  const srcUD=window._bankFilteredData||RAW; // отфильтрованные данные (все фильтры листа)
+  const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0),dayMov=new Array(daysInMonth).fill(0);
+  // ⚠ ТОТ ЖЕ срез, что и у месячного графика в bankRebuildChartData: сначала фильтры листа, ПОТОМ выбранный кликом счёт.
+  // Без второго шага клик по строке свода менял только месячный график, а дневной оставался на полных данных.
+  const _baseUD=window._bankFilteredData||RAW;
+  const srcUD=_bankFilter.accs?_baseUD.filter(r=>_bankFilter.accs.includes(String(r[COL.ACCOUNT]||'').trim())):_baseUD;
   srcUD.forEach(row=>{
     const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
     if(!d||d.getFullYear()!==yr||d.getMonth()+1!==mo)return;
-    dayInc[d.getDate()-1]+=parseNum(row[COL.INCOME]);
-    dayOut[d.getDate()-1]+=Math.abs(parseNum(row[COL.OUTCOME]));
+    const p=bankSplit(row),di=d.getDate()-1;
+    dayInc[di]+=p.inc;dayOut[di]+=p.out;dayMov[di]+=p.mov;
   });
   if(!window._bankChartMonth)return;
   const fn=window._bankChartData?._chartDaysFn;
   if(fn){
     window._bankChartMonth.destroy();
-    window._bankChartMonth=new Chart(document.getElementById('chartMonth'),fn(yr,mo,dayInc,dayOut));
+    window._bankChartMonth=new Chart(document.getElementById('chartMonth'),fn(yr,mo,dayInc,dayOut,dayMov));
   } else {
     window._bankChartMonth.data.labels=[...Array(daysInMonth).keys()].map(i=>i+1);
     window._bankChartMonth.data.datasets[0].data=dayInc;
     window._bankChartMonth.data.datasets[1].data=dayOut;
+    if(window._bankChartMonth.data.datasets[2])window._bankChartMonth.data.datasets[2].data=dayMov;
     window._bankChartMonth.update();
   }
   // Обновляем заголовок нижнего графика
@@ -1847,6 +1878,8 @@ function bankUpdateDays(yr,mo){
     window._bankChartMain.data.labels.map((_,i)=>i===mo-1?'rgba(34,139,70,1)':'rgba(34,139,70,0.82)');
   window._bankChartMain.data.datasets[1].backgroundColor=
     window._bankChartMain.data.labels.map((_,i)=>i===mo-1?'rgba(185,28,28,1)':'rgba(185,28,28,0.82)');
+  if(window._bankChartMain.data.datasets[2])window._bankChartMain.data.datasets[2].backgroundColor=
+    window._bankChartMain.data.labels.map((_,i)=>i===mo-1?'rgba(168,107,26,1)':'rgba(168,107,26,0.82)');
   window._bankChartMain.update();
 }
 
@@ -1857,7 +1890,6 @@ function bankChartSwitch(mode){
   const btnM=document.getElementById('btnMonths');
   const sel=document.getElementById('bankChartYearSel');
   const title=document.getElementById('chartMainTitle');
-  const calcBal=(inc,out)=>{let b=0;return inc.map((v,i)=>{b+=v-out[i];return Math.round(b);});};
   if(mode==='years'){
     btnY&&btnY.classList.add('active');
     btnM&&btnM.classList.remove('active');
@@ -1866,18 +1898,21 @@ function bankChartSwitch(mode){
     window._bankChartMain.data.labels=d.allYears.map(String);
     window._bankChartMain.data.datasets[0].data=d.allYearsInc;
     window._bankChartMain.data.datasets[1].data=d.allYearsOut;
-    window._bankChartMain.data.datasets[2].data=calcBalWithOpening(d.allYearsInc,d.allYearsOut,0);
+    window._bankChartMain.data.datasets[2].data=d.allYearsMov||d.allYearsInc.map(()=>0);
+    window._bankChartMain.data.datasets[3].data=calcBalWithOpening(d.allYearsInc.map((v,i)=>v+((d.allYearsMov||[])[i]||0)),d.allYearsOut,0);
   } else {
     btnM&&btnM.classList.add('active');
     btnY&&btnY.classList.remove('active');
     if(sel)sel.style.display='';
     const yr=sel?+sel.value:d.curYear;
-    const yd=d.yearDataByYear[yr]||{inc:new Array(12).fill(0),out:new Array(12).fill(0)};
+    const yd=d.yearDataByYear[yr]||{inc:new Array(12).fill(0),out:new Array(12).fill(0),mov:new Array(12).fill(0)};
+    const ydMov=yd.mov||new Array(12).fill(0);
     if(title)title.textContent=`Движение по месяцам - ${yr}`;
     window._bankChartMain.data.labels=d.monthLabels;
     window._bankChartMain.data.datasets[0].data=yd.inc;
     window._bankChartMain.data.datasets[1].data=yd.out;
-    window._bankChartMain.data.datasets[2].data=calcBalWithOpening(yd.inc,yd.out,0);
+    window._bankChartMain.data.datasets[2].data=ydMov;
+    window._bankChartMain.data.datasets[3].data=calcBalWithOpening(yd.inc.map((v,i)=>v+ydMov[i]),yd.out,0);
   }
   window._bankChartMain.update();
 }
@@ -1925,8 +1960,12 @@ function renderBank(f){
     const isNoFns=['нет','false','0','-'].includes(fnsRaw);
     const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
     const key=acc||'__noreq__';
-    if(!map.has(key))map.set(key,{name:acc||'- без счёта -',raw:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0});
-    const e=map.get(key);e.inc+=inc;e.out+=out;
+    if(!map.has(key))map.set(key,{name:acc||'- без счёта -',raw:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0,mov:0,movIn:0,movOut:0});
+    const e=map.get(key);
+    // Перемещения между своими счетами записаны ПАРАМИ в поступлениях (уход - отрицательное поступление, приход - положительное).
+    // По компании они сходятся в ноль, но по ОТДЕЛЬНОМУ счёту пара распадается и «Поступление» занижалось на объём транзита.
+    // сальдо в колонке, валовые обороты - в подсказке: строка перемещения либо приход, либо уход (списаний в них нет)
+    if(isMoveRow(row)){const v=inc+out;e.mov+=v;if(v>0)e.movIn+=v;else e.movOut+=v;} else {e.inc+=inc;e.out+=out;}
     if(e.fns===-1&&(isFns||isNoFns))e.fns=isFns?1:0;
   });
   // Группировка: СНАЧАЛА наличие реквизитов, ПОТОМ ФНС.
@@ -1935,13 +1974,13 @@ function renderBank(f){
   //   есть счёт + ФНС=Нет/неизв. → gNet  «ДС до налогового оформления»
   // Скрываем счета без ДВИЖЕНИЯ (|поступление|<0.005 И |списание|<0.005): нулевые депозиты/депонирование/задолженность.
   // Живые кассы с оборотом и нулевым ИТОГО (inc=-out) НЕ скрываются - проверку итого НЕ добавляем.
-  const hasMove=a=>Math.abs(a.inc)>=0.005||Math.abs(a.out)>=0.005;
+  const hasMove=a=>Math.abs(a.inc)>=0.005||Math.abs(a.out)>=0.005||Math.abs(a.mov)>=0.005; // ⚠ без a.mov счёт, где ТОЛЬКО транзит, исчез бы из свода
   const gDa=[],gNet=[],gAlloc=[];
   // Фильтр ФНС режет СЧЕТА по их признаку (не строки): суммы внутри счёта не меняются, меняется состав видимых счетов.
   // Признак счёта берётся из его строк выше (первое распознанное «да»/«нет» выигрывает; ни одного → -1 «без признака»).
   const fnsPass=a=>!f.fns||(f.fns==='da'?a.fns===1:f.fns==='net'?a.fns===0:f.fns==='unk'?a.fns===-1:true);
   map.forEach(a=>{
-    a.total=a.inc+a.out;
+    a.total=a.inc+a.mov+a.out; // тождественно прежнему incВсе+outВсе - «Итого» до копейки как было
     if(!hasMove(a))return; // счёт без движения - скрыт
     if(!fnsPass(a))return;
     if(a.raw==='')gAlloc.push(a); // нет реквизитов → на распределение
@@ -1954,11 +1993,13 @@ function renderBank(f){
   const _sortArr=(arr,key)=>{const s=_sortState(key),col=s.col,dir=s.dir;const cmp=col==='name'?(a,b)=>String(a.name).localeCompare(String(b.name),'ru'):(a,b)=>((a[col]||0)-(b[col]||0));return arr.slice().sort((a,b)=>dir*cmp(a,b));};
   const _sortArrow=(key,col)=>{const s=_sortState(key);return s.col===col?(s.dir<0?' ▼':' ▲'):'';};
   const _sortTh=(key,col,label,numeric)=>`<th class="${numeric?'bank-num ':''}bank-sort-th" onclick="bankSortBy('${key}','${col}')" title="Клик - сортировать, повторный - развернуть" style="cursor:pointer;text-align:${numeric?'right':'left'}">${label}${_sortArrow(key,col)}</th>`;
-  const cardThead=key=>`<thead><tr>${_sortTh(key,'name','Реквизиты счёта',false)}${_sortTh(key,'inc','Поступление',true)}${_sortTh(key,'out','Списание',true)}${_sortTh(key,'total','Итого',true)}</tr></thead>`;
+  const cardThead=key=>`<thead><tr>${_sortTh(key,'name','Реквизиты счёта',false)}${_sortTh(key,'inc','Поступление',true)}${_sortTh(key,'out','Списание',true)}${_sortTh(key,'mov','Перемещения',true)}${_sortTh(key,'total','Итого',true)}</tr></thead>`;
 
-  let totInc=0,totOut=0,totAll=0;
-  [...gDa,...gNet,...gAlloc].forEach(a=>{totInc+=a.inc;totOut+=a.out;totAll+=a.total;});
-  const saldo=totInc+totOut;
+  let totInc=0,totMov=0,totOut=0,totAll=0;
+  [...gDa,...gNet,...gAlloc].forEach(a=>{totInc+=a.inc;totMov+=a.mov;totOut+=a.out;totAll+=a.total;});
+  // По компании totMov = 0 (пары сходятся), поэтому KPI не меняются. Но под фильтром одного счёта пара распадается,
+  // и без totMov «Сальдо» разошлось бы с «Итого Общий итог».
+  const saldo=totInc+totMov+totOut;
 
   // Cash Runway = Текущий баланс (сальдо всех операций) ÷ Среднемесячный операционный расход × 30
   // Текущий баланс = saldo (все данные)
@@ -2015,16 +2056,34 @@ function renderBank(f){
   </div>`;
 
   // Строка счёта: Реквизиты | Поступление | Списание | Итого (колонка ФНС убрана - её роль в заголовке карточки).
-  const accRow=a=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td class="bank-name" title="${_htmlEsc(a.name)}">${_htmlEsc(a.name)}</td>${td(a.inc,'bank-num')}${td(a.out,'bank-num')}${td(a.total,'bank-num')}</tr>`;
+  const accRow=a=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td class="bank-name" title="${_htmlEsc(a.name)}">${_htmlEsc(a.name)}</td>${td(a.inc,'bank-num')}${td(a.out,'bank-num')}${movTd(a.mov,a.movIn,a.movOut)}${td(a.total,'bank-num')}</tr>`;
+  // Ячейка «Перемещения»: в колонке САЛЬДО, валовые обороты - в нативном title через \n (тот же приём, что в подсказке «Ответственный» в БДР).
+  // Обе строки показываем ВСЕГДА, даже при нуле: отсутствие приходов по счёту - само по себе информация.
+  // ⚠ Нативный title в macOS рисуется системным шрифтом с крупными полями, из CSS на это не повлиять - поэтому режем содержимое:
+  //    НЕТ строки «сальдо» (оно и так в ячейке, на которую наводишь - подсказка должна добавлять, а не повторять)
+  //    и НЕТ разделительной линии (она была длиннее любого числа и одна задавала ширину всплывашки).
+  //    Ширину теперь держит самое длинное из двух чисел. Выравнивание - padStart: моноширинный шрифт подсказке не задать.
+  const movTd=(mov,mIn,mOut)=>{
+    const a=fmt(mIn||0),b=fmt(mOut||0),c=fmt(mov||0);
+    const w=Math.max(a.length,b.length);
+    const L=(lbl,v)=>lbl.padEnd(9)+v.padStart(w);
+    const tip=L('получено',a)+'\n'+L('отдано',b);
+    return `<td class="${numClass(mov)} bank-num bank-mov" title="${_htmlEsc(tip)}">${c}</td>`;
+  };
   const _plur=(n,a,b,c)=>{const n10=n%10,n100=n%100;return(n10===1&&n100!==11)?a:(n10>=2&&n10<=4&&(n100<12||n100>14))?b:c;};
-  const _cardCols='<colgroup><col><col style="width:118px"><col style="width:118px"><col style="width:118px"></colgroup>'; // имя - остаток, числовые по 118px (влезает 165 699 751,11)
+  // Σ процентов ровно 100.0 (32 + 4×17): при <100 Chrome и Safari распределяют остаток по-разному - в Safari числовые сужались и цифры вылезали
+  // Ширины - КЛАССАМИ, а не инлайном: инлайн нельзя перекрыть медиа-запросом (см. CSS .bank-flat col.c-num - там фиксация 120px на широком экране).
+  // ⚠ `width:min(19%,120px)` в <col> НЕ РАБОТАЕТ: Chrome при table-layout:fixed игнорирует math-функции в ширине колонки целиком
+  //    и раскладывает все колонки поровну (замерено: 165/165/165/165/165 вместо 345/120/120/120/120). Только длина или процент.
+  const _cardCols='<colgroup><col class="c-name">'+'<col class="c-num">'.repeat(4)+'</colgroup>';
   // Карточка группы: заголовок (число счетов) + прокручиваемое тело (sticky thead) + подытог (sticky bottom). Строки сортируются по _sortState(key); подытог считается от ВСЕЙ группы - от сортировки не меняется.
   const buildCard=(arr,title,subLabel,wrapCls,key,opt)=>{
     opt=opt||{};
-    const si=arr.reduce((s,a)=>s+a.inc,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
+    const si=arr.reduce((s,a)=>s+a.inc,0),sm=arr.reduce((s,a)=>s+a.mov,0),so=arr.reduce((s,a)=>s+a.out,0),st=arr.reduce((s,a)=>s+a.total,0);
+    const smi=arr.reduce((s,a)=>s+(a.movIn||0),0),smo=arr.reduce((s,a)=>s+(a.movOut||0),0);
     const sorted=_sortArr(arr,key);
-    const body=sorted.length?sorted.map(accRow).join(''):(opt.emptyMsg?`<tr><td colspan="4" class="bank-alloc-ok">${opt.emptyMsg}</td></tr>`:'');
-    const foot=`<tfoot><tr class="subtotal"><td class="bank-name">${subLabel}</td>${td(si,'bank-num')}${td(so,'bank-num')}${td(st,'bank-num')}</tr></tfoot>`;
+    const body=sorted.length?sorted.map(accRow).join(''):(opt.emptyMsg?`<tr><td colspan="5" class="bank-alloc-ok">${opt.emptyMsg}</td></tr>`:'');
+    const foot=`<tfoot><tr class="subtotal"><td class="bank-name">${subLabel}</td>${td(si,'bank-num')}${td(so,'bank-num')}${movTd(sm,smi,smo)}${td(st,'bank-num')}</tr></tfoot>`;
     // Цвет заголовка/счётчика - ИНЛАЙН с !important на самом текстовом узле: перебивает глобальные .table-title/.table-count (в т.ч. .table-count{color:#9aa3b5!important}). Белый читается и на тёмно-синей, и на красной шапке.
     return `<div class="table-wrap bank-card ${wrapCls}"><div class="table-header${opt.red?' bank-head-red':''}"><span class="table-title" style="color:#fff!important;font-size:12px;font-weight:600">${title}</span><span class="table-count" style="color:#c7ccd4!important;font-size:11px;opacity:1">${arr.length} ${_plur(arr.length,'счёт','счёта','счетов')}</span></div><div class="bank-card-scroll"><table class="report-table bank-flat">${_cardCols}${cardThead(key)}<tbody>${body}</tbody>${foot}</table></div></div>`;
   };
@@ -2037,22 +2096,22 @@ function renderBank(f){
   const curMonth=monthsOfYear.length?Math.max(...monthsOfYear):today.getMonth()+1;
 
   const monthLabels=MONTHS_FULL.map(m=>m.slice(0,3));
-  const yearInc=new Array(12).fill(0),yearOut=new Array(12).fill(0);
+  const yearInc=new Array(12).fill(0),yearOut=new Array(12).fill(0),yearMov=new Array(12).fill(0);
   const daysInMonth=new Date(curYear,curMonth,0).getDate();
-  const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0);
+  const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0),dayMov=new Array(daysInMonth).fill(0);
   const allYears=[...new Set(allDates.map(d=>d.getFullYear()))].sort();
-  const allYearsInc=allYears.map(()=>0),allYearsOut=allYears.map(()=>0);
+  const allYearsInc=allYears.map(()=>0),allYearsOut=allYears.map(()=>0),allYearsMov=allYears.map(()=>0);
 
   data.forEach(row=>{
     const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
     if(!d)return;
-    const inc=parseNum(row[COL.INCOME]),out=Math.abs(parseNum(row[COL.OUTCOME]));
+    const {inc,out,mov}=bankSplit(row);
     const yi=allYears.indexOf(d.getFullYear());
-    if(yi>=0){allYearsInc[yi]+=inc;allYearsOut[yi]+=out;}
+    if(yi>=0){allYearsInc[yi]+=inc;allYearsOut[yi]+=out;allYearsMov[yi]+=mov;}
     if(d.getFullYear()===curYear){
       const mi=d.getMonth();
-      yearInc[mi]+=inc;yearOut[mi]+=out;
-      if(d.getMonth()+1===curMonth){const di=d.getDate()-1;dayInc[di]+=inc;dayOut[di]+=out;}
+      yearInc[mi]+=inc;yearOut[mi]+=out;yearMov[mi]+=mov;
+      if(d.getMonth()+1===curMonth){const di=d.getDate()-1;dayInc[di]+=inc;dayOut[di]+=out;dayMov[di]+=mov;}
     }
   });
 
@@ -2062,20 +2121,20 @@ function renderBank(f){
   const allocCard=buildCard(gAlloc,'Счета на распределение · требуют классификации','Итого на распределение','bank-card-alloc','alloc',{red:true,emptyMsg:'✓ все счета классифицированы'});
   const netCard=buildCard(gNet,'Денежные средства до налогового оформления · ФНС = Нет','Итого ДС до налогового оформления','bank-card-net','net');
   const colsHtml=`<div class="bank-cols"><div class="bank-col-left">${taxCard}${allocCard}</div><div class="bank-col-right">${netCard}</div></div>`;
-  const grandHtml=`<div class="bank-grand"><span class="bank-grand-label">ИТОГО ОБЩИЙ ИТОГ</span><span class="bank-grand-nums"><b class="bank-grand-pos">${fmt(totInc)}</b><b class="bank-grand-neg">${fmt(totOut)}</b><b>${fmt(totAll)}</b></span><a onclick="switchTab('registry')" class="bank-grand-reg" title="Полный список операций с фильтрами - вкладка Реестр">Все операции → Реестр</a></div>`;
+  const grandHtml=`<div class="bank-grand"><span class="bank-grand-label">ИТОГО ОБЩИЙ ИТОГ</span><span class="bank-grand-nums"><b class="bank-grand-pos">${fmt(totInc)}</b><b class="bank-grand-neg">${fmt(totOut)}</b><b class="bank-grand-mov">${fmt(totMov)}</b><b>${fmt(totAll)}</b></span><a onclick="switchTab('registry')" class="bank-grand-reg" title="Полный список операций с фильтрами - вкладка Реестр">Все операции → Реестр</a></div>`;
 
   // Сохраняем данные для переключения
   window._bankChartData={allYears,allYearsInc,allYearsOut,monthLabels,yearDataByYear:{},curYear,curMonth,daysInMonth,dayInc,dayOut};
   // Данные по месяцам для каждого года
   allYears.forEach(yr=>{
-    const inc=new Array(12).fill(0),out=new Array(12).fill(0);
+    const inc=new Array(12).fill(0),out=new Array(12).fill(0),mov=new Array(12).fill(0);
     data.forEach(row=>{
       const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);
       if(!d||d.getFullYear()!==yr)return;
-      inc[d.getMonth()]+=parseNum(row[COL.INCOME]);
-      out[d.getMonth()]+=Math.abs(parseNum(row[COL.OUTCOME]));
+      const p=bankSplit(row);
+      inc[d.getMonth()]+=p.inc;out[d.getMonth()]+=p.out;mov[d.getMonth()]+=p.mov;
     });
-    window._bankChartData.yearDataByYear[yr]={inc,out};
+    window._bankChartData.yearDataByYear[yr]={inc,out,mov};
   });
 
   const yearOptHtml=allYears.map(y=>`<option value="${y}"${y===curYear?'selected':''}>${y}</option>`).join('');
@@ -2164,12 +2223,15 @@ function renderBank(f){
     y2:{type:'linear',position:'right',grid:{display:false},ticks:{font:{size:9},color:'#C8A84B',callback:v=>{const a=Math.abs(v),s=v<0?'-':'';return a>=1e6?s+(a/1e6).toFixed(1)+'М':a>=1e3?s+(a/1e3).toFixed(0)+'К':v;}},title:{display:true,text:'Остаток',color:'#C8A84B',font:{size:9}}}
   };
 
-  const makeMainChart=(labels,incData,outData)=>{
-  const balData=calcBalWithOpening(incData,outData,0);
+  const makeMainChart=(labels,incData,outData,movData)=>{
+  movData=movData||incData.map(()=>0);
+  // «Остаток ДС» обязан учитывать перемещения: деньги реально ушли со счёта. inc+mov−out = прежняя (incСтарый−outСтарый), копейка в копейку.
+  const balData=calcBalWithOpening(incData.map((v,i)=>v+movData[i]),outData,0);
   return({
     data:{labels,datasets:[
       {type:'bar',label:'Поступления',data:incData,backgroundColor:'#2e9e6b',borderRadius:2,yAxisID:'y'},
       {type:'bar',label:'Списания',data:outData,backgroundColor:'#d24b3e',borderRadius:2,yAxisID:'y'},
+      {type:'bar',label:'Перемещения',data:movData,backgroundColor:BANK_MOVE_COLOR,borderRadius:2,yAxisID:'y'},
       {type:'line',label:'Остаток ДС',data:balData,borderColor:'#e8862b',backgroundColor:'rgba(232,134,43,0.13)',fill:'origin',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#e8862b',tension:0.3,yAxisID:'y2'}
     ]},
     options:{responsive:true,maintainAspectRatio:false,
@@ -2200,17 +2262,20 @@ function renderBank(f){
   const makeDayLabels=(yr,mo,days)=>[...Array(days).keys()].map(i=>{const dow=new Date(yr,mo-1,i+1).getDay();return[String(i+1),DOW[dow]];});
   const makeDayColors=(yr,mo,days,weekdayColor,weekendColor)=>[...Array(days).keys()].map(i=>{const dow=new Date(yr,mo-1,i+1).getDay();return(dow===0||dow===6)?weekendColor:weekdayColor;});
 
-  const chartDays=(yr,mo,incData,outData)=>{
+  const chartDays=(yr,mo,incData,outData,movData)=>{
     const days=new Date(yr,mo,0).getDate();
+    movData=movData||incData.map(()=>0);
     const labels=makeDayLabels(yr,mo,days);
     const incColors=makeDayColors(yr,mo,days,'#2e9e6b','rgba(46,158,107,0.4)');
     const outColors=makeDayColors(yr,mo,days,'#d24b3e','rgba(210,75,62,0.4)');
+    const movColors=makeDayColors(yr,mo,days,BANK_MOVE_COLOR,'rgba(168,107,26,0.4)');
     return{type:'bar',
       data:{labels,datasets:[
         {label:'Поступления',data:incData,backgroundColor:incColors,borderRadius:2},
-        {label:'Списания',data:outData,backgroundColor:outColors,borderRadius:2}
+        {label:'Списания',data:outData,backgroundColor:outColors,borderRadius:2},
+        {label:'Перемещения',data:movData,backgroundColor:movColors,borderRadius:2}
       ]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:8}}},
         onClick:(evt,items)=>{
           if(!items.length)return;
           const day=items[0].index+1;
@@ -2234,8 +2299,8 @@ function renderBank(f){
   if(window._bankChartMonth)window._bankChartMonth.destroy();
   const d=window._bankChartData;
 
-  window._bankChartMain=new Chart(document.getElementById('chartMain'),makeMainChart(d.allYears.map(String),d.allYearsInc,d.allYearsOut));
-  window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartDays(d.curYear,d.curMonth,d.dayInc,d.dayOut));
+  window._bankChartMain=new Chart(document.getElementById('chartMain'),makeMainChart(d.allYears.map(String),d.allYearsInc,d.allYearsOut,d.allYearsMov));
+  window._bankChartMonth=new Chart(document.getElementById('chartMonth'),chartDays(d.curYear,d.curMonth,d.dayInc,d.dayOut,d.dayMov));
   window._bankChartData._chartDaysFn=chartDays;
   // По умолчанию - месяцы текущего года
   const selYear=document.getElementById('bankChartYearSel');
