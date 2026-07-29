@@ -6441,8 +6441,7 @@ function renderPlanFact(f){
 
   // ── YTD и прогноз года: истёкшие ПОЛНЫЕ месяцы (текущий не берём - факт неполный); годовые планы без помесячной разбивки распределяются равномерно /12 ──
   const nowD=new Date();
-  const curY=nowD.getFullYear(),curM=nowD.getMonth()+1; // текущий календарный месяц - для колонки «Остаток лимита»
-  const showRem=year===curY&&frozenSet.has(curM); // (устар.) флаг «текущий месяц заморожен» - больше НЕ гейтит остаток; оставлен на случай внешних ссылок
+  const curY=nowD.getFullYear(),curM=nowD.getMonth()+1; // текущий календарный месяц - граница «закрытых» месяцев (отклонения, прогноз года)
   // ── Остаток лимита считается за ВЫБРАННЫЙ период отчёта (месяц/год), а не за текущий календарный месяц ──
   // База = devBase (заморожен месяц → утверждённое, иначе → прогноз; фолбэк на другую сторону) - та же, что красит матрицу. Факт - за тот же период.
   // Источник базы ('utv'/'prog'/'mix') определяется по РЕАЛЬНО давшей число стороне (не по frozen(m): замороженный месяц без baseline берёт прогноз - фолбэк). remTd приглушает и подписывает по этому источнику.
@@ -6511,10 +6510,10 @@ function renderPlanFact(f){
     else{over=fact>plan;txt=over?'перерасход +'+fmtPct(p):'экономия '+fmtPct(p);col=over?'#d35450':'#2e9e6b';}
     return`<span style="padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600;color:${col};background:color-mix(in srgb,${col} 12%,transparent)">${txt}</span>`;
   };
-  // Остаток лимита за ТЕКУЩИЙ месяц: planM(baseline) − factM. Цвет по остатку относительно месячного плана. applic=false (доходы/ЧП) или !showRem → прочерк.
+  // Остаток лимита за ВЫБРАННЫЙ период: planM(devBase) − factM. Цвет по остатку относительно плана периода. applic=false → прочерк.
   const remDash=`<td style="${td};text-align:right"><span style=color:var(--text3)>-</span></td>`;
   const remTd=(planM,factM,applic,kind,src)=>{
-    if(!applic)return remDash; // гейт showRem снят: остаток считается за ВЫБРАННЫЙ период (месяц/год), а не «только если текущий месяц заморожен»
+    if(!applic)return remDash; // остаток считается за ВЫБРАННЫЙ период (месяц/год), а не «только если текущий календарный месяц заморожен»
     factM=factM||0;
     const hasP=planM!=null; // база, равная НУЛЮ, - валидный лимит (остаток = −факт), а не «плана нет»
     const pst=(src&&src!=='utv')?';font-style:italic;opacity:.72':''; // база прогнозная или смешанная (правится свободно) - приглушаем, чтобы главбух не принял за лимит-обязательство
@@ -6602,9 +6601,6 @@ function renderPlanFact(f){
   const childFact=(kind,sub)=>_subFactP(kind,sub); // per-dir под фильтром ЦФО (Σ подстатей = статья), полная подстатья без фильтра
   const childPlan=(kind,sub)=>_subPlanP(recsOf,cvtD,planOf,kind==='inc'?'income':'subarticle',sub);
   const childBase=(kind,sub)=>PB?_subPlanP(PB.recsOf,PB.cvtD,PB.planOf,kind==='inc'?'income':'subarticle',sub):null;
-  // остаток лимита: baseline-план и факт ЗА ТЕКУЩИЙ МЕСЯЦ по дочерней подстатье (разворот статьи)
-  const childBaseM=(kind,sub)=>PB?PB.planMonth(kind==='inc'?'income':'subarticle',sub,curM):null;
-  const childFactM=(kind,sub)=>{const mp=kind==='inc'?incSubN:kind==='vyv'?vyvodSubN:factSubN;const a=mp[sub];return a?(a[curM]||0):0;};
   // лейбл строки-статьи «c3 · представитель» (представитель = ARTICLE_CODE с макс. оборотом в c3-группе, без ведущего кода); code теперь c3
   const artLabel=c3v=>{const base=c3v||'(без кода)';const m=artRepAmt[c3v];if(!m)return base;let best='',bv=-1;Object.keys(m).forEach(k=>{if(m[k]>bv){bv=m[k];best=k;}});const rest=String(best).replace(c3v,'').replace(/^[_\s.\-–—]+/,'').trim();return rest?base+' · '+rest:base;};
   // остаток лимита строки за ВЫБРАННЫЙ период: база = devBase (заморожен → baseline, иначе прогноз; фолбэк на другую сторону), факт - за тот же период.
