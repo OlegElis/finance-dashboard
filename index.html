@@ -760,7 +760,17 @@
 <script>
 const COL={DATE_DDS:0,DATE_OPIU:1,TYPE:2,OFFER_ID:3,INCOME:4,OUTCOME:5,FNS:6,ACCOUNT:7,ARTICLE_CODE:8,ARTICLE_NAME:9,ANALYTICS:10,SECOND_SIDE:11,PURPOSE:12,ACTIVITY_DIR:13,FIN_OP:14};
 // Шрифт графиков по ТЗ: оси/числа - моноширинный, мелкий, приглушённо-серый
-try{if(window.Chart){Chart.defaults.font.family="'IBM Plex Mono','SFMono-Regular',ui-monospace,Menlo,monospace";Chart.defaults.font.size=9.5;Chart.defaults.color='#9aa1ad';}}catch(e){}
+try{if(window.Chart){Chart.defaults.font.family="'IBM Plex Mono','SFMono-Regular',ui-monospace,Menlo,monospace";Chart.defaults.font.size=9.5;Chart.defaults.color='#9aa1ad';
+  // Вид ВСЕХ подсказок на графиках - к стандарту единой подсказки проекта (#uiTip): тёмный фон, белый текст, скругление 5, те же паддинги и кегль.
+  // Задаётся ОДНИМ местом в Chart.defaults, а не по 14 графикам: иначе следующий график заведут со старым видом и никто не заметит.
+  // Шрифт наследуется от Chart.defaults.font.family (моно) - на нём держится выравнивание в подсказке дневного графика Банка.
+  // displayColors НЕ трогаем: цветные квадраты полезны на многорядных графиках; там, где они ломают столбик чисел, график гасит их сам.
+  const T=Chart.defaults.plugins.tooltip;
+  T.backgroundColor='#2b3145';T.titleColor='#c7ccd4';T.bodyColor='#fff';T.footerColor='#fff';
+  T.borderColor='rgba(255,255,255,.12)';T.borderWidth=1;T.cornerRadius=5;
+  T.padding={top:7,right:11,bottom:7,left:11};T.boxPadding=4;
+  T.titleFont={size:10.5,weight:'600'};T.bodyFont={size:11.5};T.footerFont={size:11.5,weight:'400'};
+}}catch(e){}
 const MONTHS_FULL=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 const FOT_PREFIXES=['111_','226_','127_'];
 const REVENUE_PREFIX='120_';
@@ -2365,7 +2375,8 @@ function renderBank(f){
     ]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:10}},
-        tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(Math.abs(ctx.raw)>=1e6?(ctx.raw/1e6).toFixed(2)+'М':(ctx.raw/1e3).toFixed(0)+'К')}}},
+        // Числа в подсказке ПОЛНЫЕ: подсказка - место, где читают точное значение. Сокращения М/К остаются на подписях ОСЕЙ (там полные не влезут и по ним не считают).
+        tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+fmt(ctx.raw)}}},
       onClick:(evt,items)=>{
         if(!items.length)return;
         const idx=items[0].index;
@@ -7459,8 +7470,8 @@ function renderPlanFact(f){
     const pct1=v=>v.toFixed(1).replace('.',','); // русский формат процента (22,4)
     // ══ РЕЖИМ «ПО МЕСЯЦАМ ГОДА»: столбики % исполнения месячного плана ══
     if(mode==='months'){
-      const rub0=v=>Math.round(v).toLocaleString('ru-RU')+' ₽';
-      const km=v=>{const a=Math.abs(v);if(a>=1e6)return (v/1e6).toFixed(2).replace('.',',')+'М';if(a>=1e3)return Math.round(v/1e3)+'К';return String(Math.round(v));};
+      const rub0=v=>fmt(v)+' ₽'; // полное число: rub0 живёт ТОЛЬКО в подсказке этого графика, а в подсказке читают точное значение
+      const km=v=>{const a=Math.abs(v);if(a>=1e6)return (v/1e6).toFixed(2).replace('.',',')+'М';if(a>=1e3)return Math.round(v/1e3)+'К';return String(Math.round(v));}; // km - подпись НА холсте (рядом со столбиком), там сокращение остаётся
       const MSH=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
       const isCurM=m=>(year===curYear&&m===curMonth);
       const isFuture=m=>(year>curYear)||(year===curYear&&m>curMonth); // будущие месяцы не показываем вообще
@@ -8086,7 +8097,8 @@ function renderMarketing(f){
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
         layout:{padding:{top:16,bottom:2,right:hasPct?0:46}},
         plugins:{legend:{display:false},
-          tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>c.dataset._pct?`${c.dataset.label}: ${c.raw!=null?Math.round(c.raw*100)+'%':'-'}`:`${c.dataset.label}: `+(c.raw!=null?Math.round(c.raw).toLocaleString('ru-RU'):'-')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
+          // Числа полные. ⚠ На графике рядом лежат ДЕНЬГИ и КОЛИЧЕСТВА (лиды/сделки/дела): целые показываем без копеек, дробные через fmt - иначе у количеств появилось бы «12,00».
+          tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>c.dataset._pct?`${c.dataset.label}: ${c.raw!=null?Math.round(c.raw*100)+'%':'-'}`:`${c.dataset.label}: `+(c.raw!=null?(Number.isInteger(c.raw)?c.raw.toLocaleString('ru-RU'):fmt(c.raw)):'-')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
         scales:{x:{grid:{display:false},afterFit:s=>{s.height=58;},ticks:{font:{size:9},autoSkip:false,maxRotation:60,minRotation:60}},
           y:{beginAtZero:true,max:yMax,afterFit:s=>{s.width=52;},grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}},
           ...(hasPct?{y1:{position:'right',beginAtZero:true,max:1,afterFit:s=>{s.width=46;},grid:{drawOnChartArea:false},ticks:{font:{size:9},color:'#0891b2',callback:v=>Math.round(v*100)+'%'}}}:{})}}});
@@ -8448,7 +8460,7 @@ function renderLoans(f){
       {type:'line',label:'Остаток (накопл.)',data:D.balance,borderColor:'#3f5575',backgroundColor:'#3f5575',tension:.3,pointRadius:3,order:1,fill:false,yAxisID:'y1'}
     ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
       plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:12,usePointStyle:true}},
-        tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${Math.round(c.raw).toLocaleString('ru-RU')}`}}},
+        tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.raw)}`}}}, // полное число: суммы займов читают точно (сокращение осталось на осях - kfmt)
       scales:{x:{grid:{display:false},ticks:{font:{size:9},autoSkip:false,maxRotation:60,minRotation:60}},
         y:{beginAtZero:true,position:'left',title:{display:true,text:'Выдачи / Возвраты',font:{size:9},color:'var(--text3)'},grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:kfmt}},
         y1:{beginAtZero:true,position:'right',title:{display:true,text:'Остаток',font:{size:9},color:'#3f5575'},grid:{drawOnChartArea:false},ticks:{font:{size:10},color:'#3f5575',callback:kfmt}}}}});
