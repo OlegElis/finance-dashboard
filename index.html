@@ -6336,7 +6336,7 @@ window.pfNoPlanCSV=function(){
     return /[";\n\r#]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
   const rowCsv=(it,signed)=>[cell(it.sub),cell((it.dirs||[]).join(', ')),String(signed),String(it.cnt),cell(it.owner||'')].join(SEP)+'\n';
   let out='';
-  out+='# Факт без плана - ГК ОПОРА, БДР. Подстатьи с фактом, у которых нет плана в прогнозе.\n';
+  out+='# Факт без плана - ГК ОПОРА, БДР. Подстатьи с фактом, у которых нет текущего плана.\n';
   out+='# Направление: '+(NP.dirLabel||'')+' · год: '+(NP.year||'')+' · подстатей: '+(NP.N||0)+'\n';
   out+='# Расходы - отрицательные, доходы - положительные (₽). Разделитель ";", UTF-8 с BOM.\n';
   out+='\n'+['Подстатья','Направление','Факт_за_год','Операций','Ответственный'].join(SEP)+'\n';
@@ -6779,7 +6779,7 @@ function renderPlanFact(f){
     ?`<div class="kpi-card ${ytdDoneInc>=0.95?'green':'red'}" title="Факт доходов и утверждённый план доходов по ПЛАНИРУЕМЫМ месяцам (${planableLbl}).${_retroTip} Ниже 100% - недовыполнение плана выручки."><div class="kpi-label">Исполнение YTD · доходы</div><div class="kpi-value">${fmtPct(ytdDoneInc)}</div><div class="kpi-sub">по планируемым (${planableLbl}): факт ${fmt(ytdFactFrozenInc)} · утв. ${fmt(ytdPlanBaseInc)}</div></div>`
     :`<div class="kpi-card" style="opacity:.75" title="${_allRetro?'Все замороженные месяцы - ретроспектива (план=факт). Заморозьте планируемый месяц, чтобы считать исполнение доходов.':'Заморозьте хотя бы один месяц (кнопка «✓ Утвердить месяц»), чтобы считать исполнение доходов'}"><div class="kpi-label">Исполнение YTD · доходы</div><div class="kpi-value">-</div><div class="kpi-sub">${_ytdEmptySub}</div></div>`;
   const fcCard=showFc
-    ?`<div class="kpi-card" style="border-left:3px solid ${fcNet>=0?'var(--income)':'var(--outcome)'}" title="Прогноз до конца года (от текущего прогноза): факт истёкших месяцев + план оставшихся. Годовые планы без помесячной разбивки распределены равномерно."><div class="kpi-label">Прогноз года · ЧП</div><div class="kpi-value" style="color:${fcNet>=0?'var(--income)':'var(--outcome)'}">${fmt(fcNet)}</div><div class="kpi-sub">доходы ${fmt(fcInc)} · расходы ${fmt(-fcExp)}</div></div>`
+    ?`<div class="kpi-card" style="border-left:3px solid ${fcNet>=0?'var(--income)':'var(--outcome)'}" title="Прогноз до конца года (от текущего плана): факт истёкших месяцев + план оставшихся. Годовые планы без помесячной разбивки распределены равномерно."><div class="kpi-label">Прогноз года · ЧП</div><div class="kpi-value" style="color:${fcNet>=0?'var(--income)':'var(--outcome)'}">${fmt(fcNet)}</div><div class="kpi-sub">доходы ${fmt(fcInc)} · расходы ${fmt(-fcExp)}</div></div>`
     :'';
   // KPI - ВСЕГДА по компании (полные наборы), фильтр статьи/подстатьи/ЦФО на них не влияет (Часть A). ЧП = настоящая ЧП компании.
   const kpiBadge=pfFilterOn?`<div style="font-size:11px;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="color:var(--accent);font-weight:700">ℹ</span>KPI - по компании (направление/год/период); фильтр статьи/подстатьи/ЦФО на них не влияет. Суммы по фильтру - в строках «ИТОГО по фильтру» таблицы.</div>`:'';
@@ -7121,7 +7121,7 @@ function renderPlanFact(f){
       else if(dv)col=dv.col;
       else if(devBase==null&&fact)col='var(--text2)'; // факт без всякого плана - приглушён
       // Подсказка ячейки - единый компонент: числа встают в столбик сеткой (в одну строку через « · » разряды не читались).
-      const tp=[];if(base!=null)tp.push(['Утверждено',fmt(base)]);if(plan!=null)tp.push(['Прогноз',fmt(plan)]);tp.push(['Факт',fmt(fact)]);
+      const tp=[];if(base!=null)tp.push(['Утверждено',fmt(base)]);if(plan!=null)tp.push(['Текущий план',fmt(plan)]);tp.push(['Факт',fmt(fact)]);
       // Отклонение - ИТОГОВОЙ строкой под разделителем: точный % и база показываются только для ЗАКРЫТОГО месяца.
       const tpDev=(closed&&devBase!=null&&Math.abs(devBase)>0.0001&&kind!=='net'&&kind!=='vyv')?['Отклонение',rubSgn(fact-devBase),(fact/devBase*100).toFixed(1)+'%']:null;
       const tpFoot=[];
@@ -7140,12 +7140,14 @@ function renderPlanFact(f){
         const closed=(year<curY)||(year===curY&&m<curM); // месяц полностью в прошлом; ТЕКУЩИЙ и будущие - факт неполный, в отклонение не входят
         if(b!=null)yb=(yb||0)+b;if(p!=null)yp=(yp||0)+p;yf+=fa;
         if(closed){if(db!=null)ydbC=(ydbC||0)+db;yfC+=fa;closedM.push(m);} // годовое отклонение - только закрытые месяцы (иначе база полного года завышала недобор, как в незакрытой ячейке)
-        cells+=cellHtml(b,p,fa,db,(fr?(b!=null?'утверждённого':'прогноза'):(p!=null?'прогноза':'утверждённого')),kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null,closed,w);});
+        cells+=cellHtml(b,p,fa,db,(fr?(b!=null?'утверждённого':'текущего плана'):(p!=null?'текущего плана':'утверждённого')),kind,tk?`pfShowTxn('${tk}','${jesc2(code)}',${m})`:null,closed,w);});
       const ydv=devOf(ydbC,yfC,kind); // отклонение «Год» = Σ факта закрытых − Σ devBase закрытых (уровни 1-3 остаются по всем месяцам)
       const ycol=kind==='net'?(yf>=-0.0001?'var(--income)':'var(--outcome)'):(ydv?ydv.col:(ydbC==null&&yf?'var(--text2)':'var(--text)'));
-      const ytp=[];if(yb!=null)ytp.push('Утв: '+fmt(yb));if(yp!=null)ytp.push('Прог: '+fmt(yp));ytp.push('Факт: '+fmt(yf)+' (за год)');
-      if(ydbC!=null&&Math.abs(ydbC)>0.0001&&kind!=='net'&&kind!=='vyv'&&closedM.length)ytp.push('Откл: '+rubSgn(yfC-ydbC)+' ('+(yfC/ydbC*100).toFixed(1)+'%) за '+_monthsRangeLabel(closedM)+', '+closedM.length+' мес (незакрытые месяцы в отклонение не входят)');
-      const yc=`<td title="${ytp.join(' · ')}" style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:700;font-size:12px;line-height:1.1;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${subLines(yb,yp,ydv)}</td>`;
+      // Колонка «Год» - на едином компоненте, как и месячные ячейки: одна подсказка на всю матрицу, числа столбиком.
+      const ytp=[];if(yb!=null)ytp.push(['Утверждено',fmt(yb)]);if(yp!=null)ytp.push(['Текущий план',fmt(yp)]);ytp.push(['Факт за год',fmt(yf)]);
+      const yDev=(ydbC!=null&&Math.abs(ydbC)>0.0001&&kind!=='net'&&kind!=='vyv'&&closedM.length)?['Отклонение',rubSgn(yfC-ydbC),(yfC/ydbC*100).toFixed(1)+'%']:null;
+      const yFoot=yDev?[['за '+_monthsRangeLabel(closedM)+', '+closedM.length+' мес',''],['незакрытые месяцы в отклонение не входят','']]:[];
+      const yc=`<td ${_tipAttr(ytp,yDev,yDev?'Отклонение за закрытые месяцы':'',yFoot)} style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:2px solid var(--border);background:var(--surface2)"><div style="font-weight:700;font-size:12px;line-height:1.1;font-family:var(--mono);color:${ycol}">${yf?fmt(yf):'·'}</div>${subLines(yb,yp,ydv)}</td>`;
       const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:(opts.child?'<span style="display:inline-block;width:15px"></span>':'');
       const labPad=opts.child?'padding:4px 10px 4px 26px':'padding:5px 10px',labFont=opts.child?'font-size:10px;color:var(--text2)':'font-size:11px';
       // клик по лейблу статьи = разворот подстатей; расшифровка - только по ячейкам месяцев (cellHtml). У подстатей/итогов лейбл некликабелен
@@ -10494,7 +10496,7 @@ window.cfoStatementGen=function(){
   const frozenListHtml=frozen.length?frozen.map(m=>{const mo=blMap[m],nm=_cap(MONF[m-1]);return (mo&&mo.retro)?('<span style="color:#6f7682;font-weight:600" title="Ретроспектива: план приравнен к факту, месяц не планировался">'+nm+' 📋</span>'):(mo&&mo.hadFact)?('<span style="color:#b5651d;font-weight:600" title="Утверждён '+new Date(mo.approvedAt).toLocaleDateString('ru-RU')+' при известном факте '+f(mo.factAtApproval)+'">'+nm+' ⚠</span>'):nm;}).join(', '):'—';
   const _retroN=frozen.filter(m=>blMap[m]&&blMap[m].retro).length;
   const blStamp=hasBl?('<span class="ok">Заморожено месяцев: '+frozen.length+'</span>'+(_retroN?(' <span style="color:#6f7682">· из них ретро: '+_retroN+'</span>'):'')+' · '+frozenListHtml):'<span class="no">Ни один месяц не утверждён</span>';
-  const perLabel=allMonths?('все месяцы '+year+' (матрица) · факт крупно, план мелким (утв./прогноз)'):('за '+MONF[M-1]+' '+year+' · YTD - по замороженным месяцам ≤ '+MONF[M-1]);
+  const perLabel=allMonths?('все месяцы '+year+' (матрица) · факт крупно, план мелким (утв./текущий план)'):('за '+MONF[M-1]+' '+year+' · YTD - по замороженным месяцам ≤ '+MONF[M-1]);
   const matrixLegend=allMonths?('<div class="mxleg">В ячейке: <b>крупное число</b> - факт · под ним <span class="lgp">серым</span> - утверждено (замороженный месяц 🔒), <span class="lgf">курсивом</span> - текущий план (незамороженный месяц). Столбец <b>ГОД</b>: факт · <span class="lgp">утв Σ</span> (сумма замороженных) · <span class="lgf">тек Σ</span> (текущий план на 12 месяцев). Цвет факта ЧП - по знаку (прибыль зелёная, убыток красный). Крупные суммы сокращены: <b>К</b> - тысячи ₽, <b>М</b> - миллионы ₽.'+(wantDetail?' Подстатьи ФОТ (👤), аренды (🏢) и консалтинга развёрнуты по сотрудникам/объектам/контрагентам - серые строки под подстатьёй.':'')+'</div>'):'';
   // выбран текущий незакрытый месяц → колонки «за месяц»/Δ предварительные (полный план против неполного факта). Δ YTD не помечаем. В матрице предупреждения нет - показаны все 12 месяцев как есть
   const _now=new Date(),isCurUnclosed=(!allMonths&&year===_now.getFullYear()&&M===_now.getMonth()+1);
@@ -10620,7 +10622,7 @@ window.showPlansPanel=async function(){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--text3)">${isAdmin?'Хранится в облаке (Firebase), запись только админу':'Только просмотр. Изменять планы может администратор.'}</span>
         <div style="display:flex;gap:8px">
-          ${isAdmin?`<button onclick="planSave();planApproveMonthOpen(document.getElementById('plan-year').value)" title="Сохранить прогноз и заморозить план выбранного месяца (baseline). Замороженный месяц изменить нельзя." style="font-size:12px;font-weight:600;padding:7px 14px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить месяц</button>`:''}
+          ${isAdmin?`<button onclick="planSave();planApproveMonthOpen(document.getElementById('plan-year').value)" title="Сохранить текущий план и заморозить план выбранного месяца (baseline). Замороженный месяц изменить нельзя." style="font-size:12px;font-weight:600;padding:7px 14px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить месяц</button>`:''}
           <button onclick="planPrintOwners()" title="Печать: план по месяцам (как в редакторе), свод по направлениям, с учётом фильтров" style="font-size:12px;padding:7px 14px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">🖨 Печать (план по месяцам)</button>
           <button onclick="planPanelClose()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">${isAdmin?'Отмена':'Закрыть'}</button>
           ${isAdmin?`<button onclick="planSave(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>`:''}
