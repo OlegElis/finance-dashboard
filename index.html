@@ -142,7 +142,8 @@
   #uiTip .uit-v{font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;color:#fff;}
   #uiTip .uit-sep{grid-column:1/-1;height:1px;background:rgba(255,255,255,.22);margin:4px 0;}
   #uiTip .uit-tot{font-weight:700;}
-  #uiTip .uit-mut{color:#aeb6c4;} /* строки ПОД итогом: то, что в базу расчёта не входит (нейтрально, не спорит с итогом) */
+  #uiTip .uit-mut{color:#aeb6c4;}
+  #uiTip .uit-gap{grid-column:1/-1;height:7px;} /* отступ между секциями подсказки (сравнение / каналы) */ /* строки ПОД итогом: то, что в базу расчёта не входит (нейтрально, не спорит с итогом) */
   @media print{#uiTip{display:none!important;}} /* на печати подсказок нет по определению */
 
   /* ── Tables ── */
@@ -817,26 +818,28 @@ function fmtPct(v){if(typeof v!=='number'||!isFinite(v))return'-';return(v*100).
 //   rows  = [[подпись, значение], ...]   значения уже отформатированы (fmt/fmtPct) вызывающим
 //   total = [подпись, значение]          необязательная итоговая строка под разделителем
 // ⚠ Узел живёт в <body> с position:fixed - в скроллящемся теле таблицы подсказка обрезалась бы по overflow.
-function _tipData(rows,total,title,foot){return JSON.stringify({rows:rows||[],total:total||null,title:title||'',foot:foot||[]});}
-function _tipAttr(rows,total,title,foot){
-  return `data-tip="${_htmlEsc(_tipData(rows,total,title,foot))}"`; // JSON в двойных кавычках: _htmlEsc гасит " -> &quot;, getAttribute вернёт исходный JSON
+function _tipData(rows,total,title,foot,after){return JSON.stringify({rows:rows||[],total:total||null,title:title||'',foot:foot||[],after:after||[]});}
+function _tipAttr(rows,total,title,foot,after){
+  return `data-tip="${_htmlEsc(_tipData(rows,total,title,foot,after))}"`; // JSON в двойных кавычках: _htmlEsc гасит " -> &quot;, getAttribute вернёт исходный JSON
 }
 // Для элементов, у которых подсказка меняется ПОСЛЕ рендера (редактор планов: «⤓ заполнить фактом», undo).
 // Без него такие места ставили бы нативный title поверх компонента, и подсказка выглядела бы по-разному до и после нажатия кнопки.
-function _tipSet(el,rows,total,title,foot){if(el)el.setAttribute('data-tip',_tipData(rows,total,title,foot));}
+function _tipSet(el,rows,total,title,foot,after){if(el)el.setAttribute('data-tip',_tipData(rows,total,title,foot,after));}
 function _tipHide(){const t=document.getElementById('uiTip');if(t)t.style.display='none';}
 function _tipShow(anchor,d){
   if(!anchor||!d)return;
   let t=document.getElementById('uiTip');
   if(!t){t=document.createElement('div');t.id='uiTip';document.body.appendChild(t);}
   const cell=(cls,v)=>`<div class="${cls}">${_htmlEsc(v)}</div>`;
-  const all=(d.rows||[]).concat(d.total?[d.total]:[],d.foot||[]);
+  const all=(d.rows||[]).concat(d.total?[d.total]:[],d.foot||[],d.after||[]);
   const cols=Math.max(2,...all.map(r=>r.length)); // строка может нести 3-ю колонку (например проценты) - тогда сетка трёхколоночная
   const line=(r,ext)=>{const c=ext?' uit-'+ext:'';return cell('uit-l'+c,r[0])+cell('uit-v'+c,r[1])+(cols>2?cell('uit-v'+c,r[2]==null?'':r[2]):'');};
   const rows=(d.rows||[]).map(r=>line(r,'')).join('');
   const tot=d.total?`<div class="uit-sep"></div>`+line(d.total,'tot'):'';
   const foot=(d.foot||[]).map(r=>line(r,'mut')).join(''); // под итогом: то, что в базу не входит - показываем, но в сумму не берём
-  t.innerHTML=(d.title?`<div class="uit-title">${_htmlEsc(d.title)}</div>`:'')+`<div class="uit-grid${cols>2?' uit-3':''}">${rows}${tot}${foot}</div>`;
+  // after - ВТОРАЯ секция обычным цветом, через отступ (не foot: тот приглушён, он для оговорок, а не для данных)
+  const after=(d.after||[]).length?`<div class="uit-gap"></div>`+(d.after||[]).map(r=>line(r,'')).join(''):'';
+  t.innerHTML=(d.title?`<div class="uit-title">${_htmlEsc(d.title)}</div>`:'')+`<div class="uit-grid${cols>2?' uit-3':''}">${rows}${tot}${foot}${after}</div>`;
   t.style.display='block';t.style.left='0px';t.style.top='0px'; // сброс позиции ДО замера: иначе прежние координаты сжимают блок у края окна
   const r=anchor.getBoundingClientRect(),b=t.getBoundingClientRect(),M=8;
   let x=r.left,y=r.bottom+6;
@@ -2147,43 +2150,106 @@ function renderBank(f){
   const grpOf=a=>isCardAcc(a.name)?'Карты ФЛ':isKassaAcc(a.name)?'Кассы':'Счета';
   window._kassaData=kassaList.map(a=>({name:a.name,balance:a.total,limit:(_kassaLimits[a.name]??''),group:grpOf(a)}));
 
-  // «Доля оформленного» = поступления по счетам с ФНС=Да ÷ все поступления. Структурный показатель, не норматив - без светофора.
-  // ⚠ Считается по ВСЕМУ map, БЕЗ fnsPass: фильтр ФНС на карточку влиять не должен (под «Да» она всегда показывала бы 100%).
-  //    Остальные фильтры (даты, направление, счета) уже применены к data выше, поэтому карточка реагирует на них как соседние.
-  // Перемещения в базу не попадают по построению: у строк-перемещений inc=0, транзит лежит в a.mov.
-  // Неоформленный поток разложен на каналы (bankAccChannel - единственное место правила): карты физлиц / наличные / прочее.
-  const chan={da:0,card:0,cash:0,unknown:0};
-  map.forEach(a=>{
-    if(!hasMove(a))return;
-    const ch=bankAccChannel(a.name,a.fns); // ⚠ обязательно с a.fns: без него счета ООО/ИП (ФНС=Да) ушли бы в unknown - имя у них канал не описывает
-    chan[ch]+=a.inc;
-    if(ch==='unknown'&&Math.abs(a.inc)>=0.005)_bankChannelWarn(a.name,a.inc); // сторож хрупкой классификации по имени
+  // ═══ KPI «ДОЛЯ ОФОРМЛЕННОГО» ═══
+  // Метрика СТРУКТУРНАЯ и рисковая, не операционная: какая часть входящего потока прошла через счета с ФНС=Да.
+  // База - ПОСТУПЛЕНИЯ (налоговое обязательство возникает на входящем потоке), списания в базу не входят.
+  // Перемещения исключены явно (isMoveRow) - транзит между своими счетами потоком не является.
+  // ⚠ Признак ФНС - свойство СЧЁТА, а не периода, поэтому карта строится по ВСЕМУ набору БЕЗ дат.
+  //   Считай мы признак по срезу - счёт, у которого «да» стоит только в строках 2025 года, в 2026-м уехал бы
+  //   в другой канал, и сравнение годов сравнивало бы разные классификации.
+  const _cardRows=(()=>{ // те же фильтры вкладки, но БЕЗ дат: окна карточка режет сама (год / тот же отрезок год назад)
+    let rs=applyBaseFilters(RAW,{dateFrom:'',dateTo:''});
+    if(f.activityDirs&&f.activityDirs.length)rs=rs.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
+    if(!f.includeFuture){const te=new Date();te.setHours(23,59,59,999);rs=rs.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return !d||d<=te;});}
+    if(f.accounts&&f.accounts.length)rs=rs.filter(r=>f.accounts.includes(String(r[COL.ACCOUNT]||'').trim()));
+    return rs;
+  })();
+  const _accFns=new Map(); // счёт → 1/0; первое распознанное «да»/«нет» выигрывает (как в своде)
+  _cardRows.forEach(r=>{
+    const acc=String(r[COL.ACCOUNT]||'').trim();
+    if(_accFns.has(acc))return;
+    const v=String(r[COL.FNS]||'').toLowerCase().trim();
+    if(['да','true','1','+'].includes(v))_accFns.set(acc,1);
+    else if(['нет','false','0','-'].includes(v))_accFns.set(acc,0);
   });
-  // База = ВСЕ четыре канала. unknown («прочие расчёты») - тоже часть неоформленного контура: там реальные счета с ФНС=Нет
-  // (напр. «Задолженность по страховым взносам», где ввод начального остатка проведён поступлением намеренно), и по ФНС они
-  // классифицируются наравне с остальными. Поэтому доли складываются в целое без остатка.
-  // ⚠ Консольное предупреждение при этом ОСТАЁТСЯ, но говорит о другом: не «есть непонятные деньги», а «в справочнике появился
-  //    вид счёта, для которого правила канала ещё нет» - срабатывает один раз на НОВОЕ имя счёта (_bankChannelWarned).
-  // «- без счёта -» сюда не попадает по построению: у него нет положительных поступлений, только списания (плановые оплаты без назначенного счёта).
-  const fnsIncDa=chan.da;
-  const fnsIncAll=chan.da+chan.card+chan.cash+chan.unknown;
-  const fnsShare=fnsIncAll>0?fnsIncDa/fnsIncAll:null;
-  const _mln=v=>(v/1e6).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+' млн'; // в подстроке карточки полное число не влезает; точные значения - в подсказке
+  // Разложение набора строк на каналы. Единственное место правила - bankAccChannel (сначала ФНС, потом имя).
+  const _chanOf=rows=>{
+    const c={da:0,card:0,cash:0,unknown:0};
+    rows.forEach(r=>{
+      if(isMoveRow(r))return;                       // перемещения в базу не входят
+      const inc=parseNum(r[COL.INCOME]); if(!inc)return;
+      const acc=String(r[COL.ACCOUNT]||'').trim();
+      const ch=bankAccChannel(acc,_accFns.has(acc)?_accFns.get(acc):-1);
+      c[ch]+=inc;
+      if(ch==='unknown'&&Math.abs(inc)>=0.005)_bankChannelWarn(acc,inc); // сторож хрупкой классификации по имени
+    });
+    c.all=c.da+c.card+c.cash+c.unknown; // «прочие расчёты» ВХОДЯТ в базу - это часть неоформленного контура, а не мусор
+    return c;
+  };
+  const _winRows=(y,m1,m2)=>_cardRows.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
+    if(!d||d.getFullYear()!==y)return false;const mm=d.getMonth()+1;return mm>=m1&&mm<=m2;});
+  const _MONA=MONTHS_FULL.map(m=>m.slice(0,3).toLowerCase()); // «янв», «июл» - подпись отрезка
+  const _mln=v=>(v/1e6).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+' млн'; // в подстроке полное число не влезает; точные - в подсказке
   // ⚠ Свой процент, а не глобальный fmtPct: тот собран на toFixed и печатает точку («25.8%»). Глобальный не трогаем - он на всех вкладках.
   const _pct1=v=>(v*100).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
+  const _rub=v=>Math.round(_z0(v)).toLocaleString('ru-RU');
+  const _ppFmt=d=>(d>0?'+':d<0?'−':'')+Math.abs(d).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+' п.п.';
+  // ⚠ Изменение в процентных ПУНКТАХ, и подпись обязательна: 28,9% против 24,6% - это 4,3 пункта, а не 17%.
+  //   Без «п.п.» цифру прочитают как рост оформленного на 17%.
+  const _arrow=dpp=>{
+    if(dpp==null)return '';
+    // ⚠ Порог считаем от ОКРУГЛЁННОГО значения, того самого, что видно в подписи: иначе 0,49 п.п. рисуется
+    //   как «+0,5 п.п.» с серой стрелкой, а рядом настоящие 0,5 - с зелёной, и подпись спорит со стрелкой.
+    dpp=Math.round(dpp*10)/10;
+    const small=Math.abs(dpp)<0.5; // менее половины пункта - шум, показываем нейтрально
+    const sym=small?'→':(dpp>0?'↑':'↓');
+    const col=small?'var(--text3)':(dpp>0?'var(--income)':'var(--outcome)'); // светофор ТОЛЬКО у стрелки: у самой доли нормы нет
+    return ` <span style="font-size:11px;font-weight:600;color:${col};font-family:var(--sans)">${sym} ${_ppFmt(dpp)}</span>`;
+  };
+  const _chanRows=c=>[['оформлено',_rub(c.da),_pct1(c.da/c.all)],['карты физлиц',_rub(c.card),_pct1(c.card/c.all)],
+    ['наличные',_rub(c.cash),_pct1(c.cash/c.all)],['прочие расчёты',_rub(c.unknown),_pct1(c.unknown/c.all)]];
+  // Режим 1 - период НЕ задан. Пресет «Этот год» задаёт ровно то же окно (1 января - сегодня), поэтому он тоже режим 1:
+  // сравнивать есть с чем, и прятать сравнение только из-за того, что окно выбрано кнопкой, было бы формализмом.
+  const _mode1=(!f.dateFrom&&!f.dateTo)||f.preset==='year';
+  const _nowD=new Date(),_nowY=_nowD.getFullYear(),_nowM=_nowD.getMonth()+1;
+  // Последний месяц текущего года С ПОСТУПЛЕНИЯМИ. Если сегодня 1 августа, а данные кончились в июле,
+  // окно «янв-авг» тянуло бы долю пустым месяцем, а сравнение шло бы с ПОЛНЫМ «янв-авг» прошлого года.
+  let _mLast=0;
+  _cardRows.forEach(r=>{if(isMoveRow(r))return;if(!parseNum(r[COL.INCOME]))return;
+    const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
+    if(d&&d.getFullYear()===_nowY){const mm=d.getMonth()+1;if(mm<=_nowM&&mm>_mLast)_mLast=mm;}});
+  if(!_mLast)_mLast=_nowM;
+  const _perLbl=(()=>{ // подпись выбранного периода: режимы обязаны различаться с одного взгляда
+    const dm=iso=>{const p=String(iso||'').split('-');return p.length===3?p[2]+'.'+p[1]:'';};
+    const yr=iso=>String(iso||'').slice(0,4);
+    if(f.dateFrom&&f.dateTo)return yr(f.dateFrom)===yr(f.dateTo)?(dm(f.dateFrom)+'-'+dm(f.dateTo)+'.'+yr(f.dateTo)):(dm(f.dateFrom)+'.'+yr(f.dateFrom)+'-'+dm(f.dateTo)+'.'+yr(f.dateTo));
+    if(f.dateFrom)return 'с '+dm(f.dateFrom)+'.'+yr(f.dateFrom);
+    if(f.dateTo)return 'по '+dm(f.dateTo)+'.'+yr(f.dateTo);
+    return '';
+  })();
   const fnsCard=(()=>{
-    if(f.fns)return{val:'-',sub:'фильтр ФНС активен',tip:_tipAttr([],null,'Фильтр ФНС активен: доля считается по всем счетам, снимите фильтр')};
-    if(fnsShare==null)return{val:'-',sub:'нет поступлений',tip:_tipAttr([],null,'За период нет поступлений - доля не определена')};
-    // Подсказка - разложение на каналы: три колонки (канал · сумма · доля). Числа без копеек: три колонки и так широкие.
-    // Строки «прочее» нет - оно исключено из базы; о нём кричит консоль, а не подсказка (иначе выглядело бы как четвёртый канал).
-    const _rub=v=>Math.round(_z0(v)).toLocaleString('ru-RU');
-    const _sh=v=>_pct1(v/fnsIncAll);
-    // Четыре канала внутри одной базы. Название «прочие расчёты», а НЕ «прочее»: там реальный контур, а не мусорная категория.
-    // У «всего» процента НЕТ: 100% там по построению, информации не несёт, а с округлёнными долями спорит.
-    const rows=[['оформлено',_rub(chan.da),_sh(chan.da)],['карты физлиц',_rub(chan.card),_sh(chan.card)],
-      ['наличные',_rub(chan.cash),_sh(chan.cash)],['прочие расчёты',_rub(chan.unknown),_sh(chan.unknown)]];
-    return{val:_pct1(fnsShare),sub:_mln(fnsIncDa)+' из '+_mln(fnsIncAll),
-      tip:_tipAttr(rows,['всего',_rub(fnsIncAll)])};
+    // Фильтр ФНС на карточку влиять не должен: под «Да» она всегда показывала бы 100%.
+    if(f.fns)return{val:'-',arr:'',sub:'фильтр ФНС активен',tip:_tipAttr([],null,'Фильтр ФНС активен: доля считается по всем счетам, снимите фильтр')};
+    if(_mode1){
+      const cur=_chanOf(_winRows(_nowY,1,_mLast)),prv=_chanOf(_winRows(_nowY-1,1,_mLast));
+      if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений за '+_nowY,tip:_tipAttr([],null,'За '+_nowY+' год поступлений нет - доля не определена')};
+      const span=_MONA[0]+'-'+_MONA[_mLast-1];
+      const sh=cur.da/cur.all,shP=prv.all?prv.da/prv.all:null;
+      const dpp=shP!=null?(sh-shP)*100:null;
+      const cmp=shP!=null?[[span+' '+_nowY,_rub(cur.da),_pct1(sh)],[span+' '+(_nowY-1),_rub(prv.da),_pct1(shP)]]:[];
+      return{val:_pct1(sh),arr:_arrow(dpp),
+        sub:_mln(cur.da)+' из '+_mln(cur.all)+' · '+span+(shP!=null?(' к '+span+' '+(_nowY-1)):(' '+_nowY)),
+        // Сравнение - первым блоком, каналы - вторым (after). «Всего» с процентом НЕ добавляем: 100% там по построению,
+        // информации не несёт, а с округлёнными долями спорит (25,8 + 46,9 + 27,2 = 99,9).
+        tip:shP!=null?_tipAttr(cmp,['изменение','',_ppFmt(dpp)],'',[],_chanRows(cur))
+                     :_tipAttr(_chanRows(cur),null,span+' '+_nowY+' · за прошлый год данных нет')};
+    }
+    const cur=_chanOf(data); // режим 2: период задан - берём срез вкладки как есть
+    if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений'+(_perLbl?' · '+_perLbl:''),tip:_tipAttr([],null,'За выбранный период поступлений нет')};
+    // Сравнения НЕТ сознательно: сдвиг произвольного отрезка на год попадает в другие условия и вводит в заблуждение.
+    return{val:_pct1(cur.da/cur.all),arr:'',
+      sub:_mln(cur.da)+' из '+_mln(cur.all)+(_perLbl?' · '+_perLbl:''),
+      tip:_tipAttr(_chanRows(cur),['всего',_rub(cur.all)],_perLbl)};
   })();
 
   // 7 KPI-карточек (крупные цифры). «Счетов» = ВИДИМОЕ число (скрытые без движения не считаем). Числа совпадают с «Итого Общий итог».
@@ -2193,7 +2259,7 @@ function renderBank(f){
     <div class="kpi-card red"><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div></div>
-    <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
+    <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor};font-size:9px">${runwayHint} ↗</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor};font-size:9px">${kassaHint} ⚙</div></div>
   </div>`;
