@@ -817,9 +817,13 @@ function fmtPct(v){if(typeof v!=='number'||!isFinite(v))return'-';return(v*100).
 //   rows  = [[подпись, значение], ...]   значения уже отформатированы (fmt/fmtPct) вызывающим
 //   total = [подпись, значение]          необязательная итоговая строка под разделителем
 // ⚠ Узел живёт в <body> с position:fixed - в скроллящемся теле таблицы подсказка обрезалась бы по overflow.
+function _tipData(rows,total,title,foot){return JSON.stringify({rows:rows||[],total:total||null,title:title||'',foot:foot||[]});}
 function _tipAttr(rows,total,title,foot){
-  return `data-tip="${_htmlEsc(JSON.stringify({rows:rows||[],total:total||null,title:title||'',foot:foot||[]}))}"`; // JSON в двойных кавычках: _htmlEsc гасит " -> &quot;, getAttribute вернёт исходный JSON
+  return `data-tip="${_htmlEsc(_tipData(rows,total,title,foot))}"`; // JSON в двойных кавычках: _htmlEsc гасит " -> &quot;, getAttribute вернёт исходный JSON
 }
+// Для элементов, у которых подсказка меняется ПОСЛЕ рендера (редактор планов: «⤓ заполнить фактом», undo).
+// Без него такие места ставили бы нативный title поверх компонента, и подсказка выглядела бы по-разному до и после нажатия кнопки.
+function _tipSet(el,rows,total,title,foot){if(el)el.setAttribute('data-tip',_tipData(rows,total,title,foot));}
 function _tipHide(){const t=document.getElementById('uiTip');if(t)t.style.display='none';}
 function _tipShow(anchor,d){
   if(!anchor||!d)return;
@@ -6827,32 +6831,38 @@ function renderPlanFact(f){
     const hasP=planM!=null; // база, равная НУЛЮ, - валидный лимит (остаток = −факт), а не «плана нет»
     const pst=(main||!src||src==='utv')?'':';font-style:italic;opacity:.72'; // flat - сводная: обе пары стоят рядом и подписаны заголовками группы, различать начертанием больше не нужно // база - текущий план (правится свободно) или смешанная: приглушаем, чтобы главбух не принял за лимит-обязательство
     const srcLbl=src==='utv'?'утверждено':src==='prog'?'текущий план (не утверждён)':src==='mix'?'смешанная (утв. + текущий)':'-'; // источник по РЕАЛЬНО давшей число стороне (см. #2)
-    const baseNote=' База: '+srcLbl+' · '+remPerLbl+'.';
-    // отклонение в подсказке - из ТЕХ ЖЕ pM/fM, что дали остаток (иначе подсказка спорила бы с числом: остаток считается только за месяцы с базой)
-    const devNote=(planM==null)?'':(()=>{const dv=(factM)-(planM);const pc=Math.abs(planM)>0.0001?' ('+((dv<0?'−':'+')+fmtPct(Math.abs(dv)/Math.abs(planM)))+')':'';
-      return ' · Отклонение: '+(dv<0?'−':'+')+fmt(Math.abs(dv))+pc+'.';})();
+    // Подсказка - единым компонентом: «база − факт = остаток» столбиком, отклонение отдельной строкой под итогом.
+    // ⚠ Отклонение считается из ТЕХ ЖЕ planM/factM, что дали остаток - иначе подсказка спорила бы с числом ячейки
+    //    (остаток считается только за месяцы, где база ЕСТЬ, и от полного периода он отличается).
+    const mkTip=(head,totLbl,totV,note)=>{
+      const rows=[['база',fmt(hasP?planM:0)],['факт',fmt(factM)]];
+      const foot=[];
+      if(planM!=null){const dv=factM-planM,pc=Math.abs(planM)>0.0001?((dv<0?'−':'+')+fmtPct(Math.abs(dv)/Math.abs(planM))):'';
+        foot.push(['отклонение',(dv<0?'−':'+')+fmt(Math.abs(dv)),pc]);}
+      if(note)foot.push([note,'']);
+      return _tipAttr(rows,[totLbl,totV],head+' за '+remPerLbl+' · база: '+srcLbl,foot);
+    };
     if(kind==='vyv'){ // вывод прибыли (127) - без светофора, нейтрально (остаток показываем серым)
       if(!hasP)return remDashL(lbl,main);
-      return`<td style="${td};text-align:right;color:var(--text2)${FW}${pst}${CD}"${DL}${NOCLK} title="Остаток (вывод, нейтрально) за ${remPerLbl}: база ${fmt(planM)} − факт ${fmt(factM)}.${baseNote}${devNote}">${fmt(planM-factM)}</td>`;
+      return`<td style="${td};text-align:right;color:var(--text2)${FW}${pst}${CD}"${DL}${NOCLK} ${mkTip('Остаток (вывод, нейтрально)','остаток',fmt(planM-factM))}>${fmt(planM-factM)}</td>`;
     }
     if(kind==='inc'){ // доход - ЗЕРКАЛЬНЫЙ светофор: «осталось собрать до плана»; недобор красный, выполнение зелёное
       if(!hasP)return remDashL(lbl,main); // без цели недобор не измерить
       const rem=planM-factM; // >0 недобор, ≤0 план выполнен/перевыполнен
-      const tip=`Осталось собрать за ${remPerLbl}: база ${fmt(planM)} − факт ${fmt(factM)}.${baseNote}${devNote}`;
-      if(rem>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} title="${tip} Недобор.">${fmt(rem)}</td>`;
-      return`<td style="${td};text-align:right;color:var(--income);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} title="${tip} План выполнен.">${rem<-0.0001?'+'+fmt(-rem):fmt(0)}</td>`;
+      if(rem>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Осталось собрать','осталось',fmt(rem),'недобор')}>${fmt(rem)}</td>`;
+      const incTxt=rem<-0.0001?'+'+fmt(-rem):fmt(0);
+      return`<td style="${td};text-align:right;color:var(--income);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Осталось собрать','осталось',incTxt,'план выполнен')}>${incTxt}</td>`;
     }
-    const tipBase=`Остаток лимита за ${remPerLbl}: база ${fmt(hasP?planM:0)} − факт ${fmt(factM)}.${baseNote}${devNote}`;
     if(!hasP){ // базы за период нет
-      if(Math.abs(factM)>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} title="${tipBase}">нет плана</td>`;
+      if(Math.abs(factM)>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Остаток лимита','остаток','-','плана за период нет')}>нет плана</td>`;
       return remDashL(lbl,main); // ни базы, ни факта
     }
     const rem=planM-factM;
-    let col,txt,tip=tipBase;
-    if(rem<-0.0001){col='var(--outcome)';txt='−'+fmt(Math.abs(rem));}
-    else if(Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=0.20){col='var(--orange)';txt=fmt(rem);tip=tipBase+' · лимит на исходе';} // guard: при базе 0 деление дало бы Infinity
+    let col,txt,note='';
+    if(rem<-0.0001){col='var(--outcome)';txt='−'+fmt(Math.abs(rem));note='перерасход';}
+    else if(Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=0.20){col='var(--orange)';txt=fmt(rem);note='лимит на исходе';} // guard: при базе 0 деление дало бы Infinity
     else{col='var(--income)';txt=fmt(rem);}
-    return`<td style="${td};text-align:right;color:${col};${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} title="${tip}">${txt}</td>`;
+    return`<td style="${td};text-align:right;color:${col};${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Остаток лимита','остаток',txt,note)}>${txt}</td>`;
   };
   // ── «Ответственный»: тот, кто стоит при ПЛАНИРОВАНИИ (_planOwners по ключу «направление||подстатья», как в редакторе планов) ──
   // ⚠ _planOwners ключуется ПОДСТАТЬЁЙ, а строка в режиме «Статья» - это c3-группа (см. CLAUDE.md), поэтому статья агрегирует
@@ -6894,17 +6904,19 @@ function renderPlanFact(f){
     // Стрелка выходит за правый край числа и в выравнивании не участвует - её наличие или отсутствие число не двигает.
     const planNum=(html,mark)=>`<span style="display:flex;align-items:baseline;width:100%"><span style="flex:1 1 auto;text-align:right">${html}</span><span style="flex:0 0 14px;text-align:right;font-size:9px;font-weight:400;line-height:1" aria-hidden="true">${mark||''}</span></span>`;
     const planMark=(()=>{
-      if(_sk==='net'||_sk==='vyv')return{ar:'',tip:''}; // ЧП не планируется напрямую (она разность доходов и расходов), её «изменение» лишь отражает строки выше; вывод 127 - по тому же основанию, что у них пустые остаток и статус
-      if(base==null||plan==null||Math.abs(plan-base)<=0.005)return{ar:'',tip:''};
+      const _plain=_tipAttr([],null,'Текущий план (рабочий, правится свободно)'); // без пересмотра - только пояснение, без чисел
+      if(_sk==='net'||_sk==='vyv')return{ar:'',tip:_plain}; // ЧП не планируется напрямую (она разность доходов и расходов), её «изменение» лишь отражает строки выше; вывод 127 - по тому же основанию, что у них пустые остаток и статус
+      if(base==null||plan==null||Math.abs(plan-base)<=0.005)return{ar:'',tip:_plain};
       const dm=Math.abs(plan)-Math.abs(base); // + план вырос по модулю, − снизился
-      if(Math.abs(dm)<=0.005)return{ar:'',tip:''}; // модули совпали (напр. смена знака) - «изменения» не показываем
+      if(Math.abs(dm)<=0.005)return{ar:'',tip:_plain}; // модули совпали (напр. смена знака) - «изменения» не показываем
       // ОСЛАБЛЕНИЕ (расход вырос / доход снизился) - синий; УЖЕСТОЧЕНИЕ (расход снизился / доход вырос) - приглушённый сине-серый.
       // Красный и зелёный НЕ берём: они заняты отношением ФАКТА к плану (перерасход/экономия/лимит на исходе), а стрелка - про отношение ПЛАНА к плану.
       // Это другая ось, и один цвет на два смысла в одной строке путал бы. Фиолетовый в проекте вычищен осознанно - не возвращать.
       const loose=revenue?(dm<0):(dm>0);
       const shB=revenue?base:-base,shP=revenue?plan:-plan; // в тултипе - те же числа, что видны в ячейках
       return{ar:`<span style="color:${loose?'#2563eb':'#7b8ba3'}">${dm>0?'↑':'↓'}</span>`,
-        tip:` План ${loose?'ослаблен':'ужесточён'} после утверждения: ${fmt(shB)} → ${fmt(shP)} (${dm>0?'+':'−'}${fmt(Math.abs(dm))}).`};
+        tip:_tipAttr([['утверждено',fmt(shB)],['текущий план',fmt(shP)]],['изменение',(dm>0?'+':'−')+fmt(Math.abs(dm))],
+          'План '+(loose?'ослаблен':'ужесточён')+' после утверждения',[['текущий план правится свободно','']])};
     })();
     // ОДИН расчёт на бейдж и на подсветку «Факта» - та же база (base), тот же порог. ЧП/вывод 127 - без статуса и, следовательно, без подсветки.
     // Статус - от ДЕВБАЗЫ периода (заморожен → утверждённое, иначе текущий план), а НЕ от одного утверждённого:
@@ -6922,12 +6934,12 @@ function renderPlanFact(f){
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${esc(label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
-      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" title="Утверждённый (замороженный) план">${planNum(base!=null?fmt(revenue?base:-base):dash,'')}</td>
-      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" title="Текущий план (рабочий, правится свободно).${planMark.tip}">${planNum(plan!=null?fmt(revenue?plan:-plan):dash,planMark.ar)}</td>
+      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr([],null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):dash,'')}</td>
+      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" ${planMark.tip}>${planNum(plan!=null?fmt(revenue?plan:-plan):dash,planMark.ar)}</td>
       <td style="${td};text-align:right;border-left:1px solid var(--border);border-right:1px solid var(--border);font-weight:${numW}${factCol}${opts.signColor?';color:'+(fact>=-0.0001?'var(--income)':'var(--outcome)'):''}${kind?';cursor:pointer':''}" data-label="Факт"${kind?' title="Клик - операции за период по этой строке"':''}>${fmt(revenue?fact:-fact)}</td>
       ${opts.rem?remTd(opts.rem.u.pM,opts.rem.u.fM,true,opts.rem.u.kind,opts.rem.u.src,'Остаток к утв.',true,numW):remDashL('Остаток к утв.')}
       ${opts.rem?remTd(opts.rem.t.pM,opts.rem.t.fM,true,opts.rem.t.kind,opts.rem.t.src,'Остаток к тек.',true,numW):remDashL('Остаток к тек.')}
-      <td style="${td};text-align:left;cursor:default" onclick="event.stopPropagation()" data-label="Статус"${st?` title="Исполнение за ${remPerLbl} от ${stSrc}: база ${fmt(_rd.pM)} − факт ${fmt(_rd.fM)}."`:''}>${statusHtml}</td>
+      <td style="${td};text-align:left;cursor:default" onclick="event.stopPropagation()" data-label="Статус"${st?' '+_tipAttr([['база',fmt(_rd.pM)],['факт',fmt(_rd.fM)]],['отклонение',(_rd.fM-_rd.pM<0?'−':'+')+fmt(Math.abs(_rd.fM-_rd.pM))],'Исполнение за '+remPerLbl+' от '+stSrc):''}>${statusHtml}</td>
     </tr>`;
   };
   const secRow=t=>`<tr><td colspan="8" style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
@@ -7108,10 +7120,14 @@ function renderPlanFact(f){
       if(kind==='net')col=(fact>=-0.0001)?'var(--income)':'var(--outcome)'; // ЧП - цвет по ЗНАКУ (правило «цвет = знак значения»), не по отклонению
       else if(dv)col=dv.col;
       else if(devBase==null&&fact)col='var(--text2)'; // факт без всякого плана - приглушён
-      const tp=[];if(base!=null)tp.push('Утв: '+fmt(base));if(plan!=null)tp.push('Прог: '+fmt(plan));tp.push('Факт: '+fmt(fact));
-      if(closed&&devBase!=null&&Math.abs(devBase)>0.0001&&kind!=='net'&&kind!=='vyv')tp.push('Откл: '+rubSgn(fact-devBase)+' ('+(fact/devBase*100).toFixed(1)+'%) от '+dbLbl); // в тултипе точный % и база - только для закрытого месяца
-      else if(!closed&&kind!=='net'&&kind!=='vyv')tp.push('Месяц не закрыт - отклонение не считается');
-      return `<td style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}" title="${tp.join(' · ')}${click?' · клик - операции месяца':''}"${click?` onclick="${click}"`:''}><div style="color:${col};font-weight:${w};font-size:12px;line-height:1.1;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${subLines(base,plan,dv)}</td>`;
+      // Подсказка ячейки - единый компонент: числа встают в столбик сеткой (в одну строку через « · » разряды не читались).
+      const tp=[];if(base!=null)tp.push(['Утверждено',fmt(base)]);if(plan!=null)tp.push(['Прогноз',fmt(plan)]);tp.push(['Факт',fmt(fact)]);
+      // Отклонение - ИТОГОВОЙ строкой под разделителем: точный % и база показываются только для ЗАКРЫТОГО месяца.
+      const tpDev=(closed&&devBase!=null&&Math.abs(devBase)>0.0001&&kind!=='net'&&kind!=='vyv')?['Отклонение',rubSgn(fact-devBase),(fact/devBase*100).toFixed(1)+'%']:null;
+      const tpFoot=[];
+      if(!closed&&kind!=='net'&&kind!=='vyv')tpFoot.push(['месяц не закрыт - отклонение не считается','']);
+      if(click)tpFoot.push(['клик - операции месяца','']);
+      return `<td style="text-align:right;vertical-align:top;padding:1px 5px;border-bottom:1px solid var(--divider);border-left:1px solid var(--divider);white-space:nowrap${click?';cursor:pointer':''}" ${_tipAttr(tp,tpDev,tpDev?('отклонение от: '+dbLbl):'',tpFoot)}${click?` onclick="${click}"`:''}><div style="color:${col};font-weight:${w};font-size:12px;line-height:1.1;font-family:var(--mono)">${fact?fmt(fact):'·'}</div>${subLines(base,plan,dv)}</td>`;
     };
     const mrow=(label,getBase,getPlan,getFact,kind,bold,tk,code,opts)=>{ // tk/code - расшифровка по клику (tk: inc/exp/vyv); opts.expandable/expanded/child - инлайн-разворот статья→подстатьи
       opts=opts||{};
@@ -9607,18 +9623,18 @@ function _planFillTrFactCore(tr,snapAcc){
   const num=v=>{const n=parseFloat(String(v||'').replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
   const months=[...tr.querySelectorAll('input.plan-val')].filter(i=>i.getAttribute('data-month')!=='0');
   if(!months.length)return {applied:false,kept:0};
-  [...tr.querySelectorAll('input.plan-val')].forEach(i=>snapAcc.push({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,bord:i.style.borderColor,title:i.title}));
+  [...tr.querySelectorAll('input.plan-val')].forEach(i=>snapAcc.push({el:i,val:i.value,auto:i.dataset.auto,color:i.style.color,bg:i.style.background,bord:i.style.borderColor,tip:i.getAttribute('data-tip')})); // tip, а не title: подсказка переехала на компонент (data-tip). borderColor тут же - его в снимках не терять
   let kept=0;
   months.forEach(i=>{
     const f=num(i.getAttribute('data-fact'))||0,cur=num(i.value);
     i.style.background='var(--surface)';i.style.borderColor='var(--border)';
     if(cur!=null){ // введено вручную - НЕ перезаписываем (ни больше, ни меньше факта)
       // маркер расхождения - только когда факт РЕАЛЬНО есть: будущие месяцы (факт 0) не шумят «факт 0,00» под каждой ячейкой
-      if(Math.abs(f)>0.005&&Math.abs(cur-f)>0.005){kept++;i.style.background='#fffdf6';i.style.borderColor='#d9a94d';i.title='План отличается от факта. Факт: '+fmt(f)+' - при необходимости правьте вручную';_planFactHintSet(i,f);}
-      else{i.title='Факт: '+fmt(f);_planFactHintClear(i);}
+      if(Math.abs(f)>0.005&&Math.abs(cur-f)>0.005){kept++;i.style.background='#fffdf6';i.style.borderColor='#d9a94d';_tipSet(i,[['факт',fmt(f)],['введено',fmt(cur)]],null,'План отличается от факта',[['при необходимости правьте вручную','']]);_planFactHintSet(i,f);}
+      else{_tipSet(i,[['факт',fmt(f)]]);_planFactHintClear(i);}
       return;
     }
-    i.value=_planFmtNum(f);i.title='Факт: '+fmt(f);_planFactHintClear(i); // ПУСТО - заполняем фактом (месяцы без факта → 0)
+    i.value=_planFmtNum(f);_tipSet(i,[['факт',fmt(f)]]);_planFactHintClear(i); // ПУСТО - заполняем фактом (месяцы без факта → 0)
   });
   const m1=tr.querySelector('input.plan-val[data-month="1"]'); if(m1&&window.planRowYear)window.planRowYear(m1);
   return {applied:true,kept};
@@ -9695,7 +9711,7 @@ function _planFillToast(msg){
 }
 window.planUndoFill=function(){
   const s=window._planFillUndo; if(!s||!s.snap){_planFillToastHide();return;}
-  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';o.el.style.background=o.bg||'';o.el.style.borderColor=o.bord||'';if(o.title!=null)o.el.title=o.title;_planFactHintClear(o.el);});
+  s.snap.forEach(o=>{if(!o.el||!o.el.isConnected)return;o.el.value=o.val;if(o.auto!=null)o.el.dataset.auto=o.auto;o.el.style.color=o.color||'';o.el.style.background=o.bg||'';o.el.style.borderColor=o.bord||'';if(o.tip!=null)o.el.setAttribute('data-tip',o.tip);else o.el.removeAttribute('data-tip');_planFactHintClear(o.el);});
   const first=s.snap.find(o=>o.el&&o.el.isConnected); if(first&&window.planSumFromEl)planSumFromEl(first.el);
   window._planFillUndo=null; window._planDirty=true; _planFillToastHide();
 };
@@ -9813,13 +9829,13 @@ function _planRenderMatrix(){
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,rl,code,i+1));
     const moFacts=[...Array(12)].map((_,i)=>factOf(rdir,rl,code,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" data-rb="${revM(rdir,i+1)}" data-nb="${netM(rdir,i+1)}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" title="Факт:${fmt(fv)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" data-rb="${revM(rdir,i+1)}" data-nb="${netM(rdir,i+1)}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
     const yrExpl=cellVal(rdir,rl,code,0); // явный годовой план (если задан)
     const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
     const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
     const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
     const yrFact=factYr(rdir,rl,code);
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" data-rb="${revYrD(rdir)}" data-nb="${netYrD(rdir)}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" title="${yrIsAuto?'Авто: сумма месяцев. Факт за год:'+fmt(yrFact):'Годовой план. Факт за год:'+fmt(yrFact)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" data-rb="${revYrD(rdir)}" data-nb="${netYrD(rdir)}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт за год',fmt(yrFact)]],null,yrIsAuto?'Авто: сумма месяцев':'Годовой план')} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     const isExp=rl!=='revenue'; // ответственный/примечание - за расходами И доходами; не для строки «Выручка всего»
     const owner=isExp?(_planOwners[_ownerKey(rdir,code)]||''):'';
     const note=isExp?(_planNotes[_ownerKey(rdir,code)]||''):'';
@@ -9874,11 +9890,11 @@ function _planRenderMatrix(){
   const empRowHtml=(rdir,code,side,label,key)=>{
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,level,code,i+1,side));
     const moFacts=[...Array(12)].map((_,i)=>factSideOf(rdir,code,side,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" title="Факт:${fmt(fv)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
     const yrExpl=cellVal(rdir,level,code,0,side);
     const autoY=moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0);
     const yrIsAuto=(yrExpl===''); const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):''); const yrFact=factSideYr(rdir,code,side);
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" title="${yrIsAuto?'Авто: сумма месяцев. Факт за год:'+fmt(yrFact):'Годовой план. Факт за год:'+fmt(yrFact)}" style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт за год',fmt(yrFact)]],null,yrIsAuto?'Авто: сумма месяцев':'Годовой план')} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
     const rowEmpty=moVals.every(v=>!_n0(v))&&!_n0(yrExpl)&&moFacts.every(fv=>Math.abs(_n0(fv))<=0.005)&&Math.abs(_n0(yrFact))<=0.005;
     return `<tr${rowEmpty?' class="plan-row-empty"':''} data-code="${esc(code)}" data-level="${level}" data-dir="${esc(rdir)}" data-side="${esc(side)}" data-key="${esc(level+'|'+code)}">
       <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">${isRentCode(code)?'🏢':'👤'}</span>${esc(label)}</td>
