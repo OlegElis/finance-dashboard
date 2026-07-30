@@ -2173,10 +2173,15 @@ function renderBank(f){
     else if(['нет','false','0','-'].includes(v))_accFns.set(acc,0);
   });
   // Разложение набора строк на каналы. Единственное место правила - bankAccChannel (сначала ФНС, потом имя).
+  // ⚠ Ввод начального остатка (`isOpeningBalance`) в базу НЕ входит - это не входящий поток, а стартовый остаток счёта,
+  //   заведённый технически поступлением. Правило проекта «120_Ввод начального остатка - НЕ выручка НИГДЕ» действует и здесь:
+  //   иначе разовая простановка остатков (01.04.2024) задирает и базу, и канал «оформлено», а метрика структуры потока врёт.
+  const _isOpenBal=r=>isOpeningBalance(String(r[COL.ARTICLE_NAME]||''))||isOpeningBalance(String(r[COL.ARTICLE_CODE]||''));
   const _chanOf=rows=>{
     const c={da:0,card:0,cash:0,unknown:0};
     rows.forEach(r=>{
       if(isMoveRow(r))return;                       // перемещения в базу не входят
+      if(_isOpenBal(r))return;                      // стартовый остаток - не поток
       const inc=parseNum(r[COL.INCOME]); if(!inc)return;
       const acc=String(r[COL.ACCOUNT]||'').trim();
       const ch=bankAccChannel(acc,_accFns.has(acc)?_accFns.get(acc):-1);
@@ -2208,17 +2213,25 @@ function renderBank(f){
   };
   const _chanRows=c=>[['оформлено',_rub(c.da),_pct1(c.da/c.all)],['карты физлиц',_rub(c.card),_pct1(c.card/c.all)],
     ['наличные',_rub(c.cash),_pct1(c.cash/c.all)],['прочие расчёты',_rub(c.unknown),_pct1(c.unknown/c.all)]];
-  // Режим 1 - период НЕ задан. Пресет «Этот год» задаёт ровно то же окно (1 января - сегодня), поэтому он тоже режим 1:
-  // сравнивать есть с чем, и прятать сравнение только из-за того, что окно выбрано кнопкой, было бы формализмом.
-  const _mode1=(!f.dateFrom&&!f.dateTo)||f.preset==='year';
   const _nowD=new Date(),_nowY=_nowD.getFullYear(),_nowM=_nowD.getMonth()+1;
   // Последний месяц текущего года С ПОСТУПЛЕНИЯМИ. Если сегодня 1 августа, а данные кончились в июле,
   // окно «янв-авг» тянуло бы долю пустым месяцем, а сравнение шло бы с ПОЛНЫМ «янв-авг» прошлого года.
   let _mLast=0;
-  _cardRows.forEach(r=>{if(isMoveRow(r))return;if(!parseNum(r[COL.INCOME]))return;
+  _cardRows.forEach(r=>{if(isMoveRow(r)||_isOpenBal(r))return;if(!parseNum(r[COL.INCOME]))return;
     const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
     if(d&&d.getFullYear()===_nowY){const mm=d.getMonth()+1;if(mm<=_nowM&&mm>_mLast)_mLast=mm;}});
   if(!_mLast)_mLast=_nowM;
+  // ═══ Когда показываем сравнение (режим 1) ═══
+  // Сравнение корректно там, где обе стороны лежат на ОДИНАКОВОЙ базе:
+  //   период не задан        → текущий год по отрезку янв-<последний месяц с данными> к тому же отрезку год назад
+  //   пресет «Этот год»      → то же самое окно (1 января - сегодня), прятать сравнение из-за способа выбора было бы формализмом
+  //   пресет «Прошлый год»   → полный год к полному: базы одинаковые, частичных месяцев нет
+  // Произвольный отрезок сравнения НЕ получает: сдвиг на год попадает в другие условия и вводит в заблуждение.
+  const _cmpWin=(f.preset==='prev_year')?{y:_nowY-1,m1:1,m2:12}
+    :((!f.dateFrom&&!f.dateTo)||f.preset==='year')?{y:_nowY,m1:1,m2:_mLast}:null;
+  const _mode1=!!_cmpWin;
+  // Подпись отрезка: полный год - просто годом, часть года - месяцами («янв-июл 2026»)
+  const _spanLbl=(y,m1,m2)=>(m1===1&&m2===12)?String(y):(_MONA[m1-1]+'-'+_MONA[m2-1]+' '+y);
   const _perLbl=(()=>{ // подпись выбранного периода: режимы обязаны различаться с одного взгляда
     const dm=iso=>{const p=String(iso||'').split('-');return p.length===3?p[2]+'.'+p[1]:'';};
     const yr=iso=>String(iso||'').slice(0,4);
@@ -2231,18 +2244,21 @@ function renderBank(f){
     // Фильтр ФНС на карточку влиять не должен: под «Да» она всегда показывала бы 100%.
     if(f.fns)return{val:'-',arr:'',sub:'фильтр ФНС активен',tip:_tipAttr([],null,'Фильтр ФНС активен: доля считается по всем счетам, снимите фильтр')};
     if(_mode1){
-      const cur=_chanOf(_winRows(_nowY,1,_mLast)),prv=_chanOf(_winRows(_nowY-1,1,_mLast));
-      if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений за '+_nowY,tip:_tipAttr([],null,'За '+_nowY+' год поступлений нет - доля не определена')};
-      const span=_MONA[0]+'-'+_MONA[_mLast-1];
+      const W=_cmpWin,full=(W.m1===1&&W.m2===12);
+      const cur=_chanOf(_winRows(W.y,W.m1,W.m2)),prv=_chanOf(_winRows(W.y-1,W.m1,W.m2));
+      if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений за '+_spanLbl(W.y,W.m1,W.m2),tip:_tipAttr([],null,'За '+_spanLbl(W.y,W.m1,W.m2)+' поступлений нет - доля не определена')};
+      const lblCur=_spanLbl(W.y,W.m1,W.m2),lblPrv=_spanLbl(W.y-1,W.m1,W.m2);
       const sh=cur.da/cur.all,shP=prv.all?prv.da/prv.all:null;
       const dpp=shP!=null?(sh-shP)*100:null;
-      const cmp=shP!=null?[[span+' '+_nowY,_rub(cur.da),_pct1(sh)],[span+' '+(_nowY-1),_rub(prv.da),_pct1(shP)]]:[];
+      const cmp=shP!=null?[[lblCur,_rub(cur.da),_pct1(sh)],[lblPrv,_rub(prv.da),_pct1(shP)]]:[];
+      // Подпись: у части года отрезок не повторяем дважды («янв-июл к янв-июл 2025»), у полного года хватает самих годов («2025 к 2024»)
+      const subCmp=shP==null?(' · '+lblCur):full?(' · '+W.y+' к '+(W.y-1)):(' · '+_MONA[W.m1-1]+'-'+_MONA[W.m2-1]+' к '+lblPrv);
       return{val:_pct1(sh),arr:_arrow(dpp),
-        sub:_mln(cur.da)+' из '+_mln(cur.all)+' · '+span+(shP!=null?(' к '+span+' '+(_nowY-1)):(' '+_nowY)),
+        sub:_mln(cur.da)+' из '+_mln(cur.all)+subCmp,
         // Сравнение - первым блоком, каналы - вторым (after). «Всего» с процентом НЕ добавляем: 100% там по построению,
         // информации не несёт, а с округлёнными долями спорит (25,8 + 46,9 + 27,2 = 99,9).
         tip:shP!=null?_tipAttr(cmp,['изменение','',_ppFmt(dpp)],'',[],_chanRows(cur))
-                     :_tipAttr(_chanRows(cur),null,span+' '+_nowY+' · за прошлый год данных нет')};
+                     :_tipAttr(_chanRows(cur),null,lblCur+' · за прошлый год данных нет')};
     }
     const cur=_chanOf(data); // режим 2: период задан - берём срез вкладки как есть
     if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений'+(_perLbl?' · '+_perLbl:''),tip:_tipAttr([],null,'За выбранный период поступлений нет')};
