@@ -131,6 +131,19 @@
   .kpi-value.positive{color:var(--income);}
   .kpi-value.negative{color:var(--outcome);}
   .kpi-sub{font-size:10px;color:var(--text3);}
+  /* ЕДИНАЯ подсказка проекта (_tipShow / data-tip). Вид полосы «ИТОГО ОБЩИЙ ИТОГ»: тёмный фон, белый текст, числа моно.
+     ⚠ position:fixed и узел в <body> - тела таблиц скроллятся с overflow, внутри них подсказка обрезалась бы (та же ловушка, что была с дропдаунами фильтров).
+     ⚠ Числа выровнены СЕТКОЙ (две колонки), а не padStart: подпись рисуется пропорциональным шрифтом и столбик не держался. */
+  #uiTip{position:fixed;z-index:100003;/* выше всех оверлеев проекта (потолок был 100002): подсказка обязана быть поверх модалов, иначе окажется под ними */display:none;background:#2b3145;color:#fff;border-radius:5px;box-shadow:0 6px 20px rgba(0,0,0,.30);padding:7px 11px;font-family:var(--sans);font-size:11.5px;line-height:1.5;pointer-events:none;max-width:min(92vw,440px);}
+  #uiTip .uit-title{font-size:10.5px;color:#c7ccd4;margin-bottom:3px;white-space:nowrap;}
+  #uiTip .uit-grid{display:grid;grid-template-columns:auto auto;column-gap:16px;align-items:baseline;}
+  #uiTip .uit-grid.uit-3{grid-template-columns:auto auto auto;} /* третья колонка - например доли в процентах */
+  #uiTip .uit-l{white-space:nowrap;color:#e7eaf0;}
+  #uiTip .uit-v{font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;color:#fff;}
+  #uiTip .uit-sep{grid-column:1/-1;height:1px;background:rgba(255,255,255,.22);margin:4px 0;}
+  #uiTip .uit-tot{font-weight:700;}
+  #uiTip .uit-mut{color:#aeb6c4;} /* строки ПОД итогом: то, что в базу расчёта не входит (нейтрально, не спорит с итогом) */
+  @media print{#uiTip{display:none!important;}} /* на печати подсказок нет по определению */
 
   /* ── Tables ── */
   .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);}
@@ -211,6 +224,7 @@
   .chart-title{font-family:var(--head);font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;}
   .chart-wrap{position:relative;height:160px;}
   .chart-wrap canvas{cursor:pointer;}
+  #chartMonth{cursor:default;} /* дневной график Банка не кликается (только подсказка) - курсор не должен обещать переход */
   .chart-controls{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
   .chart-toggle{display:flex;background:var(--surface2);border-radius:6px;overflow:hidden;border:1px solid var(--border);}
   .chart-toggle button{padding:4px 12px;border:none;background:transparent;cursor:pointer;font-family:var(--sans);font-size:11px;font-weight:500;color:var(--text2);transition:all 0.15s;}
@@ -779,8 +793,64 @@ function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='
 function _htmlEsc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 // Текущий пользователь - админ? (ADMIN_EMAIL). Для UI-гейтинга и решения «писать ли общие config/*»
 function _isAdmin(){try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}}
-function fmt(v){if(typeof v!=='number'||!isFinite(v))return'-';return v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});} // !isFinite гасит и NaN, и Infinity (x/0) - иначе в отчёте появлялось «∞»
+// Гашение МАТЕМАТИЧЕСКОГО НУЛЯ. Сумма 5212 перемещений даёт −1,49e-8: значение верное, врёт только знак -
+// форматтер брал его у хвоста и печатал «-0,00». Порог 0.005 = половина копейки, ниже точности отображения,
+// поэтому реальные значения знак сохраняют. Ставится в ФОРМАТТЕРЫ, а не в расчёты: суммы остаются точными.
+function _z0(v){return(typeof v==='number'&&isFinite(v)&&Math.abs(v)<0.005)?0:v;}
+function fmt(v){if(typeof v!=='number'||!isFinite(v))return'-';return _z0(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});} // !isFinite гасит и NaN, и Infinity (x/0) - иначе в отчёте появлялось «∞»
 function fmtPct(v){if(typeof v!=='number'||!isFinite(v))return'-';return(v*100).toFixed(1)+'%';}
+
+// ═══ ЕДИНАЯ ПОДСКАЗКА ПРОЕКТА ═══
+// Один компонент на весь дашборд вместо нативного title: тот рисуется системным шрифтом, из CSS не управляется,
+// и выровнять в нём числа в столбик невозможно (пробел и цифра разной ширины). Здесь выравнивание держит СЕТКА.
+// Разметка: `_tipAttr(rows,total,title)` в любой тег -> единый делегированный слушатель показывает подсказку.
+//   rows  = [[подпись, значение], ...]   значения уже отформатированы (fmt/fmtPct) вызывающим
+//   total = [подпись, значение]          необязательная итоговая строка под разделителем
+// ⚠ Узел живёт в <body> с position:fixed - в скроллящемся теле таблицы подсказка обрезалась бы по overflow.
+function _tipAttr(rows,total,title,foot){
+  return `data-tip="${_htmlEsc(JSON.stringify({rows:rows||[],total:total||null,title:title||'',foot:foot||[]}))}"`; // JSON в двойных кавычках: _htmlEsc гасит " -> &quot;, getAttribute вернёт исходный JSON
+}
+function _tipHide(){const t=document.getElementById('uiTip');if(t)t.style.display='none';}
+function _tipShow(anchor,d){
+  if(!anchor||!d)return;
+  let t=document.getElementById('uiTip');
+  if(!t){t=document.createElement('div');t.id='uiTip';document.body.appendChild(t);}
+  const cell=(cls,v)=>`<div class="${cls}">${_htmlEsc(v)}</div>`;
+  const all=(d.rows||[]).concat(d.total?[d.total]:[],d.foot||[]);
+  const cols=Math.max(2,...all.map(r=>r.length)); // строка может нести 3-ю колонку (например проценты) - тогда сетка трёхколоночная
+  const line=(r,ext)=>{const c=ext?' uit-'+ext:'';return cell('uit-l'+c,r[0])+cell('uit-v'+c,r[1])+(cols>2?cell('uit-v'+c,r[2]==null?'':r[2]):'');};
+  const rows=(d.rows||[]).map(r=>line(r,'')).join('');
+  const tot=d.total?`<div class="uit-sep"></div>`+line(d.total,'tot'):'';
+  const foot=(d.foot||[]).map(r=>line(r,'mut')).join(''); // под итогом: то, что в базу не входит - показываем, но в сумму не берём
+  t.innerHTML=(d.title?`<div class="uit-title">${_htmlEsc(d.title)}</div>`:'')+`<div class="uit-grid${cols>2?' uit-3':''}">${rows}${tot}${foot}</div>`;
+  t.style.display='block';t.style.left='0px';t.style.top='0px'; // сброс позиции ДО замера: иначе прежние координаты сжимают блок у края окна
+  const r=anchor.getBoundingClientRect(),b=t.getBoundingClientRect(),M=8;
+  let x=r.left,y=r.bottom+6;
+  if(x+b.width>window.innerWidth-M)x=Math.max(M,window.innerWidth-M-b.width); // справа места нет - разворачиваем внутрь
+  if(y+b.height>window.innerHeight-M)y=Math.max(M,r.top-6-b.height);          // снизу места нет - показываем над элементом
+  t.style.left=x+'px';t.style.top=y+'px';
+}
+(function(){ // делегирование: подсказки описаны атрибутом, поэтому переживают любой ре-рендер таблиц (свои слушатели пришлось бы навешивать заново)
+  const load=el=>{try{return JSON.parse(el.getAttribute('data-tip'));}catch(e){return null;}};
+  const at=e=>{const t=e.target;return(t&&t.closest)?t.closest('[data-tip]'):null;};
+  let tTimer=null;
+  document.addEventListener('pointerover',e=>{
+    if(e.pointerType==='touch')return; // тач - по тапу ниже: на нём нет «ухода курсора», подсказка залипла бы
+    const el=at(e);const d=el&&load(el);
+    if(d)_tipShow(el,d);else _tipHide();
+  },true);
+  document.addEventListener('touchstart',e=>{
+    clearTimeout(tTimer);
+    const el=at(e);const d=el&&load(el);
+    if(!d){_tipHide();return;}
+    _tipShow(el,d);
+    tTimer=setTimeout(_tipHide,4000); // страховка от залипания на тач-устройствах
+  },{passive:true});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')_tipHide();});
+  window.addEventListener('scroll',_tipHide,true); // capture: скроллятся ВНУТРЕННИЕ контейнеры (.table-scroll, тела карточек), их события до window не всплывают
+  window.addEventListener('beforeprint',_tipHide);
+  window.addEventListener('blur',_tipHide);
+})();
 // Перемещение между своими счетами. Уход записан как ПОСТУПЛЕНИЕ СО ЗНАКОМ МИНУС, поэтому в общем ряду «Поступления»
 // зелёные столбики уходили вниз. Выносим в отдельный ряд - проблема снимается по построению, а не подавляется.
 const BANK_MOVE_COLOR='#a86b1a'; // тёмный янтарь. НЕ брать --orange (#e8862b) - им нарисована линия «Остаток ДС» на том же графике и светофор остатка в таблице
@@ -789,7 +859,32 @@ function isMoveRow(r){return String(r[COL.TYPE]||'').trim().toLowerCase()==='п�
 // равно (inc'−out'+mov), где штрих - только не-перемещения, а mov - чистое сальдо перемещений. Поэтому «Остаток ДС» не меняется.
 function bankSplit(row){const i=parseNum(row[COL.INCOME]),o=Math.abs(parseNum(row[COL.OUTCOME]));
   return isMoveRow(row)?{inc:0,out:0,mov:i-o}:{inc:i,out:o,mov:0};}
-function numClass(v){if(typeof v!=='number')return'';return v>0?'num-positive':v<0?'num-negative':'';}
+// Канал поступлений счёта. Возвращает: 'da' | 'cash' | 'card' | 'unknown'.
+// ⚠ ЕДИНСТВЕННОЕ место правила - не размазывать разбор имени по коду.
+// ⚠ ПОРЯДОК: сначала ФНС, потом имя. ФНС=Да → 'da' СРАЗУ, имя не смотрим: у р/с ООО и ИП канал по названию
+//    не определяется в принципе, и без этого выхода весь оформленный контур уехал бы в 'unknown'.
+//    Второе следствие того же порядка: «оформлено» в подсказке сходится с числителем карточки (Σ поступлений ФНС=Да).
+// ⚠ 'unknown' = «ФНС не Да, и по имени канал НЕ РАСПОЗНАН» - это неизвестный канал, а не «прочий вид счёта».
+//    Раньше значение звалось 'other', и два разных смысла («не касса и не карта» / «правила нет») сливались в одно слово.
+// ⚠ Правило ХРУПКОЕ: канал берётся из НАЗВАНИЯ счёта. Заведут «Касса Иванова» - попадёт в наличные и никто не заметит.
+//    Поэтому 'unknown' исключается из базы и КРИЧИТ в консоль (_bankChannelWarn). На будущее правильно - отдельный
+//    столбец-признак канала в источнике, а не разбор имени.
+// ФНС=Нет и ФНС неизвестен (-1) классифицируются одинаково - как в своде, где «без признака» лежит в «ДС до налогового оформления».
+function bankAccChannel(name,fns){
+  if(fns===1)return'da';
+  const n=String(name||'');
+  if(/карт[а-яё]*\s*фл/i.test(n))return'card'; // ⚠ [а-яё], а НЕ \w: \w в JS без флага u кириллицу не матчит, и «Карта ФЛ» уезжала в unknown
+  if(/касс/i.test(n))return'cash';
+  return'unknown';
+}
+const _bankChannelWarned=new Set(); // предупреждаем по одному разу на счёт: renderBank зовётся на каждый фильтр
+function _bankChannelWarn(name,inc){
+  const k=String(name||'');
+  if(_bankChannelWarned.has(k))return;
+  _bankChannelWarned.add(k);
+  console.warn('[Банк] Счёт не распознан как канал (ушёл в «прочее»), проверьте название или заведите признак в источнике:',k,'· поступления:',fmt(inc||0));
+}
+function numClass(v){if(typeof v!=='number')return'';v=_z0(v);return v>0?'num-positive':v<0?'num-negative':'';} // _z0 и здесь: иначе хвост −1,49e-8 красил математический ноль в красное
 const RU_MONTHS={'января':0,'февраля':1,'марта':2,'апреля':3,'мая':4,'июня':5,'июля':6,'августа':7,'сентября':8,'октября':9,'ноября':10,'декабря':11,'январь':0,'февраль':1,'март':2,'апрель':3,'май':4,'июнь':5,'июль':6,'август':7,'сентябрь':8,'октябрь':9,'ноябрь':10,'декабрь':11};
 function parseDate(v){
   if(!v)return null;
@@ -847,17 +942,6 @@ function bankApplyFilter(){
 }
 
 const dsOpiu=v=>{const d=parseDate(v);return d?`${MONTHS_FULL[d.getMonth()].slice(0,3)} ${d.getFullYear()}`:'';}; // общий форматтер даты ОПиУ (используется многими вкладками)
-// Клик по столбику дня в графике Банка -> операции этого дня в Реестре (таблицы операций на вкладке Банк больше нет).
-// Ставим диапазон дат ДДС Реестра ровно на этот день и переключаемся; renderRegistry применит фильтр.
-window.bankDayToRegistry=function(yr,mo,day){
-  const iso=yr+'-'+String(mo).padStart(2,'0')+'-'+String(day).padStart(2,'0');
-  _tabFilters.registry=_tabFilters.registry||{q:'',sel:{}};
-  _tabFilters.registry.dds=_tabFilters.registry.dds||{years:[],months:[],from:'',to:''};
-  _tabFilters.registry.dds.years=[];_tabFilters.registry.dds.months=[];
-  _tabFilters.registry.dds.from=iso;_tabFilters.registry.dds.to=iso;
-  window._regLimit=500;
-  if(window.switchTab)switchTab('registry');
-};
 window.bankResetAllFilters=function(){
   const b=_tabFilters.bank;
   b.accounts=[];b.activityDirs=[];b.fns='';b.includeFuture=true;b.articles=[];b.subarticles=[];b.finOps=[]; // articles/subarticles/finOps фильтры убраны из UI - гасим на случай старых значений
@@ -1268,7 +1352,7 @@ function renderAudit(){
   const host=document.getElementById('tabAudit');if(!host)return;
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const F=_tabFilters.audit;
-  const fmtR=n=>Math.round(n).toLocaleString('ru-RU');
+  const fmtR=n=>Math.round(_z0(n)).toLocaleString('ru-RU'); // _z0: Math.round(−1e-8) даёт −0 и печатает «-0»
   const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
   if(!Array.isArray(RAW)||!RAW.length){host.innerHTML=`<div style="padding:30px;color:var(--text3)">Нет данных. Подключите Google Sheets.</div>`;return;}
   const years=[...new Set(RAW.map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))].sort((a,b)=>b-a);
@@ -1389,7 +1473,7 @@ window.auditPrintReport=function(){
   const F=_tabFilters.audit;const list=window._auditList||[];
   if(!list.length){alert('Нет данных для отчёта. Откройте «Аудит закупа» и настройте фильтр.');return;}
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  const fmtR=n=>Math.round(n).toLocaleString('ru-RU');
+  const fmtR=n=>Math.round(_z0(n)).toLocaleString('ru-RU'); // _z0: Math.round(−1e-8) даёт −0 и печатает «-0»
   const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
   const dim=F.dim||'cp';
   const total=list.reduce((a,x)=>a+x.sum,0),ops=list.reduce((a,x)=>a+x.n,0);
@@ -1847,6 +1931,8 @@ function bankUpdateDays(yr,mo){
   if(window._bankChartData)window._bankChartData._currentMonth=mo;
   const daysInMonth=new Date(yr,mo,0).getDate();
   const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0),dayMov=new Array(daysInMonth).fill(0);
+  // Валовые перемещения (получено / отдано) - только для подсказки: по всем счетам пара схлопывается в ноль и сальдо немое.
+  const dayMovIn=new Array(daysInMonth).fill(0),dayMovOut=new Array(daysInMonth).fill(0);
   // ⚠ ТОТ ЖЕ срез, что и у месячного графика в bankRebuildChartData: сначала фильтры листа, ПОТОМ выбранный кликом счёт.
   // Без второго шага клик по строке свода менял только месячный график, а дневной оставался на полных данных.
   const _baseUD=window._bankFilteredData||RAW;
@@ -1856,12 +1942,13 @@ function bankUpdateDays(yr,mo){
     if(!d||d.getFullYear()!==yr||d.getMonth()+1!==mo)return;
     const p=bankSplit(row),di=d.getDate()-1;
     dayInc[di]+=p.inc;dayOut[di]+=p.out;dayMov[di]+=p.mov;
+    if(p.mov>0)dayMovIn[di]+=p.mov;else if(p.mov<0)dayMovOut[di]+=p.mov;
   });
   if(!window._bankChartMonth)return;
   const fn=window._bankChartData?._chartDaysFn;
   if(fn){
     window._bankChartMonth.destroy();
-    window._bankChartMonth=new Chart(document.getElementById('chartMonth'),fn(yr,mo,dayInc,dayOut,dayMov));
+    window._bankChartMonth=new Chart(document.getElementById('chartMonth'),fn(yr,mo,dayInc,dayOut,dayMov,dayMovIn,dayMovOut));
   } else {
     window._bankChartMonth.data.labels=[...Array(daysInMonth).keys()].map(i=>i+1);
     window._bankChartMonth.data.datasets[0].data=dayInc;
@@ -2044,13 +2131,51 @@ function renderBank(f){
   const grpOf=a=>isCardAcc(a.name)?'Карты ФЛ':isKassaAcc(a.name)?'Кассы':'Счета';
   window._kassaData=kassaList.map(a=>({name:a.name,balance:a.total,limit:(_kassaLimits[a.name]??''),group:grpOf(a)}));
 
-  // 6 KPI-карточек (крупные цифры). «Счетов» = ВИДИМОЕ число (скрытые без движения не считаем). Числа совпадают с «Итого Общий итог».
+  // «Доля оформленного» = поступления по счетам с ФНС=Да ÷ все поступления. Структурный показатель, не норматив - без светофора.
+  // ⚠ Считается по ВСЕМУ map, БЕЗ fnsPass: фильтр ФНС на карточку влиять не должен (под «Да» она всегда показывала бы 100%).
+  //    Остальные фильтры (даты, направление, счета) уже применены к data выше, поэтому карточка реагирует на них как соседние.
+  // Перемещения в базу не попадают по построению: у строк-перемещений inc=0, транзит лежит в a.mov.
+  // Неоформленный поток разложен на каналы (bankAccChannel - единственное место правила): карты физлиц / наличные / прочее.
+  const chan={da:0,card:0,cash:0,unknown:0};
+  map.forEach(a=>{
+    if(!hasMove(a))return;
+    const ch=bankAccChannel(a.name,a.fns); // ⚠ обязательно с a.fns: без него счета ООО/ИП (ФНС=Да) ушли бы в unknown - имя у них канал не описывает
+    chan[ch]+=a.inc;
+    if(ch==='unknown'&&Math.abs(a.inc)>=0.005)_bankChannelWarn(a.name,a.inc); // сторож хрупкой классификации по имени
+  });
+  // ⚠ unknown ИСКЛЮЧЁН из базы: там технические начисления («Задолженность по страховым взносам»), а не канал денег.
+  //    Поэтому база = три канала, и их доли дают ровно 100% без остатка. Появление счёта в «прочем» - сигнал в консоли,
+  //    что в справочнике завёлся вид счёта без правила, а не повод молча размазать его по каналам.
+  //    «- без счёта -» сюда не попадает по построению: у него нет положительных поступлений, только списания (плановые оплаты без назначенного счёта).
+  const fnsIncDa=chan.da;
+  const fnsIncAll=chan.da+chan.card+chan.cash;
+  const fnsShare=fnsIncAll>0?fnsIncDa/fnsIncAll:null;
+  const _mln=v=>(v/1e6).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+' млн'; // в подстроке карточки полное число не влезает; точные значения - в подсказке
+  // ⚠ Свой процент, а не глобальный fmtPct: тот собран на toFixed и печатает точку («25.8%»). Глобальный не трогаем - он на всех вкладках.
+  const _pct1=v=>(v*100).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
+  const fnsCard=(()=>{
+    if(f.fns)return{val:'-',sub:'фильтр ФНС активен',tip:_tipAttr([],null,'Фильтр ФНС активен: доля считается по всем счетам, снимите фильтр')};
+    if(fnsShare==null)return{val:'-',sub:'нет поступлений',tip:_tipAttr([],null,'За период нет поступлений - доля не определена')};
+    // Подсказка - разложение на каналы: три колонки (канал · сумма · доля). Числа без копеек: три колонки и так широкие.
+    // Строки «прочее» нет - оно исключено из базы; о нём кричит консоль, а не подсказка (иначе выглядело бы как четвёртый канал).
+    const _rub=v=>Math.round(_z0(v)).toLocaleString('ru-RU');
+    const _sh=v=>_pct1(v/fnsIncAll);
+    const rows=[['оформлено',_rub(chan.da),_sh(chan.da)],['карты физлиц',_rub(chan.card),_sh(chan.card)],['наличные',_rub(chan.cash),_sh(chan.cash)]];
+    // У «всего» процента НЕТ: 100% там по построению, информации не несёт, а с округлёнными долями (25,9+46,9+27,2=100,0 не всегда) спорит.
+    // «прочее» - строкой ПОД итогом, нейтрально и без доли: оно вне базы расчёта, в сумму не входит. Показываем только когда оно есть.
+    const foot=Math.abs(chan.unknown)>=0.005?[['прочее · вне базы расчёта',_rub(chan.unknown)]]:[];
+    return{val:_pct1(fnsShare),sub:_mln(fnsIncDa)+' из '+_mln(fnsIncAll),
+      tip:_tipAttr(rows,['всего',_rub(fnsIncAll)],'',foot)};
+  })();
+
+  // 7 KPI-карточек (крупные цифры). «Счетов» = ВИДИМОЕ число (скрытые без движения не считаем). Числа совпадают с «Итого Общий итог».
   const nAcc=gDa.length+gNet.length+gAlloc.length;
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div></div>
     <div class="kpi-card red"><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div></div>
+    <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor};font-size:9px">${runwayHint} ↗</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor};font-size:9px">${kassaHint} ⚙</div></div>
   </div>`;
@@ -2099,6 +2224,7 @@ function renderBank(f){
   const yearInc=new Array(12).fill(0),yearOut=new Array(12).fill(0),yearMov=new Array(12).fill(0);
   const daysInMonth=new Date(curYear,curMonth,0).getDate();
   const dayInc=new Array(daysInMonth).fill(0),dayOut=new Array(daysInMonth).fill(0),dayMov=new Array(daysInMonth).fill(0);
+  const dayMovIn=new Array(daysInMonth).fill(0),dayMovOut=new Array(daysInMonth).fill(0); // валовые перемещения для подсказки (сальдо по всем счетам = 0)
   const allYears=[...new Set(allDates.map(d=>d.getFullYear()))].sort();
   const allYearsInc=allYears.map(()=>0),allYearsOut=allYears.map(()=>0),allYearsMov=allYears.map(()=>0);
 
@@ -2111,7 +2237,8 @@ function renderBank(f){
     if(d.getFullYear()===curYear){
       const mi=d.getMonth();
       yearInc[mi]+=inc;yearOut[mi]+=out;yearMov[mi]+=mov;
-      if(d.getMonth()+1===curMonth){const di=d.getDate()-1;dayInc[di]+=inc;dayOut[di]+=out;dayMov[di]+=mov;}
+      if(d.getMonth()+1===curMonth){const di=d.getDate()-1;dayInc[di]+=inc;dayOut[di]+=out;dayMov[di]+=mov;
+        if(mov>0)dayMovIn[di]+=mov;else if(mov<0)dayMovOut[di]+=mov;}
     }
   });
 
@@ -2124,7 +2251,9 @@ function renderBank(f){
   const grandHtml=`<div class="bank-grand"><span class="bank-grand-label">ИТОГО ОБЩИЙ ИТОГ</span><span class="bank-grand-nums"><b class="bank-grand-pos">${fmt(totInc)}</b><b class="bank-grand-neg">${fmt(totOut)}</b><b class="bank-grand-mov">${fmt(totMov)}</b><b>${fmt(totAll)}</b></span><a onclick="switchTab('registry')" class="bank-grand-reg" title="Полный список операций с фильтрами - вкладка Реестр">Все операции → Реестр</a></div>`;
 
   // Сохраняем данные для переключения
-  window._bankChartData={allYears,allYearsInc,allYearsOut,monthLabels,yearDataByYear:{},curYear,curMonth,daysInMonth,dayInc,dayOut};
+  // ⚠ dayMov/dayMovIn/dayMovOut обязаны быть здесь: без них первый рендер отдавал в chartDays undefined,
+  //   и до первого bankUpdateDays перемещения на дневном графике (и в его подсказке) были нулевыми.
+  window._bankChartData={allYears,allYearsInc,allYearsOut,monthLabels,yearDataByYear:{},curYear,curMonth,daysInMonth,dayInc,dayOut,dayMov,dayMovIn,dayMovOut};
   // Данные по месяцам для каждого года
   allYears.forEach(yr=>{
     const inc=new Array(12).fill(0),out=new Array(12).fill(0),mov=new Array(12).fill(0);
@@ -2262,28 +2391,46 @@ function renderBank(f){
   const makeDayLabels=(yr,mo,days)=>[...Array(days).keys()].map(i=>{const dow=new Date(yr,mo-1,i+1).getDay();return[String(i+1),DOW[dow]];});
   const makeDayColors=(yr,mo,days,weekdayColor,weekendColor)=>[...Array(days).keys()].map(i=>{const dow=new Date(yr,mo-1,i+1).getDay();return(dow===0||dow===6)?weekendColor:weekdayColor;});
 
-  const chartDays=(yr,mo,incData,outData,movData)=>{
+  const chartDays=(yr,mo,incData,outData,movData,movInData,movOutData)=>{
     const days=new Date(yr,mo,0).getDate();
     movData=movData||incData.map(()=>0);
     const labels=makeDayLabels(yr,mo,days);
     const incColors=makeDayColors(yr,mo,days,'#2e9e6b','rgba(46,158,107,0.4)');
     const outColors=makeDayColors(yr,mo,days,'#d24b3e','rgba(210,75,62,0.4)');
     const movColors=makeDayColors(yr,mo,days,BANK_MOVE_COLOR,'rgba(168,107,26,0.4)');
+    // Разложение дня - в ШТАТНОМ tooltip Chart.js: mode 'index' собирает все три датасета за день, footer добавляет итог.
+    // Числа полные (правило «не сокращать»), столбик держится padEnd/padStart - шрифт tooltip моно (Chart.defaults).
+    // ⚠ displayColors:false обязателен: с цветными квадратами Chart.js сдвигает строки ТЕЛА вправо, а footer нет - разряды разъехались бы.
+    // ⚠ Списания в датасете ПОЛОЖИТЕЛЬНЫЕ (bankSplit: out=Math.abs) - столбики рисуются вверх. В подсказке
+    //   они показываются со знаком минус и в итоге ВЫЧИТАЮТСЯ: итог = поступления − списания + получено + отдано.
+    // ⚠ Перемещения разложены на ВАЛОВЫЕ получено/отдано: по всем счетам пара схлопывается в ноль (это верно -
+    //   транзит не создаёт и не уничтожает деньги), и одна строка сальдо была бы немой при значительных оборотах.
+    const TIP_LW=20; // «перемещения получено» - самый длинный лейбл
+    const tipFmt=v=>{v=_z0(v);return(v<0?'−':'')+Math.abs(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});}; // _z0: день, где перемещения сходятся в ноль, иначе давал «−0,00»
+    const tipVals=i=>{const inc=incData[i]||0,out=outData[i]||0,mi=(movInData||[])[i]||0,mo2=(movOutData||[])[i]||0;
+      return{inc,out:-out,movIn:mi,movOut:mo2,tot:inc-out+mi+mo2};};
+    const tipNW=i=>{const v=tipVals(i);return Math.max(...[v.inc,v.out,v.movIn,v.movOut,v.tot].map(x=>tipFmt(x).length));};
+    const tipLine=(i,name,v)=>name.padEnd(TIP_LW)+'  '+tipFmt(v).padStart(tipNW(i));
     return{type:'bar',
       data:{labels,datasets:[
         {label:'Поступления',data:incData,backgroundColor:incColors,borderRadius:2},
         {label:'Списания',data:outData,backgroundColor:outColors,borderRadius:2},
         {label:'Перемещения',data:movData,backgroundColor:movColors,borderRadius:2}
       ]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:8}}},
-        onClick:(evt,items)=>{
-          if(!items.length)return;
-          const day=items[0].index+1;
-          const d=window._bankChartData;
-          const yr=+(document.getElementById('bankChartYearSel')?.value||d.curYear);
-          const mo=d._currentMonth||d.curMonth;
-          bankDayToRegistry(yr,mo,day); // таблицы операций на вкладке больше нет - открываем операции этого дня в Реестре
-        },
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:true,position:'top',labels:{font:{size:10},boxWidth:12,padding:8}},
+          tooltip:{mode:'index',intersect:false,displayColors:false,footerFont:{weight:'400'},
+            callbacks:{
+              title:its=>{const i=its[0].dataIndex,dow=new Date(yr,mo-1,i+1).getDay();
+                return String(i+1).padStart(2,'0')+'.'+String(mo).padStart(2,'0')+'.'+yr+' · '+DOW[dow];},
+              // Датасет «Перемещения» отдаёт ДВЕ строки (label может вернуть массив) - получено и отдано вместо сальдо.
+              label:ctx=>{const i=ctx.dataIndex,v=tipVals(i);
+                if(ctx.datasetIndex===0)return tipLine(i,'поступления',v.inc);
+                if(ctx.datasetIndex===1)return tipLine(i,'списания',v.out);
+                return[tipLine(i,'перемещения получено',v.movIn),tipLine(i,'перемещения отдано',v.movOut)];},
+              footer:its=>{const i=its[0].dataIndex;
+                return['─'.repeat(TIP_LW+2+tipNW(i)),tipLine(i,'итого за день',tipVals(i).tot)];}
+            }}},
         scales:{
           x:{grid:{display:false},ticks:{font:{size:9},color:(ctx)=>{
             const lbl=ctx.tick?.label;const dow=Array.isArray(lbl)?lbl[1]:null;
@@ -2327,7 +2474,7 @@ window.ddsTgl=function(nodeId){
 window.showCashRunwayPopup=function(){
   const d=window._cashRunwayData;
   if(!d)return;
-  const fmt2=v=>v!==null&&v!==undefined?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
+  const fmt2=v=>v!==null&&v!==undefined?_z0(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
   const runwayColor=d.cashRunwayDays===null?'var(--text3)':d.cashRunwayDays>90?'var(--income)':d.cashRunwayDays>30?'#e87c25':'var(--outcome)';
   const runwayLabel=d.cashRunwayDays===null?'-':d.cashRunwayDays>365?`${Math.round(d.cashRunwayDays/30)} мес.`:`${d.cashRunwayDays} дн.`;
   const overlay=document.createElement('div');
@@ -2391,7 +2538,7 @@ window.kassaSetLimit=function(input,name){
 window.showKassaLimitsPopup=function(){
   const d=window._kassaData||[];
   const ro=!_isAdmin(); // лимиты меняет только админ; сотрудникам - просмотр (иначе отказ записи в config/kassaLimits)
-  const fmt2=v=>(v!==null&&v!==undefined&&v!=='')?(+v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
+  const fmt2=v=>(v!==null&&v!==undefined&&v!=='')?_z0(+v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
   const rows=d.length?d.map(k=>{
     const lim=k.limit;
     const hasLim=lim!=null&&lim!=='';
@@ -2684,7 +2831,7 @@ window.opiuShowTxnModal=function(subNodeId,pk){
   }
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const totalInc=data.rows.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
   const totalOut=data.rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
   const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
@@ -2749,7 +2896,7 @@ window.opiuTxnSearch=function(subNodeId,modalId,query){
   const filtered=q?data.rows.filter(r=>r.some(v=>String(v||'').toLowerCase().includes(q))):data.rows;
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
   const body=document.getElementById(modalId+'-body');
   const cnt=document.getElementById(modalId+'-count');
@@ -2817,7 +2964,7 @@ window.ddsShowTxnModal=function(subNodeId,pk){
   }
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const totalInc=data.rows.reduce((s,r)=>s+parseNum(r[COL.INCOME]),0);
   const totalOut=data.rows.reduce((s,r)=>s+parseNum(r[COL.OUTCOME]),0);
 
@@ -2886,7 +3033,7 @@ window.ddsTxnSearch=function(subNodeId,modalId,query){
   const filtered=q?data.rows.filter(r=>r.some(v=>String(v||'').toLowerCase().includes(q))):data.rows;
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
   const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const TD=(v,extra='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${extra}">${v}</td>`;
   const body=document.getElementById(modalId+'-body');
   const cnt=document.getElementById(modalId+'-count');
@@ -4475,7 +4622,7 @@ function _dupesReportBuild(){
   const m=window._dupesMeta||{};
   const dsFmt=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'-';};
   const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
-  const money=v=>v?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const money=v=>_z0(v)?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
   const now=new Date();
   const today=now.toLocaleDateString('ru-RU');
   const pad=n=>String(n).padStart(2,'0');
@@ -5401,7 +5548,7 @@ window.arShowDetail=function(idx){
   const net=totInc+totOut;
   // Таблица в формате всплывающего окна ДДС: те же 15 колонок и стили
   const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
   const movesThead=`<tr style="position:sticky;top:0;z-index:1">
     ${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}
@@ -8002,7 +8149,7 @@ window.mktShowCostModal=function(metric,pk){
   window._mktTxnCur=rows;
   const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const n0=v=>Math.round(Math.abs(v)).toLocaleString('ru-RU');
   const total=rows.reduce((s,r)=>s+parseNum(r[COLV]),0);
   // Сводка по подстатьям
@@ -8308,7 +8455,7 @@ window.loanShowDetail=function(idx){
   const esc=s=>String(s||'').replace(/</g,'&lt;');
   const c=v=>_htmlEsc(String(v||'').trim()); // XSS через ячейку Sheets
   const ds=v=>{const d=v instanceof Date?v:parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const moveRowsRaw=[...x.rows].sort((a,b)=>(parseDate(a[COL.DATE_DDS])||0)-(parseDate(b[COL.DATE_DDS])||0));
   window._loanMoves=moveRowsRaw;
   const TH=(label,w,align='left',color='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${align};${color?'color:'+color:''}">${label}</th>`;
@@ -8582,7 +8729,7 @@ window.anomShowCard=function(idx){
   window._anomMoves=mv;
   const esc=s=>_htmlEsc(s),c=v=>_htmlEsc(String(v||'').trim()); /* c обязан эскейпить: RAW-ячейки (контрагент, назначение, статья...) идут в innerHTML - без _htmlEsc это хранимый XSS через ячейку Sheets */
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const TH=(l,w,al='left',col='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${al};${col?'color:'+col:''}">${l}</th>`;
   const thead=`<tr style="position:sticky;top:0;z-index:1">${TH('ДДС','5%','center')}${TH('ОПиУ','4%','center')}${TH('Тип','6%','center')}${TH('ID Offer','5%')}${TH('Поступление','6%','right','var(--income)')}${TH('Списание','6%','right','var(--outcome)')}${TH('ФНС','3%','center')}${TH('Реквизиты счёта','9%')}${TH('Статья','7%')}${TH('Подстатья','7%')}${TH('Аналитика','5%','center')}${TH('Контрагент','9%')}${TH('Назначение','12%')}${TH('Направление','8%')}${TH('Фин. операция','8%')}</tr>`;
   const TD=(v,ex='')=>`<td style="padding:2px 5px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${ex}">${v}</td>`;
@@ -8762,7 +8909,7 @@ window.depShowDetail=function(idx){
   const x=(window._depRows||[])[idx];if(!x)return;
   const esc=s=>_htmlEsc(s),c=v=>_htmlEsc(String(v||'').trim()); /* c обязан эскейпить: RAW-ячейки (контрагент, назначение, статья...) идут в innerHTML - без _htmlEsc это хранимый XSS через ячейку Sheets */
   const ds=v=>{const d=parseDate(v);return d?`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`:'';};
-  const f2=v=>typeof v==='number'&&v!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+  const f2=v=>typeof v==='number'&&_z0(v)!==0?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):''; // _z0 в УСЛОВИИ: математический ноль печатался как «-0,00» вместо пустой ячейки
   const mv=[...x.rows].sort((a,b)=>(parseDate(a[COL.DATE_DDS])||0)-(parseDate(b[COL.DATE_DDS])||0));
   window._depMoves=mv;
   const TH=(l,w,al='left',col='')=>`<th style="padding:4px 5px;font-size:9px;font-weight:600;background:#f0f3ff;border-bottom:1px solid var(--border);white-space:nowrap;width:${w};text-align:${al};${col?'color:'+col:''}">${l}</th>`;
