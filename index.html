@@ -892,7 +892,7 @@ function _bankChannelWarn(name,inc){
   const k=String(name||'');
   if(_bankChannelWarned.has(k))return;
   _bankChannelWarned.add(k);
-  console.warn('[Банк] Счёт не распознан как канал (ушёл в «прочее»), проверьте название или заведите признак в источнике:',k,'· поступления:',fmt(inc||0));
+  console.warn('[Банк] В справочнике появился вид счёта без правила канала - учтён в «прочих расчётах»:',k,'· поступления:',fmt(inc||0),'· если это касса или карта ФЛ, поправьте bankAccChannel или название счёта');
 }
 function numClass(v){if(typeof v!=='number')return'';v=_z0(v);return v>0?'num-positive':v<0?'num-negative':'';} // _z0 и здесь: иначе хвост −1,49e-8 красил математический ноль в красное
 const RU_MONTHS={'января':0,'февраля':1,'марта':2,'апреля':3,'мая':4,'июня':5,'июля':6,'августа':7,'сентября':8,'октября':9,'ноября':10,'декабря':11,'январь':0,'февраль':1,'март':2,'апрель':3,'май':4,'июнь':5,'июль':6,'август':7,'сентябрь':8,'октябрь':9,'ноябрь':10,'декабрь':11};
@@ -2153,12 +2153,14 @@ function renderBank(f){
     chan[ch]+=a.inc;
     if(ch==='unknown'&&Math.abs(a.inc)>=0.005)_bankChannelWarn(a.name,a.inc); // сторож хрупкой классификации по имени
   });
-  // ⚠ unknown ИСКЛЮЧЁН из базы: там технические начисления («Задолженность по страховым взносам»), а не канал денег.
-  //    Поэтому база = три канала, и их доли дают ровно 100% без остатка. Появление счёта в «прочем» - сигнал в консоли,
-  //    что в справочнике завёлся вид счёта без правила, а не повод молча размазать его по каналам.
-  //    «- без счёта -» сюда не попадает по построению: у него нет положительных поступлений, только списания (плановые оплаты без назначенного счёта).
+  // База = ВСЕ четыре канала. unknown («прочие расчёты») - тоже часть неоформленного контура: там реальные счета с ФНС=Нет
+  // (напр. «Задолженность по страховым взносам», где ввод начального остатка проведён поступлением намеренно), и по ФНС они
+  // классифицируются наравне с остальными. Поэтому доли складываются в целое без остатка.
+  // ⚠ Консольное предупреждение при этом ОСТАЁТСЯ, но говорит о другом: не «есть непонятные деньги», а «в справочнике появился
+  //    вид счёта, для которого правила канала ещё нет» - срабатывает один раз на НОВОЕ имя счёта (_bankChannelWarned).
+  // «- без счёта -» сюда не попадает по построению: у него нет положительных поступлений, только списания (плановые оплаты без назначенного счёта).
   const fnsIncDa=chan.da;
-  const fnsIncAll=chan.da+chan.card+chan.cash;
+  const fnsIncAll=chan.da+chan.card+chan.cash+chan.unknown;
   const fnsShare=fnsIncAll>0?fnsIncDa/fnsIncAll:null;
   const _mln=v=>(v/1e6).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+' млн'; // в подстроке карточки полное число не влезает; точные значения - в подсказке
   // ⚠ Свой процент, а не глобальный fmtPct: тот собран на toFixed и печатает точку («25.8%»). Глобальный не трогаем - он на всех вкладках.
@@ -2170,12 +2172,12 @@ function renderBank(f){
     // Строки «прочее» нет - оно исключено из базы; о нём кричит консоль, а не подсказка (иначе выглядело бы как четвёртый канал).
     const _rub=v=>Math.round(_z0(v)).toLocaleString('ru-RU');
     const _sh=v=>_pct1(v/fnsIncAll);
-    const rows=[['оформлено',_rub(chan.da),_sh(chan.da)],['карты физлиц',_rub(chan.card),_sh(chan.card)],['наличные',_rub(chan.cash),_sh(chan.cash)]];
-    // У «всего» процента НЕТ: 100% там по построению, информации не несёт, а с округлёнными долями (25,9+46,9+27,2=100,0 не всегда) спорит.
-    // «прочее» - строкой ПОД итогом, нейтрально и без доли: оно вне базы расчёта, в сумму не входит. Показываем только когда оно есть.
-    const foot=Math.abs(chan.unknown)>=0.005?[['прочее · вне базы расчёта',_rub(chan.unknown)]]:[];
+    // Четыре канала внутри одной базы. Название «прочие расчёты», а НЕ «прочее»: там реальный контур, а не мусорная категория.
+    // У «всего» процента НЕТ: 100% там по построению, информации не несёт, а с округлёнными долями спорит.
+    const rows=[['оформлено',_rub(chan.da),_sh(chan.da)],['карты физлиц',_rub(chan.card),_sh(chan.card)],
+      ['наличные',_rub(chan.cash),_sh(chan.cash)],['прочие расчёты',_rub(chan.unknown),_sh(chan.unknown)]];
     return{val:_pct1(fnsShare),sub:_mln(fnsIncDa)+' из '+_mln(fnsIncAll),
-      tip:_tipAttr(rows,['всего',_rub(fnsIncAll)],'',foot)};
+      tip:_tipAttr(rows,['всего',_rub(fnsIncAll)])};
   })();
 
   // 7 KPI-карточек (крупные цифры). «Счетов» = ВИДИМОЕ число (скрытые без движения не считаем). Числа совпадают с «Итого Общий итог».
@@ -2199,11 +2201,9 @@ function renderBank(f){
   //    и НЕТ разделительной линии (она была длиннее любого числа и одна задавала ширину всплывашки).
   //    Ширину теперь держит самое длинное из двух чисел. Выравнивание - padStart: моноширинный шрифт подсказке не задать.
   const movTd=(mov,mIn,mOut)=>{
-    const a=fmt(mIn||0),b=fmt(mOut||0),c=fmt(mov||0);
-    const w=Math.max(a.length,b.length);
-    const L=(lbl,v)=>lbl.padEnd(9)+v.padStart(w);
-    const tip=L('получено',a)+'\n'+L('отдано',b);
-    return `<td class="${numClass(mov)} bank-num bank-mov" title="${_htmlEsc(tip)}">${c}</td>`;
+    // Валовые обороты - в единой подсказке проекта: выравнивание держит сетка, а не padStart (нативный title рисовался
+    // системным шрифтом, где пробел и цифра разной ширины). Сальдо в самой ячейке, поэтому в подсказке его нет - она добавляет, а не повторяет.
+    return `<td class="${numClass(mov)} bank-num bank-mov" ${_tipAttr([['получено',fmt(mIn||0)],['отдано',fmt(mOut||0)]])}>${fmt(mov||0)}</td>`;
   };
   const _plur=(n,a,b,c)=>{const n10=n%10,n100=n%100;return(n10===1&&n100!==11)?a:(n10>=2&&n10<=4&&(n100<12||n100>14))?b:c;};
   // Σ процентов ровно 100.0 (32 + 4×17): при <100 Chrome и Safari распределяют остаток по-разному - в Safari числовые сужались и цифры вылезали
@@ -6869,11 +6869,12 @@ function renderPlanFact(f){
   const ownerTd=(kind,code,isChild,dirOverride)=>{
     if(!kind||!code)return `<td style="${td}" data-label="Ответственный"></td>`; // ИТОГО/ЧП/ИТОГО ВЫВОД зовут dRow с kind=null - ячейка пустая (подпись всё равно нужна: без неё mobileCardify подставит ярлык из 2-го ряда шапки)
     const os=ownersOfRow(kind,code,isChild,dirOverride);
-    if(!os.length)return `<td style="${td};text-align:left;color:var(--text3);cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" title="Ответственный не назначен в редакторе планов">-</td>`;
+    if(!os.length)return `<td style="${td};text-align:left;color:var(--text3);cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" ${_tipAttr([],null,'Ответственный не назначен в редакторе планов')}>-</td>`;
     // ПЕРВЫЙ по алфавиту + счётчик остальных («Данилова А.П. +7»); полный список - в title. Жёсткая ширина + ellipsis, одна строка - колонка не выдавливает Δ/Остаток/Статус за край
     const lbl=esc(_fioInit(os[0]))+(os.length>1?' <span style="color:var(--text3);font-weight:600">+'+(os.length-1)+'</span>':''); // имя эскейпим (данные из _planOwners), счётчик - число, безопасно
-    // список в title - ПО СТРОКЕ НА ФИО (\n, нативный title рендерит перевод строки): через запятую длинные списки рвались посреди имени и фамилии сливались
-    return `<td style="${td};text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" title="${esc(os.join('\n'))}">${lbl}</td>`;
+    // Список - ПО СТРОКЕ НА ФИО в единой подсказке (через запятую длинные списки рвались посреди имени, фамилии сливались).
+    // ⚠ ФИО передаём СЫРЫМИ, без esc: _tipAttr эскейпит сам, двойной эскейп дал бы «&amp;amp;» в именах.
+    return `<td style="${td};text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" ${_tipAttr(os.map(o=>[o,'']),null,os.length>1?'Ответственные · '+os.length:'Ответственный')}>${lbl}</td>`;
   };
   // колонки: Ответственный | Утверждено (baseline) | Прогноз (текущий план) | Факт | Δ к утв. | Остаток (месяц) | Статус. Δ и статус считаются ТОЛЬКО от baseline.
   const dRow=(label,base,plan,fact,revenue,bold,kind,code,opts)=>{
