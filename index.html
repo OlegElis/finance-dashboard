@@ -6532,7 +6532,7 @@ function renderPlanFact(f){
   // Матч плана - по ARTICLE_NAME (расходы level='subarticle', доходы level='income'; проверка p.code===an одинакова); scope = dirsToAgg.
   // Доходы планируются по подстатьям (level='income'), поэтому проверяем и их.
   {
-    const _npHasPlan=an=>(_planRecords||[]).some(p=>p&&p.year===year&&dirsToAgg.includes(p.dir)&&p.code===an);
+    const _npHasPlan=an=>(_planRecords||[]).some(p=>p&&p.year===year&&(p.level==='subarticle'||p.level==='income')&&dirsToAgg.includes(p.dir)&&p.code===an); // отбор по LEVEL, а не по имени кода: запись чужого уровня с совпавшим кодом молча гасила бы строку «Факт без плана»
     const _npExpAcc={},_npIncAcc={}; // ARTICLE_NAME → {sum,cnt,rows,dirs:Set}
     const _npEmpty={sum:0,cnt:0,rows:[]}; // пустая подстатья расхода - дефект данных (для доходов пустую не отслеживаем)
     const _anBad={sum:0,cnt:0,rows:[]}; // сторож сверки БДР==ОПиУ: списания с аналитикой вне OPIU_CATS - БДР их считает, ОПиУ отбрасывает → отчёты расходятся ровно на _anBad.sum
@@ -9414,7 +9414,11 @@ window.showAccessPanel=async function(){
 };
 
 // ===== ПЛАН-ФАКТ: хранилище планов (config/plans) + редактор (только админ) =====
-// запись: {dir, year, month(1-12 | 0=год), level:'article'|'subarticle'|'revenue', code, mode:'money'|'pct', value}
+// запись: {dir, year, month(1-12 | 0=год), level:'subarticle'|'income'|'revenue', code, mode:'money'|'pct', value}
+// ПЛАНИРУЕМ ТОЛЬКО НА ПОДСТАТЬЯХ. Уровня 'article' в модели НЕТ: строка-статья везде = сумма подстатей по c3 (planAgg),
+// собственной записи у неё не бывает. Список - белый: читатели плана отбирают записи по level, а не по имени кода
+// (отбор по списку имён пропускает то, чего в списке не оказалось - на этом уже спотыкались при сверке).
+const PLAN_LEVELS=['subarticle','income','revenue'];
 let _planRecords=(()=>{try{return JSON.parse(localStorage.getItem('finPlans')||'[]')}catch(e){return[]}})();
 function _plansSave(){
   try{localStorage.setItem('finPlans',JSON.stringify(_planRecords));}catch(e){}
@@ -9467,7 +9471,7 @@ function _baselineBakeMonth(year,m){
   const netM=(d,mo)=>Math.max(0,(ctx[d]?ctx[d].rev[mo]:0)-(ctx[d]?ctx[d].npExp[mo]:0));
   const netYrD=d=>{let s=0;for(let mo=1;mo<=12;mo++)s+=netM(d,mo);return s;};
   const cvt=(d,r,mo)=>r.mode==='pct'?r.value*(mo?baseM(d,mo):revYrD(d)):r.mode==='pct_profit'?r.value*(mo?netM(d,mo):netYrD(d)):r.value;
-  const groups={};(_planRecords||[]).forEach(p=>{if(p.year!==year)return;const k=p.dir+'|'+p.level+'|'+p.code+'|'+String(p.side||'');(groups[k]=groups[k]||[]).push(p);});
+  const groups={};(_planRecords||[]).forEach(p=>{if(p.year!==year||PLAN_LEVELS.indexOf(p.level)<0)return;const k=p.dir+'|'+p.level+'|'+p.code+'|'+String(p.side||'');(groups[k]=groups[k]||[]).push(p);});// запекаем только валидные уровни: без фильтра снимок тащил в config/plansBaseline записи, которых нет в модели, и удаление из config/plans их оттуда уже не убирало
   const out=[];
   Object.keys(groups).forEach(k=>{const rs=groups[k];const mr=rs.find(p=>p.month===m);let val=null;
     if(mr)val=cvt(mr.dir,mr,m); else{const yr=rs.find(p=>p.month===0);if(yr)val=cvt(yr.dir,yr,0)/12;}
@@ -9855,6 +9859,7 @@ function _planStage(){
     const cb=tr.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return; // строка исключена из плана (галочка снята) - не сохраняем; прежний план уже вычищен по presentKeys
     if(offDirs.has((tr.getAttribute('data-key')||'')+'|'+(tr.getAttribute('data-dir')||selDir)))return; // сотрудник в выключенном направлении 111-ФОТ
     const rdir=tr.getAttribute('data-dir')||selDir,code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level'),side=tr.getAttribute('data-side')||'';
+    if(PLAN_LEVELS.indexOf(rlevel)<0){console.warn('[plans] строка с уровнем «'+rlevel+'» не сохраняется - планируем только на подстатьях (level: '+PLAN_LEVELS.join('/')+'); код: '+code);return;} // гейт на ЗАПИСЬ: строк-статей в форме нет, но при правке рендера они не должны просочиться в config/plans
     const mb=tr.querySelector('.plan-mode');const mode=rlevel==='revenue'?'money':(mb?mb.getAttribute('data-mode'):'money');
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
       if(inp.getAttribute('data-month')==='0'&&inp.dataset.auto==='1')return; // авто-«Год» (сумма месяцев) - не сохраняем как явный
