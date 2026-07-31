@@ -1648,21 +1648,38 @@ function _rtdbTildeGuard(strings,where){
     window._rtdbTildeChecked=true;
   }catch(e){}
 }
-// Запись в облако с предупреждением при отказе (правила БД / офлайн): раньше set() без .catch - «✓ Сохранено» показывалось,
-// а правки жили только в localStorage и затирались старым облаком при следующей загрузке (тихая потеря данных)
+function _fbCloudOn(){return !!(window.firebase&&FIREBASE_CONFIG.databaseURL);} // облако вообще настроено? В режиме fail-open (нет Firebase/ключей) его нет, и зеркало в localStorage - ЕДИНСТВЕННОЕ хранилище: там писать безусловно
+// Запись в облако с предупреждением при отказе. Раньше set() шёл без .catch - «✓ Сохранено» показывалось,
+// а правки жили только в localStorage и затирались старым облаком при следующей загрузке (тихая потеря данных).
+// ⚠ У ОТКАЗА ТРИ РАЗНЫЕ МЕХАНИКИ, и текст обязан их различать - иначе сообщение врёт:
+//   1. правила БД запретили запись → промис ОТКЛОНЯЕТСЯ. Правка не попадёт в облако НИКОГДА (повтор даст тот же отказ);
+//   2. офлайн → промис ВИСИТ (RTDB ставит запись в очередь и отправляет при восстановлении связи), сюда мы вообще не попадаем;
+//      правка доедет сама, потеряется только если вкладку закрыли до реконнекта - очередь между перезагрузками не хранится;
+//   3. запрещённый символ в ключе → SDK валидирует значение синхронно и БРОСАЕТ, а не отклоняет промис.
+// Случай 3 раньше уходил во внешний catch и возвращал false МОЛЧА - ни console.warn, ни алерта, при том что вся машинерия
+// кодирования ключей (_rtdbKeyEnc) заведена ровно под него. Теперь оба пути идут через общий обработчик fail().
+// Формулировка «сохранено только на этом устройстве» УБРАНА СОЗНАТЕЛЬНО: человек читал её как «лежит у меня, донесу потом»,
+// закрывал вкладку и терял работу. Врущее сообщение хуже отсутствующего.
 function _fbSetSafe(path,val,label){ // возвращает Promise<bool> (true=записано в облако) - чтобы вызывающий мог показать честное подтверждение; старые вызовы результат игнорируют
+  const fail=e=>{
+    let badKeys='';try{if(val&&typeof val==='object'&&!Array.isArray(val)){const bk=Object.keys(val).filter(k=>/[.$#\[\]/]/.test(k));if(bk.length)badKeys='\n\nЗапрещённые символы (. $ # [ ] /) в ключах: '+bk.slice(0,10).join(' , ')+(bk.length>10?' …':'')+'\n(ключ должен кодироваться через _rtdbKeyEnc перед записью).';}}catch(_){}
+    const msg=(e&&(e.message||e.code))||String(e);
+    const denied=/PERMISSION|permission_denied/i.test(String((e&&e.code)||'')+' '+msg);
+    console.warn('[cloud-save] '+path+':',msg,badKeys);
+    window._fbSetWarned=window._fbSetWarned||{};
+    if(!window._fbSetWarned[path]){window._fbSetWarned[path]=1;
+      alert('⚠ «'+label+'» НЕ сохранено.\n\n'+
+        (denied
+          ? 'База данных отказала в записи - у ветки '+path+' нет правила записи.\nПовтор даст тот же отказ: сначала заведите правило в Firebase Console.'
+          : 'Ошибка записи: '+msg)+badKeys+
+        '\n\nИзменение осталось только в этой вкладке и будет потеряно при обновлении данных или закрытии страницы.');}
+    return false;
+  };
   try{
-    if(!(window.firebase&&FIREBASE_CONFIG.databaseURL))return Promise.resolve(false);
+    if(!_fbCloudOn())return Promise.resolve(false); // облака нет (fail-open) - это не отказ, молчим; зеркало пишет вызывающий
     fbApp();
-    return firebase.database().ref(path).set(val).then(()=>true).catch(e=>{
-      let badKeys='';try{if(val&&typeof val==='object'&&!Array.isArray(val)){const bk=Object.keys(val).filter(k=>/[.$#\[\]/]/.test(k));if(bk.length)badKeys='\n\nЗапрещённые символы (. $ # [ ] /) в ключах: '+bk.slice(0,10).join(' , ')+(bk.length>10?' …':'')+'\n(ключ должен кодироваться через _rtdbKeyEnc перед записью).';}}catch(_){}
-      console.warn('[cloud-save] '+path+':',e&&e.message||e,badKeys);
-      window._fbSetWarned=window._fbSetWarned||{};
-      if(!window._fbSetWarned[path]){window._fbSetWarned[path]=1;
-        alert('⚠ Не удалось сохранить «'+label+'» в облако:\n'+((e&&e.message)||e)+badKeys+'\n\nИзменения сохранены только на этом устройстве и могут быть потеряны. Проверьте правила Realtime Database (запись '+path+').');}
-      return false;
-    });
-  }catch(e){return Promise.resolve(false);}
+    return firebase.database().ref(path).set(val).then(()=>true).catch(fail);
+  }catch(e){return Promise.resolve(fail(e));} // синхронный бросок SDK (невалидный ключ) - через тот же обработчик, иначе отказ проходит молча
 }
 function _presetsSave(){
   try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){}
@@ -9420,15 +9437,20 @@ window.showAccessPanel=async function(){
 // (отбор по списку имён пропускает то, чего в списке не оказалось - на этом уже спотыкались при сверке).
 const PLAN_LEVELS=['subarticle','income','revenue'];
 let _planRecords=(()=>{try{return JSON.parse(localStorage.getItem('finPlans')||'[]')}catch(e){return[]}})();
+// ИНВАРИАНТ ЗЕРКАЛА: localStorage = ПОСЛЕДНЕЕ ИЗВЕСТНОЕ ОБЛАКО, а не «что я тут набрал».
+// Пишем зеркало только при подтверждённой записи (или когда облака нет вовсе - fail-open, там зеркало единственное хранилище).
+// Иначе непрошедшая правка переживала перезагрузку, выглядела сохранённой и молча заменялась облачной при первом ответе Firebase.
 function _plansSave(){
-  try{localStorage.setItem('finPlans',JSON.stringify(_planRecords));}catch(e){}
-  return _fbSetSafe('config/plans',_planRecords,'Планы БДР');
+  const snap=JSON.stringify(_planRecords); // снимок на момент вызова: пока идёт запись, _planRecords может смениться листенером
+  if(!_fbCloudOn()){try{localStorage.setItem('finPlans',snap);}catch(e){}return Promise.resolve(false);}
+  return _fbSetSafe('config/plans',_planRecords,'Планы БДР').then(ok=>{if(ok){try{localStorage.setItem('finPlans',snap);}catch(e){}}return ok;});
 }
 function startPlansSync(){
   if(window._plansSyncStarted)return; window._plansSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
-    firebase.database().ref('config/plans').on('value',s=>{const v=s.val();
+    firebase.database().ref('config/plans').on('value',s=>{if(window._planEditorOpen)return; // как у planOwners/planNotes: пока открыт редактор, облако не затирает несохранённые правки прямо под руками
+      const v=s.val();
       if(Array.isArray(v)){_planRecords=v;} else if(v&&typeof v==='object'){_planRecords=Object.values(v);}
       try{localStorage.setItem('finPlans',JSON.stringify(_planRecords));}catch(e){}
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
@@ -9440,9 +9462,10 @@ function startPlansSync(){
 // Старая годовая структура (records на уровне года) НЕ поддерживается - удаляется вручную через Firebase Console.
 const MONTH_FULL_RU=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 let _plansBaseline=(()=>{try{const o=JSON.parse(localStorage.getItem('finPlansBaseline')||'{}');return(o&&typeof o==='object'&&!Array.isArray(o))?o:{};}catch(e){return{};}})();
-function _baselineSave(){
-  try{localStorage.setItem('finPlansBaseline',JSON.stringify(_plansBaseline));}catch(e){}
-  _fbSetSafe('config/plansBaseline',_plansBaseline,'Baseline планов');
+function _baselineSave(){ // зеркало пишется только при подтверждённой записи - см. инвариант у _plansSave
+  const snap=JSON.stringify(_plansBaseline);
+  if(!_fbCloudOn()){try{localStorage.setItem('finPlansBaseline',snap);}catch(e){}return Promise.resolve(false);}
+  return _fbSetSafe('config/plansBaseline',_plansBaseline,'Baseline планов').then(ok=>{if(ok){try{localStorage.setItem('finPlansBaseline',snap);}catch(e){}}return ok;});
 }
 // карта замороженных месяцев года {N:{…}}; толерантна к форме из Firebase - и ОБЪЕКТ {1:{…}}, и МАССИВ [null,{…}] (RTDB хранит числовые ключи массивом с null-дырами); пропускает null и записи без approvedAt
 function _baselineMonthsMap(year){
@@ -9489,7 +9512,8 @@ function startBaselineSync(){
   if(window._baselineSyncStarted)return; window._baselineSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
-    firebase.database().ref('config/plansBaseline').on('value',s=>{const v=s.val();
+    firebase.database().ref('config/plansBaseline').on('value',s=>{if(window._planEditorOpen)return; // тот же гейт, что у plans/planOwners/planNotes - не затирать под открытым редактором
+      const v=s.val();
       _plansBaseline=(v&&typeof v==='object'&&!Array.isArray(v))?v:{};
       try{localStorage.setItem('finPlansBaseline',JSON.stringify(_plansBaseline));}catch(e){}
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
@@ -10209,7 +10233,7 @@ window.planSave=async function(btn){
   // окно НЕ закрываем - даём продолжить редактирование; подтверждение на кнопке отражает реальность (сколько и записалось ли в облако)
   if(btn){const allOk=okP&&okO&&okN;
     if(allOk){btn.textContent='✓ '+nP+' планов · '+nO+' влад. · '+nN+' прим.';btn.style.background='var(--income)';}
-    else{btn.textContent='⚠ В облако НЕ записалось (локально сохранено)';btn.style.background='var(--outcome)';}
+    else{btn.textContent='⚠ НЕ сохранено - правка будет потеряна';btn.style.background='var(--outcome)';} // «(локально сохранено)» убрано: зеркало пишется только при подтверждённой записи, локально её тоже нет
     setTimeout(function(){try{btn.disabled=false;btn.textContent='Сохранить';btn.style.background='var(--accent)';}catch(e){}},allOk?2800:5000);}
 };
 // Закрытие редактора планов с защитой от потери несохранённых правок (крестик / клик мимо / «Отмена»)
