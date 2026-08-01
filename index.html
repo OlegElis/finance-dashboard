@@ -5833,6 +5833,9 @@ const _REG_GRP=new RegExp('\\d{1,3}(?:'+_REG_SP+'\\d{3})+(?:[.,]\\d+)?','g'),_RE
 function _regNumNorm(t){
   if(!/^-?\d+([.,]\d+)?$/.test(t))return t; // не число - отдаём как есть, текстовый поиск не трогаем
   let s=t.replace(',','.');
+  // ⚠ «01.2020» - это месяц-год, и хвостовой ноль в нём ЗНАЧАЩИЙ: съев его, нормализация
+  // превращала запрос в «01.202» и январь 2020 не находился. Для 2024-2026 не проявлялось.
+  if(REG_RE_MY.test(s))return s;
   if(s.indexOf('.')>=0)s=s.replace(/0+$/,'').replace(/\.$/,'');
   return s;
 }
@@ -5860,6 +5863,25 @@ const REG_SEARCH_FIELDS=[
 const REG_FIELD_BY_COL={};REG_SEARCH_FIELDS.forEach(F=>{REG_FIELD_BY_COL[F.c]=F;});
 function _regDs(v){const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';}
 function _regFieldText(r,F){return F.date?_regDs(r[F.c]):String(r[F.c]==null?'':r[F.c]);}
+// ── Запрос, ПОХОЖИЙ НА ДАТУ ────────────────────────────────────────────────────
+// «08.01.2026» и «08.2025» - формы, которыми дату называют вслух, и однозначными их делает точка.
+// Такой запрос идёт ТОЛЬКО по датам: подстрокой «08.2025» цеплялось бы и всё, где эта
+// последовательность просто встретилась. Обе даты строки (ДДС и ОПиУ) проверяются как ИЛИ - так же,
+// как они обе лежат в индексе.
+// ⚠ Голый год («2025») сюда СОЗНАТЕЛЬНО не входит и датой не считается. Четыре цифры без точки
+// одинаково похожи на год, на сумму и на кусок номера договора, а поиск номера кусками обещан
+// в плейсхолдере. Подстрокой год и так находит все даты своего года (в дд.мм.гггг он есть),
+// а что именно совпало - показывает колонка «Совпало».
+const REG_RE_DMY=/^\d{2}\.\d{2}\.\d{4}$/,REG_RE_MY=/^\d{2}\.\d{4}$/;
+function _regDateTok(tk){ // dk: 'full' = дд.мм.гггг, 'my' = мм.гггг
+  const v=tk.val;
+  if(v&&(tk.col==null||tk.col===COL.DATE_DDS||tk.col===COL.DATE_OPIU)){
+    if(REG_RE_DMY.test(v))tk.dk='full';else if(REG_RE_MY.test(v))tk.dk='my';
+  }
+  return tk;
+}
+function _regDateHit(r,tk,c){const s=_regDs(r[c]);if(!s)return false;return tk.dk==='full'?s===tk.val:s.slice(3)===tk.val;}
+function _regDateHitAny(r,tk){return tk.col!=null?_regDateHit(r,tk,tk.col):(_regDateHit(r,tk,COL.DATE_DDS)||_regDateHit(r,tk,COL.DATE_OPIU));}
 // Кэш «поисковых блобов» (по строке на запись), строится один раз на загрузку данных
 function _buildRegBlobs(){
   if(window._regBlobs&&window._regBlobs._n===RAW.length)return window._regBlobs;
@@ -5870,8 +5892,12 @@ function _buildRegBlobs(){
 // что и индекс, поэтому показать «ничего» для найденной строки не может.
 function _regWhy(r,toks){
   const out=[];
-  for(let k=0;k<REG_SEARCH_FIELDS.length;k++){const F=REG_SEARCH_FIELDS[k],v=_regFieldText(r,F).toLowerCase();
-    for(let t=0;t<toks.length;t++)if(v.indexOf(toks[t])>=0){out.push(F);break;}}
+  for(let k=0;k<REG_SEARCH_FIELDS.length;k++){const F=REG_SEARCH_FIELDS[k],txt=_regFieldText(r,F),v=txt.toLowerCase();
+    let hit=null;
+    for(let t=0;t<toks.length;t++){const tk=toks[t];
+      if(tk.dk){if(F.date&&_regDateHit(r,tk,F.c)){hit=tk.val;break;}}       // дата-запрос объясняется только колонками дат
+      else if(v.indexOf(tk.val)>=0){hit=tk.val;break;}}
+    if(hit!=null)out.push({F:F,snip:_regWhySnip(txt,[hit])});}
   return out;
 }
 // Кусок значения вокруг совпадения - чтобы в подсказке было видно не только ГДЕ, но и ЧТО совпало
@@ -6065,16 +6091,18 @@ function renderRegistry(f){
   // Прицельный синтаксис «поле:значение» существовал, но о нём никто не знал - выносим в подсказку у поля.
   // Многострочный список → единый компонент (_tipAttr), а не нативный title.
   const qHint=_tipAttr([
-    ['дата:07.2026','Дата ДДС'],['опиу:2026','Дата ОПиУ'],['тип:списание','Тип'],['id:12345','ID Offer'],
-    ['счёт:касса','Реквизиты счёта'],['статья:111','Статья'],['подстатья:зарплата','Подстатья'],
-    ['контрагент:иванов','Контрагент'],['назначение:аренда','Назначение'],['направление:бфл','Направление']
-  ],null,'Поиск по конкретной колонке',[['поле:пусто','незаполненные ячейки'],['несколько слов','все условия сразу']]);
+    ['08.01.2026','день'],['08.2025','весь месяц'],['2025','год и всё, где есть эти цифры']
+  ],null,'Как искать',
+    [['поле:пусто','незаполненные ячейки'],['несколько слов','все условия сразу']],
+    [['тип:списание','Тип'],['id:12345','ID Offer'],['счёт:касса','Реквизиты счёта'],
+     ['статья:111','Статья'],['подстатья:зарплата','Подстатья'],['контрагент:иванов','Контрагент'],
+     ['назначение:аренда','Назначение'],['направление:бфл','Направление'],['опиу:08.2025','по дате ОПиУ']]);
   const fOpen=!!_tabFilters.registry.fOpen;
   el.innerHTML=`<div class="reg-head">
       <div class="reg-searchbar">
         <div class="reg-search-field">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.5-3.5"/></svg>
-          <input id="regSearch" type="text" autocomplete="off" value="${String(q).replace(/"/g,'&quot;')}" oninput="registrySearch(this.value)" onkeydown="if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.value='';registrySearch('');}" placeholder="Найти по ФИО, назначению, сумме, номеру договора">
+          <input id="regSearch" type="text" autocomplete="off" value="${String(q).replace(/"/g,'&quot;')}" oninput="registrySearch(this.value)" onkeydown="if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.value='';registrySearch('');}" placeholder="Найти по ФИО, назначению, сумме, дате, номеру договора">
           <button id="regSearchX" class="reg-search-x" style="display:${q?'':'none'}" title="Очистить (Esc)" onclick="const i=document.getElementById('regSearch');i.value='';i.focus();registrySearch('');">✕</button>
         </div>
         <span id="regCount" class="reg-count"></span>
@@ -6232,7 +6260,7 @@ function registryRender(q){
   const dstr=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
   // Маркеры «пустое поле»: поле:пусто / поле:- → ищем записи, где это поле НЕ заполнено
   const EMPTY=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
-  const tokens=(q?q.split(/\s+/).filter(Boolean):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci);if(ALIAS[k]!=null){const v=t.slice(ci+1);if(EMPTY.has(v))return{col:ALIAS[k],empty:true};return{col:ALIAS[k],val:v};}}return{val:t};}).filter(tk=>tk.empty||tk.val!=='');
+  const tokens=(q?q.split(/\s+/).filter(Boolean):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci);if(ALIAS[k]!=null){const v=t.slice(ci+1);if(EMPTY.has(v))return{col:ALIAS[k],empty:true};return _regDateTok({col:ALIAS[k],val:v});}}return _regDateTok({val:t});}).filter(tk=>tk.empty||tk.val!=='');
   // мультивыбор по полям: sel[col]=массив значений ('' = пусто); в одном поле - ИЛИ, между полями - И
   const sel=(_tabFilters.registry&&_tabFilters.registry.sel)||{};
   const selSets=[];Object.keys(sel).forEach(c=>{const a=sel[c];if(a&&a.length)selSets.push({col:+c,set:new Set(a)});});
@@ -6258,7 +6286,11 @@ function registryRender(q){
     if(ok&&(incFrom!=null||incTo!=null)&&numFail(parseNum(RAW[i][COL.INCOME])||0,incFrom,incTo))ok=false;
     if(ok&&(outFrom!=null||outTo!=null)&&numFail(Math.abs(parseNum(RAW[i][COL.OUTCOME])||0),outFrom,outTo))ok=false;
     if(ok)for(let s=0;s<selSets.length;s++){const sc=selSets[s];const v=String(RAW[i][sc.col]==null?'':RAW[i][sc.col]).trim();if(!sc.set.has(v)){ok=false;break;}}
-    if(ok)for(let t=0;t<tokens.length;t++){const tk=tokens[t]; if(tk.empty){if(String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).trim()!==''){ok=false;break;}} else if(tk.col!=null){const F=REG_FIELD_BY_COL[tk.col];const fv=(F?_regFieldText(RAW[i],F):String(RAW[i][tk.col]==null?'':RAW[i][tk.col])).toLowerCase();if(fv.indexOf(tk.val)<0){ok=false;break;}} /* через _regFieldText: «дата:» ищет по дд.мм.гггг, а не по серийному числу - как и сплошной поиск */ else if(blobs[i].indexOf(tk.val)<0){ok=false;break;} }
+    if(ok)for(let t=0;t<tokens.length;t++){const tk=tokens[t];
+      if(tk.empty){if(String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).trim()!==''){ok=false;break;}}
+      else if(tk.dk){if(!_regDateHitAny(RAW[i],tk)){ok=false;break;}} // запрос-дата: сверяем с дд.мм.гггг, а не ищем подстроку
+      else if(tk.col!=null){const F=REG_FIELD_BY_COL[tk.col];const fv=(F?_regFieldText(RAW[i],F):String(RAW[i][tk.col]==null?'':RAW[i][tk.col])).toLowerCase();if(fv.indexOf(tk.val)<0){ok=false;break;}} /* через _regFieldText: «дата:» ищет по дд.мм.гггг, а не по серийному числу - как и сплошной поиск */
+      else if(blobs[i].indexOf(tk.val)<0){ok=false;break;} }
     if(ok)idx.push(i);
   }
   window._regRows=idx.map(i=>RAW[i]);
@@ -6279,6 +6311,7 @@ function registryRender(q){
   //      подсветит сам токен («500» уже красит «500,00»), а лишний термин только добавляет шума.
   const hlTerms=[];
   tokens.forEach(tk=>{if(!tk.val)return;hlTerms.push(tk.val);
+    if(tk.dk)return; // «10.2025» - это октябрь, а не число 10,2025: варианты дали бы подсветку «10,20» на суммах
     if(!/^-?\d+(\.\d+)?$/.test(tk.val))return;
     const n=parseFloat(tk.val);if(!isFinite(n)||String(n)!==tk.val)return;
     [n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}),n.toLocaleString('ru-RU')]
@@ -6293,13 +6326,13 @@ function registryRender(q){
   // Колонка «Совпало» - только при сплошном поиске: у прицельного «поле:значение» колонка названа
   // в самом запросе, а без запроса объяснять нечего. Стоит ПЕРВОЙ - причина обязана читаться без
   // горизонтальной прокрутки, иначе строка так и выглядит пустой (совпадение уехало за край экрана).
-  const freeToks=tokens.filter(tk=>tk.col==null&&!tk.empty).map(tk=>tk.val);
+  const freeToks=tokens.filter(tk=>tk.col==null&&!tk.empty);
   const showWhy=freeToks.length>0;
   const whyTd=r=>{
     const f=_regWhy(r,freeToks);
     if(!f.length)return '<td class="c-why"></td>';
-    const rows=f.map(F=>[F.short,_regWhySnip(_regFieldText(r,F),freeToks)]); // значения СЫРЫЕ - _tipAttr эскейпит сам
-    return `<td class="c-why" ${_tipAttr(rows,null,'Совпало в колонках')}>${_htmlEsc(f[0].short)}${f.length>1?'<i>+'+(f.length-1)+'</i>':''}</td>`;
+    const rows=f.map(x=>[x.F.short,x.snip]); // значения СЫРЫЕ - _tipAttr эскейпит сам
+    return `<td class="c-why" ${_tipAttr(rows,null,'Совпало в колонках')}>${_htmlEsc(f[0].F.short)}${f.length>1?'<i>+'+(f.length-1)+'</i>':''}</td>`;
   };
   let html=`<table class="txn-table"><colgroup>${showWhy?'<col class="c-why">':''}<col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer"><col class="c-inc"><col class="c-out"><col class="c-fns"><col class="c-acc"><col class="c-art"><col class="c-sub"><col class="c-anl"><col class="c-side"><col class="c-purp"><col class="c-dir"><col class="c-finop"></colgroup>
     <thead><tr>${showWhy?'<th class="c-why-h">Совпало</th>':''}<th>ДДС</th><th>ОПиУ</th><th>Тип</th><th>ID Offer</th><th>Поступление</th><th>Списание</th><th>ФНС</th><th>Реквизиты счёта</th><th>Статья</th><th>Подстатья</th><th>Аналитика</th><th>Контрагент</th><th>Назначение</th><th>Направление</th><th>Фин. операция</th></tr></thead><tbody>`;
