@@ -5819,6 +5819,26 @@ function _buildRegBlobs(){
   const blobs=RAW.map(r=>{let s='';cols.forEach(c=>{s+=' '+String(r[c]==null?'':r[c]);});s+=' '+ds(r[COL.DATE_DDS])+' '+ds(r[COL.DATE_OPIU]);return s.toLowerCase();});
   blobs._n=RAW.length;window._regBlobs=blobs;return blobs;
 }
+// Уникальные значения по каждому полю фильтра + годы для дат-фильтров. Кэш по образцу _buildRegBlobs
+// (ключ - длина RAW, инвалидация вместе с ним): без него полный проход по RAW × 10 полей (~600 тыс.
+// операций со строками) плюс 120 тыс. parseDate шли на КАЖДЫЙ вход на вкладку, даже если ни один
+// список не раскроют. Сортировка localeCompare тоже здесь - она делается один раз, а не на каждый рендер.
+function _regDistinct(){
+  if(window._regDist&&window._regDist._n===RAW.length)return window._regDist;
+  const d={},ys=new Set();
+  REG_FIELDS.forEach(F=>{d[F.c]={set:new Set(),empty:false};});
+  for(let i=0;i<RAW.length;i++){const r=RAW[i];
+    for(let k=0;k<REG_FIELDS.length;k++){const c=REG_FIELDS[k].c,v=String(r[c]==null?'':r[c]).trim();
+      if(v==='')d[c].empty=true;else d[c].set.add(v);}
+    const d1=parseDate(r[COL.DATE_DDS]);if(d1)ys.add(d1.getFullYear());
+    const d2=parseDate(r[COL.DATE_OPIU]);if(d2)ys.add(d2.getFullYear());}
+  REG_FIELDS.forEach(F=>{const o=d[F.c];o.vals=[...o.set].sort((a,b)=>a.localeCompare(b,'ru'));delete o.set;});
+  d._years=[...ys].sort((a,b)=>b-a);d._n=RAW.length;window._regDist=d;return d;
+}
+// Стиль пункта списка - на уровне модуля: пункты дорисовываются ПОСЛЕ рендера вкладки (_regDDMore),
+// локальная переменная renderRegistry там недоступна, а две копии стиля молча разъехались бы.
+const REG_OPT_STYLE='display:flex;align-items:center;gap:6px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap';
+const REG_DD_CHUNK=100; // сколько пунктов дорисовывать за раз
 // Поля Реестра с мультивыбор-дропдауном (по индексу COL); search:true - большой список с поиском внутри
 // порядок = как столбцы таблицы (Тип · ID Offer · ФНС · Счёт · Статья · Подстатья · Аналитика · Контрагент · Направление · Фин.операция); даты и суммы вставляются на свои позиции при сборке панели
 const REG_FIELDS=[
@@ -5833,6 +5853,37 @@ const REG_FIELDS=[
   {c:COL.ACTIVITY_DIR,label:'Направление'},
   {c:COL.FIN_OP,label:'Фин. операция'}
 ];
+// ── Ленивые списки значений ────────────────────────────────────────────────────
+// Списки строятся в момент раскрытия и порциями по REG_DD_CHUNK, а не все сразу при рендере вкладки:
+// два поля (ID Offer, Контрагент) дают тысячи пунктов каждое, и вкладка платила за них всегда.
+// ⚠ ВЫБРАННОЕ ЖИВЁТ В _tabFilters.registry.sel, а НЕ в DOM. Прежний regDDChange собирал состояние
+// как querySelectorAll('.reg-cb:checked') - при частичной отрисовке галочки за пределами окна
+// молча снялись бы, и фильтр отработал бы по части выбора, ничего не сообщив. Тот же класс
+// молчаливой потери, что ловился в planOwners и anomalyAck.
+function _regDDState(c){window._regDD=window._regDD||{};return(window._regDD[c]=window._regDD[c]||{filter:'',shown:0,list:null});}
+function _regDDValues(c){const d=_regDistinct()[c]||{vals:[],empty:false};return d;}
+// пересобрать список поля под текущий поиск внутри списка и показать первую порцию
+function _regDDApply(c){
+  const box=document.getElementById('reg-list-'+c);if(!box)return;
+  const st=_regDDState(c),d=_regDDValues(c),f=st.filter;
+  let list=f?d.vals.filter(v=>v.toLowerCase().indexOf(f)>=0):d.vals; // поиск идёт по ВСЕМУ массиву значений, а не по отрисованным узлам
+  if(d.empty&&(!f||'(пусто)'.indexOf(f)>=0))list=[''].concat(list);
+  st.list=list;st.shown=0;box.innerHTML='';box.scrollTop=0;
+  _regDDMore(c);
+}
+function _regDDMore(c){
+  const box=document.getElementById('reg-list-'+c);if(!box)return;
+  const st=_regDDState(c);if(!st.list||st.shown>=st.list.length)return;
+  const selSet=new Set(((_tabFilters.registry&&_tabFilters.registry.sel)||{})[c]||[]); // галочки рисуем ИЗ состояния - дорисованный пункт сразу приходит в правильном виде
+  const end=Math.min(st.shown+REG_DD_CHUNK,st.list.length);
+  let h='';
+  for(let i=st.shown;i<end;i++){const v=st.list[i];
+    h+=v===''
+      ?`<label class="reg-opt" style="${REG_OPT_STYLE};font-style:italic;color:var(--text3)"><input type="checkbox" class="reg-cb" value="" ${selSet.has('')?'checked':''} onchange="regDDChange(${c},this)"> (пусто)</label>`
+      :`<label class="reg-opt" style="${REG_OPT_STYLE}"><input type="checkbox" class="reg-cb" value="${_htmlEsc(v)}" ${selSet.has(v)?'checked':''} onchange="regDDChange(${c},this)"> <span>${_htmlEsc(v)}</span></label>`;}
+  st.shown=end;box.insertAdjacentHTML('beforeend',h); // именно insertAdjacentHTML: innerHTML+= пересобирал бы весь список на каждую порцию
+}
+window.regDDScroll=function(c,el){if(el.scrollTop+el.clientHeight>=el.scrollHeight-40)_regDDMore(+c);};
 function renderRegistry(f){
   const el=document.getElementById('tabRegistry');
   if(!RAW||!RAW.length){el.innerHTML=emptyState('Нет данных','Подключите таблицу (шестерёнка → Подключение)');return;}
@@ -5845,28 +5896,23 @@ function renderRegistry(f){
   const q=(f&&f.q)||'';
   const sel=_tabFilters.registry.sel,dds=_tabFilters.registry.dds,opiu=_tabFilters.registry.opiu,finc=_tabFilters.registry.inc,fout=_tabFilters.registry.out;
   const MONTHS_R=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-  const _ySet=new Set();RAW.forEach(r=>[COL.DATE_DDS,COL.DATE_OPIU].forEach(c=>{const d=parseDate(r[c]);if(d)_ySet.add(d.getFullYear());}));
-  const yearOpts=[..._ySet].sort((a,b)=>b-a).map(y=>({v:y,label:String(y)}));
+  const yearOpts=_regDistinct()._years.map(y=>({v:y,label:String(y)}));
   const monthOpts=MONTHS_R.map((m,i)=>({v:i+1,label:m}));
-  // множества уникальных значений по каждому полю (+ признак пустых ячеек)
-  const distinct={};REG_FIELDS.forEach(F=>distinct[F.c]={vals:new Set(),empty:false});
-  RAW.forEach(r=>REG_FIELDS.forEach(F=>{const v=String(r[F.c]==null?'':r[F.c]).trim();if(v==='')distinct[F.c].empty=true;else distinct[F.c].vals.add(v);}));
   const ddBtn='font-size:11px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;min-width:120px;max-width:190px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
   const ddBtnMini='font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)';
   const ddPanel='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:240px;max-width:360px;margin-top:3px';
-  const optStyle='display:flex;align-items:center;gap:6px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap';
+  const optStyle=REG_OPT_STYLE;
+  // Оболочка списка: сами пункты рисует _regDDApply при раскрытии (см. «Ленивые списки значений»).
+  // Поиск внутри списка переживает ре-рендер вкладки, поэтому его значение восстанавливается из состояния.
   const mkRegDD=F=>{
-    const d=distinct[F.c];const items=[...d.vals].sort((a,b)=>a.localeCompare(b,'ru'));
-    const selArr=sel[F.c]||[],selSet=new Set(selArr);
-    const search=F.search?`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="regDDFilter('reg-dd-${F.c}',this.value)" placeholder="Поиск..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`:'';
+    const selArr=sel[F.c]||[],st=_regDDState(F.c);
+    const search=F.search?`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" value="${_htmlEsc(st.filter)}" oninput="regDDFilter(${F.c},this.value)" placeholder="Поиск..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`:'';
     const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="regDDAll(${F.c},true)" style="${ddBtnMini}">Все</button><button onclick="regDDAll(${F.c},false)" style="${ddBtnMini}">Снять</button></div>`;
-    const emptyOpt=d.empty?`<label class="reg-opt" data-l="(пусто)" style="${optStyle};font-style:italic;color:var(--text3)"><input type="checkbox" class="reg-cb" value="" ${selSet.has('')?'checked':''} onchange="regDDChange(${F.c})"> (пусто)</label>`:'';
-    const opts=items.map(v=>`<label class="reg-opt" data-l="${_htmlEsc(v.toLowerCase())}" style="${optStyle}"><input type="checkbox" class="reg-cb" value="${_htmlEsc(v)}" ${selSet.has(v)?'checked':''} onchange="regDDChange(${F.c})"> <span>${_htmlEsc(v)}</span></label>`).join('');
     const btnLbl=selArr.length?selArr.length+' выбрано':'Все';
     return `<div style="position:relative;display:inline-block">
       <label style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--label);display:block;margin-bottom:2px">${F.label}</label>
       <button id="reg-btn-${F.c}" onclick="regDDToggle('reg-dd-${F.c}')" style="${ddBtn}">${btnLbl} ▾</button>
-      <div id="reg-dd-${F.c}" class="reg-dd" style="${ddPanel}">${search}${head}<div class="reg-dd-list" style="max-height:250px;overflow:auto">${emptyOpt}${opts}</div></div>
+      <div id="reg-dd-${F.c}" class="reg-dd" style="${ddPanel}">${search}${head}<div class="reg-dd-list" id="reg-list-${F.c}" onscroll="regDDScroll(${F.c},this)" style="max-height:250px;overflow:auto"></div></div>
     </div>`;};
   // Год/Месяц-мультивыбор для дат (значения числовые); which='dds'|'opiu', part='years'|'months'
   const mkChkDD=(id,label,opts,selArr,which,part)=>{
@@ -5953,17 +5999,38 @@ window.registrySearch=function(v){if(_tabFilters.registry)_tabFilters.registry.q
 window.registrySearchApply=function(){window._regLimit=window._regLimit||500;
   if(window._regSearchT)clearTimeout(window._regSearchT);
   window._regSearchT=setTimeout(()=>{window._regSearchT=null;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');},300);};
-window.regDDToggle=function(id){const dd=document.getElementById(id);if(!dd)return;const open=dd.style.display!=='block';document.querySelectorAll('.reg-dd').forEach(x=>{if(x!==dd)x.style.display='none';});dd.style.display=open?'block':'none';};
-window.regDDFilter=function(id,val){const dd=document.getElementById(id);if(!dd)return;const q=String(val||'').toLowerCase();dd.querySelectorAll('.reg-opt').forEach(o=>{o.style.display=(o.getAttribute('data-l')||'').includes(q)?'':'none';});};
-window.regDDChange=function(c){const dd=document.getElementById('reg-dd-'+c);if(!dd)return;const vals=[...dd.querySelectorAll('.reg-cb:checked')].map(cb=>cb.value);_tabFilters.registry.sel=_tabFilters.registry.sel||{};_tabFilters.registry.sel[c]=vals;window._regLimit=500;const btn=document.getElementById('reg-btn-'+c);if(btn)btn.textContent=(vals.length?vals.length+' выбрано':'Все')+' ▾';registrySearchApply();};
-window.regDDAll=function(c,select){const dd=document.getElementById('reg-dd-'+c);if(!dd)return;dd.querySelectorAll('.reg-cb').forEach(cb=>{cb.checked=select;});regDDChange(c);};
+// Колонка выводится ИЗ id (reg-dd-<колонка>), а не приходит вторым аргументом: аргумент легко забыть -
+// вызов без него раскрывал бы панель с пустым списком и ничего не сообщал. Дат-фильтры (reg-dds-y,
+// reg-opiu-m) под шаблон не подходят и наполняются своей разметкой.
+window.regDDToggle=function(id){const dd=document.getElementById(id);if(!dd)return;const open=dd.style.display!=='block';document.querySelectorAll('.reg-dd').forEach(x=>{if(x!==dd)x.style.display='none';});dd.style.display=open?'block':'none';const m=/^reg-dd-(\d+)$/.exec(id);if(open&&m)_regDDApply(+m[1]);};
+window.regDDFilter=function(c,val){_regDDState(+c).filter=String(val||'').toLowerCase();_regDDApply(+c);};
+// ⚠ Состояние выбора берётся из _tabFilters.registry.sel и правится ТОЧЕЧНО по сработавшему чекбоксу.
+// Пересборка из querySelectorAll('.reg-cb:checked') при ленивой отрисовке потеряла бы всё, что вне окна.
+window.regDDChange=function(c,cb){
+  const sel=(_tabFilters.registry.sel=_tabFilters.registry.sel||{});
+  const arr=(sel[c]||[]).slice();
+  if(cb){const v=cb.value,i=arr.indexOf(v);if(cb.checked){if(i<0)arr.push(v);}else if(i>=0)arr.splice(i,1);}
+  sel[c]=arr;window._regLimit=500;
+  const btn=document.getElementById('reg-btn-'+c);if(btn)btn.textContent=(arr.length?arr.length+' выбрано':'Все')+' ▾';
+  registrySearchApply();};
+// «Все / Снять» работают по ВСЕМУ массиву значений поля, а не по отрисованным узлам и не по тому,
+// что осталось видно после поиска внутри списка (то же правило, что у _bankExtraSelectAll).
+window.regDDAll=function(c,select){
+  const d=_regDDValues(+c);
+  const sel=(_tabFilters.registry.sel=_tabFilters.registry.sel||{});
+  sel[c]=select?(d.empty?['']:[]).concat(d.vals):[];
+  const dd=document.getElementById('reg-dd-'+c);
+  if(dd)dd.querySelectorAll('.reg-cb').forEach(x=>{x.checked=select;}); // отрисованные приводим в вид; неотрисованные родятся правильными
+  window._regLimit=500;
+  const btn=document.getElementById('reg-btn-'+c);if(btn)btn.textContent=(sel[c].length?sel[c].length+' выбрано':'Все')+' ▾';
+  registrySearchApply();};
 // дат-фильтры (Год/Месяц-мультивыбор + диапазон от-до) по ДДС/ОПиУ
 window.regDateSel=function(which,part,id){const dd=document.getElementById(id);if(!dd)return;const vals=[...dd.querySelectorAll('.reg-cb:checked')].map(cb=>+cb.value);_tabFilters.registry[which]=_tabFilters.registry[which]||{years:[],months:[],from:'',to:''};_tabFilters.registry[which][part]=vals;window._regLimit=500;const btn=document.getElementById(id+'-btn');if(btn)btn.textContent=(vals.length?vals.length+' выбрано':'Все')+' ▾';registrySearchApply();};
 window.regDateAll=function(id,which,part,select){const dd=document.getElementById(id);if(!dd)return;dd.querySelectorAll('.reg-cb').forEach(cb=>cb.checked=select);regDateSel(which,part,id);};
 window.regDateRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{years:[],months:[],from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
 // числовой диапазон Поступление/Списание; ID Offer (подстрока + пусто)
 window.regNumRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
-window.regResetAll=function(){_tabFilters.registry={q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regLimit=500;renderRegistry(_tabFilters.registry);};
+window.regResetAll=function(){_tabFilters.registry={q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regDD={};window._regLimit=500;renderRegistry(_tabFilters.registry);}; // _regDD - поиски внутри списков: «сбросить всё» обязано снимать и их
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
 // Экспорт найденных строк в CSV с описанием столбцов - для загрузки в ИИ
 window.registryExportAI=function(){
