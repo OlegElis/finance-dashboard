@@ -218,6 +218,72 @@
   /* line-height задаёт высоту строки: 1.5 + 14 + 1.5 + рамка = 18, как у .bank-flat td */
   #tabRegistry .txn-table td{font-size:12px;line-height:14px;padding:1.5px 6px;}
   #tabRegistry .txn-table td.c-why{font-size:10px;} /* «Совпало» остаётся служебной подписью и не спорит с данными */
+  /* ⚠ separate ОБЯЗАТЕЛЕН и возвращать collapse нельзя: и sticky-шапка, и закрепление первых
+     колонок держатся на position:sticky, а в таблицах с border-collapse браузеры sticky-ячейки
+     разъезжают (та же ловушка записана в CLAUDE.md для БДР).
+     border-spacing:0 - иначе между ячейками появятся щели; рамка первой строки снята, чтобы
+     под шапкой не встали ДВЕ линии: своя у th и border-top у первой ячейки. */
+  #tabRegistry .txn-table{border-collapse:separate;border-spacing:0;}
+  #tabRegistry .txn-table tbody tr:first-child td{border-top:0;}
+  /* ── Ширины колонок: ПИКСЕЛИ, таблица намеренно шире контейнера ───────────────────
+     ⚠ Правило «сумма colgroup ровно 100%» (PF_COLG в БДР) для ЭТОЙ таблицы ОТМЕНЕНО -
+     не возвращать по привычке: таблица шире контейнера, и процент от контейнера тут не
+     значит ничего. Ширины посчитаны по ВСЕЙ базе через canvas.measureText тем же шрифтом,
+     что вычисляется для ячейки: атомарные колонки (даты, тип, суммы, ФНС) - по МАКСИМУМУ,
+     они не обрезаются никогда; справочные - по 90-му перцентилю; свободный текст
+     (ID Offer, контрагент, назначение) - по 75-му. Пересчитывать при смене шрифта.
+     Сумма 15 колонок = 2724px, с колонкой «Совпало» = 2820px.
+     ⚠ min()/max() в <col> при table-layout:fixed Chrome игнорирует ЦЕЛИКОМ и раскладывает
+     колонки поровну - только длина.
+     ⚠ Весь блок в @media screen: на листе горизонтальной прокрутки не бывает, поэтому в
+     печати продолжают действовать прежние правила (проценты + width:100%) и таблица влезает
+     в ширину листа. Без `screen` эти пиксели уехали бы в печать - A4 шире 821px. */
+  @media screen{
+    /* ⚠ Ширина ЯВНАЯ, суммой колонок. width:max-content пробовали - Chrome при table-layout:fixed
+       раскладывает такую таблицу ПО СОДЕРЖИМОМУ, игнорируя заданные ширины (замер: 3154px вместо
+       2724 и колонки не по расчёту). Числа продублированы ниже в <col> - расхождение ловится
+       проверкой «сумма ширин колонок == ширина таблицы». */
+    #tabRegistry .txn-table{width:2845px;}
+    #tabRegistry .txn-table.reg-why{width:2941px;} /* +96px колонки «Совпало» */
+    #tabRegistry .txn-scroll{overflow-x:auto;} /* прокрутка обеих осей - в теле таблицы; шапка вкладки и фильтры стоят */
+    /* ⚠ Атомарные колонки шире расчётных: расчёт canvas.measureText недооценивал ширину дважды.
+       (1) Он не учитывает font-variant-numeric:tabular-nums, а ячейки его применяют - цифры на
+       экране шире измеренных (дата «18.04.2024» требует 80, а measureText дал 76).
+       (2) Колонки сумм набраны МОНОШИРИННЫМ шрифтом (.txn-table td.num → var(--mono)), а не тем,
+       что вычисляется для соседней текстовой ячейки. Замер по отрисованным ячейкам (scrollWidth):
+       ДДС 80, ОПиУ 71, Тип 97 («Перемещение» - слово из фиксированного словаря, шире не станет),
+       ФНС 41 (диктует ЗАГОЛОВОК, а не «Нет» в 34). Заголовки тоже не должны обрезаться:
+       «Поступление» требует 110, «Списание» 85.
+       ⚠ Суммы 121px - ЯВНОЕ ДОПУЩЕНИЕ: хватает до ±999 999 999,99 (15 знаков моно). Максимум
+       по вашей базе тут не измерить; если суммы крупнее - расширить обе колонки одинаково,
+       чтобы разряды в них стояли в одну сетку. */
+    #tabRegistry .txn-table col.c-why{width:96px}
+    #tabRegistry .txn-table col.c-date{width:80px}   #tabRegistry .txn-table col.c-opiu{width:71px}
+    #tabRegistry .txn-table col.c-type{width:97px}   #tabRegistry .txn-table col.c-offer{width:388px}
+    #tabRegistry .txn-table col.c-inc{width:121px}   #tabRegistry .txn-table col.c-out{width:121px}
+    #tabRegistry .txn-table col.c-fns{width:41px}    #tabRegistry .txn-table col.c-acc{width:251px}
+    #tabRegistry .txn-table col.c-art{width:187px}   #tabRegistry .txn-table col.c-sub{width:182px}
+    #tabRegistry .txn-table col.c-anl{width:158px}   #tabRegistry .txn-table col.c-side{width:300px}
+    #tabRegistry .txn-table col.c-purp{width:400px}  #tabRegistry .txn-table col.c-dir{width:238px}
+    #tabRegistry .txn-table col.c-finop{width:210px}
+    /* Закрепление первых колонок: даты опознают строку, без них при прокрутке вправо
+       непонятно, к чему относится сумма. Слои: закреплённая ячейка 1, шапка 2,
+       их пересечение 3 - иначе шапка уезжает под закреплённые колонки или наоборот. */
+    #tabRegistry .txn-table th.fz,#tabRegistry .txn-table td.fz{position:sticky;}
+    #tabRegistry .txn-table td.fz{z-index:1;}
+    #tabRegistry .txn-table td.fz:not(.c-why){background:var(--surface);} /* непрозрачный фон: под ней проезжают соседние колонки */
+    #tabRegistry .txn-table th{z-index:2;}
+    #tabRegistry .txn-table th.fz{z-index:3;}
+    #tabRegistry .txn-table tr:hover td.fz{background:var(--surface2);}
+    #tabRegistry .txn-table .fz1{left:0;}
+    #tabRegistry .txn-table .fz2{left:80px;} /* = ширина ДДС; правишь её - правь и это число */
+    #tabRegistry .txn-table .fz-last{box-shadow:1px 0 0 var(--border);} /* граница закреплённой зоны; box-shadow, а не border - не влияет на ширину */
+    /* с колонкой «Совпало» она встаёт первой и закрепляется вместе с датами: незакреплённая
+       колонка ЛЕВЕЕ закреплённых уезжала бы под них и выглядела сломанной */
+    #tabRegistry .txn-table.reg-why .fz0{left:0;}
+    #tabRegistry .txn-table.reg-why .fz1{left:96px;}  /* = ширина «Совпало» */
+    #tabRegistry .txn-table.reg-why .fz2{left:176px;} /* = 96 + 80 */
+  }
   /* ── Реестр: строка поиска. Реестр - поисковый сервис, а не отчёт, поэтому поле поиска стоит
      ПЕРВЫМ элементом вкладки во всю ширину, а не теряется среди фильтров. ── */
   .reg-head{position:relative;background:var(--surface);border-bottom:1px solid var(--border);}
@@ -6499,17 +6565,17 @@ function registryRender(q){
   const showWhy=freeToks.length>0;
   const whyTd=r=>{
     const f=_regWhy(r,freeToks);
-    if(!f.length)return '<td class="c-why"></td>';
+    if(!f.length)return '<td class="c-why fz fz0"></td>';
     const rows=f.map(x=>[x.F.short,x.snip]); // значения СЫРЫЕ - _tipAttr эскейпит сам
-    return `<td class="c-why" ${_tipAttr(rows,null,'Совпало в колонках')}>${_htmlEsc(f[0].F.short)}${f.length>1?'<i>+'+(f.length-1)+'</i>':''}</td>`;
+    return `<td class="c-why fz fz0" ${_tipAttr(rows,null,'Совпало в колонках')}>${_htmlEsc(f[0].F.short)}${f.length>1?'<i>+'+(f.length-1)+'</i>':''}</td>`;
   };
-  let html=`<table class="txn-table"><colgroup>${showWhy?'<col class="c-why">':''}<col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer"><col class="c-inc"><col class="c-out"><col class="c-fns"><col class="c-acc"><col class="c-art"><col class="c-sub"><col class="c-anl"><col class="c-side"><col class="c-purp"><col class="c-dir"><col class="c-finop"></colgroup>
-    <thead><tr>${showWhy?'<th class="c-why-h">Совпало</th>':''}<th>ДДС</th><th>ОПиУ</th><th>Тип</th><th>ID Offer</th><th>Поступление</th><th>Списание</th><th>ФНС</th><th>Реквизиты счёта</th><th>Статья</th><th>Подстатья</th><th>Аналитика</th><th>Контрагент</th><th>Назначение</th><th>Направление</th><th>Фин. операция</th></tr></thead><tbody>`;
+  let html=`<table class="txn-table${showWhy?' reg-why':''}"><colgroup>${showWhy?'<col class="c-why">':''}<col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer"><col class="c-inc"><col class="c-out"><col class="c-fns"><col class="c-acc"><col class="c-art"><col class="c-sub"><col class="c-anl"><col class="c-side"><col class="c-purp"><col class="c-dir"><col class="c-finop"></colgroup>
+    <thead><tr>${showWhy?'<th class="c-why-h fz fz0">Совпало</th>':''}<th class="fz fz1">ДДС</th><th class="fz fz2 fz-last">ОПиУ</th><th>Тип</th><th>ID Offer</th><th>Поступление</th><th>Списание</th><th>ФНС</th><th>Реквизиты счёта</th><th>Статья</th><th>Подстатья</th><th>Аналитика</th><th>Контрагент</th><th>Назначение</th><th>Направление</th><th>Фин. операция</th></tr></thead><tbody>`;
   for(let i=0;i<show;i++){const r=window._regRows[i];const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
     const mv=isMoveRow(r); // тот же признак, что у Банка - строка «Перемещение» красится своим цветом независимо от знака
     html+=`<tr onclick="ddsShowRecordCard(window._regRows[${i}])" style="cursor:pointer">
       ${showWhy?whyTd(r):''}
-      <td class="c-dds">${hl(ds(r[COL.DATE_DDS]))}</td><td class="center">${hl(dsO(r[COL.DATE_OPIU]))}</td><td class="center">${hl(r[COL.TYPE])}</td><td>${hl(r[COL.OFFER_ID])}</td>
+      <td class="c-dds fz fz1">${hl(ds(r[COL.DATE_DDS]))}</td><td class="center fz fz2 fz-last">${hl(dsO(r[COL.DATE_OPIU]))}</td><td class="center">${hl(r[COL.TYPE])}</td><td>${hl(r[COL.OFFER_ID])}</td>
       <td class="num num-val${mv?' bank-mov':''}" style="${(!mv&&inc>0)?'color:var(--income)':''}">${hl(f2(r[COL.INCOME]))}</td><td class="num num-val${mv?' bank-mov':''}" style="${(!mv&&out<0)?'color:var(--outcome)':''}">${hl(f2(r[COL.OUTCOME]))}</td>
       <td class="center">${hl(r[COL.FNS])}</td><td>${hl(r[COL.ACCOUNT])}</td><td>${hl(r[COL.ARTICLE_CODE])}</td><td>${hl(r[COL.ARTICLE_NAME])}</td><td class="center">${hl(r[COL.ANALYTICS])}</td><td>${hl(r[COL.SECOND_SIDE])}</td><td>${hl(r[COL.PURPOSE])}</td><td>${hl(r[COL.ACTIVITY_DIR])}</td><td>${hl(r[COL.FIN_OP])}</td>
     </tr>`;}
