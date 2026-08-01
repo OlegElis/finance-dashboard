@@ -6360,6 +6360,13 @@ function registryRender(q){
   const _rn=v=>{const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
   const rInc=(_tabFilters.registry&&_tabFilters.registry.inc)||{},rOut=(_tabFilters.registry&&_tabFilters.registry.out)||{};
   const incFrom=_rn(rInc.from),incTo=_rn(rInc.to),outFrom=_rn(rOut.from),outTo=_rn(rOut.to);
+  // ⚠ Незаданная нижняя граница = НОЛЬ, а не «минус бесконечность». Отрицательное значение в колонке
+  // «Поступление» - это не мелкая сумма, а УХОД по перемещению между своими счетами (учётная схема:
+  // перемещение пишется парой в колонке поступлений, уход со счёта - отрицательным поступлением).
+  // Без этого «до 2» отдавало 2 642 строки вместо 28: все уходы перемещений «меньше двух рублей».
+  // Достать их намеренно по-прежнему можно - нижняя граница задаётся явно отрицательной («от -10000 до -100»).
+  // Для колонки «Списание» правило холостое: там сравнивается модуль, отрицательных значений не бывает.
+  const incLo=incFrom!=null?incFrom:0,outLo=outFrom!=null?outFrom:0;
   // ⚠ Ноль в колонке сумм означает «операции этого вида не было», а не сумму 0: у КАЖДОГО списания
   // Поступление=0, у каждого поступления - Списание=0. Пока диапазон по колонке задан, такие строки
   // отбрасываются ВСЕГДА, независимо от границ - иначе «от 0 до 2» по поступлению возвращало
@@ -6371,8 +6378,8 @@ function registryRender(q){
   for(let i=0;i<RAW.length;i++){
     let ok=true;
     if(dateFail(RAW[i],COL.DATE_DDS,dfDDS)||dateFail(RAW[i],COL.DATE_OPIU,dfOP))ok=false;
-    if(ok&&(incFrom!=null||incTo!=null)&&numFail(parseNum(RAW[i][COL.INCOME])||0,incFrom,incTo))ok=false;
-    if(ok&&(outFrom!=null||outTo!=null)&&numFail(Math.abs(parseNum(RAW[i][COL.OUTCOME])||0),outFrom,outTo))ok=false;
+    if(ok&&(incFrom!=null||incTo!=null)&&numFail(parseNum(RAW[i][COL.INCOME])||0,incLo,incTo))ok=false;
+    if(ok&&(outFrom!=null||outTo!=null)&&numFail(Math.abs(parseNum(RAW[i][COL.OUTCOME])||0),outLo,outTo))ok=false;
     if(ok)for(let s=0;s<selSets.length;s++){const sc=selSets[s];const v=String(RAW[i][sc.col]==null?'':RAW[i][sc.col]).trim();if(!sc.set.has(v)){ok=false;break;}}
     if(ok)for(let t=0;t<tokens.length;t++){const tk=tokens[t];
       if(tk.empty){if(String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).trim()!==''){ok=false;break;}}
