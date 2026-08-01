@@ -237,6 +237,21 @@
   .reg-chip i{font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .reg-chip button{border:none;background:none;cursor:pointer;color:inherit;font-size:12px;line-height:1;padding:0 3px;opacity:.6;font-family:var(--sans);}
   .reg-chip button:hover{opacity:1;}
+  /* Итоги по ВСЕМУ отфильтрованному набору. Оформление - эталон полосы «ИТОГО ОБЩИЙ ИТОГ» Банка,
+     но СВОИМИ классами: правила Банка заскоуплены на #tabBank, а тянуть их сюда значило бы связать
+     две вкладки (правка Банка молча меняла бы Реестр - против правила изоляции).
+     Подписи у чисел нужны: в Банке порядок колонок читается по таблице над полосой, здесь опоры нет. */
+  .reg-grand{position:sticky;bottom:0;z-index:20;display:flex;align-items:center;gap:16px;margin:8px var(--secpx) 0;background:var(--header-dark);color:#fff;padding:7px 16px;border-radius:8px;box-shadow:var(--shadow);}
+  .reg-grand-label{font-family:var(--sans);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#fff;}
+  .reg-grand-nums{margin-left:auto;display:flex;gap:22px;}
+  .reg-grand-item{display:flex;flex-direction:column;align-items:flex-end;gap:1px;min-width:0;}
+  .reg-grand-item i{font-style:normal;font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:#a9b2c4;font-family:var(--sans);white-space:nowrap;}
+  .reg-grand-item b{font-family:var(--mono);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;color:#fff;white-space:nowrap;}
+  .reg-grand-item.reg-grand-cnt b{min-width:90px;}
+  .reg-grand-item.reg-grand-money b{min-width:150px;}
+  .reg-grand-pos b{color:#4ade80;} /* поступления на тёмном - как в Банке */
+  .reg-grand-neg b{color:#ff7b72;} /* списания на тёмном */
+  @media print{.reg-grand{position:static;}}
   /* ── Карточка операции ── */
   .txn-card-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;display:flex;align-items:center;justify-content:center;animation:fadeIn .15s ease;}
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
@@ -6120,6 +6135,15 @@ function renderRegistry(f){
     <div class="txn-wrap" style="margin:6px var(--secpx) 0">
       <div class="txn-header"><span class="table-title">Реестр операций</span><span class="table-count" id="regHdrCount"></span></div>
       <div class="txn-scroll" id="regScroll" style="max-height:none"></div>
+    </div>
+    <div class="reg-grand">
+      <span class="reg-grand-label">Итого найдено</span>
+      <span class="reg-grand-nums">
+        <span class="reg-grand-item reg-grand-cnt"><i>Операций</i><b id="regTotCnt">-</b></span>
+        <span class="reg-grand-item reg-grand-money reg-grand-pos"><i>Поступления</i><b id="regTotInc">-</b></span>
+        <span class="reg-grand-item reg-grand-money reg-grand-neg"><i>Списания</i><b id="regTotOut">-</b></span>
+        <span class="reg-grand-item reg-grand-money"><i>Итог</i><b id="regTotNet">-</b></span>
+      </span>
     </div>`;
   // закрытие списков и панели фильтров по клику снаружи и по Esc (навешивается один раз)
   if(!window._regDDDocBound){window._regDDDocBound=true;
@@ -6177,8 +6201,11 @@ window.regDateRange=function(which,part,val){_tabFilters.registry[which]=_tabFil
 window.regNumRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
 window.regResetAll=function(){_tabFilters.registry={q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regDD={};window._regLimit=500;renderRegistry(_tabFilters.registry);}; // _regDD - поиски внутри списков: «сбросить всё» обязано снимать и их
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
-// Экспорт найденных строк в CSV с описанием столбцов - для загрузки в ИИ
+// Экспорт ВСЕГО найденного набора в CSV (не показанных 500 - _regRows держит полный результат отбора)
 window.registryExportAI=function(){
+  // ⚠ Отбор идёт с задержкой 300 мс. Нажатие сразу после ввода выгружало бы ПРЕДЫДУЩИЙ набор,
+  // молча и правдоподобно - поэтому висящий пересчёт доводим до конца синхронно.
+  if(window._regSearchT){clearTimeout(window._regSearchT);window._regSearchT=null;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');}
   const rows=window._regRows||[];
   if(!rows.length){alert('Нет строк для экспорта - уточните поиск');return;}
   const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
@@ -6230,24 +6257,30 @@ window.registryExportAI=function(){
   const rg=(w,lbl,abs)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const fr=String(o.from||'').trim(),t=String(o.to||'').trim();if(!fr&&!t)return;parts.push(lbl+(abs?' (по модулю)':'')+': '+(fr?'от '+fr:'')+(fr&&t?' ':'')+(t?'до '+t:'')+' ₽');};
   rg('inc','Поступление');rg('out','Списание',true);
   const filterLine=parts.length?parts.join(' · '):'нет';
-  let out='';
+  // ⚠ Первой строкой файла идут ЗАГОЛОВКИ КОЛОНОК, а описание выгрузки - в самый КОНЕЦ.
+  // Excel определяет структуру по первой строке: с #-преамбулой сверху он раскладывал весь файл
+  // в одну колонку и требовал ручного импорта. Внизу описание не мешает и не теряется - там его
+  // и ищут, открывая старую выгрузку через месяц.
+  let out=COLS.map(c=>c.name).join(SEP)+'\n';
+  // ⚠ Десятичный разделитель - ЗАПЯТАЯ: при разделителе полей «;» русский Excel читал «15000.5»
+  // как текст или дату. Неоднозначности не возникает - запятая не является разделителем полей.
+  rows.forEach(r=>{out+=COLS.map(c=>{let v=r[c.i];if(c.date)return cell(ds(v));if(c.num){const n=parseNum(v)||0;if(!n)return '';const x=c.sign==='neg'?-Math.abs(n):c.sign==='pos'?Math.abs(n):n;return String(x).replace('.',',');}return cell(v);}).join(SEP)+'\n';});
+  out+='\n';
   out+='# Реестр операций - ГК ОПОРА (управленческий учёт). Одна строка = одна операция.\n';
   out+='# Выгружено: '+ds(new Date())+' · строк: '+rows.length+' · период ОПиУ: '+period+'\n';
   out+='# Фильтр: '+filterLine+'\n';
   out+='# Контроль: сумма списаний '+rub(sumOut)+' ₽ · сумма поступлений '+rub(sumIn)+' ₽\n';
-  out+='# Формат: CSV, разделитель ";", кодировка UTF-8 с BOM, десятичный разделитель ".",\n';
+  out+='# Формат: CSV, разделитель ";", кодировка UTF-8 с BOM, десятичный разделитель ",",\n';
   out+='#   без разделителя разрядов, суммы в рублях.\n';
-  out+="# Импорт: строки, начинающиеся с '#', пропускать (в pandas: comment='#').\n";
+  out+="# Импорт: строки, начинающиеся с '#', пропускать (в pandas: comment='#', decimal=',').\n";
   out+='# Пустые значения: пустая ячейка в Поступление/Списание = 0.\n';
   out+="# Защита: текст, начинающийся с '=', '+', '@' или '-', экранирован апострофом (формулы Excel не исполняются).\n";
   out+='# Описание столбцов:\n';
   COLS.forEach(c=>{out+='#   '+c.name+' = '+c.desc+'\n';});
-  out+='\n'+COLS.map(c=>c.name).join(SEP)+'\n';
-  rows.forEach(r=>{out+=COLS.map(c=>{let v=r[c.i];if(c.date)return cell(ds(v));if(c.num){const n=parseNum(v)||0;if(!n)return '';const x=c.sign==='neg'?-Math.abs(n):c.sign==='pos'?Math.abs(n):n;return String(x);}return cell(v);}).join(SEP)+'\n';});
+  // Имя говорит, что внутри: дата выгрузки и сколько строк. Без фильтров - «все», иначе «отфильтровано»
   const now=new Date(),p2=n=>String(n).padStart(2,'0');
-  const stamp=now.getFullYear()+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate())+'-'+p2(now.getHours())+p2(now.getMinutes())+p2(now.getSeconds());
-  const slug=(q||'все').replace(/[\\\/:*?"<>|]+/g,'').replace(/\s+/g,'_').slice(0,60)||'все';
-  const fn=stamp+'_RawData_'+slug+'.csv';
+  const stamp=now.getFullYear()+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate());
+  const fn='Реестр_'+stamp+'_'+(parts.length?'отфильтровано':'все')+'-'+rows.length+'.csv';
   const blob=new Blob(['﻿'+out],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
@@ -6298,6 +6331,15 @@ function registryRender(q){
   const anyFilter=tokens.length||selSets.length||(dfDDS.years&&dfDDS.years.length)||(dfDDS.months&&dfDDS.months.length)||dfDDS.from||dfDDS.to||(dfOP.years&&dfOP.years.length)||(dfOP.months&&dfOP.months.length)||dfOP.from||dfOP.to||incFrom!=null||incTo!=null||outFrom!=null||outTo!=null;
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=anyFilter?('найдено '+total.toLocaleString('ru-RU')+' из '+RAW.length.toLocaleString('ru-RU')):('всего '+total.toLocaleString('ru-RU'));
   const chips=document.getElementById('regChips'); if(chips)chips.innerHTML=_regChipsHtml(); // чипы обновляются здесь: сюда приходит КАЖДОЕ изменение фильтров
+  // Итоги - по ВСЕМУ отфильтрованному набору (_regRows), а не по показанным 500: вопрос «сколько всего
+  // заплатили» задают именно к найденному. Суммируем СЫРЫЕ значения колонок, поэтому «Итог» тождественно
+  // равен «Поступления + Списания» и сходится с тем, что видно в самих колонках. fmt гасит околонулевой
+  // хвост через _z0 - иначе сумма тысяч строк печаталась бы как «-0,00».
+  let sInc=0,sOut=0;
+  for(let k=0;k<window._regRows.length;k++){const rr=window._regRows[k];sInc+=parseNum(rr[COL.INCOME])||0;sOut+=parseNum(rr[COL.OUTCOME])||0;}
+  const setTot=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+  setTot('regTotCnt',total.toLocaleString('ru-RU'));
+  setTot('regTotInc',fmt(sInc));setTot('regTotOut',fmt(sOut));setTot('regTotNet',fmt(sInc+sOut));
   const hc=document.getElementById('regHdrCount'); if(hc)hc.textContent=show.toLocaleString('ru-RU')+(show<total?(' из '+total.toLocaleString('ru-RU')):'')+' строк';
   if(!total){scroll.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Ничего не найдено по запросу</div>';return;}
   // Подсветка: числовой токен нормализован («15000»), а в колонках сумм на экране стоит формат f2
