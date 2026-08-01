@@ -212,6 +212,13 @@
   /* Заголовки сумм переносятся в две строки: шапка вырастает ОДИН раз на всю таблицу,
      а отдать «Поступлению» и «Списанию» по 14px ширины пришлось бы за счёт данных. */
   #tabRegistry .txn-table th.th-wrap{white-space:normal;line-height:1.05;}
+  /* Сортировка: указатель направления живёт в самом заголовке. Неактивная стрелка бледная -
+     она подсказывает, что колонка кликабельна, но не спорит с активной. */
+  #tabRegistry .txn-table th.reg-th-sort{cursor:pointer;user-select:none;}
+  #tabRegistry .txn-table th.reg-th-sort:hover{color:var(--accent);}
+  #tabRegistry .txn-table th.reg-th-on{color:var(--accent);}
+  #tabRegistry .txn-table th i{font-style:normal;margin-left:3px;}
+  #tabRegistry .txn-table th i.reg-sort-i{opacity:.28;}
   /* ⚠ ЯЧЕЙКИ 10px, а НЕ 12px как в Банке, и приводить к «эталону Банка» их НЕЛЬЗЯ: у Банка
      пять колонок на ту же ширину, здесь пятнадцать, и при 12px не помещается ничего.
      Шапка колонок остаётся 11px - она короткая и в ширину влезает.
@@ -5981,17 +5988,61 @@ function _regNormQuery(q){
 // ⚠ Даты идут ТОЛЬКО в виде дд.мм.гггг. Сырое значение из Sheets - Excel-серийный номер (45408),
 // он не показывается нигде и никогда; пока он лежал в индексе, запрос «08» находил 26.04.2024
 // (в номере 45408 есть «08»), и строка выглядела пустой - совпадения на экране не было вообще.
+// ⚠ Порядок записей = порядок колонок таблицы, и шапка строится ИЗ ЭТОГО ЖЕ списка (см. registryRender):
+// иначе подписи и ячейки однажды разъедутся. th - подпись в шапке (у кодовых колонок сокращённая,
+// см. блок ширин), short - имя колонки в подсказках и в «Совпало», num/date - тип сравнения при сортировке.
 const REG_SEARCH_FIELDS=[
-  {c:COL.DATE_DDS,short:'ДДС',date:1},{c:COL.DATE_OPIU,short:'ОПиУ',date:1},
-  {c:COL.TYPE,short:'Тип'},{c:COL.OFFER_ID,short:'ID Offer'},
-  {c:COL.INCOME,short:'Поступление'},{c:COL.OUTCOME,short:'Списание'},
-  {c:COL.FNS,short:'ФНС'},{c:COL.ACCOUNT,short:'Счёт'},
-  {c:COL.ARTICLE_CODE,short:'Статья'},{c:COL.ARTICLE_NAME,short:'Подстатья'},
-  {c:COL.ANALYTICS,short:'Аналитика'},{c:COL.SECOND_SIDE,short:'Контрагент'},
-  {c:COL.PURPOSE,short:'Назначение'},{c:COL.ACTIVITY_DIR,short:'Направление'},
-  {c:COL.FIN_OP,short:'Фин. операция'}
+  {c:COL.DATE_DDS,short:'ДДС',th:'ДДС',date:1},{c:COL.DATE_OPIU,short:'ОПиУ',th:'ОПиУ',date:1},
+  {c:COL.TYPE,short:'Тип',th:'Тип'},{c:COL.OFFER_ID,short:'ID Offer',th:'ID Offer'},
+  {c:COL.INCOME,short:'Поступление',th:'Поступление',num:1,wrap:1},{c:COL.OUTCOME,short:'Списание',th:'Списание',num:1,wrap:1},
+  {c:COL.FNS,short:'ФНС',th:'ФНС'},{c:COL.ACCOUNT,short:'Счёт',th:'Реквизиты счёта'},
+  {c:COL.ARTICLE_CODE,short:'Статья',th:'Ст.'},{c:COL.ARTICLE_NAME,short:'Подстатья',th:'Подст.'},
+  {c:COL.ANALYTICS,short:'Аналитика',th:'Аналитика'},{c:COL.SECOND_SIDE,short:'Контрагент',th:'Контрагент'},
+  {c:COL.PURPOSE,short:'Назначение',th:'Назначение'},{c:COL.ACTIVITY_DIR,short:'Направление',th:'Напр.'},
+  {c:COL.FIN_OP,short:'Фин. операция',th:'Фин. оп.'}
 ];
 const REG_FIELD_BY_COL={};REG_SEARCH_FIELDS.forEach(F=>{REG_FIELD_BY_COL[F.c]=F;});
+// ── Сортировка по колонке ──────────────────────────────────────────────────────
+// Живёт ПОВЕРХ поиска и фильтров: смена запроса её не сбрасывает, потому что состояние
+// лежит в _tabFilters.registry.sort, а не в разметке. Применяется к ПОЛНОМУ отфильтрованному
+// набору (к массиву индексов до обрезки в 500), поэтому «Показать ещё» продолжает тот же порядок.
+// ⚠ Сравнение по КОЛОНКАМ, а не по тексту ячейки: даты - по дате (строковый порядок дал бы
+// «01.12» раньше «02.01»), суммы - по числу СО ЗНАКОМ (по модулю уходы перемещений встали бы
+// вперемешку с приходами), кодовые колонки - по ПОЛНОМУ значению, а не по показанному коду.
+// ⚠ Пустые всегда в конце, в обоих направлениях: иначе по возрастанию первым экраном идут
+// пустые ячейки, и сортировка выглядит сломанной. Ноль в колонке сумм - это «операции не было»
+// (та же трактовка, что в числовых фильтрах), поэтому он считается пустым.
+// ⚠ Intl.Collator создаётся ОДИН раз: localeCompare на каждую пару сравнений при 60 тыс. строк
+// заметно медленнее одного переиспользуемого коллатора.
+// sensitivity:'accent' - регистр не влияет, но «Ё» отличается от «Е» и встаёт на своё место
+// по русскому алфавиту (при 'base' они схлопнулись бы в одну букву).
+const REG_COLL=new Intl.Collator('ru',{sensitivity:'accent'});
+function _regSortIdx(idx,st){
+  if(!st||st.col==null)return idx;
+  const F=REG_FIELD_BY_COL[st.col]||{},dir=st.dir<0?-1:1,c=st.col;
+  const key=F.date?(r=>{const d=parseDate(r[c]);return d?d.getTime():null;})
+          :F.num ?(r=>{const n=parseNum(r[c])||0;return n===0?null:n;})
+          :       (r=>{const s=String(r[c]==null?'':r[c]).trim();return s===''?null:s;});
+  const k=new Array(RAW.length);
+  for(let i=0;i<idx.length;i++)k[idx[i]]=key(RAW[idx[i]]);
+  return idx.slice().sort((a,b)=>{
+    const va=k[a],vb=k[b];
+    if(va==null&&vb==null)return 0;
+    if(va==null)return 1;   // пустые - в конец независимо от направления
+    if(vb==null)return -1;
+    const r=(F.date||F.num)?(va-vb):REG_COLL.compare(va,vb);
+    return r===0?0:dir*r;
+  });
+}
+// Клик по заголовку: по возрастанию → по убыванию → исходный порядок строк выгрузки
+window.regSort=function(c){
+  const F=_tabFilters.registry;const st=F.sort;
+  if(!st||st.col!==c)F.sort={col:c,dir:1};
+  else if(st.dir===1)F.sort={col:c,dir:-1};
+  else F.sort=null;
+  window._regLimit=500; // порядок сменился - показываем с начала, иначе «ещё 500» продолжали бы чужой набор
+  registryRender((F&&F.q)||'');
+};
 function _regDs(v){const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';}
 function _regFieldText(r,F){return F.date?_regDs(r[F.c]):String(r[F.c]==null?'':r[F.c]);}
 // ── Сопоставление ПО НАЧАЛУ СЛОВА ──────────────────────────────────────────────
@@ -6181,9 +6232,13 @@ function _regTipsSync(){
   // Заголовки справочных колонок в 1019px тоже не помещаются («Фин. операция» требует 122px
   // при 46px колонки). Название колонки - такое же значение, как содержимое ячейки, и читаться
   // должно тем же способом.
+  // ⚠ Нативный title здесь НЕ ставим: он лёг бы поверх компонента, и подсказка выглядела бы
+  // по-разному на обрезанном и необрезанном заголовке. Полное имя колонки и подсказка про
+  // сортировку идут одним компонентом.
   [].forEach.call(scroll.querySelectorAll('thead th'),th=>{
-    if(th.scrollWidth>th.clientWidth+0.5)_tipSet(th,[[th.textContent.trim(),'']],null,'Колонка');
-    else if(th.hasAttribute('data-tip'))th.removeAttribute('data-tip');});
+    if(!th.classList.contains('reg-th-sort'))return;
+    const nm=th.textContent.replace(/[\u2195\u25b2\u25bc]/g,'').trim();
+    _tipSet(th,[[nm,'']],null,'Колонка',[['клик','сортировка']]);});
   [].forEach.call(scroll.querySelectorAll('tbody tr'),tr=>{
     const tds=tr.children;
     for(let i=0;i<tds.length;i++){const td=tds[i];
@@ -6406,7 +6461,7 @@ window.regDateAll=function(id,which,part,select){const dd=document.getElementByI
 window.regDateRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{years:[],months:[],from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
 // числовой диапазон Поступление/Списание; ID Offer (подстрока + пусто)
 window.regNumRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
-window.regResetAll=function(){_tabFilters.registry={q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regDD={};window._regLimit=500;renderRegistry(_tabFilters.registry);}; // _regDD - поиски внутри списков: «сбросить всё» обязано снимать и их
+window.regResetAll=function(){const _srt=(_tabFilters.registry||{}).sort||null;_tabFilters.registry={sort:_srt,q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regDD={};window._regLimit=500;renderRegistry(_tabFilters.registry);}; // _regDD - поиски внутри списков: «сбросить всё» обязано снимать и их
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
 // Экспорт ВСЕГО найденного набора в CSV (не показанных 500 - _regRows держит полный результат отбора)
 window.registryExportAI=function(){
@@ -6495,6 +6550,7 @@ window.registryExportAI=function(){
 function registryRender(q){
   const scroll=document.getElementById('regScroll'); if(!scroll)return;
   q=_regNormQuery(String(q||'').trim().toLowerCase()); // «15 000,00» → «15000»: в блобе лежит сырое значение из Sheets
+  const srt=(_tabFilters.registry&&_tabFilters.registry.sort)||null; // объявляем ДО сборки набора: _regSortIdx зовётся раньше шапки
   // Прицельный поиск по полю: «поле:значение». Алиасы полей → индекс COL.
   const ALIAS={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
   const dstr=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
@@ -6546,7 +6602,7 @@ function registryRender(q){
       else if(!_regHasWord(blobs[i],tk.tn)){ok=false;break;} }
     if(ok)idx.push(i);
   }
-  window._regRows=idx.map(i=>RAW[i]);
+  window._regRows=_regSortIdx(idx,srt).map(i=>RAW[i]); // сортировка поверх фильтра, до обрезки в 500
   const total=idx.length, limit=window._regLimit||500, show=Math.min(limit,total);
   const anyFilter=tokens.length||selSets.length||(dfDDS.years&&dfDDS.years.length)||(dfDDS.months&&dfDDS.months.length)||dfDDS.from||dfDDS.to||(dfOP.years&&dfOP.years.length)||(dfOP.months&&dfOP.months.length)||dfOP.from||dfOP.to||incFrom!=null||incTo!=null||outFrom!=null||outTo!=null;
   // Короткие числа в отборе не участвуют - говорим об этом прямо, иначе человек считает,
@@ -6607,7 +6663,10 @@ function registryRender(q){
     return `<td class="c-why" ${_tipAttr(rows,null,'Совпало в колонках')}>${_htmlEsc(f[0].F.short)}${f.length>1?'<i>+'+(f.length-1)+'</i>':''}</td>`;
   };
   let html=`<table class="txn-table${showWhy?' reg-why':''}"><colgroup>${showWhy?'<col class="c-why">':''}<col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer"><col class="c-inc"><col class="c-out"><col class="c-fns"><col class="c-acc"><col class="c-art"><col class="c-sub"><col class="c-anl"><col class="c-side"><col class="c-purp"><col class="c-dir"><col class="c-finop"></colgroup>
-    <thead><tr>${showWhy?'<th class="c-why-h">Совпало</th>':''}<th>ДДС</th><th>ОПиУ</th><th>Тип</th><th>ID Offer</th><th class="th-wrap">Поступление</th><th class="th-wrap">Списание</th><th>ФНС</th><th>Реквизиты счёта</th><th>Ст.</th><th>Подст.</th><th>Аналитика</th><th>Контрагент</th><th>Назначение</th><th>Напр.</th><th>Фин. оп.</th></tr></thead><tbody>`;
+    <thead><tr>${showWhy?'<th class="c-why-h">Совпало</th>':''}${REG_SEARCH_FIELDS.map(F=>{
+      const on=srt&&srt.col===F.c, arr=on?(srt.dir===1?'<i class="reg-sort-a">▲</i>':'<i class="reg-sort-a">▼</i>'):'<i class="reg-sort-i">↕</i>';
+      return `<th class="reg-th-sort${F.wrap?' th-wrap':''}${on?' reg-th-on':''}" onclick="regSort(${F.c})">${_htmlEsc(F.th)}${arr}</th>`;
+    }).join('')}</tr></thead><tbody>`;
   for(let i=0;i<show;i++){const r=window._regRows[i];const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
     const mv=isMoveRow(r); // тот же признак, что у Банка - строка «Перемещение» красится своим цветом независимо от знака
     html+=`<tr onclick="ddsShowRecordCard(window._regRows[${i}])" style="cursor:pointer">
