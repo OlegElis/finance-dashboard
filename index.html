@@ -200,6 +200,17 @@
   .txn-table td.center{text-align:center;}
   .txn-table td.c-dds{text-align:center;}
   .txn-table tr:hover td{background:var(--surface2);}
+  /* ── Реестр: строка поиска. Реестр - поисковый сервис, а не отчёт, поэтому поле поиска стоит
+     ПЕРВЫМ элементом вкладки во всю ширину, а не теряется среди фильтров. ── */
+  .reg-searchbar{display:flex;align-items:center;gap:12px;padding:8px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);}
+  .reg-search-field{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--accent);border-radius:9px;padding:7px 12px;}
+  .reg-search-field input{flex:1 1 auto;min-width:0;border:none;outline:none;background:transparent;font-size:14px;color:var(--text);font-family:var(--sans);}
+  .reg-search-field input::placeholder{color:var(--text3);font-size:13px;}
+  .reg-search-x{border:none;background:none;cursor:pointer;color:var(--text3);font-size:16px;line-height:1;padding:0 2px;font-family:var(--sans);}
+  .reg-search-x:hover{color:var(--text);}
+  .reg-count{flex:0 0 auto;font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:6px 12px;border-radius:8px;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .reg-qhint{flex:0 0 auto;width:18px;height:18px;border-radius:50%;border:1px solid var(--border);color:var(--text3);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:help;font-family:var(--sans);}
+  .reg-qhint:hover{color:var(--accent);border-color:var(--accent);}
   /* ── Карточка операции ── */
   .txn-card-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;display:flex;align-items:center;justify-content:center;animation:fadeIn .15s ease;}
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
@@ -5781,6 +5792,26 @@ window.arShowDetail=function(idx){
 };
 // ─── РЕЕСТР: все записи + поиск по любому полю ───────────────────────────────
 // Кэш «поисковых блобов» (по строке на запись), строится один раз на загрузку данных
+// Нормализация ЧИСЛОВОГО запроса Реестра. Человек ищет то, что видит на экране («15 000,00»),
+// а в поисковом блобе лежит сырое значение из Sheets («15000.5») - без нормализации поиск по сумме
+// молча не находил ничего. Два шага: (1) склеиваем разряды - пробел обычный, NBSP U+00A0 и узкий
+// NBSP U+202F (их отдаёт toLocaleString в разных версиях ICU); (2) запятую в точку, хвостовые нули
+// дробной части убираем: «15 000,50» → «15000.5», «15 000,00» → «15000».
+// ⚠ Склейка идёт по ВСЕЙ строке до разбиения на слова: q.split(/\s+/) разорвал бы «15 000» на два
+// токена, и поиск требовал бы обе части как отдельные подстроки.
+const _REG_SP='[ \\u00a0\\u202f]';
+const _REG_GRP=new RegExp('\\d{1,3}(?:'+_REG_SP+'\\d{3})+(?:[.,]\\d+)?','g'),_REG_SPG=new RegExp(_REG_SP,'g');
+function _regNumNorm(t){
+  if(!/^-?\d+([.,]\d+)?$/.test(t))return t; // не число - отдаём как есть, текстовый поиск не трогаем
+  let s=t.replace(',','.');
+  if(s.indexOf('.')>=0)s=s.replace(/0+$/,'').replace(/\.$/,'');
+  return s;
+}
+function _regNormQuery(q){
+  return String(q||'').replace(_REG_GRP,m=>m.replace(_REG_SPG,''))
+    .split(/\s+/).map(t=>{const ci=t.indexOf(':');return ci>0?t.slice(0,ci+1)+_regNumNorm(t.slice(ci+1)):_regNumNorm(t);}) // «сумма:15 000,50» - нормализуем только значение
+    .join(' ');
+}
 function _buildRegBlobs(){
   if(window._regBlobs&&window._regBlobs._n===RAW.length)return window._regBlobs;
   const ds=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
@@ -5881,23 +5912,30 @@ function renderRegistry(f){
     fdd(COL.ACTIVITY_DIR),
     fdd(COL.FIN_OP)
   ].join('');
-  el.innerHTML=`<div class="tab-filters" style="flex-wrap:wrap;align-items:flex-end;gap:8px 10px">
-      <div style="display:flex;flex-direction:column">
-        <label style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--label);margin-bottom:2px">Быстрый поиск</label>
-        <div style="display:flex;align-items:center;gap:6px;min-width:220px;background:var(--surface);border:1px solid var(--accent);border-radius:6px;padding:4px 9px">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.5-3.5"/></svg>
-          <input id="regSearch" type="text" value="${String(q).replace(/"/g,'&quot;')}" oninput="registrySearch(this.value)" placeholder="ID, назначение, сумма…" style="flex:1;border:none;outline:none;background:transparent;font-size:12px;color:var(--text);font-family:var(--sans)">
-          ${q?`<button onclick="document.getElementById('regSearch').value='';registrySearch('')" title="Очистить" style="border:none;background:none;cursor:pointer;color:var(--text3);font-size:15px;line-height:1">✕</button>`:''}
-        </div>
+  // Прицельный синтаксис «поле:значение» существовал, но о нём никто не знал - выносим в подсказку у поля.
+  // Многострочный список → единый компонент (_tipAttr), а не нативный title.
+  const qHint=_tipAttr([
+    ['дата:07.2026','Дата ДДС'],['опиу:2026','Дата ОПиУ'],['тип:списание','Тип'],['id:12345','ID Offer'],
+    ['счёт:касса','Реквизиты счёта'],['статья:111','Статья'],['подстатья:зарплата','Подстатья'],
+    ['контрагент:иванов','Контрагент'],['назначение:аренда','Назначение'],['направление:бфл','Направление']
+  ],null,'Поиск по конкретной колонке',[['поле:пусто','незаполненные ячейки'],['несколько слов','все условия сразу']]);
+  el.innerHTML=`<div class="reg-searchbar">
+      <div class="reg-search-field">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.5-3.5"/></svg>
+        <input id="regSearch" type="text" autocomplete="off" value="${String(q).replace(/"/g,'&quot;')}" oninput="registrySearch(this.value)" onkeydown="if(event.key==='Escape'){event.preventDefault();this.value='';registrySearch('');}" placeholder="Найти по ФИО, назначению, сумме, номеру договора">
+        <button id="regSearchX" class="reg-search-x" style="display:${q?'':'none'}" title="Очистить (Esc)" onclick="const i=document.getElementById('regSearch');i.value='';i.focus();registrySearch('');">✕</button>
       </div>
+      <span id="regCount" class="reg-count"></span>
+      <span class="reg-qhint" ${qHint}>?</span>
+    </div>
+    <div class="tab-filters" style="flex-wrap:wrap;align-items:flex-end;gap:8px 10px">
       ${orderedFilters}
       <div style="display:flex;gap:8px;align-items:flex-end;margin-left:auto">
         <button onclick="regResetAll()" title="Сбросить все фильтры" style="font-size:11px;font-weight:600;padding:5px 12px;border:1px solid ${activeCnt?'var(--outcome)':'var(--border)'};border-radius:6px;background:${activeCnt?'#fdecea':'var(--surface2)'};color:${activeCnt?'var(--outcome)':'var(--text3)'};cursor:pointer">× Сбросить всё${activeCnt?' ('+activeCnt+')':''}</button>
-        <span id="regCount" style="font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-light);padding:5px 10px;border-radius:8px;font-family:var(--mono);white-space:nowrap;align-self:center"></span>
         <button onclick="registryExportAI()" title="Скачать найденные строки в CSV с описанием столбцов" style="font-size:11px;font-weight:600;padding:5px 12px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;white-space:nowrap;font-family:var(--sans)">⬇ Выгрузка (CSV)</button>
       </div>
     </div>
-    <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Фильтры идут в порядке столбцов таблицы. Несколько значений в поле = ИЛИ, разные поля = И. Опция <b>«(пусто)»</b> - незаполненные ячейки. «Быстрый поиск» - подстрока по всем полям.</div>
+    <div style="padding:3px var(--secpx) 0;font-size:10px;color:var(--text3)">Фильтры идут в порядке столбцов таблицы. Несколько значений в поле = ИЛИ, разные поля = И. Опция <b>«(пусто)»</b> - незаполненные ячейки.</div>
     <div class="txn-wrap" style="margin:6px var(--secpx) 0">
       <div class="txn-header"><span class="table-title">Реестр операций</span><span class="table-count" id="regHdrCount"></span></div>
       <div class="txn-scroll" id="regScroll" style="max-height:none"></div>
@@ -5906,11 +5944,15 @@ function renderRegistry(f){
   if(!window._regDDDocBound){window._regDDDocBound=true;document.addEventListener('mousedown',e=>{if(e.target.closest&&(e.target.closest('.reg-dd')||e.target.closest('[id^="reg-btn-"]')))return;document.querySelectorAll('.reg-dd').forEach(x=>x.style.display='none');});}
   registryRender(q);
 }
-window.registrySearch=function(v){if(_tabFilters.registry)_tabFilters.registry.q=v;window._regLimit=500;registrySearchApply();};
-// применить фильтры (быстрый поиск + мультивыборы) с debounce - перерисовывается только таблица, дропдауны остаются открытыми
+window.registrySearch=function(v){if(_tabFilters.registry)_tabFilters.registry.q=v;window._regLimit=500;
+  // крестик гасим/показываем СРАЗУ, не по debounce: ввод перерисовывает только таблицу, а строка
+  // поиска остаётся прежней - при отрисовке по условию ${q?…} крестик не появлялся бы никогда
+  const x=document.getElementById('regSearchX');if(x)x.style.display=String(v||'').trim()?'':'none';
+  registrySearchApply();};
+// применить фильтры (поиск + мультивыборы) с debounce - перерисовывается только таблица, дропдауны остаются открытыми
 window.registrySearchApply=function(){window._regLimit=window._regLimit||500;
   if(window._regSearchT)clearTimeout(window._regSearchT);
-  window._regSearchT=setTimeout(()=>{window._regSearchT=null;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');},250);};
+  window._regSearchT=setTimeout(()=>{window._regSearchT=null;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');},300);};
 window.regDDToggle=function(id){const dd=document.getElementById(id);if(!dd)return;const open=dd.style.display!=='block';document.querySelectorAll('.reg-dd').forEach(x=>{if(x!==dd)x.style.display='none';});dd.style.display=open?'block':'none';};
 window.regDDFilter=function(id,val){const dd=document.getElementById(id);if(!dd)return;const q=String(val||'').toLowerCase();dd.querySelectorAll('.reg-opt').forEach(o=>{o.style.display=(o.getAttribute('data-l')||'').includes(q)?'':'none';});};
 window.regDDChange=function(c){const dd=document.getElementById('reg-dd-'+c);if(!dd)return;const vals=[...dd.querySelectorAll('.reg-cb:checked')].map(cb=>cb.value);_tabFilters.registry.sel=_tabFilters.registry.sel||{};_tabFilters.registry.sel[c]=vals;window._regLimit=500;const btn=document.getElementById('reg-btn-'+c);if(btn)btn.textContent=(vals.length?vals.length+' выбрано':'Все')+' ▾';registrySearchApply();};
@@ -5964,7 +6006,7 @@ window.registryExportAI=function(){
   const AL={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
   const CN={0:'Дата ДДС',1:'Дата ОПиУ',2:'Тип',3:'ID Offer',4:'Поступление',5:'Списание',6:'ФНС',7:'Реквизиты счёта',8:'Статья',9:'Подстатья',10:'Аналитика',11:'Контрагент',12:'Назначение',13:'Направление',14:'Фин. операция'};
   const EMP=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
-  const q=(_tabFilters.registry&&_tabFilters.registry.q||'').trim();
+  const q=_regNormQuery((_tabFilters.registry&&_tabFilters.registry.q||'').trim()); // описываем то, что реально искали, а не то, что набрали
   const parts=(q?q.split(/\s+/):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci).toLowerCase();if(AL[k]!=null){const v=t.slice(ci+1);return EMP.has(v.toLowerCase())?(CN[AL[k]]+' пусто'):(CN[AL[k]]+' содержит "'+v+'"');}}return 'любое поле содержит "'+t+'"';});
   // мультивыбор-фильтры полей
   const selF=(_tabFilters.registry&&_tabFilters.registry.sel)||{};
@@ -6000,7 +6042,7 @@ window.registryExportAI=function(){
 };
 function registryRender(q){
   const scroll=document.getElementById('regScroll'); if(!scroll)return;
-  q=String(q||'').trim().toLowerCase();
+  q=_regNormQuery(String(q||'').trim().toLowerCase()); // «15 000,00» → «15000»: в блобе лежит сырое значение из Sheets
   // Прицельный поиск по полю: «поле:значение». Алиасы полей → индекс COL.
   const ALIAS={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
   const dstr=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
@@ -6038,10 +6080,18 @@ function registryRender(q){
   window._regRows=idx.map(i=>RAW[i]);
   const total=idx.length, limit=window._regLimit||500, show=Math.min(limit,total);
   const anyFilter=tokens.length||selSets.length||(dfDDS.years&&dfDDS.years.length)||(dfDDS.months&&dfDDS.months.length)||dfDDS.from||dfDDS.to||(dfOP.years&&dfOP.years.length)||(dfOP.months&&dfOP.months.length)||dfOP.from||dfOP.to||incFrom!=null||incTo!=null||outFrom!=null||outTo!=null;
-  const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=anyFilter?('найдено: '+total.toLocaleString('ru-RU')):('всего: '+total.toLocaleString('ru-RU'));
+  const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=anyFilter?('найдено '+total.toLocaleString('ru-RU')+' из '+RAW.length.toLocaleString('ru-RU')):('всего '+total.toLocaleString('ru-RU'));
   const hc=document.getElementById('regHdrCount'); if(hc)hc.textContent=show.toLocaleString('ru-RU')+(show<total?(' из '+total.toLocaleString('ru-RU')):'')+' строк';
   if(!total){scroll.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Ничего не найдено по запросу</div>';return;}
-  const hlTerms=tokens.map(tk=>tk.val).filter(Boolean);
+  // Подсветка: числовой токен нормализован («15000»), а в колонках сумм на экране стоит формат f2
+  // («15 000,00») - без вариантов найденная строка подсвечивалась бы пустой. Варианты строим тем же
+  // toLocaleString, что и f2: иначе не совпадёт неразрывный пробел разрядов.
+  const hlTerms=[];
+  tokens.forEach(tk=>{if(!tk.val)return;hlTerms.push(tk.val);
+    if(!/^-?\d+(\.\d+)?$/.test(tk.val))return;
+    const n=parseFloat(tk.val);if(!isFinite(n))return;
+    [n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}),n.toLocaleString('ru-RU')].forEach(v=>{if(v!==tk.val&&hlTerms.indexOf(v)<0)hlTerms.push(v);});
+  });
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   const hlRes=hlTerms.map(t=>new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi')); // RegExp один раз на рендер, а не на каждую из ~7500 ячеек
   const hl=s=>{let o=esc(s);hlRes.forEach(re=>{o=o.replace(re,'<mark style="background:#fde68a;color:#23272f;padding:0 1px;border-radius:2px">$1</mark>');});return o;};
