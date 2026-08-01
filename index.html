@@ -6124,7 +6124,7 @@ function renderRegistry(f){
   // числовой диапазон Поступление/Списание (списание - по модулю, «расходы больше N»)
   const amtSub=(which,label,st)=>`<div class="reg-fsub">
       <span class="reg-fsub-t">${label}</span>
-      <div class="reg-fld"><label>от ₽</label><input type="number" inputmode="decimal" class="reg-inp reg-inp-num" value="${st.from}" oninput="regNumRange('${which}','from',this.value)" placeholder="0"></div>
+      <div class="reg-fld"><label>от ₽</label><input type="number" inputmode="decimal" class="reg-inp reg-inp-num" value="${st.from}" oninput="regNumRange('${which}','from',this.value)"></div>
       <div class="reg-fld"><label>до ₽</label><input type="number" inputmode="decimal" class="reg-inp reg-inp-num" value="${st.to}" oninput="regNumRange('${which}','to',this.value)" placeholder="∞"></div>
     </div>`;
   const numActive=o=>String(o.from||'').trim()!==''||String(o.to||'').trim()!=='';
@@ -6360,7 +6360,12 @@ function registryRender(q){
   const _rn=v=>{const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
   const rInc=(_tabFilters.registry&&_tabFilters.registry.inc)||{},rOut=(_tabFilters.registry&&_tabFilters.registry.out)||{};
   const incFrom=_rn(rInc.from),incTo=_rn(rInc.to),outFrom=_rn(rOut.from),outTo=_rn(rOut.to);
-  const numFail=(v,lo,hi)=>{if(lo!=null&&v<lo)return true;if(hi!=null&&v>hi)return true;return false;};
+  // ⚠ Ноль в колонке сумм означает «операции этого вида не было», а не сумму 0: у КАЖДОГО списания
+  // Поступление=0, у каждого поступления - Списание=0. Пока диапазон по колонке задан, такие строки
+  // отбрасываются ВСЕГДА, независимо от границ - иначе «от 0 до 2» по поступлению возвращало
+  // 29 268 строк (все списания попадали в границы) вместо 28 настоящих мелких поступлений.
+  // Сами границы остаются включающими (>= и <=) для всех ненулевых значений.
+  const numFail=(v,lo,hi)=>{if(!v)return true;if(lo!=null&&v<lo)return true;if(hi!=null&&v>hi)return true;return false;};
   const blobs=_buildRegBlobs();
   const idx=[];
   for(let i=0;i<RAW.length;i++){
