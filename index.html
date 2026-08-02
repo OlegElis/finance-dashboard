@@ -8762,7 +8762,16 @@ let _mktCounts=(()=>{try{
   if(vals.length&&vals.every(v=>v&&typeof v==='object'&&('leads'in v||'orders'in v||'fulfilled'in v)))return{'__all__':raw};
   return raw;
 }catch(e){return{}}})();
-function _mktSaveCounts(){try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){_lsWarn('mktCounts',e)}}
+// ⚠ Ключи ВЕРХНЕГО уровня - названия направлений из RAW («САУ - Союз…»), в них бывают запрещённые
+// в ключах RTDB символы (. $ # [ ] /) - кодируем через _rtdbEncObj, единственную точку кодирования.
+// Вложенный уровень (период) НЕ трогаем: он строится кодом - «2026», «Q3 2026», «Июль 2026»,
+// пользовательского текста там нет по построению (pkOfDate/getPK).
+// ⚠ Ветка config/mktCounts ТРЕБУЕТ правила записи в Firebase Console. Без него _fbSetSafe честно
+// скажет об отказе, но данные останутся только в зеркале - как было до переноса.
+function _mktSaveCounts(){
+  try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){_lsWarn('mktCounts',e)}
+  _fbSetSafe('config/mktCounts',_rtdbEncObj(_mktCounts),'Количества маркетинга');
+}
 let _mktDirKey='__all__'; // текущее направление (устанавливается в renderMarketing)
 
 // Лимиты касс {accName: limitNumber} - общие для всех устройств (Firebase RTDB config/kassaLimits) + локальный кэш в localStorage
@@ -8816,6 +8825,29 @@ function startLimitsSync(){
       }
     });
   }catch(e){console.warn('[limits] синхронизация не активна:',e&&e.message);}
+}
+
+// Синхронизация ручных количеств между устройствами: подписка на config/mktCounts.
+// ⚠ Миграция «локальное → облако» СОЗНАТЕЛЬНО не заводится (в отличие от лимитов): ключа mktCounts
+// в localStorage нет ни у кого - проверено диагностикой. Если он всё же появится, ничего не потеряется:
+// зеркало читается при загрузке, а первое же сохранение поднимет данные в облако.
+// ⚠ Ре-рендер только при РЕАЛЬНОМ изменении: эхо собственной записи иначе перерисовывало бы вкладку
+// после каждого введённого числа (та же ловушка, что у MutationObserver - не мутировать без нужды).
+function startMktCountsSync(){
+  if(window._mktSyncStarted)return; window._mktSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
+    fbApp();
+    firebase.database().ref('config/mktCounts').on('value',s=>{
+      const v=s.val();
+      if(!v||typeof v!=='object')return; // в облаке пусто - оставляем локальное, оно уедет наверх при первом сохранении
+      const next=_rtdbDecObj(v,'mktCounts');
+      if(JSON.stringify(next)===JSON.stringify(_mktCounts))return;
+      _mktCounts=next;
+      try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){_lsWarn('mktCounts',e)}
+      if(activeTab==='marketing')renderMarketing(getFilters());
+    });
+  }catch(e){console.warn('[mktCounts] синхронизация не активна:',e&&e.message);}
 }
 
 window.mktCountChange=function(pk,field,val){
@@ -11843,7 +11875,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -11897,7 +11929,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync();
       });
     }else{
       if(gate)gate.style.display='flex';
