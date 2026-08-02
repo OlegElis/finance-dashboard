@@ -5977,17 +5977,23 @@ function _regNormQuery(q){
 // он не показывается нигде и никогда; пока он лежал в индексе, запрос «08» находил 26.04.2024
 // (в номере 45408 есть «08»), и строка выглядела пустой - совпадения на экране не было вообще.
 // ⚠ Порядок записей = порядок колонок таблицы, и шапка строится ИЗ ЭТОГО ЖЕ списка (см. registryRender):
-// иначе подписи и ячейки однажды разъедутся. th - подпись в шапке (у кодовых колонок сокращённая,
-// см. блок ширин), short - имя колонки в подсказках и в «Совпало», num/date - тип сравнения при сортировке.
+// иначе подписи и ячейки однажды разъедутся.
+// th - подпись в ШАПКЕ, она может быть короче: у «Ст.», «Подст.», «Напр.», «Анал.» и «Фин.» полное
+// название не влезает в колонку, суженную под содержимое. short - ПОЛНОЕ имя колонки: идёт в подсказку
+// заголовка, в подсказки ячеек и в «Совпало». В выгрузке CSV свои полные названия (массив COLS
+// в registryExportAI) - сокращения шапки туда не попадают.
+// ⚠ «Поступление» и «Списание» НЕ сокращать: они обязаны совпадать с названиями типов операций
+// в колонке «Тип», иначе разойдутся с Банком и с данными.
+// num/date - тип сравнения при сортировке.
 const REG_SEARCH_FIELDS=[
   {c:COL.DATE_DDS,short:'ДДС',th:'ДДС',date:1},{c:COL.DATE_OPIU,short:'ОПиУ',th:'ОПиУ',date:1},
   {c:COL.TYPE,short:'Тип',th:'Тип'},{c:COL.OFFER_ID,short:'ID Offer',th:'ID Offer'},
   {c:COL.INCOME,short:'Поступление',th:'Поступление',num:1,wrap:1},{c:COL.OUTCOME,short:'Списание',th:'Списание',num:1,wrap:1},
   {c:COL.FNS,short:'ФНС',th:'ФНС'},{c:COL.ACCOUNT,short:'Счёт',th:'Реквизиты счёта'},
   {c:COL.ARTICLE_CODE,short:'Статья',th:'Ст.'},{c:COL.ARTICLE_NAME,short:'Подстатья',th:'Подст.'},
-  {c:COL.ANALYTICS,short:'Аналитика',th:'Аналитика'},{c:COL.SECOND_SIDE,short:'Контрагент',th:'Контрагент'},
+  {c:COL.ANALYTICS,short:'Аналитика',th:'Анал.'},{c:COL.SECOND_SIDE,short:'Контрагент',th:'Контрагент'},
   {c:COL.PURPOSE,short:'Назначение',th:'Назначение'},{c:COL.ACTIVITY_DIR,short:'Направление',th:'Напр.'},
-  {c:COL.FIN_OP,short:'Фин. операция',th:'Фин. оп.'}
+  {c:COL.FIN_OP,short:'Фин. операция',th:'Фин.'}
 ];
 const REG_FIELD_BY_COL={};REG_SEARCH_FIELDS.forEach(F=>{REG_FIELD_BY_COL[F.c]=F;});
 // Классы <col> в порядке колонок таблицы - тот же порядок, что у REG_SEARCH_FIELDS
@@ -6286,7 +6292,8 @@ function _regTipWrap(s){
 }
 function _regTipsSync(){
   const scroll=document.getElementById('regScroll');if(!scroll)return;
-  const heads=[].map.call(scroll.querySelectorAll('thead th'),t=>t.textContent.trim());
+  // имя колонки для подсказок берём из data-full: подпись в шапке может быть сокращена
+  const heads=[].map.call(scroll.querySelectorAll('thead th'),t=>(t.getAttribute('data-full')||t.textContent).trim());
   // Заголовки справочных колонок в 1019px тоже не помещаются («Фин. операция» требует 122px
   // при 46px колонки). Название колонки - такое же значение, как содержимое ячейки, и читаться
   // должно тем же способом.
@@ -6295,7 +6302,7 @@ function _regTipsSync(){
   // сортировку идут одним компонентом.
   [].forEach.call(scroll.querySelectorAll('thead th'),th=>{
     if(!th.classList.contains('reg-th-sort'))return;
-    const nm=th.textContent.replace(/[\u2195\u25b2\u25bc]/g,'').trim();
+    const nm=(th.getAttribute('data-full')||th.textContent.replace(/[\u2195\u25b2\u25bc]/g,'')).trim();
     _tipSet(th,[[nm,'']],null,'Колонка',[['клик','сортировка']]);});
   [].forEach.call(scroll.querySelectorAll('tbody tr'),tr=>{
     const tds=tr.children;
@@ -6728,7 +6735,7 @@ function registryRender(q){
   let html=`<table class="txn-table${showWhy?' reg-why':''}"><colgroup>${showWhy?'<col class="c-why">':''}${REG_COL_CLS.map(c=>`<col class="${c}">`).join('')}</colgroup>
     <thead><tr>${showWhy?'<th class="c-why-h">Совпало</th>':''}${REG_SEARCH_FIELDS.map(F=>{
       const on=srt&&srt.col===F.c, arr=on?(srt.dir===1?'<i class="reg-sort-a">▲</i>':'<i class="reg-sort-a">▼</i>'):'<i class="reg-sort-i">↕</i>';
-      return `<th class="reg-th-sort${F.wrap?' th-wrap':''}${on?' reg-th-on':''}" onclick="regSort(${F.c})">${_htmlEsc(F.th)}${arr}</th>`;
+      return `<th class="reg-th-sort${F.wrap?' th-wrap':''}${on?' reg-th-on':''}" data-full="${_htmlEsc(F.short)}" onclick="regSort(${F.c})">${_htmlEsc(F.th)}${arr}</th>`;
     }).join('')}</tr></thead><tbody>`;
   for(let i=0;i<show;i++){const r=window._regRows[i];const inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
     const mv=isMoveRow(r); // тот же признак, что у Банка - строка «Перемещение» красится своим цветом независимо от знака
