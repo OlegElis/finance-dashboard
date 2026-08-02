@@ -11742,6 +11742,41 @@ window.cfoStatementGen=function(){
   setTimeout(()=>{try{w.focus();w.print();}catch(e){}},450);
   const ovEl=document.getElementById('cfoStmtOverlay'); if(ovEl)ovEl.remove();
 };
+// ⚠ Сторож уровней ПРИ ОТКРЫТИИ редактора - третий слой к уже существующим двум: гейт на запись
+// (`_planStage` по PLAN_LEVELS) и фильтр при заморозке (`_baselineBakeMonth`). Оба защищают БУДУЩЕЕ,
+// а уже лежащие в config/plans записи чужого уровня не показывает никто: в форму они не попадают
+// (строки рендерятся только для подстатей), в расчёты не входят, и человек про них не знает.
+// ⚠ Отбор ПО ПОЛЮ level, а не по имени кода: запись чужого уровня с кодом подстатьи иначе прошла бы
+// мимо сторожа (эта же ловушка уже ловилась в «Факт без плана»).
+// ⚠ Сумму по таким записям НЕЛЬЗЯ показывать одним числом: в наборе вперемешку рубли, «% выручки»
+// и «% ЧП» - сложение даёт бессмыслицу (при чистке 31.07.2026 47 записей дали «132,90», где лежали
+// и 0.3, и 0.5, и 10). Поэтому разбивка ПО РЕЖИМУ: рубли суммируем, проценты считаем штуками.
+// ⚠ Удаление НЕ предлагаем: чистка данных идёт своим порядком (архив → сухой прогон → удаление →
+// сверка) и делается вручную. Полоса только сообщает.
+function _planAlienHtml(){
+  const bad=(_planRecords||[]).filter(p=>p&&PLAN_LEVELS.indexOf(p.level)<0); // ⚠ БЕЗ window: _planRecords объявлена через let и на window её НЕТ - window._planRecords даёт undefined и сторож молчит всегда
+  if(!bad.length)return ''; // нет записей - нет и блока, пустой рамки не оставляем
+  const byLvl={},byMode={money:{n:0,sum:0},pct:{n:0},pct_profit:{n:0},other:{n:0}};
+  bad.forEach(p=>{
+    const lv=String(p.level==null?'(без уровня)':p.level);
+    byLvl[lv]=(byLvl[lv]||0)+1;
+    if(p.mode==='pct')byMode.pct.n++;
+    else if(p.mode==='pct_profit')byMode.pct_profit.n++;
+    else if(p.mode==='money'||p.mode==null){byMode.money.n++;byMode.money.sum+=(+p.value||0);}
+    else byMode.other.n++;
+  });
+  const lvls=Object.keys(byLvl).sort().map(k=>'«'+_htmlEsc(k)+'» - '+byLvl[k]).join(', ');
+  const parts=[];
+  if(byMode.money.n)parts.push(byMode.money.n+' в рублях на '+fmt(byMode.money.sum)+' ₽');
+  if(byMode.pct.n)parts.push(byMode.pct.n+' в % выручки');
+  if(byMode.pct_profit.n)parts.push(byMode.pct_profit.n+' в % ЧП');
+  if(byMode.other.n)parts.push(byMode.other.n+' с неизвестным режимом');
+  return `<div style="flex-shrink:0;margin-bottom:10px;padding:8px 12px;border:1px solid var(--orange);border-radius:7px;background:rgba(232,134,43,.08);font-size:12px;color:var(--text2);line-height:1.5">
+    <b style="color:var(--orange)">⚠ В плане есть ${bad.length} ${_plurRu(bad.length,'запись','записи','записей')} не на уровне подстатьи</b> - ${lvls}.
+    ${parts.join(' · ')}. Планирование ведётся только на подстатьях, поэтому эти записи <b>не показаны в форме и не участвуют ни в одном расчёте</b>: ни в плане, ни в отклонениях, ни в «Исполнении YTD». Сохранение их не создаёт - гейт записи пропускает только ${PLAN_LEVELS.join(' / ')}.
+  </div>`;
+}
+function _plurRu(n,a,b,c){const n10=n%10,n100=n%100;return(n10===1&&n100!==11)?a:(n10>=2&&n10<=4&&(n100<12||n100>14))?b:c;}
 window.showPlansPanel=async function(){
   if(document.getElementById('plansPanelOverlay'))return;
   if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
@@ -11768,6 +11803,7 @@ window.showPlansPanel=async function(){
   overlay.innerHTML=`<div class="txn-card" style="width:98vw;max-width:none;height:94vh;max-height:94vh;display:flex;flex-direction:column">
     <div class="txn-card-head" style="flex-shrink:0"><h3>Планы (БДР)${isAdmin?'':' — просмотр'}</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:14px 18px 18px;flex:1;min-height:0;display:flex;flex-direction:column">
+      ${_planAlienHtml()}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <select id="plan-dir-flt" onchange="planDirFlt(this.value)" title="Показывать развороты и итоги только по выбранному направлению (планы остальных не трогаются)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:260px">
           <option value="">Все направления</option>${dirs.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')}
