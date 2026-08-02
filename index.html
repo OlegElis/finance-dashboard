@@ -2389,7 +2389,12 @@ function renderBank(f){
   const _lastData=_stockDates.length?new Date(Math.max(..._stockDates)):null;
   const _today0=new Date();
   // Без верхней границы (весь учёт): сегодня, а при включённых будущих оплатах - последняя дата набора.
-  const _asOfD=f.dateTo?new Date(f.dateTo+'T00:00:00'):((_lastData&&_lastData>_today0)?_lastData:_today0);
+  const _asOfBound=f.dateTo?new Date(f.dateTo+'T00:00:00'):((_lastData&&_lastData>_today0)?_lastData:_today0);
+  // ⚠ При ВЫКЛЮЧЕННОМ тумблере «Будущие оплаты» строки обрезаны сегодняшним днём, а верхняя граница
+  //   периода может лежать в будущем (умолчание тянет её к последней дате данных, а там бывает
+  //   завтрашний плановый платёж). Подпись брала границу напрямую и обещала «на 03.08.2026» при
+  //   остатке, посчитанном по сегодня: число верное, дата на день вперёд.
+  const _asOfD=(!f.includeFuture&&_asOfBound>_today0)?_today0:_asOfBound;
   const _dd=d=>String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();
   const _asOfLbl='на '+_dd(_asOfD);
   const map=new Map();
@@ -2692,12 +2697,15 @@ function renderBank(f){
   const nAcc=gDa.length+gNet.length+gAlloc.length;
   // ⚠ Порядок карточек: сначала ПОТОК (за период), потом ЗАПАС (на дату). Величины разной природы
   //   не перемешивать - иначе подписи придётся читать у каждой, чтобы понять, что с чем сравнивать.
+  // ⚠ «Счетов» стоит в ПОТОКЕ, и это не оплошность: величина зависит от периода (замер на одних данных -
+  //   4 при текущем годе, 5 при всём учёте, 3 в пустом месяце), потому что счёт попадает в своды
+  //   при движении за период ИЛИ ненулевом остатке. В блоке запаса под подписью «на дату» она врала.
   const kpiHtml=`<div class="kpi-grid">
     <div class="kpi-card green" ${_flowTip(totInc,_prvWin?_prvWin.inc:0,'Поступления')}><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}${_dArrow(_prvWin?_pctD(totInc,_prvWin.inc):null,true)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card red" ${_flowTip(totOut,_prvWin?_prvWin.out:0,'Списания')}><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}${_dArrow(_prvWin?_pctD(totOut,_prvWin.out):null,false)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
   </div>`;
