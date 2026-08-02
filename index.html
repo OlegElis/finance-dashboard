@@ -8798,6 +8798,59 @@ function _mktSaveCounts(){
 }
 let _mktDirKey='__all__'; // текущее направление (устанавливается в renderMarketing)
 
+// ══ СПРАВОЧНИК СЧЕТОВ (config/accounts) ══════════════════════════════════════
+// {имя счёта: {vid, bank, fns, active}} - общий для всех устройств, зеркало в localStorage.
+// ⚠ Вид счёта ХРАНИТСЯ, а не выводится из имени при каждом показе. Разбор имени остаётся только
+//   ПОДСКАЗКОЙ при заведении новой строки справочника: переименование счёта в источнике иначе молча
+//   меняет его вид (уже стреляло с «Картой ФЛ», где `\w` не матчил кириллицу).
+// ⚠ Поля «направление» здесь НЕТ и заводить его нельзя: счёт не привязан к одному направлению -
+//   в «БФЛ - Касса» 3 432 строки БФЛ и 1 378 АП, поле врало бы на четверти строк. Направление -
+//   свойство ОПЕРАЦИИ (решение 02.08.2026, см. CLAUDE.md).
+// ⚠ `active` - РУЧНАЯ отметка, не автомат по дате последней операции: у «БФЛ - Касса КО» 236 строк
+//   за два года, счёт редкий, но живой. Дата последней операции показывается рядом как подсказка.
+// ⚠ Ключи - имена счетов, и в них есть слэш («р/с», «…/CL») - кодируем `_rtdbEncObj`, иначе .set
+//   падает целиком. Счёт с ПУСТЫМ именем в справочник не заводится: пустая строка не может быть
+//   ключом RTDB, а три таких строки в данных - дефект, они идут в «Счета на распределение».
+// ⚠ config/accounts требует СВОЕГО ПРАВИЛА ЗАПИСИ в Firebase Console. Пока правила нет, _fbSetSafe
+//   честно скажет об отказе, а справочник останется только в зеркале - то есть у одного человека.
+const ACC_VIDS=['ООО','ИП','Прочие юрлица','Карты физлиц','Карта АУ','Корпоративные карты','Кассы','Топливные карты','Депозиты','Прочие'];
+let _accounts=(()=>{try{const v=JSON.parse(localStorage.getItem('finAccounts')||'{}');return (v&&typeof v==='object'&&!Array.isArray(v))?v:{};}catch(e){return{}}})();
+// Одна запись справочника. Приводим к форме ЯВНО: в облаке может лежать что угодно, а читатели
+// (шаги 2-5) рассчитывают на четыре поля и не должны проверять каждое.
+function _accRec(o){
+  o=o||{};
+  return{vid:ACC_VIDS.indexOf(o.vid)>=0?o.vid:'Прочие',
+    bank:String(o.bank==null?'':o.bank).trim(),
+    fns:(o.fns===1||o.fns===0)?o.fns:-1,          // 1 да / 0 нет / -1 признака нет
+    active:o.active===0?0:1};                      // по умолчанию активен
+}
+function _accNorm(map){const out={};Object.keys(map||{}).forEach(k=>{const nm=String(k||'').trim();if(nm)out[nm]=_accRec(map[k]);});return out;}
+function _accSave(){
+  _accounts=_accNorm(_accounts);
+  try{localStorage.setItem('finAccounts',JSON.stringify(_accounts));}catch(e){_lsWarn('finAccounts',e)}
+  return _fbSetSafe('config/accounts',_rtdbEncObj(_accounts),'Справочник счетов');
+}
+// Синхронизация справочника между устройствами.
+// ⚠ Ре-рендер только при РЕАЛЬНОМ изменении (сравнение JSON): эхо собственной записи иначе
+//   перерисовывало бы вкладку после каждой правки карточки (та же ловушка, что у mktCounts).
+// ⚠ Пустое облако локальное НЕ затирает: ветки может ещё не быть, а зеркало уже заполнено.
+function startAccountsSync(){
+  if(window._accSyncStarted)return; window._accSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
+    fbApp();
+    firebase.database().ref('config/accounts').on('value',s=>{
+      const v=s.val();
+      if(!v||typeof v!=='object')return;
+      const next=_accNorm(_rtdbDecObj(v,'accounts'));
+      if(JSON.stringify(next)===JSON.stringify(_accounts))return;
+      _accounts=next;
+      try{localStorage.setItem('finAccounts',JSON.stringify(_accounts));}catch(e){_lsWarn('finAccounts',e)}
+      if(activeTab==='bank')renderBank(getFilters());
+    });
+  }catch(e){console.warn('[accounts] синхронизация не активна:',e&&e.message);}
+}
+
 // Лимиты касс {accName: limitNumber} - общие для всех устройств (Firebase RTDB config/kassaLimits) + локальный кэш в localStorage
 let _kassaLimits=(()=>{try{return JSON.parse(localStorage.getItem('kassaLimits')||'{}')}catch(e){return{}}})();
 function _kassaSaveLimits(){
@@ -10349,6 +10402,7 @@ const LS_MIRROR_KEYS=[
   'finBackupLog',                     // когда и КЕМ (email) снят архив настроек
   'kassaLimits','mktCounts',          // лимиты по счетам, ручные количества маркетинга
   'reportPresets',                    // пресеты отчётов - рабочий отбор конкретного человека
+  'finAccounts',                      // справочник счетов: вид, банк, признак ФНС, активность
   'fin_sheetId','fin_apiKey'          // реквизиты доступа к таблице (см. ⚠ выше)
 ];
 function _lsWipeMirrors(){
@@ -11965,7 +12019,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -12019,7 +12073,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync();
       });
     }else{
       if(gate)gate.style.display='flex';
