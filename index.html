@@ -6214,8 +6214,8 @@ const REG_SEARCH_FIELDS=[
   {c:COL.TYPE,short:'Тип',th:'Тип'},{c:COL.OFFER_ID,short:'ID Offer',th:'ID Offer'},
   {c:COL.INCOME,short:'Поступление',th:'Поступление',num:1,wrap:1},{c:COL.OUTCOME,short:'Списание',th:'Списание',num:1,wrap:1},
   {c:COL.FNS,short:'ФНС',th:'ФНС'},{c:COL.ACCOUNT,short:'Счёт',th:'Реквизиты счёта'},
-  {c:COL.ARTICLE_CODE,short:'Статья',th:'Ст.'},{c:COL.ARTICLE_NAME,short:'Подстатья',th:'Подст.'},
-  {c:COL.ANALYTICS,short:'Аналитика',th:'Анал.'},{c:COL.SECOND_SIDE,short:'Контрагент',th:'Контрагент'},
+  {c:COL.ARTICLE_CODE,short:'Статья',th:'Статья'},{c:COL.ARTICLE_NAME,short:'Подстатья',th:'Подстатья'},
+  {c:COL.ANALYTICS,short:'Аналитика',th:'Аналитика'},{c:COL.SECOND_SIDE,short:'Контрагент',th:'Контрагент'},
   {c:COL.PURPOSE,short:'Назначение',th:'Назначение'},{c:COL.ACTIVITY_DIR,short:'Направление',th:'Напр.'},
   {c:COL.FIN_OP,short:'Фин. операция',th:'Фин.'}
 ];
@@ -6239,7 +6239,13 @@ const REG_W_FIX={};
 // значении в 91, «ФНС» - 46 при значении в 34. Брать максимум из двух.
 REG_W_FIX[COL.DATE_DDS]=76; REG_W_FIX[COL.DATE_OPIU]=68; REG_W_FIX[COL.TYPE]=90;
 REG_W_FIX[COL.INCOME]=112;  REG_W_FIX[COL.OUTCOME]=112;  REG_W_FIX[COL.FNS]=46;   // атомарные, 504
-REG_W_FIX[COL.ARTICLE_CODE]=52; REG_W_FIX[COL.ARTICLE_NAME]=64; REG_W_FIX[COL.ANALYTICS]=62;
+// ⚠ Подписи «Статья», «Подстатья», «Аналитика» - ПОЛНЫЕ слова, сокращать обратно не надо.
+// Сокращения заводились ДО снятия прописных и разрядки с шапки; после него подпись стала уже
+// примерно на 15%, и «Статья» (51px) влезла в прежние 52px бесплатно, а «Подстатье» и «Аналитике»
+// не хватало 8 и 11px - они и добавлены (64→72, 62→73). Полное слово читается быстрее сокращения.
+// ⚠ «Напр.» и «Фин.» остаются сокращёнными СОЗНАТЕЛЬНО: полным подписям нужно ещё 31 и 44px,
+// а это уже отбирается у текстовых колонок.
+REG_W_FIX[COL.ARTICLE_CODE]=52; REG_W_FIX[COL.ARTICLE_NAME]=72; REG_W_FIX[COL.ANALYTICS]=73;
 REG_W_FIX[COL.ACTIVITY_DIR]=58; REG_W_FIX[COL.FIN_OP]=54;                          // кодовые, 290
 const REG_W_FLEX=[COL.OFFER_ID,COL.ACCOUNT,COL.SECOND_SIDE,COL.PURPOSE];
 const REG_W_MIN=50, REG_W_WHY=96;
@@ -6252,11 +6258,11 @@ REG_W_WEIGHT[COL.OFFER_ID]=30; REG_W_WEIGHT[COL.ACCOUNT]=22;
 REG_W_WEIGHT[COL.SECOND_SIDE]=16; REG_W_WEIGHT[COL.PURPOSE]=32;
 // Делёжка остатка пропорционально весам, с минимумом на колонку. Разницу от округления и от
 // поднятия до минимума добираем/срезаем по самым широким - в отрицательное не уходим.
+// ⚠ Минимум ЖЁСТКИЙ: опускать его нельзя. Раньше он проседал до равной доли остатка, и при 1280
+// с активным поиском текстовые колонки молча получали 32/32/32/33px вместо 50, а при 980 - ноль.
+// Теперь недостаток места разбирает вызывающий (_regApplyColW): либо минимум соблюдён, либо
+// включается горизонтальная прокрутка. Сюда мы попадаем, только когда места ХВАТАЕТ.
 function _regAlloc(rest,keys,weights,minW){
-  // ⚠ Если остатка не хватает даже на минимумы (узкое окно + показанная колонка «Совпало»),
-  // минимум опускается до равной доли: иначе сумма ширин превысила бы контейнер, а при
-  // overflow-x:hidden это молча срезало бы последнюю колонку вместо того, чтобы её сузить.
-  minW=Math.min(minW,Math.floor(rest/keys.length));
   const out={},tot=keys.reduce((s,k)=>s+(weights[k]||1),0)||1;
   keys.forEach(k=>out[k]=Math.max(minW,Math.floor(rest*(weights[k]||1)/tot)));
   let sum=keys.reduce((s,k)=>s+out[k],0),d=rest-sum,guard=0;
@@ -6279,11 +6285,29 @@ function _regApplyColW(){
   const avail=scroll.clientWidth;
   let fixed=withWhy?REG_W_WHY:0;
   REG_SEARCH_FIELDS.forEach(F=>fixed+=REG_W_FIX[F.c]||0);
-  const flex=_regAlloc(Math.max(0,avail-fixed),REG_W_FLEX,REG_W_WEIGHT,REG_W_MIN);
+  // ⚠ ПОРОГ считается ОТ ФАКТИЧЕСКИХ величин, а не зашит числом: фиксированная часть (атомарные
+  //   + кодовые + «Совпало», если показана) плюс минимумы четырёх текстовых. Замер 02.08.2026 дал
+  //   порог около окна 1255 без поиска и 1351 с ним, но привязываться к этим числам нельзя -
+  //   они меняются от любой правки ширин, а формула следует за ними сама.
+  const need=fixed+REG_W_FLEX.length*REG_W_MIN;
+  const tight=avail<need;
+  // ⚠ Ниже порога включается ГОРИЗОНТАЛЬНАЯ ПРОКРУТКА - осознанное исключение из правила «прокрутки
+  //   нет». Правило писалось для рабочих ширин; на узком окне выбор не между прокруткой и её
+  //   отсутствием, а между прокруткой и ИСЧЕЗНОВЕНИЕМ четырёх колонок (раньше они получали 0px,
+  //   и таблица молча теряла ID Offer, счёт, контрагента и назначение). Форма статична: все колонки
+  //   на месте, минимум соблюдён, часть таблицы уезжает за край и достаётся прокруткой.
+  // ⚠ Атомарные (даты, тип, суммы, ФНС) не ужимаются НИ ПРИ КАКОЙ ширине: их значения обрезать нельзя.
+  const flex={};
+  if(tight)REG_W_FLEX.forEach(c=>{flex[c]=REG_W_MIN;});
+  else Object.assign(flex,_regAlloc(avail-fixed,REG_W_FLEX,REG_W_WEIGHT,REG_W_MIN));
   const cols=tbl.querySelectorAll('col');let n=0;
   if(withWhy)cols[n++].style.width=REG_W_WHY+'px';
   REG_SEARCH_FIELDS.forEach(F=>{const w=REG_W_FIX[F.c]!=null?REG_W_FIX[F.c]:flex[F.c];
     if(cols[n])cols[n].style.width=w+'px';n++;});
+  // Ширину таблицы задаём явно только в узком режиме: иначе table-layout:fixed растянет её
+  // по контейнеру и колонки съедут с назначенных ширин.
+  tbl.style.width=tight?need+'px':'100%';
+  scroll.style.overflowX=tight?'auto':'hidden'; // .txn-scroll по умолчанию overflow-x:hidden
 }
 // ── Сортировка по колонке ──────────────────────────────────────────────────────
 // Живёт ПОВЕРХ поиска и фильтров: смена запроса её не сбрасывает, потому что состояние
