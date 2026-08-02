@@ -3148,6 +3148,124 @@ window.showKassaLimitsPopup=function(){
   document.body.appendChild(overlay);
 };
 
+// ══ КАРТОЧКА СЧЁТА (справочник config/accounts) ══════════════════════════════
+// ⚠ Подсказка вида ПО ИМЕНИ - только предложение при заведении, хранится всё равно выбранный
+//   человеком вид (см. _accounts). Иначе переименование счёта в источнике молча меняет его вид.
+// ⚠ Правая граница - lookahead, а НЕ \b: \b и \w в JS ASCII-only ДАЖЕ с флагом u, и «ооо »
+//   границы слова не даёт - на этом классификатор уже разваливался целиком.
+// ⚠ Порядок проверок значим: «Топливная карта (ООО СИБСУДЭКС)» содержит «ООО», а «Карта ГК ОПОРА»
+//   не должна попасть в карты физлиц. Сначала точные формы, потом общие.
+const _ACC_B='(?![\\p{L}\\p{N}])';
+const ACC_GUESS=[
+  ['Топливные карты',new RegExp('^топливная\\s+карта'+_ACC_B,'u')],
+  ['Карты физлиц',   new RegExp('^карта\\s*фл'+_ACC_B,'u')],
+  ['Карта АУ',       new RegExp('^карта\\s*ау'+_ACC_B,'u')],
+  ['Корпоративные карты',/^карта\s+гк(?![\p{L}\p{N}])/u],
+  ['Депозиты',       /депозит|депонирован/u],
+  ['Кассы',          /касс|задолженность\s+по\s+страховым\s+взносам|займы\s+сотрудникам/u],
+  ['ООО',            new RegExp('^ооо'+_ACC_B,'u')],
+  ['ИП',             new RegExp('^ип'+_ACC_B,'u')],
+  ['Прочие юрлица',  /р\/с|расчётный\s+счет|расчетный\s+счет/u] // признак - «р/с», а не префикс: «АРИБ - р/с СберБанк» не ООО и не ИП
+];
+function _accGuessVid(name){
+  const n=String(name||'').toLowerCase().replace(/\u00a0|\u202f/gu,' ').replace(/ё/gu,'е').replace(/\s+/gu,' ').trim();
+  for(let i=0;i<ACC_GUESS.length;i++)if(ACC_GUESS[i][1].test(n))return ACC_GUESS[i][0];
+  return 'Прочие';
+}
+// Факты по счёту ИЗ ДАННЫХ - подсказка для решения, а не источник вердикта.
+// ⚠ Признак ФНС берётся по ВСЕМ строкам счёта (первое распознанное «да»/«нет»), как в своде и
+//   в карточке «Доля оформленного»: он свойство счёта, а не периода.
+function _accFacts(name){
+  const nm=String(name||'').trim(),out={n:0,min:null,max:null,fns:-1,dirs:{}};
+  (RAW||[]).forEach(r=>{
+    if(String(r[COL.ACCOUNT]||'').trim()!==nm)return;
+    out.n++;
+    const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
+    if(d){if(!out.min||d<out.min)out.min=d;if(!out.max||d>out.max)out.max=d;}
+    if(out.fns===-1){const v=String(r[COL.FNS]||'').toLowerCase().trim();
+      if(['да','true','1','+'].includes(v))out.fns=1;else if(['нет','false','0','-'].includes(v))out.fns=0;}
+    const dr=String(r[COL.ACTIVITY_DIR]||'').trim();if(dr)out.dirs[dr]=(out.dirs[dr]||0)+1;
+  });
+  return out;
+}
+const _ACC_FNS_LBL={1:'да',0:'нет','-1':'без признака'};
+window.accCardOpen=function(name){
+  if(document.getElementById('accCardOverlay'))return;
+  const nm=String(name||'').trim(); if(!nm)return; // пустое имя в справочник не заводится
+  const ro=!_isAdmin(); // правка - только админу: запись config/* всё равно отклонится правилами
+  const rec=_accRec(_accounts[nm]||{vid:_accGuessVid(nm)});
+  const isNew=!_accounts[nm];
+  const f=_accFacts(nm);
+  const dd=d=>d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'-';
+  const dirTop=Object.keys(f.dirs).sort((a,b)=>f.dirs[b]-f.dirs[a]).slice(0,2).map(k=>k+' ('+f.dirs[k].toLocaleString('ru-RU')+')').join(' · ')||'-';
+  // ⚠ Подсказки - через единый компонент: в них числа, а нативный title их не выравнивает.
+  const factTip=_tipAttr([['строк в данных',f.n.toLocaleString('ru-RU')],['первая операция',dd(f.min)],['последняя операция',dd(f.max)]],null,'Факты по счёту из RAW');
+  const lbl='font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em';
+  const inp='font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans);width:100%;box-sizing:border-box';
+  const sel=v=>ACC_VIDS.map(x=>`<option value="${_htmlEsc(x)}"${x===v?' selected':''}>${_htmlEsc(x)}</option>`).join('');
+  const fnsOpts=[[1,'да'],[0,'нет'],[-1,'без признака']].map(([v,t])=>`<option value="${v}"${rec.fns===v?' selected':''}>${t}</option>`).join('');
+  const roCell=t=>`<div style="font-size:12px;color:var(--text2);padding:5px 0">${_htmlEsc(t)}</div>`;
+  // ⚠ Расхождение по ФНС ПОКАЗЫВАЕМ, но молча не переписываем ни в ту, ни в другую сторону:
+  //   в справочнике может стоять решение учёта, а в строках - то, как заводили операции.
+  const mism=(f.fns!==-1&&rec.fns!==-1&&f.fns!==rec.fns);
+  const fnsFact=`<div id="accFnsFact" style="font-size:11px;margin-top:4px;color:${mism?'var(--orange)':'var(--text3)'}">${mism?'⚠ ':''}по строкам счёта: <b>${_ACC_FNS_LBL[f.fns]}</b>${mism?' - расходится с выбранным':''}</div>`;
+  const ov=document.createElement('div');
+  ov.className='txn-card-overlay'; ov.id='accCardOverlay';
+  ov.innerHTML=`<div class="txn-card" style="max-width:620px;width:92vw">
+    <div class="txn-card-head"><h3>Счёт: ${_htmlEsc(nm)}${isNew?' <span style="font-size:11px;font-weight:400;color:var(--text3)">- ещё не в справочнике</span>':''}</h3><button class="txn-card-close">✕</button></div>
+    <div style="padding:16px 20px 20px">
+      <div ${factTip} style="background:var(--surface2);border-radius:7px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:var(--text2);line-height:1.6">
+        Строк в данных: <b>${f.n.toLocaleString('ru-RU')}</b> · операции с <b>${dd(f.min)}</b> по <b>${dd(f.max)}</b><br>
+        Направления: ${_htmlEsc(dirTop)}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 16px">
+        <div><div style="${lbl}">Вид</div>${ro?roCell(rec.vid):`<select id="accVid" style="${inp}">${sel(rec.vid)}</select>`}
+          ${isNew&&!ro?`<div style="font-size:11px;color:var(--text3);margin-top:4px">подсказка по имени: <b>${_htmlEsc(_accGuessVid(nm))}</b></div>`:''}</div>
+        <div><div style="${lbl}">Банк</div>${ro?roCell(rec.bank||'-'):`<input id="accBank" type="text" value="${_htmlEsc(rec.bank)}" placeholder="например, СберБанк" style="${inp}">`}</div>
+        <div><div style="${lbl}">Признак ФНС</div>${ro?roCell(_ACC_FNS_LBL[rec.fns]):`<select id="accFns" onchange="accCardFnsHint()" style="${inp}">${fnsOpts}</select>`}${fnsFact}</div>
+        <div><div style="${lbl}">Состояние</div>${ro?roCell(rec.active?'активен':'закрыт'):`<select id="accActive" style="${inp}"><option value="1"${rec.active?' selected':''}>активен</option><option value="0"${rec.active?'':' selected'}>закрыт</option></select>`}
+          <div style="font-size:11px;color:var(--text3);margin-top:4px" ${_tipAttr([['последняя операция',dd(f.max)],['строк всего',f.n.toLocaleString('ru-RU')]],null,'Отметку ставит человек - это не автомат')}>отметка ручная · последняя операция <b>${dd(f.max)}</b></div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
+        ${ro?'<span style="font-size:11px;color:var(--text3)">Только просмотр. Справочник ведёт администратор.</span>'
+            :`<button onclick="accCardSave('${_htmlEsc(nm).replace(/'/g,"\\'")}')" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">Сохранить</button>
+              <button onclick="document.getElementById('accCardOverlay').remove()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Отмена</button>
+              <span id="accCardMsg" style="font-size:11px;color:var(--text3)"></span>`}
+      </div>
+    </div>
+  </div>`;
+  const close=()=>{ov.remove();document.removeEventListener('keydown',onKey);};
+  const onKey=e=>{if(e.key==='Escape')close();};
+  ov.querySelector('.txn-card-close').addEventListener('click',close);
+  ov.addEventListener('click',e=>{if(e.target===ov)close();});
+  document.addEventListener('keydown',onKey);
+  document.body.appendChild(ov);
+};
+// Пересчёт подсказки о расхождении при смене признака - без ре-рендера всей карточки
+window.accCardFnsHint=function(){
+  const ov=document.getElementById('accCardOverlay'); if(!ov)return;
+  const h3=ov.querySelector('.txn-card-head h3'); if(!h3)return;
+  const nm=h3.textContent.replace(/^Счёт:\s*/,'').replace(/\s*- ещё не в справочнике$/,'').trim();
+  const sel=ov.querySelector('#accFns'),box=ov.querySelector('#accFnsFact'); if(!sel||!box)return;
+  const cur=+sel.value, fact=_accFacts(nm).fns;
+  const mism=(fact!==-1&&cur!==-1&&fact!==cur);
+  box.style.color=mism?'var(--orange)':'var(--text3)';
+  box.innerHTML=(mism?'⚠ ':'')+'по строкам счёта: <b>'+_ACC_FNS_LBL[fact]+'</b>'+(mism?' - расходится с выбранным':'');
+};
+window.accCardSave=function(name){
+  const ov=document.getElementById('accCardOverlay'); if(!ov)return;
+  const nm=String(name||'').trim(); if(!nm)return;
+  _accounts[nm]={vid:(ov.querySelector('#accVid')||{}).value,bank:(ov.querySelector('#accBank')||{}).value,
+    fns:+((ov.querySelector('#accFns')||{}).value),active:+((ov.querySelector('#accActive')||{}).value)};
+  const msg=ov.querySelector('#accCardMsg'); if(msg)msg.textContent='сохраняю…';
+  // _accSave сам сообщит об отказе записи (правило ветки config/accounts заводится в Firebase Console)
+  Promise.resolve(_accSave()).then(ok=>{
+    const o=document.getElementById('accCardOverlay');
+    if(o)o.remove();
+    if(activeTab==='bank')renderBank(getFilters());
+  });
+};
+
 // Generic multi-select for year/month dropdowns (DDS & OPIU)
 window.multiSelToggle=function(ddId){const dd=document.getElementById(ddId);if(!dd)return;const open=dd.style.display==='block';dd.style.display=open?'none':'block';};
 window.multiSelChange=function(tab,field,ddId,btnId){
