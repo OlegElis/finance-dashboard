@@ -3256,7 +3256,8 @@ window.accCardSave=function(name){
   const ov=document.getElementById('accCardOverlay'); if(!ov)return;
   const nm=String(name||'').trim(); if(!nm)return;
   _accounts[nm]={vid:(ov.querySelector('#accVid')||{}).value,bank:(ov.querySelector('#accBank')||{}).value,
-    fns:+((ov.querySelector('#accFns')||{}).value),active:+((ov.querySelector('#accActive')||{}).value)};
+    fns:+((ov.querySelector('#accFns')||{}).value),active:+((ov.querySelector('#accActive')||{}).value),
+    ok:1}; // человек открыл карточку и сохранил - это и есть подтверждение
   const msg=ov.querySelector('#accCardMsg'); if(msg)msg.textContent='сохраняю…';
   // _accSave сам сообщит об отказе записи (правило ветки config/accounts заводится в Firebase Console)
   Promise.resolve(_accSave()).then(ok=>{
@@ -3290,6 +3291,40 @@ function _accInventory(){
     return{...e,rec,inDir:has};
   }).sort((a,b)=>b.n-a.n);
 }
+// Массовое заведение: добавляет ТОЛЬКО отсутствующие счета, существующие не трогает вовсе
+// (ни подтверждённые, ни черновые) - повторный запуск безопасен и показывает, сколько прибавилось.
+// ⚠ ОДИН вызов _accSave на всю пачку, а не по вызову на счёт: пятьдесят записей в облако - это
+//   пятьдесят отказов при выключенном правиле и пятьдесят раундтрипов при включённом.
+// ⚠ Признак ФНС предзаполняется ФАКТОМ из строк счёта - другого источника у подсказки нет;
+//   запись всё равно уходит неподтверждённой (ok:0), и расхождение будет видно в карточке.
+window.accFillGuesses=function(){
+  if(!_isAdmin())return 0;
+  let added=0;
+  (RAW||[]).forEach(r=>{
+    const nm=String(r[COL.ACCOUNT]||'').trim();
+    if(!nm||_accounts[nm])return;                       // пустое имя не заводим, существующее не трогаем
+    _accounts[nm]=_accRec({vid:_accGuessVid(nm),fns:_accFacts(nm).fns,ok:0});
+    added++;
+  });
+  if(added)_accSave();
+  return added;
+};
+// Пакетное подтверждение: отмеченные строки принимают свою подсказку разом, одним сохранением.
+window.accConfirmChecked=function(){
+  const ov=document.getElementById('accInvOverlay'); if(!ov||!_isAdmin())return;
+  const names=[...ov.querySelectorAll('input.acc-inv-cb:checked')].map(cb=>cb.dataset.acc).filter(Boolean);
+  if(!names.length){alert('Отметьте счета, подсказки которых принимаете');return;}
+  names.forEach(nm=>{if(_accounts[nm])_accounts[nm]=_accRec({..._accounts[nm],ok:1});});
+  _accSave();
+  ov.remove();showAccInventory();
+};
+// ⚠ Отмечаем только НЕПОДТВЕРЖДЁННЫЕ (у подтверждённых чекбокс disabled): кнопка обещает
+//   «все непроверенные», а отмечала подряд - данные это не портило (повторное подтверждение
+//   ничего не меняет), но подпись врала.
+window.accInvCheckAll=function(on){
+  const ov=document.getElementById('accInvOverlay'); if(!ov)return;
+  ov.querySelectorAll('input.acc-inv-cb:not([disabled])').forEach(cb=>{cb.checked=!!on;});
+};
 window.showAccInventory=function(){
   if(document.getElementById('accInvOverlay'))return;
   const list=_accInventory();
@@ -3297,6 +3332,8 @@ window.showAccInventory=function(){
   list.forEach(x=>{const v=byVid[x.rec.vid]||(byVid[x.rec.vid]={n:0,rows:0});v.n++;v.rows+=x.n;});
   const totalRows=list.reduce((s,x)=>s+x.n,0)||1;
   const notInDir=list.filter(x=>!x.inDir).length;
+  const notOk=list.filter(x=>!x.inDir||!x.rec.ok).length; // не заведён ИЛИ заведён подсказкой без подтверждения
+  const isAdm=_isAdmin();
   const dd=d=>d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'-';
   const th='padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap';
   const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
@@ -3307,9 +3344,12 @@ window.showAccInventory=function(){
     <td style="${td};text-align:right;color:var(--text3);font-variant-numeric:tabular-nums">${(100*byVid[v].rows/totalRows).toFixed(1)}%</td></tr>`).join('');
   const rows=list.map(x=>{
     const nmEsc=_htmlEsc(x.name).replace(/'/g,"\\'");
-    const vidCell=x.inDir?_htmlEsc(x.rec.vid)
-      :`<span style="color:var(--text3)" ${_tipAttr([],null,'Счёт ещё не заведён в справочнике - вид показан подсказкой по имени')}>${_htmlEsc(x.rec.vid)} <i style="font-style:normal">?</i></span>`;
+    // ⚠ Подсказка помечается ВИЗУАЛЬНО и не выдаётся за решение: янтарный «?» - «предложено, не принято».
+    const vidCell=(x.inDir&&x.rec.ok)?_htmlEsc(x.rec.vid)
+      :`<span style="color:var(--orange)" ${_tipAttr([],null,x.inDir?'Вид проставлен подсказкой по имени и ещё не подтверждён':'Счёт ещё не заведён в справочнике - вид показан подсказкой по имени')}>${_htmlEsc(x.rec.vid)} <i style="font-style:normal">?</i></span>`;
+    const cb=isAdm?`<td style="${td};text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="acc-inv-cb" data-acc="${_htmlEsc(x.name)}"${(x.inDir&&x.rec.ok)?' disabled':''} style="cursor:pointer;margin:0"></td>`:'';
     return`<tr class="acc-inv-row" style="cursor:pointer" onclick="accCardOpen('${nmEsc}')" ${_tipAttr([['строк',x.n.toLocaleString('ru-RU')],['первая',dd(x.min)],['последняя',dd(x.max)]],null,'Открыть карточку счёта')}>
+      ${cb}
       <td style="${td}">${_htmlEsc(x.name)}</td>
       <td style="${td}">${vidCell}</td>
       <td style="${td};color:var(--text2)">${_htmlEsc(x.rec.bank||'-')}</td>
@@ -3324,8 +3364,14 @@ window.showAccInventory=function(){
   ov.innerHTML=`<div class="txn-card" style="max-width:1080px;width:94vw">
     <div class="txn-card-head"><h3>Инвентаризация счетов - ${list.length} ${_plurRu(list.length,'счёт','счёта','счетов')}</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:16px 20px 20px">
-      ${notInDir?`<div style="border:1px solid var(--orange);border-radius:7px;background:rgba(232,134,43,.08);padding:8px 12px;margin-bottom:14px;font-size:12px;color:var(--text2)">
-        ⚠ Не заведено в справочнике: <b>${notInDir}</b> из ${list.length}. У таких счетов вид показан подсказкой по имени и помечен «?» - откройте карточку, проверьте и сохраните.</div>`:''}
+      ${notOk?`<div style="border:1px solid var(--orange);border-radius:7px;background:rgba(232,134,43,.08);padding:9px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.6">
+        ⚠ Не подтверждено: <b>${notOk}</b> из ${list.length}${notInDir?` (из них вообще нет в справочнике: <b>${notInDir}</b>)`:''}. Вид у таких счетов проставлен <b>подсказкой по имени</b> и помечен «?» - это предложение, а не решение.
+        ${isAdm?`<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button onclick="const n=accFillGuesses();const o=document.getElementById('accInvOverlay');if(o)o.remove();showAccInventory();alert(n?('Добавлено счетов: '+n):'Новых счетов нет - все уже в справочнике');" style="font-size:11px;font-weight:600;padding:5px 12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">⤓ Заполнить подсказками</button>
+          <button onclick="accInvCheckAll(true)" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Отметить все непроверенные</button>
+          <button onclick="accInvCheckAll(false)" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Снять отметки</button>
+          <button onclick="accConfirmChecked()" style="font-size:11px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer">✓ Подтвердить отмеченные</button>
+        </div>`:''}</div>`:''}
       <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;overflow:hidden">
           <table style="border-collapse:collapse">
@@ -3342,6 +3388,7 @@ window.showAccInventory=function(){
       <div style="max-height:52vh;overflow-y:auto;border:1px solid var(--border);border-radius:6px;margin-top:14px">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
+            ${isAdm?`<th style="${th};text-align:center;position:sticky;top:0;width:30px"></th>`:''}
             <th style="${th};text-align:left;position:sticky;top:0">Счёт</th><th style="${th};text-align:left;position:sticky;top:0">Вид</th>
             <th style="${th};text-align:left;position:sticky;top:0">Банк</th><th style="${th};text-align:center;position:sticky;top:0">ФНС</th>
             <th style="${th};text-align:center;position:sticky;top:0">Состояние</th><th style="${th};text-align:right;position:sticky;top:0">Строк</th>
@@ -9029,12 +9076,16 @@ const ACC_VIDS=['ООО','ИП','Прочие юрлица','Карты физл
 let _accounts=(()=>{try{const v=JSON.parse(localStorage.getItem('finAccounts')||'{}');return (v&&typeof v==='object'&&!Array.isArray(v))?v:{};}catch(e){return{}}})();
 // Одна запись справочника. Приводим к форме ЯВНО: в облаке может лежать что угодно, а читатели
 // (шаги 2-5) рассчитывают на четыре поля и не должны проверять каждое.
+// ⚠ `ok` - ПОДТВЕРЖДЁН ЧЕЛОВЕКОМ. Массовое заведение проставляет вид подсказкой и пишет ok:0:
+//   счёт считается заведённым не когда подсказка проставилась, а когда её приняли. Читатели
+//   (шаг 5, «Счетов») должны смотреть на ok, иначе непроверенная догадка пойдёт в отчёт как факт.
 function _accRec(o){
   o=o||{};
   return{vid:ACC_VIDS.indexOf(o.vid)>=0?o.vid:'Прочие',
     bank:String(o.bank==null?'':o.bank).trim(),
     fns:(o.fns===1||o.fns===0)?o.fns:-1,          // 1 да / 0 нет / -1 признака нет
-    active:o.active===0?0:1};                      // по умолчанию активен
+    active:o.active===0?0:1,                       // по умолчанию активен
+    ok:o.ok===1?1:0};
 }
 function _accNorm(map){const out={};Object.keys(map||{}).forEach(k=>{const nm=String(k||'').trim();if(nm)out[nm]=_accRec(map[k]);});return out;}
 function _accSave(){
