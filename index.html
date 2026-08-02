@@ -232,39 +232,15 @@
      под шапкой не встали ДВЕ линии: своя у th и border-top у первой ячейки. */
   #tabRegistry .txn-table{border-collapse:separate;border-spacing:0;}
   #tabRegistry .txn-table tbody tr:first-child td{border-top:0;}
-  /* ── Ширины колонок Реестра: ПРОЦЕНТЫ, сумма РОВНО 100.00 ──────────────────────
-     Таблица укладывается в ширину контейнера; горизонтальной прокрутки нет ни при какой
-     ширине окна от 1280. Вариант «пиксели + горизонтальный скролл» пробовали и ОТКАЗАЛИСЬ.
-     ⚠ Сумма обязана быть ровно 100.00: при меньшей Chrome и Safari раскладывают остаток
-     по-разному (то же правило, что у PF_COLG в БДР).
-     ⚠ min()/max() в <col> при table-layout:fixed Chrome игнорирует ЦЕЛИКОМ и раскладывает
-     колонки поровну - только длина или процент.
-     Три класса колонок: АТОМАРНЫЕ (даты, тип, суммы, ФНС) - обрезка убивает значение, ширина
-     по максимуму; СПРАВОЧНЫЕ (счёт, статья, подстатья, аналитика, направление, фин. операция) -
-     узнаются по началу строки, хвост обрезать можно; СВОБОДНЫЙ ТЕКСТ (ID Offer, контрагент,
-     назначение) - забирает остаток. Пересчитывать при смене шрифта.
-     ⚠ УЗКОЕ МЕСТО - окно 1280 (таблица ~1013px), а не широкий монитор. Пятнадцати колонкам там
-     нужно около 2500px, поэтому место взято НЕ перекладыванием процентов, а сокращением
-     содержимого справочных колонок до кода (_regCode) и ID Offer до номера с договором
-     (_regOfferShort). Полное значение - в подсказке.
-     ⚠ Заголовки кодовых колонок сокращены (Ст., Подст., Напр., Фин. оп.) - иначе ширину диктует
-     не содержимое, а название: «Фин. операция» требует 122px при 45px колонки. Это СОЗНАТЕЛЬНОЕ
-     расхождение с наименованиями Банка и прочих вкладок, не «причёсывать» обратно.
-     ⚠ Заголовкам сумм разрешён перенос в две строки (.th-wrap): высота шапки одна на всю
-     таблицу, и это дешевле, чем отдать каждой колонке по 14px ширины.
-     ⚠ АТОМАРНЫЕ ПРОЦЕНТЫ ПОДНЯТЫ ПРОТИВ РАСЧЁТА на 6-14px каждая, и занижать обратно нельзя.
-     Расчёт canvas.measureText систематически недооценивает: он не применяет
-     font-variant-numeric:tabular-nums, а ячейки его применяют. Замер отрисовкой при 1280
-     (таблица 1019px): ДДС 70px (расчёт давал 63), ОПиУ 63 (56), Тип 84 (77),
-     суммы 91 (76). Мерить только scrollWidth отрисованной ячейки. */
-  .txn-table col.c-date{width:6.87%;}   .txn-table col.c-opiu{width:6.18%;}  .txn-table col.c-type{width:8.24%;}
-  .txn-table col.c-offer{width:9.08%;}  .txn-table col.c-inc{width:8.93%;}   .txn-table col.c-out{width:8.93%;}
-  .txn-table col.c-fns{width:4.12%;}    .txn-table col.c-acc{width:6.80%;}   .txn-table col.c-art{width:4.08%;}
-  .txn-table col.c-sub{width:4.99%;}    .txn-table col.c-anl{width:4.99%;}   .txn-table col.c-side{width:7.26%;}
-  .txn-table col.c-purp{width:10.90%;}  .txn-table col.c-dir{width:4.54%;}   .txn-table col.c-finop{width:4.09%;}
-  /* «Совпало» появляется только при сплошном поиске. Её процент вычитается из «Назначения» -
-     это свободный текст, обрезка там норма, - поэтому сумма остаётся ровно 100.00 и в этой форме. */
-  #tabRegistry .txn-table col.c-why{width:5.00%;}
+  /* ── Ширины колонок Реестра: считаются в JS (_regApplyColW), а НЕ задаются здесь ──────
+     ⚠ Правило «сумма colgroup ровно 100%» для ЭТОЙ таблицы больше НЕ действует и возвращать
+     его не надо: ширины теперь в пикселях и в сумме равны ширине контейнера.
+     ⚠ Проценты для атомарных колонок неверны в принципе: потребность даты абсолютна (63px)
+     и от ширины окна не зависит, а 6.87% дают 63px при 1280 и 103px при 1920 - шесть
+     атомарных колонок съедали около 245 лишних пикселей, которых не хватало текстовым.
+     Поэтому атомарные и кодовые колонки - фиксированные пиксели, а весь прирост ширины окна
+     уходит четырём текстовым (ID Offer, счёт, контрагент, назначение).
+     ⚠ min()/max() в <col> при table-layout:fixed Chrome игнорирует ЦЕЛИКОМ - только длина. */
   #tabRegistry .txn-table.reg-why col.c-purp{width:5.90%;}
   /* ── Реестр: строка поиска. Реестр - поисковый сервис, а не отчёт, поэтому поле поиска стоит
      ПЕРВЫМ элементом вкладки во всю ширину, а не теряется среди фильтров. ── */
@@ -6007,6 +5983,67 @@ const REG_SEARCH_FIELDS=[
   {c:COL.FIN_OP,short:'Фин. операция',th:'Фин. оп.'}
 ];
 const REG_FIELD_BY_COL={};REG_SEARCH_FIELDS.forEach(F=>{REG_FIELD_BY_COL[F.c]=F;});
+// Классы <col> в порядке колонок таблицы - тот же порядок, что у REG_SEARCH_FIELDS
+const REG_COL_CLS=['c-date','c-opiu','c-type','c-offer','c-inc','c-out','c-fns','c-acc','c-art','c-sub','c-anl','c-side','c-purp','c-dir','c-finop'];
+// ── Ширины колонок: считаются при отрисовке и на resize ────────────────────────
+// ⚠ Потребность АТОМАРНОЙ колонки абсолютна и от ширины окна не зависит: дате нужно 63px
+// и при 1280, и при 1920. Процент этого выразить не может - те же 6.87% дают 63px при 1280
+// и 103px при 1920, и шесть атомарных колонок съедали около 245 лишних пикселей, которых
+// не хватало текстовым. Поэтому атомарные и кодовые - фиксированные пиксели, а ВЕСЬ прирост
+// ширины окна достаётся четырём текстовым колонкам.
+// Числа - максимум содержимого плюс паддинг (у кодовых - по их заголовку). Не пересчитывать
+// от ширины окна; пересчитывать только при смене шрифта.
+const REG_W_FIX={};
+REG_W_FIX[COL.DATE_DDS]=63; REG_W_FIX[COL.DATE_OPIU]=56; REG_W_FIX[COL.TYPE]=77;
+REG_W_FIX[COL.INCOME]=76;   REG_W_FIX[COL.OUTCOME]=76;   REG_W_FIX[COL.FNS]=40;   // атомарные, 388
+REG_W_FIX[COL.ARTICLE_CODE]=45; REG_W_FIX[COL.ARTICLE_NAME]=55; REG_W_FIX[COL.ANALYTICS]=55;
+REG_W_FIX[COL.ACTIVITY_DIR]=50; REG_W_FIX[COL.FIN_OP]=45;                          // кодовые, 250
+const REG_W_FLEX=[COL.OFFER_ID,COL.ACCOUNT,COL.SECOND_SIDE,COL.PURPOSE];
+const REG_W_MIN=70, REG_W_WHY=96;
+// 95-й перцентиль длины ПОКАЗЫВАЕМОГО текста - вес при делёжке остатка. Считаем в символах,
+// а не в пикселях: все четыре колонки набраны одним шрифтом, поэтому соотношение то же,
+// а измерять канвасом 60 тыс. строк вчетверо дороже. Кэш по образцу _buildRegBlobs.
+function _regP95(){
+  if(window._regP95c&&window._regP95c._n===RAW.length)return window._regP95c;
+  const acc={};REG_W_FLEX.forEach(c=>acc[c]=[]);
+  for(let i=0;i<RAW.length;i++){const r=RAW[i];
+    for(let k=0;k<REG_W_FLEX.length;k++){const c=REG_W_FLEX[k];
+      acc[c].push((c===COL.OFFER_ID?_regOfferShort(r[c]):String(r[c]==null?'':r[c])).length);}}
+  const out={_n:RAW.length};
+  REG_W_FLEX.forEach(c=>{const a=acc[c].sort((x,y)=>x-y);out[c]=a.length?Math.max(1,a[Math.min(a.length-1,Math.floor(a.length*0.95))]):1;});
+  window._regP95c=out;return out;
+}
+// Делёжка остатка пропорционально весам, с минимумом на колонку. Разницу от округления и от
+// поднятия до минимума добираем/срезаем по самым широким - в отрицательное не уходим.
+function _regAlloc(rest,keys,weights,minW){
+  const out={},tot=keys.reduce((s,k)=>s+(weights[k]||1),0)||1;
+  keys.forEach(k=>out[k]=Math.max(minW,Math.floor(rest*(weights[k]||1)/tot)));
+  let sum=keys.reduce((s,k)=>s+out[k],0),d=rest-sum,guard=0;
+  const order=keys.slice().sort((a,b)=>out[b]-out[a]);
+  while(d!==0&&guard++<20000){
+    let moved=false;
+    for(let i=0;i<order.length&&d!==0;i++){const k=order[i];
+      if(d>0){out[k]++;d--;moved=true;}
+      else if(out[k]>minW){out[k]--;d++;moved=true;}}
+    if(!moved)break; // все на минимуме - остатка не хватает даже на них, дальше не режем
+  }
+  return out;
+}
+// Проставляет ширины в <col>. Зовётся ПОСЛЕ вставки таблицы в DOM: до неё не известна
+// ширина контейнера, а с появлением вертикальной полосы прокрутки она ещё и меняется.
+function _regApplyColW(){
+  const scroll=document.getElementById('regScroll');if(!scroll)return;
+  const tbl=scroll.querySelector('table.txn-table');if(!tbl)return;
+  const withWhy=tbl.classList.contains('reg-why');
+  const avail=scroll.clientWidth;
+  let fixed=withWhy?REG_W_WHY:0;
+  REG_SEARCH_FIELDS.forEach(F=>fixed+=REG_W_FIX[F.c]||0);
+  const flex=_regAlloc(Math.max(0,avail-fixed),REG_W_FLEX,_regP95(),REG_W_MIN);
+  const cols=tbl.querySelectorAll('col');let n=0;
+  if(withWhy)cols[n++].style.width=REG_W_WHY+'px';
+  REG_SEARCH_FIELDS.forEach(F=>{const w=REG_W_FIX[F.c]!=null?REG_W_FIX[F.c]:flex[F.c];
+    if(cols[n])cols[n].style.width=w+'px';n++;});
+}
 // ── Сортировка по колонке ──────────────────────────────────────────────────────
 // Живёт ПОВЕРХ поиска и фильтров: смена запроса её не сбрасывает, потому что состояние
 // лежит в _tabFilters.registry.sort, а не в разметке. Применяется к ПОЛНОМУ отфильтрованному
@@ -6257,7 +6294,7 @@ function _regTipsSync(){
 }
 window.addEventListener('resize',()=>{ // проценты: при другой ширине окна обрезаны другие ячейки
   if(activeTab!=='registry')return;
-  clearTimeout(window._regTipT);window._regTipT=setTimeout(()=>{try{_regTipsSync();}catch(e){}},150);
+  clearTimeout(window._regTipT);window._regTipT=setTimeout(()=>{try{_regApplyColW();_regTipsSync();}catch(e){}},150); // ширины первыми: от них зависит, что обрезано
 });
 // ── Чипы активных фильтров ─────────────────────────────────────────────────────
 // Панель фильтров свёрнута, поэтому применённое обязано быть видно снаружи - иначе отчёт молча
@@ -6672,7 +6709,7 @@ function registryRender(q){
     const rows=f.map(x=>[x.F.short,x.snip]); // значения СЫРЫЕ - _tipAttr эскейпит сам
     return `<td class="c-why" ${_tipAttr(rows,null,'Совпало в колонках')}>${_htmlEsc(f[0].F.short)}${f.length>1?'<i>+'+(f.length-1)+'</i>':''}</td>`;
   };
-  let html=`<table class="txn-table${showWhy?' reg-why':''}"><colgroup>${showWhy?'<col class="c-why">':''}<col class="c-date"><col class="c-opiu"><col class="c-type"><col class="c-offer"><col class="c-inc"><col class="c-out"><col class="c-fns"><col class="c-acc"><col class="c-art"><col class="c-sub"><col class="c-anl"><col class="c-side"><col class="c-purp"><col class="c-dir"><col class="c-finop"></colgroup>
+  let html=`<table class="txn-table${showWhy?' reg-why':''}"><colgroup>${showWhy?'<col class="c-why">':''}${REG_COL_CLS.map(c=>`<col class="${c}">`).join('')}</colgroup>
     <thead><tr>${showWhy?'<th class="c-why-h">Совпало</th>':''}${REG_SEARCH_FIELDS.map(F=>{
       const on=srt&&srt.col===F.c, arr=on?(srt.dir===1?'<i class="reg-sort-a">▲</i>':'<i class="reg-sort-a">▼</i>'):'<i class="reg-sort-i">↕</i>';
       return `<th class="reg-th-sort${F.wrap?' th-wrap':''}${on?' reg-th-on':''}" onclick="regSort(${F.c})">${_htmlEsc(F.th)}${arr}</th>`;
@@ -6688,6 +6725,7 @@ function registryRender(q){
   html+='</tbody></table>';
   if(show<total)html+=`<div style="padding:8px;text-align:center"><button onclick="registryShowMore()" style="padding:6px 20px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer;font-size:11px;font-family:var(--sans)">Показать ещё 500 (осталось ${(total-show).toLocaleString('ru-RU')})</button></div>`;
   scroll.innerHTML=html;
+  _regApplyColW(); // ширины считаются от фактической ширины контейнера - только после вставки в DOM
   _regTipsSync(); // обрезанные значения получают подсказку с полным текстом - только после вставки в DOM, до неё ширины не известны
 }
 // ─── ПЛАН-ФАКТ (заглушка) ────────────────────────────────────────────────────
