@@ -2701,6 +2701,27 @@ function renderBank(f){
     :_tipAttr([[_flowLbl,fmt(cur)]],null,name+' · сравнения нет: отрезок год назад перекрывается с выбранным');
   // 7 KPI-карточек (крупные цифры). «Счетов» = ВИДИМОЕ число (скрытые без движения не считаем). Числа совпадают с «Итого Общий итог».
   const nAcc=gDa.length+gNet.length+gAlloc.length;
+  // ══ «Счетов» - ИНВЕНТАРНАЯ величина из справочника, а не из среза ══════════
+  // ⚠ Считаются только ПОДТВЕРЖДЁННЫЕ записи (ok===1): вид, проставленный подсказкой по имени,
+  //   это предложение, а не решение, и в отчёт он идти не должен.
+  // ⚠ Показатель НЕ зависит от фильтров вовсе - ни от периода, ни от направления, ни от ФНС:
+  //   он отвечает на вопрос «сколько у нас счетов», а не «сколько их в этом срезе». Поэтому
+  //   считается по _accounts, а не по gDa/gNet/gAlloc, и подпись у него своя - «в справочнике».
+  // ⚠ Закрытые (active:0) НЕ прячем, а называем отдельно: иначе инвентаризация умалчивает, что
+  //   счёт существует, но не работает.
+  // ⚠ Пока ни одной подтверждённой записи нет - показываем ПРЕЖНЕЕ число видимых счетов среза
+  //   и говорим, что справочник не заполнен. Ноль в этом месте читается как поломка.
+  const _accOkNames=Object.keys(_accounts||{}).filter(k=>_accounts[k]&&_accRec(_accounts[k]).ok===1);
+  const _accDirOn=_accOkNames.length>0;
+  const _accClosed=_accOkNames.filter(k=>_accRec(_accounts[k]).active===0).length;
+  const _accByVid={};_accOkNames.forEach(k=>{const v=_accRec(_accounts[k]).vid;_accByVid[v]=(_accByVid[v]||0)+1;});
+  const _accTip=_accDirOn
+    ?_tipAttr(ACC_VIDS.filter(v=>_accByVid[v]).map(v=>[v,String(_accByVid[v])]),['закрытых',String(_accClosed)],'Счета в справочнике (подтверждённые)')
+    :_tipAttr([['видно в срезе',String(nAcc)],['подтверждено в справочнике','0']],null,'Справочник счетов не заполнен - показано число счетов текущего среза');
+  const _accVal=_accDirOn
+    ?`${_accOkNames.length}${_accClosed?`<span style="font-size:12px;color:var(--text3);font-weight:400"> · ${_accClosed} ${_plurRu(_accClosed,'закрыт','закрыты','закрыто')}</span>`:''}`
+    :String(nAcc);
+  const _accSub=_accDirOn?'в справочнике':`${_flowSub} · справочник не заполнен`;
   // ⚠ Порядок карточек: сначала ПОТОК (за период), потом ЗАПАС (на дату). Величины разной природы
   //   не перемешивать - иначе подписи придётся читать у каждой, чтобы понять, что с чем сравнивать.
   // ⚠ «Счетов» стоит в ПОТОКЕ, и это не оплошность: величина зависит от периода (замер на одних данных -
@@ -2710,7 +2731,7 @@ function renderBank(f){
     <div class="kpi-card green" ${_flowTip(totInc,_prvWin?_prvWin.inc:0,'Поступления')}><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}${_dArrow(_prvWin?_pctD(totInc,_prvWin.inc):null,true)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card red" ${_flowTip(totOut,_prvWin?_prvWin.out:0,'Списания')}><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}${_dArrow(_prvWin?_pctD(totOut,_prvWin.out):null,false)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
-    <div class="kpi-card orange" style="cursor:pointer" onclick="showAccInventory()" ${_tipAttr([['счетов в отчёте',String(nAcc)],['всего в данных',String(_accInventory().length)]],null,'Нажмите - инвентаризация счетов по видам')}><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div><div class="kpi-sub">${_flowSub} ⚙</div></div>
+    <div class="kpi-card orange" style="cursor:pointer" onclick="showAccInventory()" ${_accTip}><div class="kpi-label">Счетов</div><div class="kpi-value">${_accVal}</div><div class="kpi-sub">${_accSub} ⚙</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
