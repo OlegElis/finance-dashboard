@@ -2369,13 +2369,30 @@ function renderBank(f){
   //   названием. Пока обе считались от `data`, вкладка была верна ровно при одном периоде «весь учёт»,
   //   и поменять умолчание было нельзя - остаток поехал бы вместе с ним.
   // stockRows - те же фильтры вкладки (направления, будущие оплаты, счета), но БЕЗ дат.
-  const stockRows=(()=>{
+  const _noDateRows=(()=>{
     let rs=applyBaseFilters(RAW,{dateFrom:'',dateTo:''});
     if(f.activityDirs&&f.activityDirs.length)rs=rs.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
     if(!f.includeFuture){const te=new Date();te.setHours(23,59,59,999);rs=rs.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return !d||d<=te;});}
     if(f.accounts&&f.accounts.length)rs=rs.filter(r=>f.accounts.includes(String(r[COL.ACCOUNT]||'').trim()));
     return rs;
   })();
+  // ⚠ Запас считается с начала учёта до ВЕРХНЕЙ границы периода, а нижняя на него не влияет:
+  //      поток = операции между «с» и «по», запас = всё от начала учёта до «по».
+  //   Игнорировать даты ЦЕЛИКОМ было нельзя - так пропадает единственный способ посмотреть остаток
+  //   на прошлую дату (бухгалтер выставлял период и читал «Итого»).
+  // ⚠ Карточка «Доля оформленного» берёт НЕ этот набор, а _noDateRows: она режет свои окна сама
+  //   (текущий год против предыдущего полугодия), и обрезка по «по» опустошила бы её окно при
+  //   любой верхней границе в прошлом.
+  const stockRows=f.dateTo?_noDateRows.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return !d||toIso(d)<=f.dateTo;}):_noDateRows;
+  // Дата запаса - ФАКТИЧЕСКАЯ верхняя граница: подпись «на 31.12.2025» обязана следовать за фильтром,
+  // иначе цифра уже на конец 2025-го, а подпись всё ещё обещает сегодня.
+  const _stockDates=stockRows.map(r=>parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU])).filter(Boolean);
+  const _lastData=_stockDates.length?new Date(Math.max(..._stockDates)):null;
+  const _today0=new Date();
+  // Без верхней границы (весь учёт): сегодня, а при включённых будущих оплатах - последняя дата набора.
+  const _asOfD=f.dateTo?new Date(f.dateTo+'T00:00:00'):((_lastData&&_lastData>_today0)?_lastData:_today0);
+  const _dd=d=>String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();
+  const _asOfLbl='на '+_dd(_asOfD);
   const map=new Map();
   const isCardAcc=name=>/карт|card|ФЛ\b|физ\.?\s*лиц/i.test(name);
   const isKassaAcc=name=>/касс|кассир|наличн|kassa|kasca/i.test(name);
@@ -2455,7 +2472,11 @@ function renderBank(f){
   //   в ОБЕИХ своих половинах - и в остатке, и в скорости расхода.
   const rawAll=stockRows.filter(r=>!String(r[COL.TYPE]||'').trim().toLowerCase().includes('перемещение')&&String(r[COL.FIN_OP]||'').trim().startsWith('001_'));
   // Средний расход за последние 90 дней (текущий месяц не включается)
-  const nowR=new Date();
+  // ⚠ Окно расхода привязано к ДАТЕ ЗАПАСА, а не жёстко к сегодняшнему дню: при верхней границе
+  //   «31.12.2025» окно «90 дней до конца прошлого месяца» уехало бы в 2026 год, где в наборе
+  //   строк уже нет, и Runway молча превращался бы в прочерк. Берём МИНИМУМ из даты запаса и сегодня -
+  //   при умолчании это ровно сегодня, поэтому прежние числа не меняются.
+  const nowR=_asOfD<new Date()?_asOfD:new Date();
   const periodEnd=new Date(nowR.getFullYear(),nowR.getMonth(),0); // последний день предыдущего месяца
   const periodStart=new Date(periodEnd.getTime()-89*86400000); // 90 дней назад
   const monthlyOut={};
@@ -2499,7 +2520,7 @@ function renderBank(f){
   // ⚠ Признак ФНС - свойство СЧЁТА, а не периода, поэтому карта строится по ВСЕМУ набору БЕЗ дат.
   //   Считай мы признак по срезу - счёт, у которого «да» стоит только в строках 2025 года, в 2026-м уехал бы
   //   в другой канал, и сравнение годов сравнивало бы разные классификации.
-  const _cardRows=stockRows; // тот же набор «фильтры вкладки без дат»: окна карточка режет сама. Две копии разъехались бы
+  const _cardRows=_noDateRows; // окна карточка режет сама - ей нужен набор БЕЗ верхней границы, иначе они опустеют
   const _accFns=new Map(); // счёт → 1/0; первое распознанное «да»/«нет» выигрывает (как в своде)
   _cardRows.forEach(r=>{
     const acc=String(r[COL.ACCOUNT]||'').trim();
@@ -2623,14 +2644,6 @@ function renderBank(f){
   // ═══ ПОДПИСИ ПОД ЦИФРАМИ ═══
   // ⚠ Подписи ОБЯЗАТЕЛЬНЫ: в одной полосе стоят величины за период и величины на дату, и без подписи
   //   это читается как рассогласование - «поступления за год, а сальдо почему-то другое».
-  const _stockDates=stockRows.map(r=>parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU])).filter(Boolean);
-  const _lastData=_stockDates.length?new Date(Math.max(..._stockDates)):null;
-  const _today0=new Date();
-  // Дата запаса: сегодня, а при включённых будущих оплатах - последняя дата в наборе (остаток отражает и их).
-  // При выключенных будущих оплатах строки обрезаны сегодняшним днём, поэтому правило одно на оба случая.
-  const _asOfD=(_lastData&&_lastData>_today0)?_lastData:_today0;
-  const _dd=d=>String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();
-  const _asOfLbl='на '+_dd(_asOfD);
   // Подпись потока - по МЕСЯЦАМ, реально попавшим в выборку («янв-авг 2026»), а не по границам фильтра:
   // период 01.01-31.12 при данных по август честнее назвать «янв-авг», иначе подпись обещает больше, чем в цифре.
   const _flowLbl=(()=>{
@@ -2692,7 +2705,7 @@ function renderBank(f){
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
   </div>
-  <div class="bank-allperiod">За весь период учёта: поступления ${fmt(allInc)}, списания ${fmt(allOut)}</div>`;
+  <div class="bank-allperiod">За весь период учёта${(f.dateTo&&_lastData&&toIso(_lastData)<f.dateTo)?'':(f.dateTo?' по '+_dd(_asOfD):'')}: поступления ${fmt(allInc)}, списания ${fmt(allOut)}</div>`;
 
   // Строка счёта: Реквизиты | Поступление | Списание | Итого (колонка ФНС убрана - её роль в заголовке карточки).
   const accRow=a=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td class="bank-name" title="${_htmlEsc(a.name)}">${_htmlEsc(a.name)}</td>${td(a.inc,'bank-num')}${td(a.out,'bank-num')}${movTd(a.mov,a.movIn,a.movOut)}${td(a.total,'bank-num')}</tr>`;
