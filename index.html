@@ -2710,7 +2710,7 @@ function renderBank(f){
     <div class="kpi-card green" ${_flowTip(totInc,_prvWin?_prvWin.inc:0,'Поступления')}><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}${_dArrow(_prvWin?_pctD(totInc,_prvWin.inc):null,true)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card red" ${_flowTip(totOut,_prvWin?_prvWin.out:0,'Списания')}><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}${_dArrow(_prvWin?_pctD(totOut,_prvWin.out):null,false)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div><div class="kpi-sub">${_flowSub}</div></div>
+    <div class="kpi-card orange" style="cursor:pointer" onclick="showAccInventory()" ${_tipAttr([['счетов в отчёте',String(nAcc)],['всего в данных',String(_accInventory().length)]],null,'Нажмите - инвентаризация счетов по видам')}><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div><div class="kpi-sub">${_flowSub} ⚙</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
@@ -3264,6 +3264,100 @@ window.accCardSave=function(name){
     if(o)o.remove();
     if(activeTab==='bank')renderBank(getFilters());
   });
+};
+
+// ══ ИНВЕНТАРИЗАЦИЯ СЧЕТОВ (модал с вкладки БАНК) ═════════════════════════════
+// ⚠ Считается по ВСЕМУ RAW, без фильтров периода: инвентаризация отвечает на вопрос «какие счета
+//   у нас есть», а не «что было за отрезок». Поэтому она не зависит от фильтров вкладки.
+// ⚠ Счета, которых в RAW уже нет, но которые есть в справочнике (закрытые), показываем тоже -
+//   иначе закрытый счёт исчезает из инвентаризации, и непонятно, куда он делся.
+// ⚠ АВТОМАТИЧЕСКИХ ВЕРДИКТОВ ПРО ДУБЛИ ЗДЕСЬ НЕТ и добавлять их не надо: правило «периоды
+//   не пересекаются = переименование» на живых данных дало два ложных вывода («Касса ОС ↔ КО2»,
+//   «КО2 ↔ АО» - просто разные мелкие кассы, не совпавшие по времени). Показываем даты и объёмы,
+//   решает человек (решение 02.08.2026, CLAUDE.md).
+function _accInventory(){
+  const st={};
+  (RAW||[]).forEach(r=>{
+    const nm=String(r[COL.ACCOUNT]||'').trim(); if(!nm)return; // пустое имя в справочник не заводится
+    const e=st[nm]||(st[nm]={name:nm,n:0,min:null,max:null});
+    e.n++;
+    const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
+    if(d){if(!e.min||d<e.min)e.min=d;if(!e.max||d>e.max)e.max=d;}
+  });
+  Object.keys(_accounts||{}).forEach(nm=>{if(!st[nm])st[nm]={name:nm,n:0,min:null,max:null};});
+  return Object.keys(st).map(nm=>{
+    const e=st[nm],has=!!(_accounts&&_accounts[nm]),rec=_accRec(has?_accounts[nm]:{vid:_accGuessVid(nm)});
+    return{...e,rec,inDir:has};
+  }).sort((a,b)=>b.n-a.n);
+}
+window.showAccInventory=function(){
+  if(document.getElementById('accInvOverlay'))return;
+  const list=_accInventory();
+  const byVid={};ACC_VIDS.forEach(v=>byVid[v]={n:0,rows:0});
+  list.forEach(x=>{const v=byVid[x.rec.vid]||(byVid[x.rec.vid]={n:0,rows:0});v.n++;v.rows+=x.n;});
+  const totalRows=list.reduce((s,x)=>s+x.n,0)||1;
+  const notInDir=list.filter(x=>!x.inDir).length;
+  const dd=d=>d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'-';
+  const th='padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap';
+  const td='padding:5px 10px;font-size:11px;border-bottom:1px solid var(--border)';
+  const sumRows=ACC_VIDS.filter(v=>byVid[v].n).map(v=>`<tr>
+    <td style="${td}">${_htmlEsc(v)}</td>
+    <td style="${td};text-align:right;font-variant-numeric:tabular-nums">${byVid[v].n}</td>
+    <td style="${td};text-align:right;font-variant-numeric:tabular-nums">${byVid[v].rows.toLocaleString('ru-RU')}</td>
+    <td style="${td};text-align:right;color:var(--text3);font-variant-numeric:tabular-nums">${(100*byVid[v].rows/totalRows).toFixed(1)}%</td></tr>`).join('');
+  const rows=list.map(x=>{
+    const nmEsc=_htmlEsc(x.name).replace(/'/g,"\\'");
+    const vidCell=x.inDir?_htmlEsc(x.rec.vid)
+      :`<span style="color:var(--text3)" ${_tipAttr([],null,'Счёт ещё не заведён в справочнике - вид показан подсказкой по имени')}>${_htmlEsc(x.rec.vid)} <i style="font-style:normal">?</i></span>`;
+    return`<tr class="acc-inv-row" style="cursor:pointer" onclick="accCardOpen('${nmEsc}')" ${_tipAttr([['строк',x.n.toLocaleString('ru-RU')],['первая',dd(x.min)],['последняя',dd(x.max)]],null,'Открыть карточку счёта')}>
+      <td style="${td}">${_htmlEsc(x.name)}</td>
+      <td style="${td}">${vidCell}</td>
+      <td style="${td};color:var(--text2)">${_htmlEsc(x.rec.bank||'-')}</td>
+      <td style="${td};text-align:center;color:var(--text2)">${_ACC_FNS_LBL[x.rec.fns]}</td>
+      <td style="${td};text-align:center;color:${x.rec.active?'var(--text2)':'var(--outcome)'}">${x.rec.active?'активен':'закрыт'}</td>
+      <td style="${td};text-align:right;font-variant-numeric:tabular-nums">${x.n.toLocaleString('ru-RU')}</td>
+      <td style="${td};text-align:center;color:var(--text2);white-space:nowrap">${dd(x.min)}</td>
+      <td style="${td};text-align:center;color:var(--text2);white-space:nowrap">${dd(x.max)}</td>
+    </tr>`;}).join('');
+  const ov=document.createElement('div');
+  ov.className='txn-card-overlay'; ov.id='accInvOverlay';
+  ov.innerHTML=`<div class="txn-card" style="max-width:1080px;width:94vw">
+    <div class="txn-card-head"><h3>Инвентаризация счетов - ${list.length} ${_plurRu(list.length,'счёт','счёта','счетов')}</h3><button class="txn-card-close">✕</button></div>
+    <div style="padding:16px 20px 20px">
+      ${notInDir?`<div style="border:1px solid var(--orange);border-radius:7px;background:rgba(232,134,43,.08);padding:8px 12px;margin-bottom:14px;font-size:12px;color:var(--text2)">
+        ⚠ Не заведено в справочнике: <b>${notInDir}</b> из ${list.length}. У таких счетов вид показан подсказкой по имени и помечен «?» - откройте карточку, проверьте и сохраните.</div>`:''}
+      <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+          <table style="border-collapse:collapse">
+            <thead><tr><th style="${th};text-align:left">Вид</th><th style="${th};text-align:right">Счетов</th><th style="${th};text-align:right">Строк</th><th style="${th};text-align:right">Доля</th></tr></thead>
+            <tbody>${sumRows}</tbody>
+          </table>
+        </div>
+        <p style="flex:1 1 260px;font-size:11px;color:var(--text3);line-height:1.6;margin:0">
+          Инвентаризация считается по всем данным и <b>не зависит от фильтров вкладки</b>: она отвечает на вопрос, какие счета есть, а не что было за период.<br>
+          Даты первой и последней операции - справочные. <b>Выводов про дубли здесь нет сознательно</b>: одинаковые по смыслу счета определяет человек, а не правило.<br>
+          Клик по строке открывает карточку счёта.
+        </p>
+      </div>
+      <div style="max-height:52vh;overflow-y:auto;border:1px solid var(--border);border-radius:6px;margin-top:14px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="${th};text-align:left;position:sticky;top:0">Счёт</th><th style="${th};text-align:left;position:sticky;top:0">Вид</th>
+            <th style="${th};text-align:left;position:sticky;top:0">Банк</th><th style="${th};text-align:center;position:sticky;top:0">ФНС</th>
+            <th style="${th};text-align:center;position:sticky;top:0">Состояние</th><th style="${th};text-align:right;position:sticky;top:0">Строк</th>
+            <th style="${th};text-align:center;position:sticky;top:0">Первая</th><th style="${th};text-align:center;position:sticky;top:0">Последняя</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+  const close=()=>{ov.remove();document.removeEventListener('keydown',onKey);if(activeTab==='bank')renderBank(getFilters());};
+  const onKey=e=>{if(e.key==='Escape'&&!document.getElementById('accCardOverlay'))close();}; // Esc сначала закрывает карточку поверх, не весь экран
+  ov.querySelector('.txn-card-close').addEventListener('click',close);
+  ov.addEventListener('click',e=>{if(e.target===ov)close();});
+  document.addEventListener('keydown',onKey);
+  document.body.appendChild(ov);
 };
 
 // Generic multi-select for year/month dropdowns (DDS & OPIU)
