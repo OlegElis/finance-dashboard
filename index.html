@@ -1196,6 +1196,12 @@ function setStatus(state,text){
   if(p)p.dataset.state=state||'';
   if(r)r.classList.toggle('spin',state==='loading');
 }
+// ⚠ Запись в localStorage падает МОЛЧА: переполнение квоты, приватное окно, отключённое хранилище.
+// Раньше во всех этих местах стоял пустой catch, и пользователь терял настройки без единого следа
+// в консоли. Логика НЕ меняется - ошибка по-прежнему гасится (зеркало не источник истины, им является
+// облако), добавлено только сообщение с именем ключа. Сам console.warn обёрнут: в некоторых окружениях
+// консоль тоже может быть недоступна, а падать на диагностике - худшее, что может сделать диагностика.
+function _lsWarn(key,e){try{console.warn('[localStorage] ключ «'+key+'» не записан: '+((e&&e.message)||e)+' - локальное зеркало не обновлено');}catch(_){}}
 function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const cls=numClass(v);const display=typeof val==='number'?fmt(val):(val||'-');return`<td class="${cls} ${extra}">${display}</td>`;}
 
 function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${day}`;}
@@ -1890,7 +1896,7 @@ function _fbSetSafe(path,val,label){ // возвращает Promise<bool> (true
   }catch(e){return Promise.resolve(fail(e));} // синхронный бросок SDK (невалидный ключ) - через тот же обработчик, иначе отказ проходит молча
 }
 function _presetsSave(){
-  try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){}
+  try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){_lsWarn('reportPresets',e)}
   _fbSetSafe('config/presets',_presets,'Пресеты отчётов');
 }
 let _presetsSynced=false;
@@ -1901,7 +1907,7 @@ function startPresetsSync(){
     fbApp();
     firebase.database().ref('config/presets').on('value',s=>{
       _presets=_presetsNormalize(s.val());
-      try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){}
+      try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){_lsWarn('reportPresets',e)}
       try{_injectPresetBar();}catch(e){}
       const ov=document.getElementById('presetsOverlay'),body=document.getElementById('presetBody');
       if(ov&&body&&body.dataset.tab)_presetRenderBody(body.dataset.tab);
@@ -7225,7 +7231,7 @@ let _backupLog=(()=>{try{return JSON.parse(localStorage.getItem('finBackupLog')|
 function startBackupLogSync(){
   if(window._backupLogSyncStarted)return;window._backupLogSyncStarted=true;
   try{if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;fbApp();
-    firebase.database().ref('config/backupLog').on('value',s=>{const v=s.val();_backupLog=(v&&typeof v==='object')?v:null;try{localStorage.setItem('finBackupLog',JSON.stringify(_backupLog));}catch(e){}
+    firebase.database().ref('config/backupLog').on('value',s=>{const v=s.val();_backupLog=(v&&typeof v==='object')?v:null;try{localStorage.setItem('finBackupLog',JSON.stringify(_backupLog));}catch(e){_lsWarn('finBackupLog',e)}
       try{if(activeTab==='planfact')renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[backupLog] sync',e&&e.message);}
 }
@@ -8756,13 +8762,13 @@ let _mktCounts=(()=>{try{
   if(vals.length&&vals.every(v=>v&&typeof v==='object'&&('leads'in v||'orders'in v||'fulfilled'in v)))return{'__all__':raw};
   return raw;
 }catch(e){return{}}})();
-function _mktSaveCounts(){try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){}}
+function _mktSaveCounts(){try{localStorage.setItem('mktCounts',JSON.stringify(_mktCounts));}catch(e){_lsWarn('mktCounts',e)}}
 let _mktDirKey='__all__'; // текущее направление (устанавливается в renderMarketing)
 
 // Лимиты касс {accName: limitNumber} - общие для всех устройств (Firebase RTDB config/kassaLimits) + локальный кэш в localStorage
 let _kassaLimits=(()=>{try{return JSON.parse(localStorage.getItem('kassaLimits')||'{}')}catch(e){return{}}})();
 function _kassaSaveLimits(){
-  try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}
+  try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){_lsWarn('kassaLimits',e)}
   _fbSetSafe('config/kassaLimits',_rtdbEncObj(_kassaLimits),'Лимиты счетов'); // ключ = имя счёта («р/с …», «…/CL») - кодируем, иначе .set падал целиком
 }
 // Синхронизация реквизитов подключения (ID таблицы + API Key) между устройствами через config/sheets
@@ -8801,7 +8807,7 @@ function startLimitsSync(){
       const v=s.val();
       if(v&&typeof v==='object'){
         _kassaLimits=_rtdbDecObj(v,'kassaLimits'); // декодируем ключи-имена счетов
-        try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){}
+        try{localStorage.setItem('kassaLimits',JSON.stringify(_kassaLimits));}catch(e){_lsWarn('kassaLimits',e)}
         if(activeTab==='bank')renderBank(getFilters()); // обновить карточку/контроль лимитов
       }else if(!window._limitsMigrated&&_kassaLimits&&Object.keys(_kassaLimits).length){
         // в облаке ещё нет лимитов - один раз переносим локальные «вверх»
@@ -10428,8 +10434,8 @@ let _planRecords=(()=>{try{return JSON.parse(localStorage.getItem('finPlans')||'
 // Иначе непрошедшая правка переживала перезагрузку, выглядела сохранённой и молча заменялась облачной при первом ответе Firebase.
 function _plansSave(){
   const snap=JSON.stringify(_planRecords); // снимок на момент вызова: пока идёт запись, _planRecords может смениться листенером
-  if(!_fbCloudOn()){try{localStorage.setItem('finPlans',snap);}catch(e){}return Promise.resolve(false);}
-  return _fbSetSafe('config/plans',_planRecords,'Планы БДР').then(ok=>{if(ok){try{localStorage.setItem('finPlans',snap);}catch(e){}}return ok;});
+  if(!_fbCloudOn()){try{localStorage.setItem('finPlans',snap);}catch(e){_lsWarn('finPlans',e)}return Promise.resolve(false);}
+  return _fbSetSafe('config/plans',_planRecords,'Планы БДР').then(ok=>{if(ok){try{localStorage.setItem('finPlans',snap);}catch(e){_lsWarn('finPlans',e)}}return ok;});
 }
 function startPlansSync(){
   if(window._plansSyncStarted)return; window._plansSyncStarted=true;
@@ -10438,7 +10444,7 @@ function startPlansSync(){
     firebase.database().ref('config/plans').on('value',s=>{if(window._planEditorOpen)return; // как у planOwners/planNotes: пока открыт редактор, облако не затирает несохранённые правки прямо под руками
       const v=s.val();
       if(Array.isArray(v)){_planRecords=v;} else if(v&&typeof v==='object'){_planRecords=Object.values(v);}
-      try{localStorage.setItem('finPlans',JSON.stringify(_planRecords));}catch(e){}
+      try{localStorage.setItem('finPlans',JSON.stringify(_planRecords));}catch(e){_lsWarn('finPlans',e)}
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[plans] sync',e&&e.message);}
 }
@@ -10450,8 +10456,8 @@ const MONTH_FULL_RU=['Январь','Февраль','Март','Апрель','
 let _plansBaseline=(()=>{try{const o=JSON.parse(localStorage.getItem('finPlansBaseline')||'{}');return(o&&typeof o==='object'&&!Array.isArray(o))?o:{};}catch(e){return{};}})();
 function _baselineSave(){ // зеркало пишется только при подтверждённой записи - см. инвариант у _plansSave
   const snap=JSON.stringify(_plansBaseline);
-  if(!_fbCloudOn()){try{localStorage.setItem('finPlansBaseline',snap);}catch(e){}return Promise.resolve(false);}
-  return _fbSetSafe('config/plansBaseline',_plansBaseline,'Baseline планов').then(ok=>{if(ok){try{localStorage.setItem('finPlansBaseline',snap);}catch(e){}}return ok;});
+  if(!_fbCloudOn()){try{localStorage.setItem('finPlansBaseline',snap);}catch(e){_lsWarn('finPlansBaseline',e)}return Promise.resolve(false);}
+  return _fbSetSafe('config/plansBaseline',_plansBaseline,'Baseline планов').then(ok=>{if(ok){try{localStorage.setItem('finPlansBaseline',snap);}catch(e){_lsWarn('finPlansBaseline',e)}}return ok;});
 }
 // карта замороженных месяцев года {N:{…}}; толерантна к форме из Firebase - и ОБЪЕКТ {1:{…}}, и МАССИВ [null,{…}] (RTDB хранит числовые ключи массивом с null-дырами); пропускает null и записи без approvedAt
 function _baselineMonthsMap(year){
@@ -10501,7 +10507,7 @@ function startBaselineSync(){
     firebase.database().ref('config/plansBaseline').on('value',s=>{if(window._planEditorOpen)return; // тот же гейт, что у plans/planOwners/planNotes - не затирать под открытым редактором
       const v=s.val();
       _plansBaseline=(v&&typeof v==='object'&&!Array.isArray(v))?v:{};
-      try{localStorage.setItem('finPlansBaseline',JSON.stringify(_plansBaseline));}catch(e){}
+      try{localStorage.setItem('finPlansBaseline',JSON.stringify(_plansBaseline));}catch(e){_lsWarn('finPlansBaseline',e)}
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[baseline] sync',e&&e.message);}
 }
@@ -10575,7 +10581,7 @@ window.cfoApproveMonthInfo=function(){
 let _planOwners=(()=>{try{return JSON.parse(localStorage.getItem('finPlanOwners')||'{}')}catch(e){return{}}})();
 const _ownerKey=(dir,code)=>String(dir||'')+'||'+String(code||'');
 function _ownersSave(){
-  try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){}
+  try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){_lsWarn('finPlanOwners',e)}
   return _fbSetSafe('config/planOwners',_rtdbEncObj(_planOwners),'Ответственные по планам'); // ключ dir||подстатья кодируем (слэш в подстатьях ломал .set всего объекта)
 }
 function startOwnersSync(){
@@ -10584,7 +10590,7 @@ function startOwnersSync(){
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
     firebase.database().ref('config/planOwners').on('value',s=>{if(window._planEditorOpen)return; // пока открыт редактор - не затираем несохранённые локальные правки владельцев (правки пишутся сразу через onchange; на закрытии слушатель подхватит облако)
       const v=s.val();_planOwners=_rtdbDecObj((v&&typeof v==='object')?v:{},'planOwners'); // декодируем ключи обратно в dir||подстатья
-      try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){}});
+      try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){_lsWarn('finPlanOwners',e)}});
   }catch(e){console.warn('[owners] sync',e&&e.message);}
 }
 // ===== Иерархия ЦФО: руководитель блока → подчинённые - config/cfoHierarchy =====
@@ -10592,7 +10598,7 @@ function startOwnersSync(){
 // Ключи по ФИО (как _planOwners); при переименовании ФИО в панели «Доступ» записи мигрируют (accessSavePanel).
 let _cfoHierarchy=(()=>{try{const o=JSON.parse(localStorage.getItem('finCfoHierarchy')||'{}');return(o&&typeof o==='object'&&!Array.isArray(o))?o:{};}catch(e){return{};}})();
 function _cfoHierSave(){
-  try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){}
+  try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){_lsWarn('finCfoHierarchy',e)}
   _fbSetSafe('config/cfoHierarchy',_rtdbEncObj(_cfoHierarchy),'Иерархия ЦФО'); // ключ = ФИО - кодируем на случай запрещённых символов
 }
 function startCfoHierarchySync(){
@@ -10601,7 +10607,7 @@ function startCfoHierarchySync(){
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
     firebase.database().ref('config/cfoHierarchy').on('value',s=>{const v=s.val();
       _cfoHierarchy=_rtdbDecObj((v&&typeof v==='object'&&!Array.isArray(v))?v:{},'cfoHierarchy'); // декодируем ключи-ФИО
-      try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){}
+      try{localStorage.setItem('finCfoHierarchy',JSON.stringify(_cfoHierarchy));}catch(e){_lsWarn('finCfoHierarchy',e)}
       if(activeTab==='planfact')try{renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[cfoHier] sync',e&&e.message);}
 }
@@ -10619,7 +10625,7 @@ window.cfoToggleMgr=function(gid,el){
 // Примечания к планам (текст по подстатье+направлению) - config/planNotes; ключ = `${dir}||${code}` (тот же _ownerKey)
 let _planNotes=(()=>{try{return JSON.parse(localStorage.getItem('finPlanNotes')||'{}')}catch(e){return{}}})();
 function _notesSave(){
-  try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}
+  try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){_lsWarn('finPlanNotes',e)}
   return _fbSetSafe('config/planNotes',_rtdbEncObj(_planNotes),'Примечания к планам'); // тот же ключ dir||подстатья - кодируем
 }
 function startNotesSync(){
@@ -10628,13 +10634,13 @@ function startNotesSync(){
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
     firebase.database().ref('config/planNotes').on('value',s=>{if(window._planEditorOpen)return; // как у владельцев - не затираем несохранённые правки, пока редактор открыт
       const v=s.val();_planNotes=_rtdbDecObj((v&&typeof v==='object')?v:{},'planNotes'); // декодируем ключи
-      try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){}});
+      try{localStorage.setItem('finPlanNotes',JSON.stringify(_planNotes));}catch(e){_lsWarn('finPlanNotes',e)}});
   }catch(e){console.warn('[notes] sync',e&&e.message);}
 }
 // Проверенные аномалии (положительные списания, отмеченные как возврат) - config/anomalyAck; ключ = `outsign:<хэш строки>`. Запись = только админ.
 let _anomalyAck=(()=>{try{const o=JSON.parse(localStorage.getItem('finAnomalyAck')||'{}');return(o&&typeof o==='object')?o:{}}catch(e){return{}}})();
 function _anomAckSave(){
-  try{localStorage.setItem('finAnomalyAck',JSON.stringify(_anomalyAck));}catch(e){}
+  try{localStorage.setItem('finAnomalyAck',JSON.stringify(_anomalyAck));}catch(e){_lsWarn('finAnomalyAck',e)}
   _fbSetSafe('config/anomalyAck',_anomalyAck,'Проверенные аномалии');
 }
 function startAnomalyAckSync(){
@@ -10643,7 +10649,7 @@ function startAnomalyAckSync(){
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
     firebase.database().ref('config/anomalyAck').on('value',s=>{const v=s.val();
       _anomalyAck=(v&&typeof v==='object')?v:{};
-      try{localStorage.setItem('finAnomalyAck',JSON.stringify(_anomalyAck));}catch(e){}
+      try{localStorage.setItem('finAnomalyAck',JSON.stringify(_anomalyAck));}catch(e){_lsWarn('finAnomalyAck',e)}
       if(activeTab==='anomaly')try{renderAnomaly(getFilters());}catch(e){}});
   }catch(e){console.warn('[anomAck] sync',e&&e.message);}
 }
@@ -10656,13 +10662,13 @@ function startCfoSync(){
     firebase.database().ref('config/names').on('value',s=>{const v=s.val();
       const arr=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
       _cfoList=[...new Set(arr.map(x=>x&&String(x.name||'').trim()).filter(Boolean))];
-      try{localStorage.setItem('finCfo',JSON.stringify(_cfoList));}catch(e){}});
+      try{localStorage.setItem('finCfo',JSON.stringify(_cfoList));}catch(e){_lsWarn('finCfo',e)}});
   }catch(e){console.warn('[cfo/names] sync',e&&e.message);}
 }
 // Справочник объектов аренды (для 3-го уровня планирования подстатьи 223_Аренда) - хранится в Firebase config/rentObjects, общий для всех устройств
 window._rentObjects=(()=>{try{const a=JSON.parse(localStorage.getItem('finRentObjects')||'[]');return Array.isArray(a)?a:[]}catch(e){return[]}})();
 function _rentObjectsSave(){
-  try{localStorage.setItem('finRentObjects',JSON.stringify(window._rentObjects||[]));}catch(e){}
+  try{localStorage.setItem('finRentObjects',JSON.stringify(window._rentObjects||[]));}catch(e){_lsWarn('finRentObjects',e)}
   _fbSetSafe('config/rentObjects',window._rentObjects||[],'Объекты аренды');
 }
 function startRentObjectsSync(){
@@ -10672,14 +10678,14 @@ function startRentObjectsSync(){
     firebase.database().ref('config/rentObjects').on('value',s=>{const v=s.val();
       const arr=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
       window._rentObjects=[...new Set(arr.map(x=>String(x||'').trim()).filter(Boolean))];
-      try{localStorage.setItem('finRentObjects',JSON.stringify(window._rentObjects));}catch(e){}
+      try{localStorage.setItem('finRentObjects',JSON.stringify(window._rentObjects));}catch(e){_lsWarn('finRentObjects',e)}
       if(activeTab==='planfact'&&document.getElementById('plan-matrix'))try{_planRenderMatrix();}catch(e){}});
   }catch(e){console.warn('[rentObjects] sync',e&&e.message);}
 }
 // Целевой ОПиУ: зафиксированные подстатьи («не менять») - сохраняются в Firebase config/targetLocked + localStorage (не сбрасываются при обновлении)
 function _targetLockedSave(){
   const v=(_tabFilters.target&&_tabFilters.target.locked)||[];
-  try{localStorage.setItem('finTargetLocked',JSON.stringify(v));}catch(e){}
+  try{localStorage.setItem('finTargetLocked',JSON.stringify(v));}catch(e){_lsWarn('finTargetLocked',e)}
   _fbSetSafe('config/targetLocked',v,'Фиксации Целевого ОПиУ');
 }
 function startTargetLockedSync(){
@@ -10689,7 +10695,7 @@ function startTargetLockedSync(){
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return; fbApp();
     firebase.database().ref('config/targetLocked').on('value',s=>{const v=s.val();
       _tabFilters.target.locked=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
-      try{localStorage.setItem('finTargetLocked',JSON.stringify(_tabFilters.target.locked));}catch(e){}
+      try{localStorage.setItem('finTargetLocked',JSON.stringify(_tabFilters.target.locked));}catch(e){_lsWarn('finTargetLocked',e)}
       if(activeTab==='target')try{renderActiveTab();}catch(e){}});
   }catch(e){console.warn('[targetLocked] sync',e&&e.message);}
 }
@@ -12169,7 +12175,7 @@ function bflAutoFact(){
 // ── Персист (Firebase config/bflModel + localStorage) ────────────────────────
 function _bflModelSave(){
   _bflModel.savedAt=Date.now(); // метка времени - чтобы старое облако не затирало свежие локальные правки
-  try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
+  try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){_lsWarn('finBflModel',e)}
   _fbSetSafe('config/bflModel',_bflModel,'Модель БФЛ');
   try{const s=document.getElementById('bfl-save-status');if(s){const d=new Date();const p=n=>String(n).padStart(2,'0');s.textContent='✓ Сохранено '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());s.style.color='var(--income)';}}catch(e){}
 }
@@ -12180,7 +12186,7 @@ function startBflModelSync(){
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;fbApp();
     firebase.database().ref('config/bflModel').on('value',sn=>{const v=sn.val();
       // применяем облако ТОЛЬКО если оно не старше локального (иначе старое облако затрёт свежие правки)
-      if(v&&typeof v==='object'&&(v.savedAt||0)>=(_bflModel.savedAt||0)){_bflModel=bflEnsureModel(v);try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){}
+      if(v&&typeof v==='object'&&(v.savedAt||0)>=(_bflModel.savedAt||0)){_bflModel=bflEnsureModel(v);try{localStorage.setItem('finBflModel',JSON.stringify(_bflModel));}catch(e){_lsWarn('finBflModel',e)}
         if(activeTab==='bflmodel')try{renderBflModel(getFilters());}catch(e){}}});
   }catch(e){console.warn('[bflModel] sync',e&&e.message);}
 }
