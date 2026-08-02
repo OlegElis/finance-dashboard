@@ -1201,7 +1201,7 @@ function setStatus(state,text){
 // в консоли. Логика НЕ меняется - ошибка по-прежнему гасится (зеркало не источник истины, им является
 // облако), добавлено только сообщение с именем ключа. Сам console.warn обёрнут: в некоторых окружениях
 // консоль тоже может быть недоступна, а падать на диагностике - худшее, что может сделать диагностика.
-function _lsWarn(key,e){try{console.warn('[localStorage] ключ «'+key+'» не записан: '+((e&&e.message)||e)+' - локальное зеркало не обновлено');}catch(_){}}
+function _lsWarn(key,e,op){try{console.warn('[localStorage] ключ «'+key+'» не '+(op==='del'?'удалён':'записан')+': '+((e&&e.message)||e)+(op==='del'?' - зеркало осталось на машине':' - локальное зеркало не обновлено'));}catch(_){}}
 function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const cls=numClass(v);const display=typeof val==='number'?fmt(val):(val||'-');return`<td class="${cls} ${extra}">${display}</td>`;}
 
 function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${day}`;}
@@ -10327,9 +10327,39 @@ function authErrMsg(err){
   return (err&&err.message)||'Ошибка входа';
 }
 const ADMIN_EMAIL='o017ev@gmail.com'; // админ: всегда разрешён + видит кнопку «Сбросить сессии»
+// ── Зеркала localStorage, привязанные к человеку: снимаются при выходе ────────
+// ⚠ Граница проведена по вопросу «останется ли на чужой машине то, чего там быть не должно».
+// Всё, что перечислено, - ЛОКАЛЬНАЯ КОПИЯ облачных данных: config/* в Firebase не трогается,
+// при следующем входе листенеры (startPlansSync, startPresetsSync, startAnomalyAckSync и прочие)
+// возвращают всё обратно. Пустое зеркало - штатное состояние первого входа, а не поломка.
+// ⚠ Реквизиты подключения ТОЖЕ чистятся, хотя и «ускоряют вход»: Sheets API-ключ в исходнике
+// НЕ лежит (в index.html только публичный ключ Firebase), поэтому пара sheetId+apiKey в хранилище -
+// это готовый доступ на чтение ко ВСЕЙ финансовой таблице для любого, кто откроет консоль на этой
+// машине. Возвращаются они сами: startConfigSync читает config/sheets и сам зовёт connectAndLoad.
+// ⚠ `fin_rawHeaders_*` СОЗНАТЕЛЬНО НЕ чистится (единственное исключение): это эталон шапки листа -
+// порядок из 15 названий колонок, персональных данных нет, а сторож перестановки колонок после
+// чистки один раз промолчал бы (эталон переустановился бы по новой шапке как по «правильной»).
+const LS_MIRROR_KEYS=[
+  'finPlans','finPlansBaseline',      // планы БДР и утверждённый baseline - цифры компании
+  'finPlanOwners','finPlanNotes',     // ФИО ответственных и их примечания
+  'finCfo','finCfoHierarchy',         // список ЦФО и кто кому подчиняется - ФИО
+  'finAnomalyAck',                    // отметки «✓ проверено» в Аномалиях
+  'finBflModel',                      // параметры сценарной модели БФЛ
+  'finRentObjects','finTargetLocked', // объекты аренды, зафиксированные цели
+  'finBackupLog',                     // когда и КЕМ (email) снят архив настроек
+  'kassaLimits','mktCounts',          // лимиты по счетам, ручные количества маркетинга
+  'reportPresets',                    // пресеты отчётов - рабочий отбор конкретного человека
+  'fin_sheetId','fin_apiKey'          // реквизиты доступа к таблице (см. ⚠ выше)
+];
+function _lsWipeMirrors(){
+  let n=0;
+  LS_MIRROR_KEYS.forEach(k=>{try{if(localStorage.getItem(k)!==null){localStorage.removeItem(k);n++;}}catch(e){_lsWarn(k,e,'del');}});
+  return n;
+}
 window.appLogout=function(){
   try{if(window._presenceStop)window._presenceStop();}catch(e){} // гасим пульс презенса под старым email
   window._appBooted=false; window._dataSheet=''; // следующий вход перезагрузит данные СВОЕЙ вкладки (раньше новый пользователь видел RAW предыдущего до «↻ Обновить»)
+  _lsWipeMirrors(); // зеркала настроек и данных не остаются на машине после выхода; облако (config/*) не трогаем - оттуда всё вернётся
   try{ if(window.firebase&&firebase.auth) firebase.auth().signOut(); }catch(e){}
 };
 // Вход через Google (всплывающее окно)
