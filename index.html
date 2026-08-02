@@ -76,6 +76,7 @@
   .main{margin-left:var(--sidebar-w);flex:1;min-width:0;display:flex;flex-direction:column;}
   .topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,0.05);}
   .page-title{font-family:var(--head);font-size:16.5px;font-weight:600;color:var(--text);}
+  .page-title.has-hint{cursor:help;} /* пояснение к отчёту - в подсказке; курсор говорит, что там что-то есть */
   .content{padding:24px var(--secpx);flex:1;}
 
   /* ── Per-tab filter bar ── */
@@ -963,7 +964,17 @@ function _planSideMD(recsAll,cvt){return (d,code,side,m)=>{const recs=recsAll.fi
 // стороны кода: факт ∪ baseline ∪ прогноз ∪ объекты аренды (для 223); hasUn - есть план/факт без стороны
 function _sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code){const named={};let hasUn=false;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});if(_slRent(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};}
 
-const TAB_TITLES={bank:'Свод по счетам и кассам (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ - план от обратного (сколько тратить под целевую прибыль)',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Контроль - Дубли записей',incomplete:'Контроль - Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ - задолженность по договорам',bflmodel:'Модель БФЛ - юнит-экономика и сценарии',registry:'Реестр банковских и кассовых операций (РЕЕСТР)',audit:'Аудит закупа - контрагенты и кассы по подстатье'};
+// Пояснения, снятые с заголовков вкладок: заголовок называет отчёт, пояснение отвечает
+// на «а что это». Хвост через дефис в самом заголовке ломал шаблон «название (СОКРАЩЕНИЕ)»
+// и удлинял строку в топбаре, поэтому переехал сюда.
+// ⚠ Через ЕДИНЫЙ компонент подсказок, а не нативный title: правило проекта.
+const TAB_HINTS={
+  target:'план от обратного: сколько тратить под целевую прибыль',
+  bflmodel:'юнит-экономика и сценарии',
+  debtbfl:'задолженность по договорам',
+  audit:'контрагенты и кассы по подстатье'
+};
+const TAB_TITLES={bank:'Свод по счетам и кассам (БАНК)',loans:'Займы сотрудникам',anomaly:'Аномалии',depau:'Депозиты АУ',planfact:'Бюджет доходов и расходов (БДР)',target:'Целевой ОПиУ',dds:'Отчет о движении денежных средств (ДДС)',opiu:'Отчёт о прибылях и убытках (ОПиУ)',fot:'Фонд оплаты труда (ФОТ)',marketing:'Юнит-экономика',expenses:'Структура расходов',dupes:'Дубли записей',incomplete:'Недозаполненные данные',osv:'Оборотно-сальдовая ведомость (ОСВ)',debtbfl:'Дебиторка БФЛ',bflmodel:'Модель БФЛ',registry:'Реестр банковских и кассовых операций (РЕЕСТР)',audit:'Аудит закупа'};
 
 function parseNum(v){if(v===null||v===undefined||v==='')return 0;if(typeof v==='number')return v;const n=parseFloat(String(v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}
 // Глобальный HTML-эскейп для данных из Sheets в innerHTML (защита от хранимого XSS через ячейки таблицы)
@@ -1537,7 +1548,11 @@ function switchTab(name){
   document.querySelectorAll('.nav-item[id^="nav-"]').forEach(el=>el.classList.remove('active'));
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
-  document.getElementById('pageTitle').textContent=TAB_TITLES[name]||name;
+  const _pt=document.getElementById('pageTitle');
+  _pt.textContent=TAB_TITLES[name]||name;
+  // подсказка у заголовка: есть пояснение - ставим, нет - снимаем (иначе останется от прошлой вкладки)
+  if(TAB_HINTS[name]){_tipSet(_pt,[[TAB_HINTS[name],'']]);_pt.classList.add('has-hint');}
+  else{_pt.removeAttribute('data-tip');_pt.classList.remove('has-hint');}
   ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv','debtbfl','loans','anomaly','depau','planfact','target','bflmodel','registry','audit'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   if(window.innerWidth<=820)toggleSidebar(false); // на мобильном закрываем меню после выбора
   renderActiveTab();
