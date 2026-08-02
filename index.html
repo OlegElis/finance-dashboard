@@ -584,6 +584,8 @@
   .bank-head-red{background:var(--outcome)!important;}
   .bank-alloc-ok{text-align:center!important;color:var(--income);font-style:italic;padding:8px!important;}
   /* Полоса общего итога: белая подпись, числа - ЯРКАЯ пара для тёмного фона (в таблицах на белом цвета не меняем) */
+  .bank-allperiod{padding:5px var(--secpx) 0;font-family:var(--sans);font-size:10px;color:var(--text3);}
+  .bank-card-note{padding:3px 10px;font-family:var(--sans);font-size:10px;color:var(--text3);background:var(--surface2);border-bottom:1px solid var(--border);}
   .bank-grand{display:flex;align-items:center;gap:16px;background:var(--header-dark);color:#fff;padding:8px 16px;border-radius:8px;box-shadow:var(--shadow);}
   .bank-grand-label{font-family:var(--sans);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#fff;}
   .bank-grand-nums{margin-left:auto;display:flex;gap:22px;font-family:var(--mono);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;}
@@ -1154,7 +1156,8 @@ const dsOpiu=v=>{const d=parseDate(v);return d?`${MONTHS_FULL[d.getMonth()].slic
 window.bankResetAllFilters=function(){
   const b=_tabFilters.bank;
   b.accounts=[];b.activityDirs=[];b.fns='';b.includeFuture=true;b.articles=[];b.subarticles=[];b.finOps=[]; // articles/subarticles/finOps фильтры убраны из UI - гасим на случай старых значений
-  if(typeof _activePreset==='object')_activePreset.bank=''; setPreset('bank','all'); // полный сброс, включая период/пресет
+  if(typeof _activePreset==='object')_activePreset.bank='';
+  setPreset('bank','all'); if(!bankDefaultPeriod())_tabFilters.bank.preset='all'; // период - к умолчанию вкладки (текущий год), а не ко всему учёту
   renderBank(getFilters());
 };
 
@@ -1248,6 +1251,7 @@ function buildFilterOptions(data){
     if(!_tabFilters[tab].dateFrom)_tabFilters[tab].dateFrom=toIso(minD);
     if(!_tabFilters[tab].dateTo)_tabFilters[tab].dateTo=toIso(maxD);
   });
+  if(!_tabFilters.bank._defPeriodDone){_tabFilters.bank._defPeriodDone=1;bankDefaultPeriod();}
 }
 
 function renderFilterBar(tab){
@@ -1288,6 +1292,25 @@ function renderFilterBarUpdate(tab){
 }
 
 
+// ⚠ БАНК открывается с ТЕКУЩИМ ГОДОМ, а не со всем учётом: свод по счетам читают про «сейчас», а два
+// с половиной года оборотов в колонках Поступление/Списание отвечают на другой вопрос. Умолчание
+// безопасно ТОЛЬКО потому, что ЗАПАС (Сальдо, Cash Runway, лимиты, колонка «Итого») считается с начала
+// учёта и от периода не зависит - см. stockRows в renderBank. Пока этого разделения не было, смена
+// периода ломала остаток, и трогать умолчание было нельзя.
+// ⚠ Верхняя граница - конец данных внутри года, а НЕ сегодня: иначе фильтр дат резал бы будущие оплаты
+// и тумблер «Будущие оплаты» стал бы немым. Нет данных за текущий год → false, остаётся весь учёт.
+// ⚠ Функция ОДНА на два вызова - старт вкладки и «× сбросить всё»: сброс обязан возвращать туда же,
+// откуда вкладка открывается, иначе «сбросить» даёт состояние, которого при открытии не бывает.
+function bankDefaultPeriod(){
+  const ds=RAW.map(r=>parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU])).filter(Boolean);
+  if(!ds.length)return false;
+  const maxD=new Date(Math.max(...ds)),y=new Date().getFullYear(),jan=new Date(y,0,1),dec=new Date(y,11,31);
+  if(maxD<jan)return false;
+  _tabFilters.bank.dateFrom=toIso(jan);
+  _tabFilters.bank.dateTo=toIso(maxD<dec?maxD:dec);
+  _tabFilters.bank.preset='year';
+  return true;
+}
 function applyBaseFilters(data,f){return data.filter(row=>{const d=parseDate(row[COL.DATE_DDS])||parseDate(row[COL.DATE_OPIU]);if(f.dateFrom||f.dateTo){if(!d)return false;const iso=toIso(d);if(f.dateFrom&&iso<f.dateFrom)return false;if(f.dateTo&&iso>f.dateTo)return false;}const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);return inc!==0||out!==0;});}
 
 function showSetup(){
@@ -2339,24 +2362,46 @@ function renderBank(f){
   // Extra-фильтры применяются ко ВСЕМ блокам листа (свод, KPI, графики, таблица)
   if(f.accounts&&f.accounts.length)data=data.filter(r=>f.accounts.includes(String(r[COL.ACCOUNT]||'').trim())); // фильтр по реквизитам счёта - режет data до выбранных счетов (сумма/KPI/графики пересчитываются)
   window._bankFilteredData=data; // для графиков (в т.ч. «по дням»), чтобы реагировали на все фильтры
+  // ═══ ПОТОК и ЗАПАС - величины РАЗНОЙ природы, и период применяется только к первым ═══
+  // ПОТОК (обороты за отрезок): Поступление, Списание, Перемещения, «Доля оформленного», графики.
+  // ЗАПАС (состояние на дату): Сальдо, Cash Runway, лимиты счетов, колонка «Итого» в сводах.
+  // ⚠ Остаток, ограниченный периодом, - это уже ИЗМЕНЕНИЕ остатка за период, другая величина под тем же
+  //   названием. Пока обе считались от `data`, вкладка была верна ровно при одном периоде «весь учёт»,
+  //   и поменять умолчание было нельзя - остаток поехал бы вместе с ним.
+  // stockRows - те же фильтры вкладки (направления, будущие оплаты, счета), но БЕЗ дат.
+  const stockRows=(()=>{
+    let rs=applyBaseFilters(RAW,{dateFrom:'',dateTo:''});
+    if(f.activityDirs&&f.activityDirs.length)rs=rs.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
+    if(!f.includeFuture){const te=new Date();te.setHours(23,59,59,999);rs=rs.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return !d||d<=te;});}
+    if(f.accounts&&f.accounts.length)rs=rs.filter(r=>f.accounts.includes(String(r[COL.ACCOUNT]||'').trim()));
+    return rs;
+  })();
   const map=new Map();
   const isCardAcc=name=>/карт|card|ФЛ\b|физ\.?\s*лиц/i.test(name);
   const isKassaAcc=name=>/касс|кассир|наличн|kassa|kasca/i.test(name);
-  data.forEach(row=>{
-    const rawAcc=String(row[COL.ACCOUNT]||'').trim();
-    const acc=rawAcc;
-    const fnsRaw=String(row[COL.FNS]||'').toLowerCase().trim();
-    const isFns=['да','true','1','+'].includes(fnsRaw);
-    const isNoFns=['нет','false','0','-'].includes(fnsRaw);
+  const _accOf=acc=>{const key=acc||'__noreq__';
+    if(!map.has(key))map.set(key,{name:acc||'- без счёта -',raw:acc,fns:-1,inc:0,out:0,mov:0,movIn:0,movOut:0,sInc:0,sOut:0,sMov:0,total:0});
+    return map.get(key);};
+  // Проход 1 - ЗАПАС: остаток с начала учёта и признак ФНС.
+  // ⚠ Признак ФНС берётся по ВСЕМ строкам счёта, а не по срезу периода: он свойство СЧЁТА, а не периода
+  //   (то же правило уже действует в карточке «Доля оформленного»). Считай мы его по срезу - счёт, у которого
+  //   «да» стоит только в строках 2024 года, при периоде «текущий год» уехал бы в другую карточку, и своды
+  //   перестали бы совпадать сами с собой при смене периода.
+  stockRows.forEach(row=>{
+    const acc=String(row[COL.ACCOUNT]||'').trim(),e=_accOf(acc);
     const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
-    const key=acc||'__noreq__';
-    if(!map.has(key))map.set(key,{name:acc||'- без счёта -',raw:acc,fns:isFns?1:isNoFns?0:-1,inc:0,out:0,mov:0,movIn:0,movOut:0});
-    const e=map.get(key);
+    if(isMoveRow(row))e.sMov+=inc+out; else {e.sInc+=inc;e.sOut+=out;}
+    if(e.fns===-1){const v=String(row[COL.FNS]||'').toLowerCase().trim();
+      if(['да','true','1','+'].includes(v))e.fns=1; else if(['нет','false','0','-'].includes(v))e.fns=0;}
+  });
+  // Проход 2 - ПОТОК: обороты за выбранный период.
+  data.forEach(row=>{
+    const e=_accOf(String(row[COL.ACCOUNT]||'').trim());
+    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
     // Перемещения между своими счетами записаны ПАРАМИ в поступлениях (уход - отрицательное поступление, приход - положительное).
     // По компании они сходятся в ноль, но по ОТДЕЛЬНОМУ счёту пара распадается и «Поступление» занижалось на объём транзита.
     // сальдо в колонке, валовые обороты - в подсказке: строка перемещения либо приход, либо уход (списаний в них нет)
     if(isMoveRow(row)){const v=inc+out;e.mov+=v;if(v>0)e.movIn+=v;else e.movOut+=v;} else {e.inc+=inc;e.out+=out;}
-    if(e.fns===-1&&(isFns||isNoFns))e.fns=isFns?1:0;
   });
   // Группировка: СНАЧАЛА наличие реквизитов, ПОТОМ ФНС.
   //   нет реквизитов счёта       → gAlloc «Счета на распределение» (сторож, независимо от ФНС - сюда «- без счёта -»)
@@ -2364,13 +2409,17 @@ function renderBank(f){
   //   есть счёт + ФНС=Нет/неизв. → gNet  «ДС до налогового оформления»
   // Скрываем счета без ДВИЖЕНИЯ (|поступление|<0.005 И |списание|<0.005): нулевые депозиты/депонирование/задолженность.
   // Живые кассы с оборотом и нулевым ИТОГО (inc=-out) НЕ скрываются - проверку итого НЕ добавляем.
-  const hasMove=a=>Math.abs(a.inc)>=0.005||Math.abs(a.out)>=0.005||Math.abs(a.mov)>=0.005; // ⚠ без a.mov счёт, где ТОЛЬКО транзит, исчез бы из свода
+  // ⚠ Счёт виден, если у него есть движение ЗА ПЕРИОД **или** ненулевой остаток с начала учёта.
+  //   Вторая половина - не косметика, а условие контрольного правила «Σ Итого = Сальдо»: счёт с остатком
+  //   от 2024 года и без операций в текущем исчез бы из свода, а его деньги остались бы в Сальдо.
+  // ⚠ без a.mov счёт, где ТОЛЬКО транзит, исчез бы из свода
+  const hasMove=a=>Math.abs(a.inc)>=0.005||Math.abs(a.out)>=0.005||Math.abs(a.mov)>=0.005||Math.abs(a.total)>=0.005;
   const gDa=[],gNet=[],gAlloc=[];
   // Фильтр ФНС режет СЧЕТА по их признаку (не строки): суммы внутри счёта не меняются, меняется состав видимых счетов.
   // Признак счёта берётся из его строк выше (первое распознанное «да»/«нет» выигрывает; ни одного → -1 «без признака»).
   const fnsPass=a=>!f.fns||(f.fns==='da'?a.fns===1:f.fns==='net'?a.fns===0:f.fns==='unk'?a.fns===-1:true);
   map.forEach(a=>{
-    a.total=a.inc+a.mov+a.out; // тождественно прежнему incВсе+outВсе - «Итого» до копейки как было
+    a.total=a.sInc+a.sMov+a.sOut; // ЗАПАС: остаток на сегодня, от периода не зависит
     if(!hasMove(a))return; // счёт без движения - скрыт
     if(!fnsPass(a))return;
     if(a.raw==='')gAlloc.push(a); // нет реквизитов → на распределение
@@ -2387,15 +2436,24 @@ function renderBank(f){
 
   let totInc=0,totMov=0,totOut=0,totAll=0;
   [...gDa,...gNet,...gAlloc].forEach(a=>{totInc+=a.inc;totMov+=a.mov;totOut+=a.out;totAll+=a.total;});
-  // По компании totMov = 0 (пары сходятся), поэтому KPI не меняются. Но под фильтром одного счёта пара распадается,
-  // и без totMov «Сальдо» разошлось бы с «Итого Общий итог».
-  const saldo=totInc+totMov+totOut;
+  // ⚠ Сальдо - ЗАПАС: сумма остатков ВИДИМЫХ счетов с начала учёта, а не поток за период.
+  //   Считается по тем же счетам, что попали в своды, поэтому контрольное правило «Σ Итого по трём сводам
+  //   = Сальдо» держится при любом периоде и при фильтре ФНС (он режет состав счетов).
+  //   Прежняя формула totInc+totMov+totOut оставалась бы верна только при периоде «весь учёт».
+  const saldo=totAll;
+  // Обороты за весь учёт - для справочной строки под полосой (числа из данных, не зашиты)
+  let allInc=0,allOut=0;
+  [...gDa,...gNet,...gAlloc].forEach(a=>{allInc+=a.sInc;allOut+=a.sOut;});
 
   // Cash Runway = Текущий баланс (сальдо всех операций) ÷ Среднемесячный операционный расход × 30
   // Текущий баланс = saldo (все данные)
   // Средний расход = только операционная деятельность (001_)
-  const currentBalance=saldo; // реальный остаток ДС
-  const rawAll=data.filter(r=>!String(r[COL.TYPE]||'').trim().toLowerCase().includes('перемещение')&&String(r[COL.FIN_OP]||'').trim().startsWith('001_'));
+  const currentBalance=saldo; // реальный остаток ДС (запас, от периода не зависит)
+  // ⚠ Расход для среднего берётся из stockRows, а НЕ из data: окно «90 дней до конца прошлого месяца»
+  //   фиксировано, и при периоде «текущий год» оно ещё попадает внутрь, а при «этот месяц» - уже нет,
+  //   и Runway молча уезжал бы вместе с фильтром. Величина «на сегодня» обязана быть period-независимой
+  //   в ОБЕИХ своих половинах - и в остатке, и в скорости расхода.
+  const rawAll=stockRows.filter(r=>!String(r[COL.TYPE]||'').trim().toLowerCase().includes('перемещение')&&String(r[COL.FIN_OP]||'').trim().startsWith('001_'));
   // Средний расход за последние 90 дней (текущий месяц не включается)
   const nowR=new Date();
   const periodEnd=new Date(nowR.getFullYear(),nowR.getMonth(),0); // последний день предыдущего месяца
@@ -2441,13 +2499,7 @@ function renderBank(f){
   // ⚠ Признак ФНС - свойство СЧЁТА, а не периода, поэтому карта строится по ВСЕМУ набору БЕЗ дат.
   //   Считай мы признак по срезу - счёт, у которого «да» стоит только в строках 2025 года, в 2026-м уехал бы
   //   в другой канал, и сравнение годов сравнивало бы разные классификации.
-  const _cardRows=(()=>{ // те же фильтры вкладки, но БЕЗ дат: окна карточка режет сама (год / тот же отрезок год назад)
-    let rs=applyBaseFilters(RAW,{dateFrom:'',dateTo:''});
-    if(f.activityDirs&&f.activityDirs.length)rs=rs.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
-    if(!f.includeFuture){const te=new Date();te.setHours(23,59,59,999);rs=rs.filter(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);return !d||d<=te;});}
-    if(f.accounts&&f.accounts.length)rs=rs.filter(r=>f.accounts.includes(String(r[COL.ACCOUNT]||'').trim()));
-    return rs;
-  })();
+  const _cardRows=stockRows; // тот же набор «фильтры вкладки без дат»: окна карточка режет сама. Две копии разъехались бы
   const _accFns=new Map(); // счёт → 1/0; первое распознанное «да»/«нет» выигрывает (как в своде)
   _cardRows.forEach(r=>{
     const acc=String(r[COL.ACCOUNT]||'').trim();
@@ -2568,17 +2620,79 @@ function renderBank(f){
       tip:_tipAttr(_chanRows(cur),['всего',_rub(cur.all)],_perLbl)};
   })();
 
+  // ═══ ПОДПИСИ ПОД ЦИФРАМИ ═══
+  // ⚠ Подписи ОБЯЗАТЕЛЬНЫ: в одной полосе стоят величины за период и величины на дату, и без подписи
+  //   это читается как рассогласование - «поступления за год, а сальдо почему-то другое».
+  const _stockDates=stockRows.map(r=>parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU])).filter(Boolean);
+  const _lastData=_stockDates.length?new Date(Math.max(..._stockDates)):null;
+  const _today0=new Date();
+  // Дата запаса: сегодня, а при включённых будущих оплатах - последняя дата в наборе (остаток отражает и их).
+  // При выключенных будущих оплатах строки обрезаны сегодняшним днём, поэтому правило одно на оба случая.
+  const _asOfD=(_lastData&&_lastData>_today0)?_lastData:_today0;
+  const _dd=d=>String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();
+  const _asOfLbl='на '+_dd(_asOfD);
+  // Подпись потока - по МЕСЯЦАМ, реально попавшим в выборку («янв-авг 2026»), а не по границам фильтра:
+  // период 01.01-31.12 при данных по август честнее назвать «янв-авг», иначе подпись обещает больше, чем в цифре.
+  const _flowLbl=(()=>{
+    let a=null,b=null;
+    data.forEach(r=>{const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);if(!d)return;if(!a||d<a)a=d;if(!b||d>b)b=d;});
+    if(!a)return _perLbl;
+    const y1=a.getFullYear(),y2=b.getFullYear();
+    return y1===y2?_spanLbl(y1,a.getMonth()+1,b.getMonth()+1):(_MONA[a.getMonth()]+' '+y1+' - '+_MONA[b.getMonth()]+' '+y2);
+  })();
+  const _flowSub='за '+_flowLbl;
+  // ═══ ДЕЛЬТА ПОТОКА К ТОМУ ЖЕ ОТРЕЗКУ ПРОШЛОГО ГОДА ═══
+  // ⚠ Верхняя граница окна прижимается к последней дате с данными: период «весь текущий год» при данных
+  //   по август сравнивал бы 8 месяцев с полными 12 прошлого года. Та же ловушка уже ловилась в «Доле
+  //   оформленного» (_mLast) и в годовой колонке БДР.
+  const _visAcc=new Set([...gDa,...gNet,...gAlloc].map(a=>a.raw));
+  const _isoY=(iso,n)=>{const q=String(iso||'').split('-');return q.length===3?((+q[0]+n)+'-'+q[1]+'-'+q[2]):'';};
+  const _winSum=(from,to)=>{let i=0,o=0;
+    stockRows.forEach(r=>{
+      if(isMoveRow(r))return; // перемещения - транзит между своими счетами, потоком не являются
+      if(!_visAcc.has(String(r[COL.ACCOUNT]||'').trim()))return; // те же счета, что в полосе - иначе дельта считалась бы по другому множеству
+      const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]); if(!d)return;
+      const iso=toIso(d); if((from&&iso<from)||(to&&iso>to))return;
+      i+=parseNum(r[COL.INCOME]); o+=parseNum(r[COL.OUTCOME]);});
+    return{inc:i,out:o};};
+  const _curTo=(()=>{const t=f.dateTo||'',L=_lastData?toIso(_lastData):'';return (t&&L)?(t<L?t:L):(t||L);})();
+  const _curFrom=f.dateFrom||(_stockDates.length?toIso(new Date(Math.min(..._stockDates))):'');
+  // ⚠ Сравнение показываем, ТОЛЬКО если сдвинутое на год окно целиком лежит РАНЬШЕ текущего.
+  //   При периоде «весь учёт» (мар 2024 - авг 2026) сдвиг даёт мар 2023 - авг 2025, то есть отрезок
+  //   сравнивается сам с собой внахлёст: «+17,5%» выглядит как факт, а означает лишь то, что окно
+  //   съехало. Тот же принцип, что у «Доли оформленного»: нет сопоставимой базы - нет и стрелки.
+  const _cmpOk=!!(_curFrom&&_curTo&&_isoY(_curTo,-1)<_curFrom);
+  const _prvWin=_cmpOk?_winSum(_isoY(_curFrom,-1),_isoY(_curTo,-1)):null;
+  const _prvLbl=_cmpOk?(_dd(new Date(_isoY(_curFrom,-1)+'T00:00:00'))+'-'+_dd(new Date(_isoY(_curTo,-1)+'T00:00:00'))):'';
+  // Стрелка в ПРОЦЕНТАХ (в отличие от «Доли оформленного», где п.п.): здесь сравниваются рубли, а не доли.
+  // Порог 0,5% - шум показываем нейтрально; светофор считает рост расхода ухудшением, поэтому знак «хорошо»
+  // передаётся флагом, а не выводится из знака числа.
+  const _pctD=(cur,prv)=>(prv&&Math.abs(prv)>=0.005)?((Math.abs(cur)-Math.abs(prv))/Math.abs(prv)*100):null;
+  const _dArrow=(d,goodUp)=>{
+    if(d==null)return '';
+    d=Math.round(d*10)/10;
+    const small=Math.abs(d)<0.5,up=d>0;
+    const sym=small?'→':(up?'↑':'↓');
+    const col=small?'var(--text3)':((up===!!goodUp)?'var(--income)':'var(--outcome)');
+    const txt=(d>0?'+':d<0?'−':'')+Math.abs(d).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
+    return ` <span style="font-size:11px;font-weight:600;color:${col};font-family:var(--sans)">${sym} ${txt}</span>`;
+  };
+  const _flowTip=(cur,prv,name)=>_prvWin?_tipAttr([[_flowLbl,fmt(cur)],[_prvLbl,fmt(prv)]],['изменение',fmt(cur-prv)],name+': тот же отрезок год назад')
+    :_tipAttr([[_flowLbl,fmt(cur)]],null,name+' · сравнения нет: отрезок год назад перекрывается с выбранным');
   // 7 KPI-карточек (крупные цифры). «Счетов» = ВИДИМОЕ число (скрытые без движения не считаем). Числа совпадают с «Итого Общий итог».
   const nAcc=gDa.length+gNet.length+gAlloc.length;
+  // ⚠ Порядок карточек: сначала ПОТОК (за период), потом ЗАПАС (на дату). Величины разной природы
+  //   не перемешивать - иначе подписи придётся читать у каждой, чтобы понять, что с чем сравнивать.
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card green"><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div></div>
-    <div class="kpi-card red"><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}</div></div>
-    <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div></div>
-    <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div></div>
+    <div class="kpi-card green" ${_flowTip(totInc,_prvWin?_prvWin.inc:0,'Поступления')}><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}${_dArrow(_prvWin?_pctD(totInc,_prvWin.inc):null,true)}</div><div class="kpi-sub">${_flowSub}</div></div>
+    <div class="kpi-card red" ${_flowTip(totOut,_prvWin?_prvWin.out:0,'Списания')}><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}${_dArrow(_prvWin?_pctD(totOut,_prvWin.out):null,false)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
-    <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor};font-size:9px">${runwayHint} ↗</div></div>
-    <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor};font-size:9px">${kassaHint} ⚙</div></div>
-  </div>`;
+    <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
+    <div class="kpi-card orange"><div class="kpi-label">Счетов</div><div class="kpi-value">${nAcc}</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
+  </div>
+  <div class="bank-allperiod">За весь период учёта: поступления ${fmt(allInc)}, списания ${fmt(allOut)}</div>`;
 
   // Строка счёта: Реквизиты | Поступление | Списание | Итого (колонка ФНС убрана - её роль в заголовке карточки).
   const accRow=a=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td class="bank-name" title="${_htmlEsc(a.name)}">${_htmlEsc(a.name)}</td>${td(a.inc,'bank-num')}${td(a.out,'bank-num')}${movTd(a.mov,a.movIn,a.movOut)}${td(a.total,'bank-num')}</tr>`;
@@ -2608,7 +2722,9 @@ function renderBank(f){
     const body=sorted.length?sorted.map(accRow).join(''):(opt.emptyMsg?`<tr><td colspan="5" class="bank-alloc-ok">${opt.emptyMsg}</td></tr>`:'');
     const foot=`<tfoot><tr class="subtotal"><td class="bank-name">${subLabel}</td>${td(si,'bank-num')}${td(so,'bank-num')}${movTd(sm,smi,smo)}${td(st,'bank-num')}</tr></tfoot>`;
     // Цвет заголовка/счётчика - ИНЛАЙН с !important на самом текстовом узле: перебивает глобальные .table-title/.table-count (в т.ч. .table-count{color:#9aa3b5!important}). Белый читается и на тёмно-синей, и на красной шапке.
-    return `<div class="table-wrap bank-card ${wrapCls}"><div class="table-header${opt.red?' bank-head-red':''}"><span class="table-title" style="color:#fff!important;font-size:12px;font-weight:600">${title}</span><span class="table-count" style="color:#c7ccd4!important;font-size:11px;opacity:1">${arr.length} ${_plur(arr.length,'счёт','счёта','счетов')}</span></div><div class="bank-card-scroll"><table class="report-table bank-flat">${_cardCols}${cardThead(key)}<tbody>${body}</tbody>${foot}</table></div></div>`;
+    // ⚠ Пояснение обязательно: в одной таблице стоят обороты ЗА ПЕРИОД и остаток НА ДАТУ.
+    //   Без строки словами это читается как ошибка расчёта («поступления за год, а итого больше»).
+    return `<div class="table-wrap bank-card ${wrapCls}"><div class="table-header${opt.red?' bank-head-red':''}"><span class="table-title" style="color:#fff!important;font-size:12px;font-weight:600">${title}</span><span class="table-count" style="color:#c7ccd4!important;font-size:11px;opacity:1">${arr.length} ${_plur(arr.length,'счёт','счёта','счетов')}</span></div><div class="bank-card-note">Поступление, Списание, Перемещения - ${_flowSub}. Итого - остаток ${_asOfLbl}</div><div class="bank-card-scroll"><table class="report-table bank-flat">${_cardCols}${cardThead(key)}<tbody>${body}</tbody>${foot}</table></div></div>`;
   };
 
   // Берём последний год/месяц из данных (включая будущие даты)
@@ -2646,7 +2762,8 @@ function renderBank(f){
   const allocCard=buildCard(gAlloc,'Счета на распределение · требуют классификации','Итого на распределение','bank-card-alloc','alloc',{red:true,emptyMsg:'✓ все счета классифицированы'});
   const netCard=buildCard(gNet,'Денежные средства до налогового оформления · ФНС = Нет','Итого ДС до налогового оформления','bank-card-net','net');
   const colsHtml=`<div class="bank-cols"><div class="bank-col-left">${taxCard}${allocCard}</div><div class="bank-col-right">${netCard}</div></div>`;
-  const grandHtml=`<div class="bank-grand"><span class="bank-grand-label">ИТОГО ОБЩИЙ ИТОГ</span><span class="bank-grand-nums"><b class="bank-grand-pos">${fmt(totInc)}</b><b class="bank-grand-neg">${fmt(totOut)}</b><b class="bank-grand-mov">${fmt(totMov)}</b><b>${fmt(totAll)}</b></span><a onclick="switchTab('registry')" class="bank-grand-reg" title="Полный список операций с фильтрами - вкладка Реестр">Все операции → Реестр</a></div>`;
+  // Последнее число строки - ЗАПАС (равен Сальдо в полосе), три первых - поток за период
+  const grandHtml=`<div class="bank-grand"><span class="bank-grand-label">ИТОГО ОБЩИЙ ИТОГ</span><span style="font-family:var(--sans);font-size:10px;color:#c7ccd4;font-weight:400">обороты ${_flowSub} · итого - остаток ${_asOfLbl}</span><span class="bank-grand-nums"><b class="bank-grand-pos">${fmt(totInc)}</b><b class="bank-grand-neg">${fmt(totOut)}</b><b class="bank-grand-mov">${fmt(totMov)}</b><b>${fmt(totAll)}</b></span><a onclick="switchTab('registry')" class="bank-grand-reg" title="Полный список операций с фильтрами - вкладка Реестр">Все операции → Реестр</a></div>`;
 
   // Сохраняем данные для переключения
   // ⚠ dayMov/dayMovIn/dayMovOut обязаны быть здесь: без них первый рендер отдавал в chartDays undefined,
