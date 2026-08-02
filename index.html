@@ -6267,11 +6267,21 @@ function _regDateHitAny(r,tk){return tk.col!=null?_regDateHit(r,tk,tk.col):(_reg
 // ⚠ Копейки в выдаче ОСТАЮТСЯ сознательно: «15 000,00» находит и 15 000,50 - соседняя операция
 // того же порядка полезнее отсечённой. Числовым сравнением не занимаемся: это отдельная ветка
 // для колонок сумм со своим поведением у подсветки и «Совпало».
+// ⚠ Русские союзы и предлоги в одну-две буквы в отбор НЕ пускаются. «поступление и сау и остаток»
+// человек пишет как союз, а «и» становилось третьим УСЛОВИЕМ: строка обязана содержать слово,
+// начинающееся на «и» - «ИП Болотов», «Игуменов», «Ивановна». Выдача сужалась по признаку,
+// которого не задавали, и МОЛЧА. Механизм тот же, что у коротких чисел (hlOnly), поэтому
+// продвижение «весь запрос служебный» работает и здесь без отдельной ветки.
+// ⚠ Список ТОЛЬКО из одно-двухбуквенных: с трёх букв слово уже значимо («сау», «ооо», «ндс»,
+// «зао») и трогать его нельзя. Расширять список длинными словами - НЕ надо: молча выкинутое
+// из отбора слово это ровно та беда, которую здесь чинят.
+const REG_STOP=new Set(['и','а','в','к','о','с','у','на','по','за','от','до','из','не','но','же','ли','бы']);
 function _regFreeTok(tk){
   if(tk.dk||tk.empty)return tk;
   tk.tn=_regTokNorm(tk.val);
   if(tk.col==null&&/^[\d ]+$/.test(tk.tn))tk.word=true;
   if(tk.col==null&&/^\d{1,2}$/.test(tk.tn))tk.hlOnly=true;
+  if(tk.col==null&&REG_STOP.has(tk.tn)){tk.hlOnly=true;tk.stop=true;} // stop - только ради формулировки счётчика: причина у слова и у числа разная
   return tk;
 }
 // ⚠ «Не фильтрует» верно только пока в запросе есть ЧЕМ фильтровать. Если весь запрос состоит
@@ -6792,10 +6802,14 @@ function registryRender(q){
   const anyFilter=tokens.length||selSets.length||(dfDDS.years&&dfDDS.years.length)||(dfDDS.months&&dfDDS.months.length)||dfDDS.from||dfDDS.to||(dfOP.years&&dfOP.years.length)||(dfOP.months&&dfOP.months.length)||dfOP.from||dfOP.to||incFrom!=null||incTo!=null||outFrom!=null||outTo!=null;
   // Короткие числа в отборе не участвуют - говорим об этом прямо, иначе человек считает,
   // что уточнил запрос, а список не сузился и объяснения нет.
-  const hlOnlyToks=tokens.filter(tk=>tk.hlOnly).map(tk=>'«'+tk.val+'»');
-  const wordToks=tokens.filter(tk=>tk.promoted).map(tk=>'«'+tk.val+'»'); // ⚠ по promoted, а НЕ по word: word стоит у любого числового токена, и примечание вылезало бы на каждый поиск суммы
-  const cntNote=hlOnlyToks.length?(' · '+hlOnlyToks.join(', ')+' в поиске не участву'+(hlOnlyToks.length>1?'ют':'ет')+' - слишком коротко')
-    :(wordToks.length?(' · '+wordToks.join(', ')+' искал'+(wordToks.length>1?'ись':'ось')+' как отдельное слово'):'');
+  const _uniqNames=a=>{const o=[];a.forEach(tk=>{const v='«'+tk.val+'»';if(o.indexOf(v)<0)o.push(v);});return o;}; // «и» в запросе дважды - в примечании один раз
+  const hlSkip=tokens.filter(tk=>tk.hlOnly),hlNames=_uniqNames(hlSkip);
+  const stopN=hlSkip.filter(tk=>tk.stop).length; // причина у служебного слова и у короткого числа разная - счётчик обязан их различать
+  const skipWhy=stopN&&stopN<hlSkip.length?' - служебные слова и короткие числа'
+    :(stopN?(hlNames.length>1?' - служебные слова':' - служебное слово'):' - слишком коротко'); // число согласуем по ИМЕНАМ, а не по токенам: «и» дважды - это одно имя
+  const wordToks=_uniqNames(tokens.filter(tk=>tk.promoted)); // ⚠ по promoted, а НЕ по word: word стоит у любого числового токена, и примечание вылезало бы на каждый поиск суммы
+  const cntNote=hlNames.length?(' · '+hlNames.join(', ')+' в поиске не участву'+(hlNames.length>1?'ют':'ет')+skipWhy)
+    :(wordToks.length?(' · '+wordToks.join(', ')+(wordToks.length>1?' искались как отдельные слова':' искалось как отдельное слово')):'');
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=(anyFilter?('найдено '+total.toLocaleString('ru-RU')+' из '+RAW.length.toLocaleString('ru-RU')):('всего '+total.toLocaleString('ru-RU')))+cntNote;
   // ⚠ Синхронизация выбранного пресета. Контрол встраивается один раз, а правка фильтра
   // перерисовывает только таблицу - без этого список продолжал показывать имя пресета,
