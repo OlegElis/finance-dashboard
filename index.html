@@ -6204,7 +6204,9 @@ function _regFieldText(r,F){return F.date?_regDs(r[F.c]):String(r[F.c]==null?'':
 const REG_NONWORD=/[^\p{L}\p{N}]+/gu;
 function _regNorm(s){return ' '+String(s==null?'':s).toLowerCase().replace(REG_NONWORD,' ').trim()+' ';} // обрамляющие пробелы: начало строки - тоже граница слова
 function _regTokNorm(t){return String(t==null?'':t).toLowerCase().replace(REG_NONWORD,' ').trim();}
-function _regHasWord(norm,tn){return tn!==''&&norm.indexOf(' '+tn)>=0;}
+// word: границы с ОБЕИХ сторон («4» как самостоятельное слово). norm обрамлён пробелами,
+// поэтому хвостовая граница работает и для токена в конце строки.
+function _regHasWord(norm,tn,word){return tn!==''&&norm.indexOf(' '+tn+(word?' ':''))>=0;}
 // ── Сокращение справочных значений до кода (ТОЛЬКО показ) ─────────────────────
 // Пятнадцати колонкам в 1013px не хватает примерно 2500px, и место берётся не перекладыванием
 // процентов, а сокращением содержимого: «120_Поступление от АУ» → «120», «САУ - Союз Арбитражных
@@ -6261,6 +6263,18 @@ function _regFreeTok(tk){
   if(tk.col==null&&/^\d{1,2}$/.test(tk.tn))tk.hlOnly=true;
   return tk;
 }
+// ⚠ «Не фильтрует» верно только пока в запросе есть ЧЕМ фильтровать. Если весь запрос состоит
+// из коротких чисел, отбор остаётся пустым и «4» возвращает ВСЮ базу: человек уточнил запрос
+// и получил полный список - хуже и пустого экрана, потому что выглядит как рабочий ответ.
+// Тогда короткий токен всё-таки идёт в отбор, но как ОТДЕЛЬНОЕ СЛОВО (границы с обеих сторон):
+// «4» находит четвёрку самостоятельным словом и не находит её внутри дат и номеров счетов.
+// ⚠ Прицельный «id:4» сюда не попадает - у него col!=null, он фильтрует по своему правилу всегда.
+function _regPromoteShort(tokens){
+  const free=tokens.filter(tk=>tk.col==null&&!tk.empty);
+  if(!free.length||free.some(tk=>!tk.hlOnly))return tokens; // есть длинный токен - отбор ведёт он, поведение прежнее
+  free.forEach(tk=>{tk.hlOnly=false;tk.word=true;});
+  return tokens;
+}
 // Кэш «поисковых блобов» (по строке на запись), строится один раз на загрузку данных
 function _buildRegBlobs(){
   if(window._regBlobs&&window._regBlobs._n===RAW.length)return window._regBlobs;
@@ -6274,18 +6288,22 @@ function _buildRegBlobs(){
 function _regWhy(r,toks){
   const out=[];
   for(let k=0;k<REG_SEARCH_FIELDS.length;k++){const F=REG_SEARCH_FIELDS[k],txt=_regFieldText(r,F),nv=_regNorm(txt);
-    let hit=null;
+    let hit=null,hw=false;
     for(let t=0;t<toks.length;t++){const tk=toks[t];
       if(tk.dk){if(F.date&&_regDateHit(r,tk,F.c)){hit=tk.val;break;}}       // дата-запрос объясняется только колонками дат
-      else if(_regHasWord(nv,tk.tn)){hit=(tk.tn||'').split(' ')[0];break;}} // для выреза берём первое слово токена - оно есть в исходном тексте
-    if(hit!=null)out.push({F:F,snip:_regWhySnip(txt,[hit])});}
+      else if(_regHasWord(nv,tk.tn,tk.word)){hit=(tk.tn||'').split(' ')[0];hw=tk.word;break;}} // для выреза берём первое слово токена - оно есть в исходном тексте
+    if(hit!=null)out.push({F:F,snip:_regWhySnip(txt,[hit],hw)});}
   return out;
 }
 // Кусок значения вокруг совпадения - чтобы в подсказке было видно не только ГДЕ, но и ЧТО совпало
 // (в длинном назначении платежа само название колонки на вопрос не отвечает).
-function _regWhySnip(text,toks){
+function _regWhySnip(text,toks,word){
   const s=String(text==null?'':text),low=s.toLowerCase();let p=-1,L=0;
-  for(let i=0;i<toks.length;i++){const k=low.indexOf(toks[i]);if(k>=0&&(p<0||k<p)){p=k;L=toks[i].length;}}
+  for(let i=0;i<toks.length;i++){
+    let k;
+    if(word){const m=new RegExp('(^|[^\\p{L}\\p{N}])('+toks[i].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')(?![\\p{L}\\p{N}])','u').exec(low);k=m?m.index+m[1].length:-1;} // слово-токен: вырез вокруг ТОГО совпадения, которое дало отбор, а не вокруг первой подстроки
+    else k=low.indexOf(toks[i]);
+    if(k>=0&&(p<0||k<p)){p=k;L=toks[i].length;}}
   if(p<0)return s.length>40?s.slice(0,40)+'…':s;
   const a=Math.max(0,p-14),b=Math.min(s.length,p+L+14);
   return (a>0?'…':'')+s.slice(a,b)+(b<s.length?'…':'');
@@ -6712,6 +6730,7 @@ function registryRender(q){
   // Маркеры «пустое поле»: поле:пусто / поле:- → ищем записи, где это поле НЕ заполнено
   const EMPTY=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
   const tokens=(q?q.split(/\s+/).filter(Boolean):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci);if(ALIAS[k]!=null){const v=t.slice(ci+1);if(EMPTY.has(v))return{col:ALIAS[k],empty:true};return _regFreeTok(_regDateTok({col:ALIAS[k],val:v}));}}return _regFreeTok(_regDateTok({val:t}));}).filter(tk=>tk.empty||tk.val!=='');
+  _regPromoteShort(tokens); // весь запрос из коротких чисел - ищем их как отдельные слова, а не отдаём всю базу
   // мультивыбор по полям: sel[col]=массив значений ('' = пусто); в одном поле - ИЛИ, между полями - И
   const sel=(_tabFilters.registry&&_tabFilters.registry.sel)||{};
   const selSets=[];Object.keys(sel).forEach(c=>{const a=sel[c];if(a&&a.length)selSets.push({col:+c,set:new Set(a)});});
@@ -6754,7 +6773,7 @@ function registryRender(q){
       else if(tk.hlOnly){continue;} // короткое число: в отборе не участвует, только подсвечивается
       else if(tk.dk){if(!_regDateHitAny(RAW[i],tk)){ok=false;break;}} // запрос-дата: сверяем с дд.мм.гггг, а не ищем подстроку
       else if(tk.col!=null){const F=REG_FIELD_BY_COL[tk.col];const fv=_regNorm(F?_regFieldText(RAW[i],F):String(RAW[i][tk.col]==null?'':RAW[i][tk.col]));if(!_regHasWord(fv,tk.tn)){ok=false;break;}} /* через _regFieldText: «дата:» ищет по дд.мм.гггг, а не по серийному числу - как и сплошной поиск */
-      else if(!_regHasWord(blobs[i],tk.tn)){ok=false;break;} }
+      else if(!_regHasWord(blobs[i],tk.tn,tk.word)){ok=false;break;} }
     if(ok)idx.push(i);
   }
   window._regRows=_regSortIdx(idx,srt).map(i=>RAW[i]); // сортировка поверх фильтра, до обрезки в 500
@@ -6763,7 +6782,9 @@ function registryRender(q){
   // Короткие числа в отборе не участвуют - говорим об этом прямо, иначе человек считает,
   // что уточнил запрос, а список не сузился и объяснения нет.
   const hlOnlyToks=tokens.filter(tk=>tk.hlOnly).map(tk=>'«'+tk.val+'»');
-  const cntNote=hlOnlyToks.length?(' · '+hlOnlyToks.join(', ')+' в поиске не участву'+(hlOnlyToks.length>1?'ют':'ет')+' - слишком коротко'):'';
+  const wordToks=tokens.filter(tk=>tk.word).map(tk=>'«'+tk.val+'»'); // продвинутые короткие: сказать, что искали ИНАЧЕ, иначе разница с обычным поиском невидима
+  const cntNote=hlOnlyToks.length?(' · '+hlOnlyToks.join(', ')+' в поиске не участву'+(hlOnlyToks.length>1?'ют':'ет')+' - слишком коротко')
+    :(wordToks.length?(' · '+wordToks.join(', ')+' искал'+(wordToks.length>1?'ись':'ось')+' как отдельное слово'):'');
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=(anyFilter?('найдено '+total.toLocaleString('ru-RU')+' из '+RAW.length.toLocaleString('ru-RU')):('всего '+total.toLocaleString('ru-RU')))+cntNote;
   // ⚠ Синхронизация выбранного пресета. Контрол встраивается один раз, а правка фильтра
   // перерисовывает только таблицу - без этого список продолжал показывать имя пресета,
@@ -6797,18 +6818,21 @@ function registryRender(q){
   // поэтому и не красится - иначе на экране горели бы четвёрки в номерах счетов, а строка
   // нашлась совсем по другому слову, и подсветка спорила бы со списком.
   const hlTerms=[];
-  tokens.forEach(tk=>{if(!tk.val||tk.hlOnly)return;hlTerms.push(tk.val);
+  const hlAdd=(t,word)=>{if(!hlTerms.some(x=>x.t===t))hlTerms.push({t:t,word:!!word});};
+  tokens.forEach(tk=>{if(!tk.val||tk.hlOnly)return;hlAdd(tk.val,tk.word);
     if(tk.dk)return; // «10.2025» - это октябрь, а не число 10,2025: варианты дали бы подсветку «10,20» на суммах
     if(!/^-?\d+(\.\d+)?$/.test(tk.val))return;
     const n=parseFloat(tk.val);if(!isFinite(n)||String(n)!==tk.val)return;
     [n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}),n.toLocaleString('ru-RU')]
-      .forEach(v=>{if(v!==tk.val&&v.indexOf(tk.val)<0&&hlTerms.indexOf(v)<0)hlTerms.push(v);});
+      .forEach(v=>{if(v!==tk.val&&v.indexOf(tk.val)<0)hlAdd(v,tk.word);});
   });
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   // ⚠ Подсветка идёт по ТОМУ ЖЕ правилу, что и отбор - с начала слова. Иначе на экране горели
   // четвёрки внутри дат и номеров счетов, которых в отборе не было, и подсветка спорила со списком.
   // Граница захватывается первой группой и возвращается на место ($1), чтобы не съесть символ.
-  const hlRes=hlTerms.map(t=>new RegExp('(^|[^\\p{L}\\p{N}])('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','giu')); // RegExp один раз на рендер, а не на каждую из ~7500 ячеек
+  // ⚠ У продвинутого короткого токена граница нужна и СПРАВА - тем же правилом, что в отборе:
+  // иначе он подсветил бы четвёрку внутри «45408», по которой строка не отбиралась.
+  const hlRes=hlTerms.map(x=>new RegExp('(^|[^\\p{L}\\p{N}])('+x.t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')'+(x.word?'(?![\\p{L}\\p{N}])':''),'giu')); // RegExp один раз на рендер, а не на каждую из ~7500 ячеек
   const hl=s=>{let o=esc(s);hlRes.forEach(re=>{o=o.replace(re,'$1<mark style="background:#fde68a;color:#23272f;padding:0 1px;border-radius:2px">$2</mark>');});return o;};
   const ds=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
   const dsO=v=>{const d=parseDate(v);if(!d)return '';const M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];return M[d.getMonth()]+' '+d.getFullYear();};
