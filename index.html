@@ -5993,9 +5993,13 @@ const REG_COL_CLS=['c-date','c-opiu','c-type','c-offer','c-inc','c-out','c-fns',
 // ширины окна достаётся четырём текстовым колонкам.
 // Числа - максимум содержимого плюс паддинг (у кодовых - по их заголовку). Не пересчитывать
 // от ширины окна; пересчитывать только при смене шрифта.
+// ⚠ МЕРИТЬ ТОЛЬКО ПО scrollWidth ОТРИСОВАННОЙ ЯЧЕЙКИ, не canvas.measureText: канвас не применяет
+// font-variant-numeric:tabular-nums, а ячейки применяют, и он стабильно занижает на 6-14px.
+// Расхождение всплывало пять раз подряд - каждый набор ширин, посчитанный канвасом, приходилось
+// поднимать после замера отрисовкой.
 const REG_W_FIX={};
-REG_W_FIX[COL.DATE_DDS]=63; REG_W_FIX[COL.DATE_OPIU]=56; REG_W_FIX[COL.TYPE]=77;
-REG_W_FIX[COL.INCOME]=76;   REG_W_FIX[COL.OUTCOME]=76;   REG_W_FIX[COL.FNS]=40;   // атомарные, 388
+REG_W_FIX[COL.DATE_DDS]=70; REG_W_FIX[COL.DATE_OPIU]=63; REG_W_FIX[COL.TYPE]=84;
+REG_W_FIX[COL.INCOME]=91;   REG_W_FIX[COL.OUTCOME]=91;   REG_W_FIX[COL.FNS]=40;   // атомарные, 439
 REG_W_FIX[COL.ARTICLE_CODE]=45; REG_W_FIX[COL.ARTICLE_NAME]=55; REG_W_FIX[COL.ANALYTICS]=55;
 REG_W_FIX[COL.ACTIVITY_DIR]=50; REG_W_FIX[COL.FIN_OP]=45;                          // кодовые, 250
 const REG_W_FLEX=[COL.OFFER_ID,COL.ACCOUNT,COL.SECOND_SIDE,COL.PURPOSE];
@@ -6016,6 +6020,10 @@ function _regP95(){
 // Делёжка остатка пропорционально весам, с минимумом на колонку. Разницу от округления и от
 // поднятия до минимума добираем/срезаем по самым широким - в отрицательное не уходим.
 function _regAlloc(rest,keys,weights,minW){
+  // ⚠ Если остатка не хватает даже на минимумы (узкое окно + показанная колонка «Совпало»),
+  // минимум опускается до равной доли: иначе сумма ширин превысила бы контейнер, а при
+  // overflow-x:hidden это молча срезало бы последнюю колонку вместо того, чтобы её сузить.
+  minW=Math.min(minW,Math.floor(rest/keys.length));
   const out={},tot=keys.reduce((s,k)=>s+(weights[k]||1),0)||1;
   keys.forEach(k=>out[k]=Math.max(minW,Math.floor(rest*(weights[k]||1)/tot)));
   let sum=keys.reduce((s,k)=>s+out[k],0),d=rest-sum,guard=0;
@@ -6106,17 +6114,22 @@ function _regHasWord(norm,tn){return tn!==''&&norm.indexOf(' '+tn)>=0;}
 // ── Сокращение справочных значений до кода (ТОЛЬКО показ) ─────────────────────
 // Пятнадцати колонкам в 1013px не хватает примерно 2500px, и место берётся не перекладыванием
 // процентов, а сокращением содержимого: «120_Поступление от АУ» → «120», «САУ - Союз Арбитражных
-// управляющих» → «САУ». Разделители - подчёркивание и « - ». Полное значение живёт в подсказке.
+// управляющих» → «САУ», «Прямые / Переменные» → «Прямые». Разделители - подчёркивание и « - ».
+// Сокращаются пять справочных колонок: Статья, Подстатья, Аналитика, Направление, Фин. операция.
+// Полное значение живёт в подсказке.
 // ⚠ Сокращение ТОЛЬКО ДЛЯ ЭКРАНА. Поиск, фильтры, сортировка, «Совпало» и выгрузка CSV читают
 // РАW напрямую и работают по полному значению - иначе «зарплата» перестала бы находить 111_ФОТ.
 // ⚠ Следствие принято сознательно: подсветка совпадения в кодовой колонке не видна - подсвечивать
 // в «111» нечего. Причину называет колонка «Совпало», текст целиком - подсказка.
+// ⚠ Разделителей ТРИ: «_» (коды статей), « - » (направления) и « / » (аналитика:
+// «Прямые / Переменные»). Без третьего «Аналитика» показывалась целиком и требовала 126px
+// вместо отведённых 55. Ни в одной из пяти сокращаемых колонок другие значения этих
+// разделителей не содержат, поэтому список безопасен.
 function _regCode(v){
   const s=String(v==null?'':v).trim();
-  const i=s.indexOf('_'),j=s.indexOf(' - ');
-  if(j>=0&&(i<0||j<i))return s.slice(0,j).trim();
-  if(i>=0)return s.slice(0,i).trim();
-  return s;
+  let p=-1;
+  [s.indexOf('_'),s.indexOf(' - '),s.indexOf(' / ')].forEach(k=>{if(k>=0&&(p<0||k<p))p=k;});
+  return p>=0?s.slice(0,p).trim():s;
 }
 // ID Offer: «18224 | Б/Н | УСОВА ЕЛЕНА НИКОЛАЕВНА» → «18224 | Б/Н». ФИО уходит в подсказку -
 // по нему ищут, но в 100px оно всё равно не читается.
@@ -6720,7 +6733,7 @@ function registryRender(q){
       ${showWhy?whyTd(r):''}
       <td class="c-dds">${hl(ds(r[COL.DATE_DDS]))}</td><td class="center">${hl(dsO(r[COL.DATE_OPIU]))}</td><td class="center">${hl(r[COL.TYPE])}</td><td data-full="${_htmlEsc(r[COL.OFFER_ID])}">${hl(_regOfferShort(r[COL.OFFER_ID]))}</td>
       <td class="num num-val${mv?' bank-mov':''}" style="${(!mv&&inc>0)?'color:var(--income)':''}">${hl(f2(r[COL.INCOME]))}</td><td class="num num-val${mv?' bank-mov':''}" style="${(!mv&&out<0)?'color:var(--outcome)':''}">${hl(f2(r[COL.OUTCOME]))}</td>
-      <td class="center">${hl(r[COL.FNS])}</td><td>${hl(r[COL.ACCOUNT])}</td><td class="center" data-full="${_htmlEsc(r[COL.ARTICLE_CODE])}">${hl(_regCode(r[COL.ARTICLE_CODE]))}</td><td class="center" data-full="${_htmlEsc(r[COL.ARTICLE_NAME])}">${hl(_regCode(r[COL.ARTICLE_NAME]))}</td><td class="center">${hl(r[COL.ANALYTICS])}</td><td>${hl(r[COL.SECOND_SIDE])}</td><td>${hl(r[COL.PURPOSE])}</td><td class="center" data-full="${_htmlEsc(r[COL.ACTIVITY_DIR])}">${hl(_regCode(r[COL.ACTIVITY_DIR]))}</td><td class="center" data-full="${_htmlEsc(r[COL.FIN_OP])}">${hl(_regCode(r[COL.FIN_OP]))}</td>
+      <td class="center">${hl(r[COL.FNS])}</td><td>${hl(r[COL.ACCOUNT])}</td><td class="center" data-full="${_htmlEsc(r[COL.ARTICLE_CODE])}">${hl(_regCode(r[COL.ARTICLE_CODE]))}</td><td class="center" data-full="${_htmlEsc(r[COL.ARTICLE_NAME])}">${hl(_regCode(r[COL.ARTICLE_NAME]))}</td><td class="center" data-full="${_htmlEsc(r[COL.ANALYTICS])}">${hl(_regCode(r[COL.ANALYTICS]))}</td><td>${hl(r[COL.SECOND_SIDE])}</td><td>${hl(r[COL.PURPOSE])}</td><td class="center" data-full="${_htmlEsc(r[COL.ACTIVITY_DIR])}">${hl(_regCode(r[COL.ACTIVITY_DIR]))}</td><td class="center" data-full="${_htmlEsc(r[COL.FIN_OP])}">${hl(_regCode(r[COL.FIN_OP]))}</td>
     </tr>`;}
   html+='</tbody></table>';
   if(show<total)html+=`<div style="padding:8px;text-align:center"><button onclick="registryShowMore()" style="padding:6px 20px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer;font-size:11px;font-family:var(--sans)">Показать ещё 500 (осталось ${(total-show).toLocaleString('ru-RU')})</button></div>`;
