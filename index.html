@@ -2035,9 +2035,13 @@ function _presetRenderBody(tab){
   const listHtml=list.length?list.map(p=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:6px">
       <span style="flex:1;font-size:13px;font-weight:600;color:var(--text)">${_pesc(p.name)}</span>
       <button onclick="_presetEdit('${tab}','${p.id}')" style="font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Изменить</button>
+      ${tab==='registry'?`<button onclick="_regPresetRefresh('${p.id}')" title="Записать в этот пресет отбор, настроенный сейчас на вкладке" style="font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">Обновить снимок</button>`:''}
       <button onclick="_presetDelete('${tab}','${p.id}')" style="font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--outcome);cursor:pointer;font-family:var(--sans)">Удалить</button>
     </div>`).join(''):'<div style="font-size:12px;color:var(--text3);margin-bottom:8px">Пресетов пока нет - создайте ниже.</div>';
-  body.innerHTML=`<div style="margin-bottom:14px">${listHtml}</div>
+  // ⚠ Направление объясняем ВИДИМОЙ строкой, а не подсказкой: её надо прочитать до первого
+  // сохранения, а подсказка показывается только тому, кто навёл - то есть уже засомневался.
+  const dirNote=tab==='registry'?`<div style="font-size:12px;color:var(--text2);background:var(--surface2);border-radius:7px;padding:8px 11px;margin-bottom:12px">Пресет запоминает отбор, <b>настроенный на вкладке</b>: сначала задайте фильтры в Реестре, потом откройте это окно.</div>`:'';
+  body.innerHTML=`${dirNote}<div style="margin-bottom:14px">${listHtml}</div>
     <div style="border-top:1px solid var(--border);padding-top:12px">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--label);font-weight:600;margin-bottom:10px" id="presetFormTitle">Новый пресет</div>
       <div id="presetForm">${_presetFormHtml(tab,null)}</div>
@@ -2059,7 +2063,7 @@ function _regPresetSnapshotHtml(){
     if(String(o.from||'').trim()||String(o.to||'').trim())parts.push([l,(o.from?'от '+o.from:'')+(o.from&&o.to?' ':'')+(o.to?'до '+o.to:'')+' ₽']);});
   if(st.sort&&st.sort.col!=null)parts.push(['Сортировка',(REG_COL_NAMES[st.sort.col]||st.sort.col)+(st.sort.dir<0?' ↓':' ↑')]);
   const rows=parts.length?parts.map(x=>`<div style="display:flex;gap:10px;font-size:12px;padding:3px 0"><span style="color:var(--text3);min-width:150px">${_pesc(x[0])}</span><span style="color:var(--text)">${_pesc(x[1])}</span></div>`).join('')
-    :'<div style="font-size:12px;color:var(--text3)">Отбор сейчас пустой - пресет запомнит «показать всё».</div>';
+    :'<div style="font-size:12px;color:var(--orange);border:1px solid var(--orange);border-radius:6px;padding:7px 10px;background:rgba(232,134,43,.08)">⚠ Отбор сейчас пустой - пресет запомнит «показать всё». Настройте отбор на вкладке и откройте это окно снова.</div>';
   return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px;background:var(--surface2)">
       <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Будет запомнено текущее состояние вкладки:</div>${rows}
     </div>
@@ -2094,7 +2098,7 @@ function _presetFormHtml(tab,p){
     ${fields}
     ${tab==='registry'?'':`<div style="font-size:10.5px;color:var(--text3);margin:4px 0 10px">«Авто-период» (если задан) всегда считается от сегодня и перекрывает ручные Годы/Месяцы. Пустые мультиполя = «все».</div>`}
     <div style="display:flex;gap:8px">
-      <button class="btn btn-primary" onclick="_presetSave('${tab}')">Сохранить</button>
+      <button class="btn btn-primary" onclick="_presetSave('${tab}')">${tab==='registry'?'Запомнить текущий отбор':'Сохранить'}</button>
       ${p?`<button class="btn btn-secondary" onclick="_presetRenderBody('${tab}')">Отмена</button>`:''}
     </div>`;
 }
@@ -2114,9 +2118,30 @@ window._presetDelete=function(tab,id){
   _presets[tab]=(_presets[tab]||[]).filter(x=>x.id!==id);
   _presetsSave(); _presetRenderBody(tab); if(activeTab===tab)_injectPresetBar();
 };
+// Пуст ли отбор Реестра - тот же признак, что показывает предупреждение в панели
+function _regStateIsEmpty(st){
+  const s2=st||_regStateSnapshot();
+  if(String(s2.q||'').trim())return false;
+  if(Object.keys(s2.sel||{}).some(k=>(s2.sel[k]||[]).length))return false;
+  if(['dds','opiu'].some(k=>{const o=s2[k]||{};return (o.years||[]).length||(o.months||[]).length||o.from||o.to;}))return false;
+  if(['inc','out'].some(k=>{const o=s2[k]||{};return String(o.from||'').trim()||String(o.to||'').trim();}))return false;
+  return !(s2.sort&&s2.sort.col!=null);
+}
+// Пересохранить текущий отбор в СУЩЕСТВУЮЩИЙ пресет, не заводя новый: имя и id остаются.
+window._regPresetRefresh=function(id){
+  const p=(_presets.registry||[]).find(x=>x.id===id); if(!p)return;
+  const st=_regStateSnapshot();
+  if(_regStateIsEmpty(st)&&!confirm('Отбор пустой, пресет запомнит «показать всё». Всё равно обновить «'+p.name+'»?'))return;
+  p.f=st; _presetsSave(); _presetRenderBody('registry'); if(activeTab==='registry')_injectPresetBar();
+  alert('Снимок пресета «'+p.name+'» обновлён.');
+};
 window._presetSave=function(tab){
   const nameEl=document.getElementById('presetName'); const name=(nameEl?nameEl.value:'').trim();
   if(!name){alert('Введите название пресета');return;}
+  // ⚠ У Реестра пресет снимает отбор, настроенный НА ВКЛАДКЕ, а панель выглядит как банковская,
+  // где отбор наоборот ЗАДАЮТ в ней. На этом уже потерялся один пресет: человек открыл панель
+  // при пустом отборе, ввёл имя и получил запись «показать всё».
+  if(tab==='registry'&&_regStateIsEmpty()&&!confirm('Отбор пустой, пресет запомнит «показать всё». Всё равно сохранить?'))return;
   const f=(tab==='registry')?_regStateSnapshot():{};
   if(tab!=='registry')document.querySelectorAll('#presetForm .preset-fld').forEach(el=>{const k=el.dataset.k;f[k]=(el.type==='checkbox')?el.checked:el.value;});
   // ⚠ Значения мультиполей ложатся в config/presets ЗНАЧЕНИЯМИ МАССИВА, а не ключами объекта - имена счетов содержат «/»,
