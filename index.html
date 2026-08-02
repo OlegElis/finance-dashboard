@@ -9681,7 +9681,13 @@ function renderAnomaly(f){
   // Идентификатор операции для отметки «проверено» (ack): хэш стабильных полей строки (философия «Дублей» - вся строка).
   // Ключ безопасен для RTDB (base36, без .#$[]/). Две идентичные строки-дубли делят хэш - ack снимет обе (приемлемо).
   const _rowHash=r=>{const s=[COL.DATE_DDS,COL.DATE_OPIU,COL.TYPE,COL.OFFER_ID,COL.INCOME,COL.OUTCOME,COL.ACCOUNT,COL.ARTICLE_CODE,COL.ARTICLE_NAME,COL.ANALYTICS,COL.SECOND_SIDE,COL.PURPOSE,COL.ACTIVITY_DIR,COL.FIN_OP].map(i=>S(r[i])).join('');let h=5381;for(let i=0;i<s.length;i++)h=((h*33)^s.charCodeAt(i))>>>0;return h.toString(36);};
-  const _ackKey=r=>'outsign:'+_rowHash(r); // scope по правилу: отметка «возврат» не гасит другое нарушение той же строки
+  // ⚠ Правила, поддерживающие отметку «проверено». Раньше здесь был жёстко зашит 'outsign' в ЧЕТЫРЁХ
+  //   местах (ключ, сбор признаков, счётчик, фильтр видимых) - добавление второго правила означало
+  //   четыре согласованные правки, и любая забытая давала полурабочую отметку.
+  // ⚠ Ключ остаётся «<id правила>:<хэш строки>»: отметка на одном правиле не гасит другое нарушение
+  //   той же строки. Ветка config/anomalyAck общая, новой заводить не надо.
+  const ACK_RULES=new Set(['outsign','movboth']);
+  const _ackKey=(r,rule)=>rule+':'+_rowHash(r);
   // Индекс отрицательных списаний для поиска зеркала (контрагент+подстатья+|сумма|). По ВСЕМУ RAW - зеркало может лежать вне фильтра дат.
   const _mDate=r=>parseDate(r[COL.DATE_OPIU])||parseDate(r[COL.DATE_DDS]); // учётная дата пары
   const _daysB=(a,b)=>Math.round((Date.UTC(b.getFullYear(),b.getMonth(),b.getDate())-Date.UTC(a.getFullYear(),a.getMonth(),a.getDate()))/86400000); // календарные дни (как в Займах/Депозитах)
@@ -9731,6 +9737,14 @@ function renderAnomaly(f){
     {id:'fns',label:'Счёт ООО/ИП → ФНС «да»',where:r=>!isMove(r)&&isOfficialAcc(r),checks:[{field:COL.FNS,fieldName:'ФНС',expect:'да',ok:fnsYes}]},
     {id:'ebitda',label:'EBITDA-корректировки → 002_Финансовая деятельность',where:r=>!isMove(r)&&norm(r[COL.ANALYTICS]).includes('ebitda'),checks:[{field:COL.FIN_OP,fieldName:'Фин. операция',expect:'002_Финансовая деятельность',ok:okFin002}]},
     {id:'aucard',label:'Карты/касса АУ → направление АУ/САУ',soft:true,where:r=>!isMove(r)&&isAuCard(r),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:isAuSauDir}]},
+    // ⚠ Дыра, закрытая 02.08.2026: девять правил начинаются с !isMove(r), `move` смотрит только фин.
+    //   операцию, `movebal` - парность по колонке ПОСТУПЛЕНИЙ. Перемещение с суммой ещё и в Списании
+    //   не ловило НИ ОДНО правило. Учётная схема: перемещение пишется ПАРОЙ в поступлениях (уход -
+    //   отрицательное поступление, приход - положительное), списаний в таких строках не бывает;
+    //   сумма в Списании этой схеме не соответствует и рвёт `movebal` (парность считается по другой колонке).
+    // ⚠ Помечаем, НЕ подавляем: строка остаётся в отчётах как есть, правило только показывает её для правки
+    //   в источнике - как `outsign`. Отметка админа - через тот же config/anomalyAck (см. ACK_RULES).
+    {id:'movboth',label:'Перемещение → сумма только в Поступлении (пара +/−)',where:r=>isMove(r)&&parseNum(r[COL.INCOME])!==0&&parseNum(r[COL.OUTCOME])!==0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'пусто - перемещение пишется парой в Поступлении (уход −X, приход +X)',ok:a=>!parseNum(a)}]},
     {id:'movebal',label:'Перемещение → парность (+/− в Поступлении, сумма 0)',group:true}
   ];
   // ID_Offer - сверка со справочником Bitrix24 (считается отдельным блоком ниже; здесь только для фильтра/KPI)
@@ -9785,9 +9799,11 @@ function renderAnomaly(f){
   });
   Object.values(offAgg).forEach(g=>{g.count=g.rows.length;g.got=S(g.row[COL.OFFER_ID]);aitems.push(g);});
   // Возвраты: помечаем положительные списания зеркалом/лексикой + ключ ack. Проверенные (config/anomalyAck) убираем, если не включён показ.
-  aitems.forEach(x=>{if(x.rule!=='outsign')return;x.mirror=_findMirror(x.row);x.lexRefund=isRefund(x.row);x.ackKey=_ackKey(x.row);x.acked=!!(_anomalyAck&&_anomalyAck[x.ackKey]);});
-  const ackedN=aitems.filter(x=>x.rule==='outsign'&&x.acked).length;
-  const visible=f.showAcked?aitems:aitems.filter(x=>!(x.rule==='outsign'&&x.acked));
+  aitems.forEach(x=>{if(!ACK_RULES.has(x.rule))return;
+    if(x.rule==='outsign'){x.mirror=_findMirror(x.row);x.lexRefund=isRefund(x.row);} // подсказка про зеркало - только у возвратов
+    x.ackKey=_ackKey(x.row,x.rule);x.acked=!!(_anomalyAck&&_anomalyAck[x.ackKey]);});
+  const ackedN=aitems.filter(x=>x.acked).length;
+  const visible=f.showAcked?aitems:aitems.filter(x=>!x.acked);
   const shown=f.field?visible.filter(x=>x.rule===f.field):visible;
 
   const lbl=t=>`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">${t}</label>`;
@@ -9817,7 +9833,7 @@ function renderAnomaly(f){
   const rows=shown.slice(0,LIMIT).map((x,i)=>{
     // Подсказка о возврате: парное зеркало (приоритет) или лексический признак. Только для правила outsign.
     const rf=x.rule!=='outsign'?'':(x.mirror?`↩ похоже на возврат · парное списание −${fmtRub(x.mirror.amt)} от ${dsD(x.mirror.date)}`:(x.lexRefund?'↩ подстатья/назначение содержит «возврат»':''));
-    const ackBtn=(x.rule==='outsign'&&isAdm)?(x.acked?`<button onclick="event.stopPropagation();anomAck('${x.ackKey}',true)" style="font-size:9px;padding:1px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text3);cursor:pointer">↺ снять отметку</button>`:`<button onclick="event.stopPropagation();anomAck('${x.ackKey}')" style="font-size:9px;padding:1px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">✓ проверено</button>`):'';
+    const ackBtn=(ACK_RULES.has(x.rule)&&isAdm)?(x.acked?`<button onclick="event.stopPropagation();anomAck('${x.ackKey}',true)" style="font-size:9px;padding:1px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text3);cursor:pointer">↺ снять отметку</button>`:`<button onclick="event.stopPropagation();anomAck('${x.ackKey}')" style="font-size:9px;padding:1px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">✓ проверено</button>`):'';
     return `<tr class="anom-row" style="cursor:pointer;${x.acked?'opacity:.55;':''}" onclick="anomShowCard(${i})" title="Карточка операции">
     <td style="${td}"><span style="padding:1px 7px;border-radius:8px;font-weight:600;font-size:10px;color:${x.soft?'var(--orange)':'var(--accent)'};background:color-mix(in srgb,${x.soft?'var(--orange)':'var(--accent)'} 12%,transparent)">${esc(x.ruleLabel)}${x.soft?' · мягкое':''}</span>${x.acked?' <span style="font-size:9px;color:var(--text3)">✓ проверено</span>':''}</td>
     <td style="${td};font-size:10px;color:var(--text3)">${esc(x.fieldName)}</td>
