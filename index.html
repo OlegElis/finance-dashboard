@@ -1756,7 +1756,7 @@ function renderActiveTab(){const f=getFilters();
 // ───────────────────────── Пресеты отчётов (config/presets) ─────────────────────────
 // Пресет = именованный частичный снимок фильтров вкладки. Хранится в Firebase config/presets + localStorage-кэш.
 // Поддерживаемые отчёты: БАНК, ОПиУ, ДДС, ОСВ, ФОТ.
-const PRESET_TABS=[['bank','БАНК'],['opiu','ОПиУ'],['dds','ДДС'],['osv','ОСВ'],['fot','ФОТ']];
+const PRESET_TABS=[['bank','БАНК'],['registry','РЕЕСТР'],['opiu','ОПиУ'],['dds','ДДС'],['osv','ОСВ'],['fot','ФОТ']];
 const PRESET_MONTHS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
 const PRESET_FIELDS={
   bank:[
@@ -1799,11 +1799,16 @@ const _pesc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').r
 let _presets={bank:[],opiu:[],dds:[],osv:[],fot:[]};
 const _activePreset={bank:'',opiu:'',dds:'',osv:'',fot:''}; // какой пресет сейчас выбран в выпадашке (для отображения + снятия)
 const _activePresetSig={bank:'',opiu:'',dds:'',osv:'',fot:''}; // снимок фильтров в момент применения пресета
-function _filterSig(tab){const f=_tabFilters[tab]||{};const ks=['preset','periodType','rel','dateFrom','dateTo','years','months','activityDirs','accounts','articles','subarticles','counterparties','finOps','includeFuture','ebitdaInclBelow','expFlat','postSplit','noOpening','rowDim','fotDetail'];const o={};ks.forEach(k=>{if(k in f)o[k]=f[k];});return JSON.stringify(o);}
+// ⚠ У Реестра состояние своё и в общий список ключей не укладывается. Отдельно ВАЖНО:
+// fOpen (раскрыта ли панель) в подпись НЕ входит - это вид, а не отбор, иначе открытие панели
+// снимало бы пресет.
+function _filterSig(tab){const f=_tabFilters[tab]||{};
+  if(tab==='registry')return JSON.stringify({q:f.q||'',sel:f.sel||{},dds:f.dds||{},opiu:f.opiu||{},inc:f.inc||{},out:f.out||{},sort:f.sort||null});
+  const ks=['preset','periodType','rel','dateFrom','dateTo','years','months','activityDirs','accounts','articles','subarticles','counterparties','finOps','includeFuture','ebitdaInclBelow','expFlat','postSplit','noOpening','rowDim','fotDetail'];const o={};ks.forEach(k=>{if(k in f)o[k]=f[k];});return JSON.stringify(o);}
 // активный пресет с авто-снятием: если фильтры разошлись со снимком - пресет считается снятым
 function _presetActive(tab){if(_activePreset[tab]&&_filterSig(tab)!==_activePresetSig[tab])_activePreset[tab]='';return _activePreset[tab]||'';}
-try{const _ls=JSON.parse(localStorage.getItem('reportPresets')||'null');if(_ls&&typeof _ls==='object')_presets=Object.assign({bank:[],opiu:[],dds:[],osv:[],fot:[]},_ls);}catch(e){}
-function _presetsNormalize(v){const out={bank:[],opiu:[],dds:[],osv:[],fot:[]};if(v&&typeof v==='object'){['bank','opiu','dds','osv','fot'].forEach(t=>{const a=v[t];out[t]=Array.isArray(a)?a.filter(Boolean):(a&&typeof a==='object'?Object.values(a).filter(Boolean):[]);});}return out;}
+try{const _ls=JSON.parse(localStorage.getItem('reportPresets')||'null');if(_ls&&typeof _ls==='object')_presets=Object.assign({bank:[],registry:[],opiu:[],dds:[],osv:[],fot:[]},_ls);}catch(e){}
+function _presetsNormalize(v){const out={bank:[],registry:[],opiu:[],dds:[],osv:[],fot:[]};if(v&&typeof v==='object'){['bank','registry','opiu','dds','osv','fot'].forEach(t=>{const a=v[t];out[t]=Array.isArray(a)?a.filter(Boolean):(a&&typeof a==='object'?Object.values(a).filter(Boolean):[]);});}return out;}
 // ── Кодирование ключей RTDB ─────────────────────────────────────────────────
 // Realtime Database ЗАПРЕЩАЕТ в ключах символы . $ # [ ] / - при их наличии .set(ВСЕГО объекта) падает целиком
 // («set failed: contains an invalid key»), т.е. один плохой ключ отменяет запись всех остальных. Это молча ломало
@@ -1901,10 +1906,12 @@ function _setupPresetObserver(){
 function _injectPresetBar(){
   _setupPresetObserver();
   const oldBar=document.getElementById('presetBar'); if(oldBar)oldBar.remove(); // убрать прежний отдельный бар, если остался
-  if(!['bank','opiu','dds','osv','fot'].includes(activeTab))return;
+  if(!['bank','registry','opiu','dds','osv','fot'].includes(activeTab))return;
   const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1));
   if(!cont)return;
-  const bar=cont.querySelector('.tab-filters, .dds-extra-filters');
+  // ⚠ У Реестра цель - ПОЛОСА ПОИСКА, а не панель фильтров: панель свёрнута по умолчанию,
+  // и пресет в ней был бы не виден. Класса .tab-filters на его панели нет (снят намеренно).
+  const bar=activeTab==='registry'?cont.querySelector('.reg-searchbar'):cont.querySelector('.tab-filters, .dds-extra-filters');
   if(!bar)return;
   if(!bar.querySelector(':scope > .preset-inline')){
     const list=_presets[activeTab]||[];
@@ -1918,6 +1925,7 @@ function _injectPresetBar(){
       <span class="filter-sep" style="width:1px;height:18px;background:var(--border);margin:0 2px"></span>`;
     bar.insertBefore(wrap,bar.firstChild);
   }
+
   // Строка-сводка выбранных фильтров (у Банка своя в renderBank; здесь - для ДДС/ОПиУ/ОСВ/ФОТ)
   if(['dds','opiu','osv','fot'].includes(activeTab)){
     let sum=bar.nextElementSibling;
@@ -1973,15 +1981,30 @@ function _presetApplyRel(tab,rel){
   else if(rel==='cur_day'){F.years=[y];F.months=[mo];setPT('day');}
   else if(rel==='all'){F.years=[];F.months=[];if(tab==='osv')setPT('all');}
 }
+// Чистое состояние отбора Реестра - оно же то, что кладётся в пресет и восстанавливается из него.
+// ⚠ fOpen сюда НЕ входит: раскрытость панели - вид, а не отбор, и пресет её не трогает.
+function _regBlankState(){return {q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false},sort:null};}
+function _regStateSnapshot(){const F=_tabFilters.registry||{};return JSON.parse(JSON.stringify({
+  q:F.q||'',sel:F.sel||{},dds:F.dds||{},opiu:F.opiu||{},inc:F.inc||{},out:F.out||{},sort:F.sort||null}));}
+// ⚠ Ставим состояние ЦЕЛИКОМ поверх чистого, а не досыпаем поверх текущего: иначе от прежнего
+// отбора оставались бы поля, которых в пресете нет, и результат зависел бы от того, что было до.
+function _regStateRestore(st){
+  const F=_tabFilters.registry,fOpen=F&&F.fOpen;
+  _tabFilters.registry=Object.assign(_regBlankState(),JSON.parse(JSON.stringify(st||{})));
+  _tabFilters.registry.fOpen=fOpen; window._regDD={}; window._regLimit=500;
+  const inp=document.getElementById('regSearch'); if(inp)inp.value=_tabFilters.registry.q||'';
+}
 window.presetApply=function(tab,id){
   const F=_tabFilters[tab]; if(!F)return;
   if(!id){ // снять пресет → вернуть период по умолчанию (всё время)
     _activePreset[tab]='';
-    if(tab==='bank')setPreset('bank','all'); else { if('rel'in F)F.rel=''; F.years=[]; F.months=[]; }
+    if(tab==='registry')_regStateRestore(null);
+    else if(tab==='bank')setPreset('bank','all'); else { if('rel'in F)F.rel=''; F.years=[]; F.months=[]; }
     renderActiveTab(); return;
   }
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
-  Object.entries(p.f||{}).forEach(([k,v])=>{F[k]=Array.isArray(v)?v.slice():v;});
+  if(tab==='registry')_regStateRestore(p.f);
+  else Object.entries(p.f||{}).forEach(([k,v])=>{F[k]=Array.isArray(v)?v.slice():v;});
   if(tab==='bank'&&p.f&&p.f.preset)setPreset('bank',p.f.preset); // банк: пресет дат всегда относителен (setPreset считает от now)
   if(tab!=='bank'&&p.f&&p.f.rel)_presetApplyRel(tab,p.f.rel);   // прочие: авто-период от сегодня
   _activePreset[tab]=id; _activePresetSig[tab]=_filterSig(tab); // запомнить снимок - для авто-снятия при ручном изменении фильтров
@@ -1990,7 +2013,7 @@ window.presetApply=function(tab,id){
 // ── Панель управления пресетами (в Настройках) ──
 window.showPresetsPanel=function(initTab){
   const ex=document.getElementById('presetsOverlay'); if(ex)ex.remove();
-  const tab0=['bank','opiu','dds','osv','fot'].includes(initTab)?initTab:'bank';
+  const tab0=['bank','registry','opiu','dds','osv','fot'].includes(initTab)?initTab:'bank';
   const ov=document.createElement('div'); ov.className='txn-card-overlay'; ov.id='presetsOverlay';
   ov.onclick=e=>{if(e.target===ov)ov.remove();};
   ov.innerHTML=`<div class="txn-card" style="width:640px;max-width:94vw">
@@ -2020,9 +2043,31 @@ function _presetRenderBody(tab){
       <div id="presetForm">${_presetFormHtml(tab,null)}</div>
     </div>`;
 }
+// ⚠ У Реестра пресет - СНИМОК всего состояния отбора, а не набор полей: колонок пятнадцать,
+// у каждой мультивыбор на тысячи значений, и форма для них была бы неработоспособна.
+// Поэтому вместо полей показываем, что именно будет запомнено прямо сейчас. Имя пресета
+// и кнопки берутся из ОБЩЕГО хвоста _presetFormHtml - второй копии разметки не заводим.
+function _regPresetSnapshotHtml(){
+  const st=_regStateSnapshot(),parts=[];
+  if(st.q)parts.push(['Поиск','«'+st.q+'»']);
+  const nsel=Object.keys(st.sel||{}).filter(k=>(st.sel[k]||[]).length);
+  if(nsel.length)parts.push(['Фильтры по колонкам',nsel.map(k=>(REG_COL_NAMES[k]||k)+' ('+st.sel[k].length+')').join(', ')]);
+  [['dds','Дата ДДС'],['opiu','Дата ОПиУ']].forEach(([k,l])=>{const o=st[k]||{};
+    const p2=[];if((o.years||[]).length)p2.push(o.years.join(','));if((o.months||[]).length)p2.push(o.months.length+' мес.');
+    if(o.from)p2.push('с '+o.from);if(o.to)p2.push('по '+o.to);if(p2.length)parts.push([l,p2.join(' · ')]);});
+  [['inc','Поступление'],['out','Списание']].forEach(([k,l])=>{const o=st[k]||{};
+    if(String(o.from||'').trim()||String(o.to||'').trim())parts.push([l,(o.from?'от '+o.from:'')+(o.from&&o.to?' ':'')+(o.to?'до '+o.to:'')+' ₽']);});
+  if(st.sort&&st.sort.col!=null)parts.push(['Сортировка',(REG_COL_NAMES[st.sort.col]||st.sort.col)+(st.sort.dir<0?' ↓':' ↑')]);
+  const rows=parts.length?parts.map(x=>`<div style="display:flex;gap:10px;font-size:12px;padding:3px 0"><span style="color:var(--text3);min-width:150px">${_pesc(x[0])}</span><span style="color:var(--text)">${_pesc(x[1])}</span></div>`).join('')
+    :'<div style="font-size:12px;color:var(--text3)">Отбор сейчас пустой - пресет запомнит «показать всё».</div>';
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px;background:var(--surface2)">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Будет запомнено текущее состояние вкладки:</div>${rows}
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Чтобы записать другой отбор - настройте его на вкладке и откройте это окно снова.</div>`;
+}
 function _presetFormHtml(tab,p){
   const f=p?(p.f||{}):{};
-  const fields=(PRESET_FIELDS[tab]||[]).map(fd=>{
+  const fields=(tab==='registry')?_regPresetSnapshotHtml():(PRESET_FIELDS[tab]||[]).map(fd=>{
     let ctrl='';
     if(fd.t==='select'){ctrl=`<select class="preset-fld" data-k="${fd.k}" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans);min-width:200px">${fd.o.map(([v,l])=>`<option value="${v}"${String(f[fd.k]==null?'':f[fd.k])===v?' selected':''}>${l}</option>`).join('')}</select>`;}
     else if(fd.t==='toggle'){ctrl=`<label style="font-size:12px;color:var(--text);display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--sans)"><input type="checkbox" class="preset-fld" data-k="${fd.k}" ${f[fd.k]?'checked':''}> включено</label>`;}
@@ -2047,7 +2092,7 @@ function _presetFormHtml(tab,p){
     <div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Название</div>
       <input id="presetName" type="text" value="${p?_pesc(p.name):''}" placeholder="напр. БФЛ · текущий год" style="width:100%;box-sizing:border-box;font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)"></div>
     ${fields}
-    <div style="font-size:10.5px;color:var(--text3);margin:4px 0 10px">«Авто-период» (если задан) всегда считается от сегодня и перекрывает ручные Годы/Месяцы. Пустые мультиполя = «все».</div>
+    ${tab==='registry'?'':`<div style="font-size:10.5px;color:var(--text3);margin:4px 0 10px">«Авто-период» (если задан) всегда считается от сегодня и перекрывает ручные Годы/Месяцы. Пустые мультиполя = «все».</div>`}
     <div style="display:flex;gap:8px">
       <button class="btn btn-primary" onclick="_presetSave('${tab}')">Сохранить</button>
       ${p?`<button class="btn btn-secondary" onclick="_presetRenderBody('${tab}')">Отмена</button>`:''}
@@ -2072,11 +2117,11 @@ window._presetDelete=function(tab,id){
 window._presetSave=function(tab){
   const nameEl=document.getElementById('presetName'); const name=(nameEl?nameEl.value:'').trim();
   if(!name){alert('Введите название пресета');return;}
-  const f={};
-  document.querySelectorAll('#presetForm .preset-fld').forEach(el=>{const k=el.dataset.k;f[k]=(el.type==='checkbox')?el.checked:el.value;});
+  const f=(tab==='registry')?_regStateSnapshot():{};
+  if(tab!=='registry')document.querySelectorAll('#presetForm .preset-fld').forEach(el=>{const k=el.dataset.k;f[k]=(el.type==='checkbox')?el.checked:el.value;});
   // ⚠ Значения мультиполей ложатся в config/presets ЗНАЧЕНИЯМИ МАССИВА, а не ключами объекта - имена счетов содержат «/»,
   //   ключом это уронило бы запись всей ветки RTDB (та же ловушка, что была с planOwners).
-  document.querySelectorAll('#presetForm .preset-fld-multi').forEach(el=>{const k=el.dataset.k,asStr=el.dataset.str==='1';
+  if(tab!=='registry')document.querySelectorAll('#presetForm .preset-fld-multi').forEach(el=>{const k=el.dataset.k,asStr=el.dataset.str==='1';
     f[k]=[...el.querySelectorAll('input:checked')].map(i=>(!asStr&&/^\d+$/.test(i.value))?Number(i.value):i.value);});
   const idEl=document.getElementById('presetEditId'); const id=(idEl&&idEl.value)||('p'+Date.now()+Math.floor(Math.random()*1000));
   if(!Array.isArray(_presets[tab]))_presets[tab]=[];
@@ -6695,6 +6740,13 @@ function registryRender(q){
   const hlOnlyToks=tokens.filter(tk=>tk.hlOnly).map(tk=>'«'+tk.val+'»');
   const cntNote=hlOnlyToks.length?(' · '+hlOnlyToks.join(', ')+' в поиске не участву'+(hlOnlyToks.length>1?'ют':'ет')+' - слишком коротко'):'';
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=(anyFilter?('найдено '+total.toLocaleString('ru-RU')+' из '+RAW.length.toLocaleString('ru-RU')):('всего '+total.toLocaleString('ru-RU')))+cntNote;
+  // ⚠ Синхронизация выбранного пресета. Контрол встраивается один раз, а правка фильтра
+  // перерисовывает только таблицу - без этого список продолжал показывать имя пресета,
+  // от которого отбор уже ушёл, то есть врал.
+  // ⚠ Делается ЗДЕСЬ, а не в _injectPresetBar: того дёргает MutationObserver на #mainContent,
+  // и правка DOM внутри него закольцовывается (ловушка описана в CLAUDE.md).
+  try{const _ps=document.querySelector('#tabRegistry .reg-searchbar .preset-inline select');
+    if(_ps){const _av=_presetActive('registry'); if(_ps.value!==_av)_ps.value=_av;}}catch(e){}
   const chips=document.getElementById('regChips'); if(chips)chips.innerHTML=_regChipsHtml(); // чипы обновляются здесь: сюда приходит КАЖДОЕ изменение фильтров
   // Итоги - по ВСЕМУ отфильтрованному набору (_regRows), а не по показанным 500: вопрос «сколько всего
   // заплатили» задают именно к найденному. Суммируем СЫРЫЕ значения колонок, поэтому «Итог» тождественно
