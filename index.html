@@ -268,7 +268,7 @@
   #tabRegistry .txn-table.reg-why col.c-purp{width:5.90%;}
   /* ── Реестр: строка поиска. Реестр - поисковый сервис, а не отчёт, поэтому поле поиска стоит
      ПЕРВЫМ элементом вкладки во всю ширину, а не теряется среди фильтров. ── */
-  .reg-head{position:relative;background:var(--surface);border-bottom:1px solid var(--border);}
+  .reg-head{background:var(--surface);border-bottom:1px solid var(--border);} /* position не нужен: панель в потоке, выпадающие списки якорятся на .reg-fld */
   /* Габариты - по верхней полосе Банка (.bank-filters-1row): высота 31, паддинг 3px/--secpx, gap 10,
      контролы 11px с радиусом 5-6. min-height, а не height: контролы ниже полосы и центрируются в ней,
      а если один из них однажды окажется выше - полоса вырастет, а не обрежет его. */
@@ -294,7 +294,14 @@
   /* Панель фильтров раскрывается ПОВЕРХ содержимого: 789px контролов не должны раздвигать таблицу.
      ⚠ overflow тут задавать нельзя - выпадающие списки внутри position:absolute и обрежутся по нему
      (та же ловушка, что с подсказками внутри .table-scroll). */
-  .reg-filters{position:absolute;left:0;right:0;top:100%;z-index:150;background:var(--surface);border-bottom:1px solid var(--border);box-shadow:0 12px 30px rgba(0,0,0,.18);}
+  /* ⚠ Панель - БЛОК В ПОТОКЕ, не накладка. Прежнее решение (position:absolute + z-index, таблица
+     не двигается) ОТМЕНЕНО и возвращать его не надо: накладка закрывала собой ту самую выборку,
+     ради которой фильтр и открывают. Довод «таблица не должна прыгать» действовал, пока панель
+     занимала 466px; после перегруппировки в две строки она около 130px, и сдвиг приемлем.
+     Высоту вкладке править не нужно: #tabRegistry - флекс-колонка, .reg-head не сжимается
+     (flex-shrink:0), а остаток забирает .reg-tablewrap - поэтому страница не скроллит,
+     а укорачивается тело таблицы. */
+  .reg-filters{background:var(--surface);border-top:1px solid var(--border);}
   .reg-filters.reg-hidden{display:none;}
   /* ── Панель фильтров: смысловые группы ──────────────────────────────────────
      Двадцать контролов сплошным полотном глазу не за что зацепить. Порядок групп -
@@ -711,10 +718,8 @@
     .mflt-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;margin:0 0 10px;padding:10px 14px;font-size:12px;font-weight:700;color:var(--text2);background:var(--surface);border:1px solid var(--border);border-radius:10px;cursor:pointer;font-family:var(--sans);}
     .mflt-toggle .mflt-arr{color:var(--accent);font-size:13px;}
     .mflt-hide{display:none !important;}
-    /* У Реестра свой сворачиватель («Фильтры ▾»), поэтому мобильный тумблер его не трогает (см. mobileFiltersCollapse).
-       На телефоне панель идёт обычным потоком: перекрывать весь экран накладкой тут неудобно,
-       а группы встают в колонку - в строку они на телефоне не помещаются. */
-    .reg-filters{position:static;box-shadow:none;}
+    /* У Реестра свой сворачиватель («Фильтры ▾»), поэтому мобильный тумблер его не трогает
+       (см. mobileFiltersCollapse). Группы встают в колонку - в строку они на телефоне не помещаются. */
     .reg-fgroup{width:100%;box-sizing:border-box;}
 
     /* ===== Фильтр-бары на телефоне: вертикально, метка-подпись над контролом, контрол на всю ширину ===== */
@@ -6412,7 +6417,12 @@ function renderRegistry(f){
     document.addEventListener('mousedown',e=>{
       const t=e.target;if(!t||!t.closest)return;
       if(!t.closest('.reg-dd')&&!t.closest('[id^="reg-btn-"]'))document.querySelectorAll('.reg-dd').forEach(x=>{x.style.display='none';});
-      // панель закрываем только кликом ВНЕ её самой и вне кнопки-переключателя
+    });
+    // ⚠ Панель закрывается по CLICK, а не по mousedown. Она в потоке: закрытие на нажатии сдвинуло бы
+    // таблицу ВВЕРХ между mousedown и mouseup, и клик по строке уехал бы в соседнюю. На click строка
+    // уже отработала свой onclick.
+    document.addEventListener('click',e=>{
+      const t=e.target;if(!t||!t.closest)return;
       if(activeTab==='registry'&&!t.closest('#regFilters')&&!t.closest('#regFiltersBtn')&&_tabFilters.registry&&_tabFilters.registry.fOpen)regFiltersToggle();
     });
     document.addEventListener('keydown',e=>{ // Esc в поле поиска до сюда не доходит - там stopPropagation, он чистит запрос
