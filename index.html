@@ -2409,7 +2409,8 @@ function renderBank(f){
   const _accOf=acc=>{const key=acc||'__noreq__';
     if(!map.has(key))map.set(key,{name:acc||'- без счёта -',raw:acc,fns:-1,inc:0,out:0,mov:0,movIn:0,movOut:0,sInc:0,sOut:0,sMov:0,total:0});
     return map.get(key);};
-  // Проход 1 - ЗАПАС: остаток с начала учёта и признак ФНС.
+  // Проход 1 - ЗАПАС: остаток с начала учёта и ФАКТИЧЕСКИЙ признак ФНС из строк.
+  // ⚠ Факт из строк - ВТОРОЙ источник признака: подтверждённая запись справочника его перебивает (см. _accFnsOf ниже).
   // ⚠ Признак ФНС берётся по ВСЕМ строкам счёта, а не по срезу периода: он свойство СЧЁТА, а не периода
   //   (то же правило уже действует в карточке «Доля оформленного»). Считай мы его по срезу - счёт, у которого
   //   «да» стоит только в строках 2024 года, при периоде «текущий год» уехал бы в другую карточку, и своды
@@ -2421,6 +2422,11 @@ function renderBank(f){
     if(e.fns===-1){const v=String(row[COL.FNS]||'').toLowerCase().trim();
       if(['да','true','1','+'].includes(v))e.fns=1; else if(['нет','false','0','-'].includes(v))e.fns=0;}
   });
+  // Подтверждённый признак из справочника перебивает факт из строк (правило целиком - в _accFnsOf).
+  // ⚠ Факт сохраняем в fnsFact: он нужен пометке «спр.» в строке свода - подмена не должна быть молчаливой.
+  //   Пометка ставится по РЕЗУЛЬТАТУ (fnsFact!==fns), а не по наличию записи: справочник, повторяющий
+  //   данные, ничего не меняет и помечать его нечем.
+  map.forEach(a=>{a.fnsFact=a.fns;a.fns=_accFnsOf(a.raw,a.fns);});
   // Проход 2 - ПОТОК: обороты за выбранный период.
   data.forEach(row=>{
     const e=_accOf(String(row[COL.ACCOUNT]||'').trim());
@@ -2527,6 +2533,8 @@ function renderBank(f){
   // ⚠ Признак ФНС - свойство СЧЁТА, а не периода, поэтому карта строится по ВСЕМУ набору БЕЗ дат.
   //   Считай мы признак по срезу - счёт, у которого «да» стоит только в строках 2025 года, в 2026-м уехал бы
   //   в другой канал, и сравнение годов сравнивало бы разные классификации.
+  // ⚠ Итоговый признак берёт _accFnsOf: подтверждённая запись справочника перебивает факт из строк.
+  //   Карта ниже - только ФАКТ, второй источник; правило приоритета одно на весь Банк и лежит в _accFnsOf.
   const _cardRows=_noDateRows; // окна карточка режет сама - ей нужен набор БЕЗ верхней границы, иначе они опустеют
   const _accFns=new Map(); // счёт → 1/0; первое распознанное «да»/«нет» выигрывает (как в своде)
   _cardRows.forEach(r=>{
@@ -2548,7 +2556,7 @@ function renderBank(f){
       if(_isOpenBal(r))return;                      // стартовый остаток - не поток
       const inc=parseNum(r[COL.INCOME]); if(!inc)return;
       const acc=String(r[COL.ACCOUNT]||'').trim();
-      const ch=bankAccChannel(acc,_accFns.has(acc)?_accFns.get(acc):-1);
+      const ch=bankAccChannel(acc,_accFnsOf(acc,_accFns.has(acc)?_accFns.get(acc):-1));
       c[ch]+=inc;
       if(ch==='unknown'&&Math.abs(inc)>=0.005)_bankChannelWarn(acc,inc); // сторож хрупкой классификации по имени
     });
@@ -2737,8 +2745,18 @@ function renderBank(f){
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
   </div>`;
 
+  // Пометка «спр.»: признак ФНС этого счёта взят из справочника и ОТЛИЧАЕТСЯ от строк, то есть счёт стоит
+  // в карточке не по тому признаку, который увидят в источнике. Без пометки переезд между «Налоговой выручкой»
+  // и «ДС до налогового оформления» не оставляет следа на экране, и сверка с источником расходится молча.
+  // ⚠ Пометка стоит ПЕРЕД именем, а не после: td.bank-name обрезает содержимое многоточием
+  //   (overflow:hidden), и у длинного имени значок справа срезался бы ровно там, где он нужен.
+  // ⚠ Подсказка НАТИВНАЯ сознательно: чисел в ней нет, выравнивать нечего (правило проекта - компонент только
+  //   для чисел и списков). Плюс свой title на span перебивает title родительской ячейки с именем счёта -
+  //   иначе на пометке всплывали бы две подсказки разом.
+  const fnsRefBadge=a=>(a.fnsFact===a.fns)?''
+    :`<span style="margin-right:6px;font-size:9px;font-weight:700;color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:0 3px;vertical-align:1px;cursor:help" title="Признак ФНС взят из справочника счетов: ${_ACC_FNS_LBL[a.fns]}. По строкам счёта в данных: ${_ACC_FNS_LBL[a.fnsFact]}. Счёт показан в карточке по признаку справочника - изменить можно в карточке счёта (KPI «Счетов» → инвентаризация).">спр.</span>`;
   // Строка счёта: Реквизиты | Поступление | Списание | Итого (колонка ФНС убрана - её роль в заголовке карточки).
-  const accRow=a=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td class="bank-name" title="${_htmlEsc(a.name)}">${_htmlEsc(a.name)}</td>${td(a.inc,'bank-num')}${td(a.out,'bank-num')}${movTd(a.mov,a.movIn,a.movOut)}${td(a.total,'bank-num')}</tr>`;
+  const accRow=a=>`<tr class="acc-row-selectable${(_bankFilter.accs&&_bankFilter.accs.includes(a.name))?' selected':''}" data-acc="${a.name.replace(/"/g,'&quot;')}" onclick="bankFilterByAccount('${_htmlEsc(a.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')"><td class="bank-name" title="${_htmlEsc(a.name)}">${fnsRefBadge(a)}${_htmlEsc(a.name)}</td>${td(a.inc,'bank-num')}${td(a.out,'bank-num')}${movTd(a.mov,a.movIn,a.movOut)}${td(a.total,'bank-num')}</tr>`;
   // Ячейка «Перемещения»: в колонке САЛЬДО, валовые обороты - в нативном title через \n (тот же приём, что в подсказке «Ответственный» в БДР).
   // Обе строки показываем ВСЕГДА, даже при нуле: отсутствие приходов по счёту - само по себе информация.
   // ⚠ Нативный title в macOS рисуется системным шрифтом с крупными полями, из CSS на это не повлиять - поэтому режем содержимое:
@@ -3229,10 +3247,12 @@ window.accCardOpen=function(name){
   const sel=v=>ACC_VIDS.map(x=>`<option value="${_htmlEsc(x)}"${x===v?' selected':''}>${_htmlEsc(x)}</option>`).join('');
   const fnsOpts=[[1,'да'],[0,'нет'],[-1,'без признака']].map(([v,t])=>`<option value="${v}"${rec.fns===v?' selected':''}>${t}</option>`).join('');
   const roCell=t=>`<div style="font-size:12px;color:var(--text2);padding:5px 0">${_htmlEsc(t)}</div>`;
-  // ⚠ Расхождение по ФНС ПОКАЗЫВАЕМ, но молча не переписываем ни в ту, ни в другую сторону:
-  //   в справочнике может стоять решение учёта, а в строках - то, как заводили операции.
+  // ⚠ Расхождение по ФНС ПОКАЗЫВАЕМ и говорим, чем оно кончится: строки в источнике не переписываются,
+  //   но ПОДТВЕРЖДЁННЫЙ признак справочника перебивает их в расчётах Банка (_accFnsOf) - счёт встанет
+  //   в карточку свода по признаку отсюда. Умолчать об этом нельзя: правка карточки двигает деньги
+  //   между «Налоговой выручкой» и «ДС до налогового оформления».
   const mism=(f.fns!==-1&&rec.fns!==-1&&f.fns!==rec.fns);
-  const fnsFact=`<div id="accFnsFact" style="font-size:11px;margin-top:4px;color:${mism?'var(--orange)':'var(--text3)'}">${mism?'⚠ ':''}по строкам счёта: <b>${_ACC_FNS_LBL[f.fns]}</b>${mism?' - расходится с выбранным':''}</div>`;
+  const fnsFact=`<div id="accFnsFact" style="font-size:11px;margin-top:4px;color:${mism?'var(--orange)':'var(--text3)'}">${mism?'⚠ ':''}по строкам счёта: <b>${_ACC_FNS_LBL[f.fns]}</b>${mism?' - расходится; в отчётах будет использован признак справочника':''}</div>`;
   const ov=document.createElement('div');
   ov.className='txn-card-overlay'; ov.id='accCardOverlay';
   ov.innerHTML=`<div class="txn-card" style="max-width:620px;width:92vw">
@@ -3277,7 +3297,7 @@ window.accCardFnsHint=function(){
   const cur=+sel.value, fact=_accFacts(nm).fns;
   const mism=(fact!==-1&&cur!==-1&&fact!==cur);
   box.style.color=mism?'var(--orange)':'var(--text3)';
-  box.innerHTML=(mism?'⚠ ':'')+'по строкам счёта: <b>'+_ACC_FNS_LBL[fact]+'</b>'+(mism?' - расходится с выбранным':'');
+  box.innerHTML=(mism?'⚠ ':'')+'по строкам счёта: <b>'+_ACC_FNS_LBL[fact]+'</b>'+(mism?' - расходится; в отчётах будет использован признак справочника':'');
 };
 window.accCardSave=function(name){
   const ov=document.getElementById('accCardOverlay'); if(!ov)return;
@@ -3315,15 +3335,21 @@ function _accInventory(){
   const st={};
   (RAW||[]).forEach(r=>{
     const nm=String(r[COL.ACCOUNT]||'').trim(); if(!nm)return; // пустое имя в справочник не заводится
-    const e=st[nm]||(st[nm]={name:nm,n:0,min:null,max:null});
+    const e=st[nm]||(st[nm]={name:nm,n:0,min:null,max:null,fnsFact:-1});
     e.n++;
+    // ⚠ Факт ФНС собираем ЗДЕСЬ ЖЕ, в общем проходе по RAW, а не вызовом _accFacts на каждый счёт:
+    //   та обходит весь RAW целиком, и на полусотне счетов это полсотни обходов 60 тыс. строк.
+    if(e.fnsFact===-1){const v=String(r[COL.FNS]||'').toLowerCase().trim();
+      if(['да','true','1','+'].includes(v))e.fnsFact=1; else if(['нет','false','0','-'].includes(v))e.fnsFact=0;}
     const d=parseDate(r[COL.DATE_DDS])||parseDate(r[COL.DATE_OPIU]);
     if(d){if(!e.min||d<e.min)e.min=d;if(!e.max||d>e.max)e.max=d;}
   });
-  Object.keys(_accounts||{}).forEach(nm=>{if(!st[nm])st[nm]={name:nm,n:0,min:null,max:null};});
+  Object.keys(_accounts||{}).forEach(nm=>{if(!st[nm])st[nm]={name:nm,n:0,min:null,max:null,fnsFact:-1};});
   return Object.keys(st).map(nm=>{
     const e=st[nm],has=!!(_accounts&&_accounts[nm]),rec=_accRec(has?_accounts[nm]:{vid:_accGuessVid(nm)});
-    return{...e,rec,inDir:has};
+    // Расхождение = признак СЧИТАЕТСЯ (запись подтверждена) и ПРОТИВОРЕЧИТ строкам. Оба значения должны быть
+    // заданы: «в справочнике да, в строках признака нет» - это не противоречие, а дополнение к неполным данным.
+    return{...e,rec,inDir:has,fnsMism:has&&rec.ok===1&&rec.fns!==-1&&e.fnsFact!==-1&&rec.fns!==e.fnsFact};
   }).sort((a,b)=>b.n-a.n);
 }
 // Массовое заведение: добавляет ТОЛЬКО отсутствующие счета, существующие не трогает вовсе
@@ -3406,6 +3432,10 @@ window.showAccInventory=function(){
   const totalRows=list.reduce((s,x)=>s+x.n,0)||1;
   const notInDir=list.filter(x=>!x.inDir).length;
   const notOk=list.filter(x=>!x.inDir||!x.rec.ok).length; // не заведён ИЛИ заведён подсказкой без подтверждения
+  // Счета, где ПОДТВЕРЖДЁННЫЙ признак ФНС противоречит строкам. Одна цифра вместо обхода полусотни карточек -
+  // самый дешёвый способ заметить ошибочно проставленный признак, ведь именно он теперь идёт в расчёты.
+  // ⚠ При нуле строки нет вовсе: расхождение - исключение, а не постоянный элемент интерфейса.
+  const mismList=list.filter(x=>x.fnsMism);
   const isAdm=_isAdmin();
   const dd=d=>d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'-';
   const th='padding:6px 10px;font-size:10px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap';
@@ -3428,7 +3458,7 @@ window.showAccInventory=function(){
       <td style="${td}"><span style="color:var(--text3);margin-right:5px">✎</span>${_htmlEsc(x.name)}${x.rec.at?`<span style="color:var(--text3);font-size:9px;margin-left:6px" ${_tipAttr([['изменено',_accWhen(x.rec.at)]].concat(x.rec.by?[['кем',x.rec.by]]:[]),null,'Последняя правка карточки')}>✓</span>`:''}</td>
       <td style="${td}">${vidCell}</td>
       <td style="${td};color:var(--text2)">${_htmlEsc(x.rec.bank||'-')}</td>
-      <td style="${td};text-align:center;color:var(--text2)">${_ACC_FNS_LBL[x.rec.fns]}</td>
+      <td style="${td};text-align:center;color:${x.fnsMism?'var(--orange)':'var(--text2)'}"${x.fnsMism?` title="Расходится со строками счёта: там «${_ACC_FNS_LBL[x.fnsFact]}». В расчётах используется признак справочника."`:''}>${_ACC_FNS_LBL[x.rec.fns]}${x.fnsMism?' ⚠':''}</td>
       <td style="${td};text-align:center;color:${x.rec.active?'var(--text2)':'var(--outcome)'}">${x.rec.active?'активен':'закрыт'}</td>
       <td style="${td};text-align:right;font-variant-numeric:tabular-nums">${x.n.toLocaleString('ru-RU')}</td>
       <td style="${td};text-align:center;color:var(--text2);white-space:nowrap">${dd(x.min)}</td>
@@ -3450,6 +3480,9 @@ window.showAccInventory=function(){
           <select id="accBulkVid" style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)"><option value="">- сменить вид на -</option>${ACC_VIDS.map(v=>`<option value="${_htmlEsc(v)}">${_htmlEsc(v)}</option>`).join('')}</select>
           <button onclick="accSetVidChecked()" style="font-size:11px;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Применить к отмеченным</button>
         </div>`:''}</div>`:''}
+      ${mismList.length?`<div style="border-left:3px solid var(--orange);background:var(--surface2);border-radius:0 6px 6px 0;padding:8px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.6" ${_tipAttr(mismList.slice(0,12).map(x=>[x.name,'спр. '+_ACC_FNS_LBL[x.rec.fns]+' · строки '+_ACC_FNS_LBL[x.fnsFact]]).concat(mismList.length>12?[['и ещё счетов',String(mismList.length-12)]]:[]),null,'Признак справочника против признака в строках')}>
+        Признак ФНС расходится с данными: <b style="color:var(--orange)">${mismList.length}</b> ${_plurRu(mismList.length,'счёт','счёта','счетов')} - в расчётах Банка используется признак <b>справочника</b>, в своде такие счета помечены «спр.».
+      </div>`:''}
       <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;overflow:hidden">
           <table style="border-collapse:collapse">
@@ -9173,6 +9206,28 @@ function _accRec(o){
     by:String(o.by==null?'':o.by).trim()};                 // и кто
 }
 function _accNorm(map){const out={};Object.keys(map||{}).forEach(k=>{const nm=String(k||'').trim();if(nm)out[nm]=_accRec(map[k]);});return out;}
+// ══ ПРИЗНАК ФНС СЧЁТА ДЛЯ РАСЧЁТОВ ═══════════════════════════════════════════
+// Источников два, и порядок фиксирован:
+//   1) справочник, ПОДТВЕРЖДЁННАЯ запись (ok===1) с заданным признаком - это решение человека;
+//   2) факт из строк RAW (приходит аргументом) - первое распознанное «да»/«нет» по строкам счёта.
+// ⚠ Неподтверждённая запись (ok:0) данные НЕ перебивает: её признак предзаполнен ТОЙ ЖЕ машинной
+//   подсказкой из ТЕХ ЖЕ строк (accFillGuesses ставит _accFacts(nm).fns) - перебивать факт фактом
+//   нечем, а ошибку подсказки это узаконило бы, выдав её за решение учёта.
+// ⚠ Подмена обязана быть ЗАМЕТНА: в своде Банка у такого счёта стоит пометка «спр.» с подсказкой
+//   на фактическое значение, в инвентаризации - счётчик расхождений. Молча уводить счёт из
+//   «Налоговой выручки» в «ДС до налогового оформления» нельзя: сверка с источником разошлась бы,
+//   а причину пришлось бы искать руками.
+// ⚠ Признак ФНС - свойство СЧЁТА, не строки и не периода. Правило `fns` в Аномалиях и колонка ФНС
+//   в Реестре живут по строкам и сюда НЕ относятся - их этот приоритет не касается.
+function _accFnsRef(name){
+  const r=_accounts&&_accounts[String(name||'').trim()]; if(!r)return -1;
+  const rec=_accRec(r);
+  return rec.ok===1?rec.fns:-1;
+}
+function _accFnsOf(name,rawFns){
+  const ref=_accFnsRef(name);
+  return ref===-1?((rawFns===1||rawFns===0)?rawFns:-1):ref;
+}
 // ⚠ Сравнение состояний - по НОРМАЛИЗОВАННОМУ виду: ключи по алфавиту. RTDB отдаёт ключи
 // лексикографически, а не в порядке записи, поэтому прямой JSON.stringify почти всегда видел
 // «разное» там, где данные те же, и эхо собственной записи проходило как чужая правка -
