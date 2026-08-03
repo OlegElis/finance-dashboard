@@ -3284,6 +3284,13 @@ window.accCardSave=function(name){
   Promise.resolve(_accSave()).then(ok=>{
     const o=document.getElementById('accCardOverlay');
     if(o)o.remove();
+    // ⚠ Открытое окно инвентаризации СТРОИТСЯ ОДИН РАЗ и само себя не обновляет: карточка
+    //   открывается поверх него, и после сохранения список под ней остаётся прежним. Человек видел
+    //   в строке старый вид и делал единственно разумный вывод - «не сохранилось», хотя запись
+    //   уходила и в память, и в облако. Перестраиваем список ЗДЕСЬ, а не в close(): удаляем узел
+    //   напрямую, без close(), чтобы не звать renderBank второй раз.
+    const inv=document.getElementById('accInvOverlay');
+    if(inv){inv.remove();showAccInventory();}
     if(activeTab==='bank')renderBank(getFilters());
   });
 };
@@ -9109,6 +9116,16 @@ function _accRec(o){
     ok:o.ok===1?1:0};
 }
 function _accNorm(map){const out={};Object.keys(map||{}).forEach(k=>{const nm=String(k||'').trim();if(nm)out[nm]=_accRec(map[k]);});return out;}
+// ⚠ Сравнение состояний - по НОРМАЛИЗОВАННОМУ виду: ключи по алфавиту. RTDB отдаёт ключи
+// лексикографически, а не в порядке записи, поэтому прямой JSON.stringify почти всегда видел
+// «разное» там, где данные те же, и эхо собственной записи проходило как чужая правка -
+// защита от лишней перерисовки не срабатывала ни разу.
+// Поля внутри записи не сортируем: их порядок задаёт _accRec, он одинаков у обеих сторон.
+function _accStable(o){
+  const src=o||{},out={};
+  Object.keys(src).sort().forEach(k=>{out[k]=_accRec(src[k]);});
+  return JSON.stringify(out);
+}
 function _accSave(){
   _accounts=_accNorm(_accounts);
   try{localStorage.setItem('finAccounts',JSON.stringify(_accounts));}catch(e){_lsWarn('finAccounts',e)}
@@ -9127,7 +9144,7 @@ function startAccountsSync(){
       const v=s.val();
       if(!v||typeof v!=='object')return;
       const next=_accNorm(_rtdbDecObj(v,'accounts'));
-      if(JSON.stringify(next)===JSON.stringify(_accounts))return;
+      if(_accStable(next)===_accStable(_accounts))return; // эхо своей записи: данные те же, отличается только порядок ключей
       _accounts=next;
       try{localStorage.setItem('finAccounts',JSON.stringify(_accounts));}catch(e){_lsWarn('finAccounts',e)}
       if(activeTab==='bank')renderBank(getFilters());
