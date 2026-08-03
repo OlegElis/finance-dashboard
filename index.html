@@ -3210,6 +3210,9 @@ function _accFacts(name){
   return out;
 }
 const _ACC_FNS_LBL={1:'да',0:'нет','-1':'без признака'};
+function _accWhen(ms){if(!ms)return'';const d=new Date(ms);
+  return String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()
+    +' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
 window.accCardOpen=function(name){
   if(document.getElementById('accCardOverlay'))return;
   const nm=String(name||'').trim(); if(!nm)return; // пустое имя в справочник не заводится
@@ -3247,6 +3250,9 @@ window.accCardOpen=function(name){
         <div><div style="${lbl}">Состояние</div>${ro?roCell(rec.active?'активен':'закрыт'):`<select id="accActive" style="${inp}"><option value="1"${rec.active?' selected':''}>активен</option><option value="0"${rec.active?'':' selected'}>закрыт</option></select>`}
           <div style="font-size:11px;color:var(--text3);margin-top:4px" ${_tipAttr([['последняя операция',dd(f.max)],['строк всего',f.n.toLocaleString('ru-RU')]],null,'Отметку ставит человек - это не автомат')}>отметка ручная · последняя операция <b>${dd(f.max)}</b></div></div>
       </div>
+      ${(!ro&&rec.ok)?`<label style="display:flex;align-items:center;gap:7px;margin-top:14px;font-size:12px;color:var(--text2);cursor:pointer" ${_tipAttr([],null,'Снимите галочку, если вид проставлен ошибочно: счёт вернётся в «не подтверждённые» и снова попадёт в список на проверку')}>
+        <input type="checkbox" id="accOk" checked style="cursor:pointer;margin:0"> Подтверждено (снимите, чтобы вернуть в проверку)</label>`:''}
+      ${rec.at?`<div style="margin-top:10px;font-size:11px;color:var(--text3)">Изменено ${_accWhen(rec.at)}${rec.by?' · '+_htmlEsc(rec.by):''}</div>`:''}
       <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
         ${ro?'<span style="font-size:11px;color:var(--text3)">Только просмотр. Справочник ведёт администратор.</span>'
             :`<button onclick="accCardSave('${_htmlEsc(nm).replace(/'/g,"\\'")}')" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">Сохранить</button>
@@ -3278,7 +3284,8 @@ window.accCardSave=function(name){
   const nm=String(name||'').trim(); if(!nm)return;
   _accounts[nm]={vid:(ov.querySelector('#accVid')||{}).value,bank:(ov.querySelector('#accBank')||{}).value,
     fns:+((ov.querySelector('#accFns')||{}).value),active:+((ov.querySelector('#accActive')||{}).value),
-    ok:1}; // человек открыл карточку и сохранил - это и есть подтверждение
+    ok:(ov.querySelector('#accOk')&&!ov.querySelector('#accOk').checked)?0:1}; // сохранение = подтверждение, если галочку не сняли
+  _accounts[nm]=_accStamp(_accounts[nm]);
   const msg=ov.querySelector('#accCardMsg'); if(msg)msg.textContent='сохраняю…';
   // _accSave сам сообщит об отказе записи (правило ветки config/accounts заводится в Firebase Console)
   Promise.resolve(_accSave()).then(ok=>{
@@ -3342,16 +3349,54 @@ window.accConfirmChecked=function(){
   const ov=document.getElementById('accInvOverlay'); if(!ov||!_isAdmin())return;
   const names=[...ov.querySelectorAll('input.acc-inv-cb:checked')].map(cb=>cb.dataset.acc).filter(Boolean);
   if(!names.length){alert('Отметьте счета, подсказки которых принимаете');return;}
-  names.forEach(nm=>{if(_accounts[nm])_accounts[nm]=_accRec({..._accounts[nm],ok:1});});
+  names.forEach(nm=>{if(_accounts[nm])_accounts[nm]=_accStamp(_accRec({..._accounts[nm],ok:1}));});
   _accSave();
   ov.remove();showAccInventory();
+};
+// Массовая смена вида: отмеченные строки получают выбранный вид разом, одним сохранением.
+// ⚠ Смена вида - это РЕШЕНИЕ человека, поэтому запись заодно становится подтверждённой:
+//   иначе счёт остался бы в списке «на проверку» с уже проверенным видом.
+window.accSetVidChecked=function(){
+  const ov=document.getElementById('accInvOverlay'); if(!ov||!_isAdmin())return;
+  const vid=(ov.querySelector('#accBulkVid')||{}).value;
+  if(ACC_VIDS.indexOf(vid)<0){alert('Выберите вид');return;}
+  const names=[...ov.querySelectorAll('input.acc-inv-cb:checked')].map(cb=>cb.dataset.acc).filter(Boolean);
+  if(!names.length){alert('Отметьте счета, которым меняете вид');return;}
+  if(!confirm('Сменить вид на «'+vid+'» у '+names.length+' '+_plurRu(names.length,'счёта','счетов','счетов')+'?'))return;
+  names.forEach(nm=>{_accounts[nm]=_accStamp(_accRec({..._accounts[nm]||{},vid:vid,ok:1}));});
+  _accSave();
+  ov.remove();showAccInventory();
+};
+// ── 7. поиск и фильтр по виду: чисто клиентский отбор строк уже построенного списка.
+// ⚠ Перестраивать список не надо - прячем строки классом. Ре-рендер сбросил бы отметки
+//   чекбоксов, а пакетные действия именно на них и держатся.
+window.accInvFilter=function(){
+  const ov=document.getElementById('accInvOverlay'); if(!ov)return;
+  const q=String((ov.querySelector('#accInvQ')||{}).value||'').toLowerCase().replace(/ё/gu,'е').trim();
+  const vid=(ov.querySelector('#accInvVid')||{}).value||'';
+  let shown=0;
+  ov.querySelectorAll('tr.acc-inv-row').forEach(tr=>{
+    const nm=String(tr.dataset.acc||'').toLowerCase().replace(/ё/gu,'е');
+    const okQ=!q||nm.indexOf(q)>=0, okV=!vid||tr.dataset.vid===vid;
+    const on=okQ&&okV; tr.style.display=on?'':'none'; if(on)shown++;
+    if(!on){const cb=tr.querySelector('input.acc-inv-cb'); if(cb)cb.checked=false;} // скрытую строку в пакет не берём
+  });
+  const cnt=ov.querySelector('#accInvCnt'); if(cnt)cnt.textContent=shown;
 };
 // ⚠ Отмечаем только НЕПОДТВЕРЖДЁННЫЕ (у подтверждённых чекбокс disabled): кнопка обещает
 //   «все непроверенные», а отмечала подряд - данные это не портило (повторное подтверждение
 //   ничего не меняет), но подпись врала.
+// ⚠ И только ВИДИМЫЕ: при активном поиске/фильтре «отметить все» цепляло скрытые строки, и массовая
+//   смена вида меняла счета, которых человек в этот момент вообще не видел на экране (поймано
+//   проверкой: фильтр «карта фл», а вид сменился ещё и у «КМ - Касса» и «Банковский депозит»).
+//   Инвариант простой: отмеченное ⊆ видимое. Его же держит accInvFilter, снимая отметки со скрытых.
 window.accInvCheckAll=function(on){
   const ov=document.getElementById('accInvOverlay'); if(!ov)return;
-  ov.querySelectorAll('input.acc-inv-cb:not([disabled])').forEach(cb=>{cb.checked=!!on;});
+  ov.querySelectorAll('tr.acc-inv-row').forEach(tr=>{
+    if(tr.style.display==='none')return;
+    const cb=tr.querySelector('input.acc-inv-cb:not([disabled])');
+    if(cb)cb.checked=!!on;
+  });
 };
 window.showAccInventory=function(){
   if(document.getElementById('accInvOverlay'))return;
@@ -3376,9 +3421,11 @@ window.showAccInventory=function(){
     const vidCell=(x.inDir&&x.rec.ok)?_htmlEsc(x.rec.vid)
       :`<span style="color:var(--orange)" ${_tipAttr([],null,x.inDir?'Вид проставлен подсказкой по имени и ещё не подтверждён':'Счёт ещё не заведён в справочнике - вид показан подсказкой по имени')}>${_htmlEsc(x.rec.vid)} <i style="font-style:normal">?</i></span>`;
     const cb=isAdm?`<td style="${td};text-align:center" onclick="event.stopPropagation()"><input type="checkbox" class="acc-inv-cb" data-acc="${_htmlEsc(x.name)}"${(x.inDir&&x.rec.ok)?' disabled':''} style="cursor:pointer;margin:0"></td>`:'';
-    return`<tr class="acc-inv-row" style="cursor:pointer" onclick="accCardOpen('${nmEsc}')" ${_tipAttr([['строк',x.n.toLocaleString('ru-RU')],['первая',dd(x.min)],['последняя',dd(x.max)]],null,'Открыть карточку счёта')}>
+    // ⚠ Кликабельность строки должна быть ВИДНА: курсор, значок правки и подсказка. Без них
+    //   список читается как статичный отчёт, и карточку не открывают, потому что не знают, что можно.
+    return`<tr class="acc-inv-row" data-acc="${_htmlEsc(x.name)}" data-vid="${_htmlEsc(x.rec.vid)}" style="cursor:pointer" onclick="accCardOpen('${nmEsc}')" ${_tipAttr([['строк',x.n.toLocaleString('ru-RU')],['первая',dd(x.min)],['последняя',dd(x.max)]],null,'Открыть карточку счёта - вид, банк, признак ФНС, состояние')}>
       ${cb}
-      <td style="${td}">${_htmlEsc(x.name)}</td>
+      <td style="${td}"><span style="color:var(--text3);margin-right:5px">✎</span>${_htmlEsc(x.name)}${x.rec.at?`<span style="color:var(--text3);font-size:9px;margin-left:6px" ${_tipAttr([['изменено',_accWhen(x.rec.at)]].concat(x.rec.by?[['кем',x.rec.by]]:[]),null,'Последняя правка карточки')}>✓</span>`:''}</td>
       <td style="${td}">${vidCell}</td>
       <td style="${td};color:var(--text2)">${_htmlEsc(x.rec.bank||'-')}</td>
       <td style="${td};text-align:center;color:var(--text2)">${_ACC_FNS_LBL[x.rec.fns]}</td>
@@ -3395,10 +3442,13 @@ window.showAccInventory=function(){
       ${notOk?`<div style="border:1px solid var(--orange);border-radius:7px;background:rgba(232,134,43,.08);padding:9px 12px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.6">
         ⚠ Не подтверждено: <b>${notOk}</b> из ${list.length}${notInDir?` (из них вообще нет в справочнике: <b>${notInDir}</b>)`:''}. Вид у таких счетов проставлен <b>подсказкой по имени</b> и помечен «?» - это предложение, а не решение.
         ${isAdm?`<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button onclick="const n=accFillGuesses();const o=document.getElementById('accInvOverlay');if(o)o.remove();showAccInventory();alert(n?('Добавлено счетов: '+n):'Новых счетов нет - все уже в справочнике');" style="font-size:11px;font-weight:600;padding:5px 12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">⤓ Заполнить подсказками</button>
+          <button title="Добавляет в справочник только НОВЫЕ счета, которых в нём ещё нет. Подтверждённые и уже заведённые карточки не трогает." onclick="const n=accFillGuesses();const o=document.getElementById('accInvOverlay');if(o)o.remove();showAccInventory();alert(n?('Добавлено новых счетов: '+n+'. Подтверждённые карточки не тронуты.'):'Новых счетов нет - все уже в справочнике');" style="font-size:11px;font-weight:600;padding:5px 12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">⤓ Добавить новые счета подсказками</button>
           <button onclick="accInvCheckAll(true)" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Отметить все непроверенные</button>
           <button onclick="accInvCheckAll(false)" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Снять отметки</button>
           <button onclick="accConfirmChecked()" style="font-size:11px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer">✓ Подтвердить отмеченные</button>
+          <span style="width:1px;height:18px;background:var(--border)"></span>
+          <select id="accBulkVid" style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)"><option value="">- сменить вид на -</option>${ACC_VIDS.map(v=>`<option value="${_htmlEsc(v)}">${_htmlEsc(v)}</option>`).join('')}</select>
+          <button onclick="accSetVidChecked()" style="font-size:11px;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer">Применить к отмеченным</button>
         </div>`:''}</div>`:''}
       <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:0 0 auto;border:1px solid var(--border);border-radius:6px;overflow:hidden">
@@ -3413,7 +3463,12 @@ window.showAccInventory=function(){
           Клик по строке открывает карточку счёта.
         </p>
       </div>
-      <div style="max-height:52vh;overflow-y:auto;border:1px solid var(--border);border-radius:6px;margin-top:14px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px">
+        <input id="accInvQ" type="text" oninput="accInvFilter()" placeholder="Поиск по имени счёта..." style="font-size:11px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans);width:230px">
+        <select id="accInvVid" onchange="accInvFilter()" style="font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)"><option value="">Все виды</option>${ACC_VIDS.filter(v=>byVid[v]&&byVid[v].n).map(v=>`<option value="${_htmlEsc(v)}">${_htmlEsc(v)} (${byVid[v].n})</option>`).join('')}</select>
+        <span style="font-size:11px;color:var(--text3)">показано <b id="accInvCnt">${list.length}</b> из ${list.length}</span>
+      </div>
+      <div style="max-height:52vh;overflow-y:auto;border:1px solid var(--border);border-radius:6px;margin-top:8px">
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
             ${isAdm?`<th style="${th};text-align:center;position:sticky;top:0;width:30px"></th>`:''}
@@ -9113,7 +9168,9 @@ function _accRec(o){
     bank:String(o.bank==null?'':o.bank).trim(),
     fns:(o.fns===1||o.fns===0)?o.fns:-1,          // 1 да / 0 нет / -1 признака нет
     active:o.active===0?0:1,                       // по умолчанию активен
-    ok:o.ok===1?1:0};
+    ok:o.ok===1?1:0,
+    at:(typeof o.at==='number'&&isFinite(o.at))?o.at:0,   // когда правили (ms)
+    by:String(o.by==null?'':o.by).trim()};                 // и кто
 }
 function _accNorm(map){const out={};Object.keys(map||{}).forEach(k=>{const nm=String(k||'').trim();if(nm)out[nm]=_accRec(map[k]);});return out;}
 // ⚠ Сравнение состояний - по НОРМАЛИЗОВАННОМУ виду: ключи по алфавиту. RTDB отдаёт ключи
@@ -9125,6 +9182,13 @@ function _accStable(o){
   const src=o||{},out={};
   Object.keys(src).sort().forEach(k=>{out[k]=_accRec(src[k]);});
   return JSON.stringify(out);
+}
+// Кто и когда тронул запись. ⚠ Ставится ТОЛЬКО там, где правку делает человек (карточка,
+// пакетные действия), и НЕ ставится при массовом заведении подсказками: там автора нет,
+// это машинная догадка, и подписывать её именем администратора значит врать.
+function _accStamp(rec){
+  const u=(window.firebase&&firebase.auth&&firebase.auth().currentUser)||null;
+  return{...rec,at:Date.now(),by:(u&&(u.email||u.displayName))||''};
 }
 function _accSave(){
   _accounts=_accNorm(_accounts);
