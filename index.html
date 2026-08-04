@@ -6605,6 +6605,32 @@ const REG_SEARCH_FIELDS=[
   {c:COL.FIN_OP,short:'Фин. операция',th:'Фин.'}
 ];
 const REG_FIELD_BY_COL={};REG_SEARCH_FIELDS.forEach(F=>{REG_FIELD_BY_COL[F.c]=F;});
+// ⚠ Колонки ПЕЧАТНОЙ формы - свой набор из девяти, рядом с экранным, чтобы менять их одним местом.
+//   Пятнадцать экранных на лист не встают: атомарные и кодовые занимают 504px, на A4 в альбоме
+//   остаётся около 1047px, и четырём текстовым досталось бы по 130px - назначение платежа
+//   превратилось бы в многоточие, а за ним на бумагу и ходят.
+// ⚠ Ширины в ПРОЦЕНТАХ (Σ=100): лист бывает разной ширины (A4/Letter, поля принтера), пиксели
+//   на нём не якорь. `num` - вправо и tabular-nums, `wrap` - перенос по словам, а не обрезка.
+const REG_PRINT_COLS=[
+  {c:COL.DATE_DDS,th:'ДДС',w:7,date:1},
+  {c:COL.TYPE,th:'Тип',w:7},
+  {c:COL.INCOME,th:'Поступление',w:9,num:1},
+  {c:COL.OUTCOME,th:'Списание',w:9,num:1},
+  {c:COL.ACCOUNT,th:'Реквизиты счёта',w:12,wrap:1},
+  {c:COL.ARTICLE_NAME,th:'Подстатья',w:12,wrap:1},
+  {c:COL.SECOND_SIDE,th:'Контрагент',w:14,wrap:1},
+  {c:COL.PURPOSE,th:'Назначение',w:22,wrap:1},
+  {c:COL.ACTIVITY_DIR,th:'Направление',w:8,wrap:1}
+];
+// Сторож объёма: весь реестр - около 61 тыс. строк, это порядка 1200 листов. Спрашиваем ЧИСЛАМИ,
+// а не «уверены?»: человек должен видеть, сколько бумаги заказывает.
+// ⚠ Пороги - именованными константами, а не числами внутри условия: их правят вместе с кеглем.
+const REG_PRINT_WARN=1000;        // с какого числа строк спрашиваем
+// ⚠ Число ИЗМЕРЕНО, а не прикинуто: печать 300 строк в PDF через Chrome дала 10 листов на обычных
+//   строках (30 на лист) и 15 листов, когда каждая седьмая строка с длинным назначением (20 на лист).
+//   Поэтому оценка сторожа - НИЖНЯЯ граница, и сказано это прямо: «не меньше N листов». Занижать
+//   молча нельзя - весь смысл сторожа в том, чтобы человек видел, сколько бумаги заказывает.
+const REG_PRINT_ROWS_PER_SHEET=30;
 // Классы <col> в порядке колонок таблицы - тот же порядок, что у REG_SEARCH_FIELDS
 const REG_COL_CLS=['c-date','c-opiu','c-type','c-offer','c-inc','c-out','c-fns','c-acc','c-art','c-sub','c-anl','c-side','c-purp','c-dir','c-finop'];
 // ── Ширины колонок: считаются при отрисовке и на resize ────────────────────────
@@ -7123,6 +7149,7 @@ function renderRegistry(f){
         <span class="reg-qhint" ${fHint}>?</span>
         ${activeCnt?`<button class="reg-btn reg-btn-reset" title="Сбросить поиск и все фильтры" onclick="regResetAll()">× Сбросить всё (${activeCnt})</button>`:''}
         <button class="reg-btn reg-btn-csv" title="Скачать весь найденный набор в CSV" onclick="registryExportAI()">⬇ Выгрузка (CSV)</button>
+        <button class="reg-btn" title="Печатная форма всего найденного набора" onclick="registryPrint()">🖨 Печать</button>
       </div>
       <div class="reg-chips" id="regChips"></div>
       <!-- ⚠ класса .tab-filters здесь НЕТ намеренно: он несёт свои паддинги и мобильную раскладку
@@ -7225,9 +7252,21 @@ function _regSetMeta(){
   let minD=null,maxD=null;
   rows.forEach(r=>{const d=parseDate(r[COL.DATE_OPIU]);if(!d)return;if(!minD||d<minD)minD=d;if(!maxD||d>maxD)maxD=d;});
   const period=minD?(monLabel(minD)+' - '+monLabel(maxD)):'нет';
-  // контрольные суммы (списания всегда отрицательные, поступления ≥ 0)
-  let sumOut=0,sumIn=0;
-  rows.forEach(r=>{const o=parseNum(r[COL.OUTCOME])||0,ic=parseNum(r[COL.INCOME])||0;if(o)sumOut+=-Math.abs(o);if(ic)sumIn+=Math.abs(ic);});
+  // ⚠ ДВЕ пары контрольных сумм, и это не дублирование - у них разные конвенции знака.
+  //   sumIn/sumOut - историческая конвенция CSV: модуль каждого значения («списания всегда
+  //   отрицательные, поступления ≥ 0»). Она НЕ равна тому, что показывает липкая полоса на экране:
+  //   уход при ПЕРЕМЕЩЕНИИ записан отрицательным поступлением, и модуль превращает его в приход.
+  //   На стенде 13 строк это дало 3 607 000 против 3 467 000 - ровно две пары перемещений ±70 000.
+  //   sumInRaw/sumOutRaw - сырые суммы колонок, ровно как в липкой полосе (regTotInc/regTotOut),
+  //   поэтому «Итог» тождественно равен «Поступления + Списания».
+  // ⚠ Печатная форма обязана брать RAW: её кладут рядом с экраном и сверяют глазами. CSV оставлен
+  //   на прежней конвенции СОЗНАТЕЛЬНО - менять содержимое выгрузки в задаче про печать нельзя,
+  //   это отдельное решение (расхождение преамбулы CSV с экраном существует давно и здесь только
+  //   названо вслух).
+  let sumOut=0,sumIn=0,sumOutRaw=0,sumInRaw=0;
+  rows.forEach(r=>{const o=parseNum(r[COL.OUTCOME])||0,ic=parseNum(r[COL.INCOME])||0;
+    if(o)sumOut+=-Math.abs(o); if(ic)sumIn+=Math.abs(ic);
+    sumOutRaw+=o; sumInRaw+=ic;});
   // фильтр - человекочитаемо из фактического запроса поиска
   const AL={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
   const CN=REG_COL_NAMES; // одна карта имён на чипы и на описание фильтра
@@ -7244,7 +7283,7 @@ function _regSetMeta(){
   const rg=(w,lbl,abs)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const fr=String(o.from||'').trim(),t=String(o.to||'').trim();if(!fr&&!t)return;parts.push(lbl+(abs?' (по модулю)':'')+': '+(fr?'от '+fr:'')+(fr&&t?' ':'')+(t?'до '+t:'')+' ₽');};
   rg('inc','Поступление');rg('out','Списание',true);
   const filterLine=parts.length?parts.join(' · '):'нет';
-  return{rows,period,sumIn,sumOut,filterLine,ds};
+  return{rows,period,sumIn,sumOut,sumInRaw,sumOutRaw,filterLine,ds};
 }
 // Экспорт ВСЕГО найденного набора в CSV (не показанных 500 - _regRows держит полный результат отбора)
 window.registryExportAI=function(){
@@ -7302,6 +7341,98 @@ window.registryExportAI=function(){
   const blob=new Blob(['﻿'+out],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
+};
+// ══ ПЕЧАТНАЯ ФОРМА РЕЕСТРА ═══════════════════════════════════════════════════
+// Печатает ВЕСЬ найденный набор (_regSetMeta), а не отрисованные 500 строк.
+// ⚠ Это и есть причина, по которой форма заведена: быстрый Cmd+P печатает ровно то, что в DOM
+//   (`_regLimit`, по умолчанию 500), а липкая полоса «Итого найдено» считает по всему набору.
+//   На листе выходило 500 операций и итог по трём тысячам, и НИЧТО на бумаге об этом не говорило.
+// ⚠ Экранные правила @media print для #tabRegistry не трогаем - быстрый Cmd+P остаётся отдельным путём.
+// ⚠ Шрифты в pt, а не в px: Safari масштабирует px на печати по-своему, и цифры вылезают из ячеек
+//   (та же ловушка уже описана у печати БДР).
+// ⚠ «Лист 3 из 40» силами CSS не сделать - Chrome не поддерживает margin-boxes @page. Нумерация
+//   листов остаётся браузерная, из настроек печати. В код это не закладывать.
+window.registryPrint=function(){
+  const meta=_regSetMeta();
+  const rows=meta.rows;
+  if(!rows.length){alert('Нечего печатать - в наборе нет строк, уточните поиск');return;}
+  if(rows.length>REG_PRINT_WARN){
+    const sheets=Math.ceil(rows.length/REG_PRINT_ROWS_PER_SHEET);
+    if(!confirm('В найденном наборе '+rows.length.toLocaleString('ru-RU')+' '+_plurRu(rows.length,'строка','строки','строк')
+      +' - это не меньше '+sheets.toLocaleString('ru-RU')+' '+_plurRu(sheets,'листа','листов','листов')+' A4'
+      +' (строки с длинным назначением занимают больше).\n\nФормировать печатную форму?'))return;
+  }
+  const esc=_htmlEsc;
+  const rub=n=>Math.round(n).toLocaleString('ru-RU',{maximumFractionDigits:0});
+  let by='';try{by=(firebase.auth().currentUser.displayName||firebase.auth().currentUser.email||'');}catch(e){}
+  const now=new Date(),p2=n=>String(n).padStart(2,'0');
+  const when=p2(now.getDate())+'.'+p2(now.getMonth()+1)+'.'+now.getFullYear()+' '+p2(now.getHours())+':'+p2(now.getMinutes());
+  // ⚠ Берём СЫРЫЕ суммы (sumInRaw/sumOutRaw), а не CSV-конвенцию с модулем: печатную форму кладут
+  //   рядом с экраном и сверяют с липкой полосой «Итого найдено». С модулем уход при ПЕРЕМЕЩЕНИИ
+  //   (отрицательное поступление) считался бы приходом, и бумага расходилась бы с экраном - на стенде
+  //   из 13 строк это давало 3 607 000 против 3 467 000. Шапка и итоговая строка берут ОДНУ величину:
+  //   два числа в одном документе расходиться не имеют права.
+  const sumIn=meta.sumInRaw,sumOut=meta.sumOutRaw;
+  const cells=r=>REG_PRINT_COLS.map(c=>{
+    if(c.date)return '<td class="c">'+esc(meta.ds(r[c.c]))+'</td>';
+    if(c.num){const n=parseNum(r[c.c])||0;return '<td class="n'+(n>0?' pos':n<0?' neg':'')+'">'+(n?esc(fmt(n)):'')+'</td>';}
+    return '<td'+(c.wrap?' class="w"':'')+'>'+esc(r[c.c]==null?'':r[c.c])+'</td>';
+  }).join('');
+  const body=rows.map(r=>'<tr>'+cells(r)+'</tr>').join('');
+  // Итоговая строка: количество, поступления, списания, итог. Стоит под таблицей отдельным блоком,
+  // а не в <tfoot>: tfoot с display:table-footer-group повторяется на КАЖДОМ листе, и промежуточный
+  // «итог» на первом листе читался бы как итог этого листа.
+  const styleCss=`
+    @page{size:A4 landscape;margin:10mm}
+    *{box-sizing:border-box}
+    body{font-family:'IBM Plex Sans',-apple-system,Segoe UI,Roboto,sans-serif;font-size:7pt;color:#23272f;margin:0}
+    h1{font-size:12pt;margin:0 0 2pt;font-weight:700}
+    .sub{font-size:7pt;color:#5b6472;margin:0 0 6pt}
+    .meta{border:0.4pt solid #c3c9d4;border-radius:2pt;padding:4pt 6pt;margin:0 0 6pt;font-size:7pt;line-height:1.5}
+    .meta b{font-weight:600}
+    .meta .flt{display:block;margin-top:1pt}
+    table{width:100%;border-collapse:collapse;table-layout:fixed}
+    thead{display:table-header-group} /* шапка таблицы повторяется на каждом листе */
+    th{font-size:6.5pt;font-weight:700;text-align:left;background:#eef1f5;border:0.4pt solid #c3c9d4;padding:2pt 3pt;text-transform:uppercase;letter-spacing:.02em}
+    td{border:0.4pt solid #d6dae2;padding:1.6pt 3pt;vertical-align:top;font-size:7pt;overflow-wrap:break-word;word-break:normal}
+    tr{break-inside:avoid;page-break-inside:avoid} /* строку не разрывать между листами */
+    td.c{text-align:center;white-space:nowrap}
+    td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace}
+    td.w{white-space:normal} /* назначение переносится по словам, а не режется многоточием */
+    th.n{text-align:right}
+    /* ⚠ Цвет сумм сохраняем на печати, но СМЫСЛ на цвете не держим: на чёрно-белом принтере
+       зелёное и красное станут одинаково серыми, и различать поступление от списания обязаны
+       РАЗНЫЕ КОЛОНКИ, а не оттенок. */
+    .pos{color:#1e8a5f}.neg{color:#c0392f}
+    .tot{margin-top:5pt;border:0.6pt solid #23272f;border-radius:2pt;padding:4pt 6pt;font-size:8pt;display:flex;gap:16pt;flex-wrap:wrap;break-inside:avoid}
+    .tot b{font-weight:700;font-variant-numeric:tabular-nums;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace}
+    @media print{html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  `;
+  const colgroup='<colgroup>'+REG_PRINT_COLS.map(c=>'<col style="width:'+c.w+'%">').join('')+'</colgroup>';
+  const thead='<thead><tr>'+REG_PRINT_COLS.map(c=>'<th'+(c.num?' class="n"':'')+'>'+esc(c.th)+'</th>').join('')+'</tr></thead>';
+  const bodyHtml=`
+    <h1>Реестр операций - ГК ОПОРА (управленческий учёт)</h1>
+    <div class="sub">Сформировано ${esc(when)}${by?' · '+esc(by):''}</div>
+    <div class="meta">
+      Период ОПиУ: <b>${esc(meta.period)}</b> · операций: <b>${rows.length.toLocaleString('ru-RU')}</b> ·
+      поступления: <b>${esc(rub(sumIn))} ₽</b> · списания: <b>${esc(rub(sumOut))} ₽</b>
+      <span class="flt">Фильтр: ${esc(meta.filterLine)}</span>
+    </div>
+    <table>${colgroup}${thead}<tbody>${body}</tbody></table>
+    <div class="tot">
+      <span>Операций: <b>${rows.length.toLocaleString('ru-RU')}</b></span>
+      <span>Поступления: <b>${esc(fmt(sumIn))}</b></span>
+      <span>Списания: <b>${esc(fmt(sumOut))}</b></span>
+      <span>Итог: <b>${esc(fmt(sumIn+sumOut))}</b></span>
+    </div>`;
+  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Реестр операций - ${esc(when)}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>${styleCss}</style></head><body>${bodyHtml}
+  <script>window.onload=()=>window.print();<\/script></body></html>`;
+  const w=window.open('','_blank');
+  if(!w){alert('Разрешите всплывающие окна - без них печатная форма не откроется');return;}
+  w.document.write(html);w.document.close();
 };
 function registryRender(q){
   const scroll=document.getElementById('regScroll'); if(!scroll)return;
