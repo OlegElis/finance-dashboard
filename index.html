@@ -6622,6 +6622,28 @@ const REG_PRINT_COLS=[
   {c:COL.PURPOSE,th:'Назначение',w:22,wrap:1},
   {c:COL.ACTIVITY_DIR,th:'Направление',w:8,wrap:1}
 ];
+// ⚠ Колонки ВЫГРУЗКИ - все пятнадцать, с полными именами и описаниями. Общие у CSV и Excel:
+//   две копии разошлись бы, и один и тот же набор приезжал бы в двух форматах с разными шапками.
+//   `desc` использует только CSV (в преамбуле), Excel берёт имена и признаки date/num/sign.
+// ⚠ Печатная форма (REG_PRINT_COLS) - ДРУГОЙ набор, из девяти: там кончается ширина листа,
+//   а на листе Excel не кончается, и Аналитика с Фин. операцией бухгалтеру нужны.
+const REG_EXPORT_COLS=[
+  {i:COL.DATE_DDS,name:'Дата_ДДС',desc:'дата движения денег (факт оплаты), дд.мм.гггг',date:1},
+  {i:COL.DATE_OPIU,name:'Дата_ОПиУ',desc:'дата признания в ОПиУ (начисление), дд.мм.гггг',date:1},
+  {i:COL.TYPE,name:'Тип',desc:'тип операции: поступление / списание / перемещение'},
+  {i:COL.OFFER_ID,name:'ID_Offer',desc:'идентификатор сделки (id | № договора | ФИО)'},
+  {i:COL.INCOME,name:'Поступление',desc:'сумма прихода в рублях (число ≥ 0)',num:1,sign:'pos'},
+  {i:COL.OUTCOME,name:'Списание',desc:'сумма расхода в рублях (число, всегда отрицательное)',num:1,sign:'neg'},
+  {i:COL.FNS,name:'ФНС',desc:'признак налогового оформления (да/нет)'},
+  {i:COL.ACCOUNT,name:'Реквизиты_счета',desc:'касса или счёт-плательщик'},
+  {i:COL.ARTICLE_CODE,name:'Статья',desc:'код статьи (первые 3 цифры = группа статей)'},
+  {i:COL.ARTICLE_NAME,name:'Подстатья',desc:'подстатья (детальная статья затрат/доходов)'},
+  {i:COL.ANALYTICS,name:'Аналитика',desc:'категория для ОПиУ (Прямые/Косвенные, Переменные/Постоянные, Вывод прибыли и т.п.)'},
+  {i:COL.SECOND_SIDE,name:'Контрагент',desc:'контрагент / получатель / сотрудник (ID_SecondSide)'},
+  {i:COL.PURPOSE,name:'Назначение',desc:'назначение платежа (текст)'},
+  {i:COL.ACTIVITY_DIR,name:'Направление',desc:'направление деятельности (ЦФО): БФЛ / АУ / САУ / АП (Автоправо) и т.п.'},
+  {i:COL.FIN_OP,name:'Фин_операция',desc:'вид фин. операции: 001_Операционная / 002_Финансовая / 003_Инвестиционная / прочее'}
+];
 // Сторож объёма: весь реестр - около 61 тыс. строк, это порядка 1200 листов. Спрашиваем ЧИСЛАМИ,
 // а не «уверены?»: человек должен видеть, сколько бумаги заказывает.
 // ⚠ Пороги - именованными константами, а не числами внутри условия: их правят вместе с кеглем.
@@ -6631,6 +6653,15 @@ const REG_PRINT_WARN=1000;        // с какого числа строк сп�
 //   Поэтому оценка сторожа - НИЖНЯЯ граница, и сказано это прямо: «не меньше N листов». Занижать
 //   молча нельзя - весь смысл сторожа в том, чтобы человек видел, сколько бумаги заказывает.
 const REG_PRINT_ROWS_PER_SHEET=30;
+// ⚠ Порог сторожа Excel ПО ЗАМЕРУ, а не по догадке (headless Chrome, 15 колонок, сжатый xlsx):
+//   1 000 строк - 45 мс / 0,22 МБ · 5 000 - 119 мс / 1,06 МБ · 20 000 - 400 мс / 4,24 МБ ·
+//   60 976 (весь реестр) - 1 312 мс / 12,94 МБ. Браузер НЕ задыхается нигде, даже на полной базе;
+//   расти начинает ФАЙЛ, а не время. Поэтому порог поставлен там, где файл переваливает за несколько
+//   мегабайт и становится неудобен для почты и диска, а не там, где «может подвиснуть».
+// ⚠ Замер снят на строках с длинным назначением; на реальных данных размер зависит от текста,
+//   поэтому оценка в предупреждении названа ориентировочной.
+const REG_XLSX_WARN=30000;      // с какого числа строк спрашиваем
+const REG_XLSX_MB_PER_1000=0.21; // МБ на 1000 строк - из того же замера, для оценки размера файла
 // Классы <col> в порядке колонок таблицы - тот же порядок, что у REG_SEARCH_FIELDS
 const REG_COL_CLS=['c-date','c-opiu','c-type','c-offer','c-inc','c-out','c-fns','c-acc','c-art','c-sub','c-anl','c-side','c-purp','c-dir','c-finop'];
 // ── Ширины колонок: считаются при отрисовке и на resize ────────────────────────
@@ -7302,23 +7333,7 @@ window.registryExportAI=function(){
   const meta=_regSetMeta();
   const rows=meta.rows,ds=meta.ds,period=meta.period,filterLine=meta.filterLine,sumIn=meta.sumIn,sumOut=meta.sumOut;
   if(!rows.length){alert('Нет строк для экспорта - уточните поиск');return;}
-  const COLS=[
-    {i:COL.DATE_DDS,name:'Дата_ДДС',desc:'дата движения денег (факт оплаты), дд.мм.гггг',date:1},
-    {i:COL.DATE_OPIU,name:'Дата_ОПиУ',desc:'дата признания в ОПиУ (начисление), дд.мм.гггг',date:1},
-    {i:COL.TYPE,name:'Тип',desc:'тип операции: поступление / списание / перемещение'},
-    {i:COL.OFFER_ID,name:'ID_Offer',desc:'идентификатор сделки (id | № договора | ФИО)'},
-    {i:COL.INCOME,name:'Поступление',desc:'сумма прихода в рублях (число ≥ 0)',num:1,sign:'pos'},
-    {i:COL.OUTCOME,name:'Списание',desc:'сумма расхода в рублях (число, всегда отрицательное)',num:1,sign:'neg'},
-    {i:COL.FNS,name:'ФНС',desc:'признак налогового оформления (да/нет)'},
-    {i:COL.ACCOUNT,name:'Реквизиты_счета',desc:'касса или счёт-плательщик'},
-    {i:COL.ARTICLE_CODE,name:'Статья',desc:'код статьи (первые 3 цифры = группа статей)'},
-    {i:COL.ARTICLE_NAME,name:'Подстатья',desc:'подстатья (детальная статья затрат/доходов)'},
-    {i:COL.ANALYTICS,name:'Аналитика',desc:'категория для ОПиУ (Прямые/Косвенные, Переменные/Постоянные, Вывод прибыли и т.п.)'},
-    {i:COL.SECOND_SIDE,name:'Контрагент',desc:'контрагент / получатель / сотрудник (ID_SecondSide)'},
-    {i:COL.PURPOSE,name:'Назначение',desc:'назначение платежа (текст)'},
-    {i:COL.ACTIVITY_DIR,name:'Направление',desc:'направление деятельности (ЦФО): БФЛ / АУ / САУ / АП (Автоправо) и т.п.'},
-    {i:COL.FIN_OP,name:'Фин_операция',desc:'вид фин. операции: 001_Операционная / 002_Финансовая / 003_Инвестиционная / прочее'}
-  ];
+  const COLS=REG_EXPORT_COLS;
   const SEP=';';
   const cell=v=>{v=String(v==null?'':v);
     // защита от формульных инъекций: текст, начинающийся с = + @ (или - не перед числом), Excel исполнил бы как формулу (=HYPERLINK и т.п.) - префиксуем апострофом
@@ -7349,6 +7364,116 @@ window.registryExportAI=function(){
   const fn=_regFileBase(meta)+'.csv';
   const blob=new Blob(['﻿'+out],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
+};
+// ══ ВЫГРУЗКА В EXCEL (.xlsx) ═════════════════════════════════════════════════
+// CSV сделан для машины (это видно по имени registryExportAI): преамбула с # под данными, никаких
+// ширин, закрепления и автофильтра, при чужих региональных настройках числа приезжают текстом.
+// Здесь - книга, которую открывают двойным кликом и сразу работают.
+// ⚠ Библиотека грузится ЛЕНИВО, по первому клику: 880 КБ на каждом открытии дашборда ради кнопки,
+//   которой пользуются раз в неделю, - это ровно те секунды, за которые боролись, опуская открытие
+//   с 18,7 до 3,6 с. Промис кэшируется, поэтому второй клик не тянет скрипт повторно.
+// ⚠ Версия ПРИБИТА (0.18.5): «latest» на CDN однажды сменится мажорной и сломает выгрузку молча.
+//   Читать чужие книги мы не умеем и не будем - библиотека только ПИШЕТ файл, поэтому известные
+//   уязвимости разбора чужих xlsx нас не касаются.
+let _sheetJsP=null;
+function _loadSheetJS(){
+  if(window.XLSX)return Promise.resolve();
+  if(_sheetJsP)return _sheetJsP; // второй клик подхватывает уже идущую загрузку, а не начинает свою
+  _sheetJsP=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload=()=>res();
+    s.onerror=()=>{_sheetJsP=null;rej(new Error('SheetJS не загрузился'));}; // сбрасываем: следующий клик попробует снова
+    document.head.appendChild(s);
+  });
+  return _sheetJsP;
+}
+window.registryExportXlsx=async function(){
+  const meta=_regSetMeta();
+  const rows=meta.rows;
+  if(!rows.length){alert('Нет строк для выгрузки - уточните поиск');return;}
+  if(rows.length>REG_XLSX_WARN){
+    const mb=(rows.length/1000*REG_XLSX_MB_PER_1000).toFixed(1);
+    if(!confirm('В найденном наборе '+rows.length.toLocaleString('ru-RU')+' '+_plurRu(rows.length,'строка','строки','строк')
+      +' - файл получится ориентировочно '+mb+' МБ.\n\nСобирать книгу Excel?'))return;
+  }
+  try{await _loadSheetJS();}
+  catch(e){alert('Не удалось загрузить библиотеку Excel (нет сети или её блокирует расширение браузера).\n\nВыгрузка в CSV работает без интернета - воспользуйтесь ей.');return;}
+  const COLS=REG_EXPORT_COLS;
+  // ⚠ Числа - ЧИСЛАМИ, даты - ДАТАМИ (cellDates). Строки уходят строками, поэтому текст, начинающийся
+  //   с «=», формулой НЕ становится: в xlsx формула - отдельное свойство ячейки, а не первый символ,
+  //   и апостроф-щит здесь не нужен (в CSV нужен, там первый символ решает всё).
+  // ⚠ Суммы пишутся СЫРЫМИ, без Math.abs, хотя CSV приводит их к «поступление ≥ 0, списание ≤ 0».
+  //   Причина измерена: уход при ПЕРЕМЕЩЕНИИ записан отрицательным поступлением, и модуль превращал бы
+  //   его в приход - на стенде сумма колонки «Поступление» разошлась с листом «Отчёт» на 140 000
+  //   (две пары ±70 000). Книгу открывают, чтобы сложить колонку и сверить с экраном, поэтому колонка
+  //   обязана давать ровно то же число, что липкая полоса и печатная форма. В нормальных данных
+  //   списания и так отрицательные - конвенция CSV нарушается только там, где данные аномальны
+  //   (положительное списание ловится правилом outsign в Аномалиях).
+  const aoa=[COLS.map(c=>c.name)];
+  rows.forEach(r=>{
+    aoa.push(COLS.map(c=>{
+      const v=r[c.i];
+      if(c.date){const d=parseDate(v);return d||'';}
+      if(c.num){const n=parseNum(v)||0;return n?n:null;}
+      return v==null?'':String(v);
+    }));
+  });
+  const ws=XLSX.utils.aoa_to_sheet(aoa,{cellDates:true});
+  const last=rows.length,lastCol=COLS.length-1;
+  ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:last,c:lastCol}})};
+  // ⚠ ЗАКРЕПЛЕНИЯ ПЕРВОЙ СТРОКИ ЗДЕСЬ НЕТ, и это не забыто: в SheetJS 0.18.5 (community) писатель
+  //   его не умеет вовсе - в коде библиотеки нет ни `!freeze`, ни `!panes`, ни `xSplit`, ни
+  //   `activePane` (проверено по исходнику с CDN), и в готовом файле стоит пустой
+  //   <sheetView workbookViewId="0"/>. Ключи `!freeze`/`!panes` на листе молча игнорируются -
+  //   не заводить их обратно, они создают ложное впечатление работающей настройки.
+  //   Автофильтр, ширины и форматы библиотека пишет, они на месте. Закрепление человек ставит
+  //   в Excel сам (Вид → Закрепить области), либо это отдельная задача с правкой xlsx после сборки.
+  // Ширины по содержимому, с потолком: без потолка «Назначение» растянет колонку на пол-экрана.
+  ws['!cols']=COLS.map((c,ci)=>{
+    let w=String(c.name).length;
+    for(let k=1;k<aoa.length;k++){const v=aoa[k][ci];const l=(v instanceof Date)?10:String(v==null?'':v).length;if(l>w)w=l;}
+    return{wch:Math.min(46,Math.max(9,w+2))};
+  });
+  // Формат ячеек: даты - дд.мм.гггг, суммы - с разделителем разрядов и двумя дробными
+  const fmtCell=(ci,z)=>{for(let k=1;k<=last;k++){const a=XLSX.utils.encode_cell({r:k,c:ci});const cl=ws[a];if(cl&&cl.v!=null)cl.z=z;}};
+  COLS.forEach((c,ci)=>{if(c.date)fmtCell(ci,'DD.MM.YYYY');else if(c.num)fmtCell(ci,'#,##0.00');});
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Реестр');
+  // ⚠ Итоги идут на ОТДЕЛЬНЫЙ лист, а не под таблицу: итог под данными ломает автофильтр и сортировку -
+  //   бухгалтер отсортирует по сумме, и итоговая строка уедет в середину списка.
+  // ⚠ Контрольные суммы - СЫРЫЕ (sumInRaw/sumOutRaw), как в печатной форме и в липкой полосе на экране.
+  //   С конвенцией модуля (её держит преамбула CSV) книга разошлась бы с бумагой на сумму перемещений.
+  let by='';try{by=(firebase.auth().currentUser.displayName||firebase.auth().currentUser.email||'');}catch(e){}
+  const now=new Date(),p2=n=>String(n).padStart(2,'0');
+  const when=p2(now.getDate())+'.'+p2(now.getMonth()+1)+'.'+now.getFullYear()+' '+p2(now.getHours())+':'+p2(now.getMinutes());
+  const rep=[
+    ['Реестр операций - ГК ОПОРА (управленческий учёт)'],
+    [],
+    ['Сформировано',when],
+    ['Кто сформировал',by||'-'],
+    ['Период ОПиУ',meta.period],
+    ['Операций',rows.length],
+    [],
+    ['Поступления',meta.sumInRaw],
+    ['Списания',meta.sumOutRaw],
+    ['Итог',meta.sumInRaw+meta.sumOutRaw],
+    [],
+    ['Фильтр',meta.filterLine],
+    [],
+    ['Лист «Реестр» - все операции набора, по одной в строке. Суммы по колонкам сходятся с этим листом.']
+  ];
+  const wsr=XLSX.utils.aoa_to_sheet(rep);
+  wsr['!cols']=[{wch:22},{wch:90}];
+  ['B8','B9','B10'].forEach(a=>{if(wsr[a])wsr[a].z='#,##0.00';}); // суммы - тем же форматом, что в «Реестре»
+  XLSX.utils.book_append_sheet(wb,wsr,'Отчёт');
+  // ⚠ compression:true - не косметика: по замеру полный реестр это 12,9 МБ и 1,3 с против 55 МБ и 2,5 с
+  //   без сжатия. Сжатый файл и меньше, и собирается БЫСТРЕЕ (меньше байт уходит в Blob).
+  const buf=XLSX.write(wb,{bookType:'xlsx',type:'array',compression:true});
+  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=_regFileBase(meta)+'.xlsx';
+  document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
 };
 // ══ ПЕЧАТНАЯ ФОРМА РЕЕСТРА ═══════════════════════════════════════════════════
