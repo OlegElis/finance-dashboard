@@ -8085,6 +8085,262 @@ window.pfBackupRestoreApply=async function(){
   const ov=document.getElementById('pfRestoreOv');if(ov)ov.remove();
   alert('Восстановлено веток: '+n+'. Настройки применяются из облака (может занять секунду). Если что-то не так - восстановите из только что скачанного архива текущего состояния.');
 };
+// ══ РАЗНЕСЕНИЕ НАЧИСЛЕНИЙ (БДР) ═════════════════════════════════════════════
+// Планы со стороной (сотрудник / объект аренды / контрагент) заводятся ПО КАЖДОМУ направлению
+// отдельно. Руководитель меняет разбивку в любом месяце - было два направления, стало пять, - а
+// бухгалтер, которая начисляет, об этом не знает, разносит по привычке и создаёт перерасход,
+// который потом ищут задним числом. Экран показывает плановую разбивку ДО начисления.
+// ⚠ Третий уровень сводной БДР считает по стороне верно, но СКЛАДЫВАЕТ направления внутри себя
+//   (ownDirsOf(sub).forEach в _fcSideM): видно «Васякова - всего 120 000» вместо разбивки по пяти.
+//   Здесь тот же расчёт БЕЗ этого сложения.
+// ⚠ Собрано на модульных примитивах (_buildSideFactIdx / _planSideMD / _sideUniverse / _planRecords),
+//   а НЕ на замыкании renderPlanFact - там они локальные. Второй потребитель (выписка ЦФО) уже так
+//   сделан, взят за образец. Конвертер тот же: план бывает в процентах, своя конвертация дала бы
+//   другие деньги.
+// ⚠ Считаем по ПРОГНОЗУ (config/plans), а не по baseline: разносят по действующему плану, и правит
+//   руководитель именно его. Замороженный месяц закрыт, начислять в него уже нечего.
+const PF_ALLOC_SHARE_TOL=0.01; // сдвиг доли, с которого пропорция считается изменившейся (1 п.п.)
+const _pfAllocNorm=s=>String(s==null?'':s).toLowerCase().replace(/ё/g,'е').replace(/ | /g,' ').replace(/\s+/g,' ').trim();
+// ⚠ Направления берём из RAW И ИЗ ПЛАНОВ. Только по RAW - и направление, на которое план УЖЕ заведён,
+//   а операций по нему ещё нет, молча выпадает из разбивки: на стенде пятинаправленная Васякова
+//   показывала три направления и 75 000 вместо 100 000. Новое направление - ровно тот случай, ради
+//   которого экран и заводится, терять его нельзя.
+function _pfAllocRawDirs(){const s=new Set();(RAW||[]).forEach(r=>{const d=String(r[COL.ACTIVITY_DIR]||'').trim();if(d)s.add(d);});return s;}
+function _pfAllocDirs(){
+  const s=_pfAllocRawDirs();
+  (_planRecords||[]).forEach(p=>{if(p){const d=String(p.dir||'').trim();if(d)s.add(d);}});
+  return [...s].sort((a,b)=>a.localeCompare(b,'ru'));
+}
+// Контекст года: база выручки и ЧП по направлениям (для %-планов) + конвертер + план по стороне.
+// ⚠ ОДИН проход по RAW на все направления. В выписке ЦФО проход вложен в цикл по направлениям
+//   (O(направления × строки)) - здесь так делать нельзя, функция зовётся на каждый рендер БДР.
+function _pfAllocYearCtx(year){
+  const dirs=_pfAllocDirs(),rev={},npExp={};
+  dirs.forEach(d=>{rev[d]=new Array(13).fill(0);npExp[d]=new Array(13).fill(0);});
+  (RAW||[]).forEach(r=>{
+    const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!rev[dir])return;
+    const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
+    const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
+    const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[dir][m]+=inc;
+    if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');
+      if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[dir][m]+=Math.abs(out);}
+  });
+  const recs=(_planRecords||[]).filter(p=>p&&p.year===year);
+  const revBaseM=(d,m)=>{const r=recs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;
+    const ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,m):0;if(ip>0)return ip;return (rev[d]?rev[d][m]:0)||0;};
+  const revBaseY=d=>{const r=recs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===0);if(r&&r.value>0)return r.value;
+    let s=0;for(let m=1;m<=12;m++)s+=revBaseM(d,m);return s;};
+  const netM=(d,m)=>Math.max(0,(rev[d]?rev[d][m]:0)-(npExp[d]?npExp[d][m]:0));
+  const netY=d=>{let s=0;for(let m=1;m<=12;m++)s+=netM(d,m);return s;};
+  const cvt=(d,r,m)=>r.mode==='pct'?r.value*(m?revBaseM(d,m):revBaseY(d)):r.mode==='pct_profit'?r.value*(m?netM(d,m):netY(d)):r.value;
+  return{year,dirs,recs,cvt,planSideMD:_planSideMD(recs,cvt)};
+}
+// Пары «сторона + подстатья» с планом в месяце. Возвращает разбивку по направлениям БЕЗ сложения.
+// ⚠ План, заданный ТОЛЬКО годовой строкой (month===0), _planSideMD делит на 12 - пропорция во всех
+//   месяцах получается одинаковой, и метка «изменилась» по такой паре не сработает НИКОГДА.
+//   Это не дефект расчёта: помесячной разбивки в данных просто нет, и показывать нечего.
+// ⚠ РАСХОЖДЕНИЕ С ТРЕТЬИМ УРОВНЕМ БДР, принятое сознательно. Сводная берёт направления только из RAW
+//   (index.html:8430), поэтому план, заведённый на направление БЕЗ ОПЕРАЦИЙ, она не показывает вовсе -
+//   ни в строке стороны, ни в ИТОГО. Здесь такие направления ПОКАЗЫВАЮТСЯ и помечаются «нет операций»:
+//   переезд плана на новое направление - ровно то изменение, ради которого экран и заведён, потерять
+//   его нельзя. На стенде это дало 430 000 против 405 000 у БДР - разница ровно АП 15 000 + РИ 10 000.
+//   Где все направления плана есть в данных, суммы сходятся с третьим уровнем БДР до копейки.
+function _pfAllocMix(YC,month){
+  const pairs={};
+  YC.recs.forEach(p=>{
+    if(!p||p.level!=='subarticle')return;
+    const side=String(p.side||'').trim(); if(!side)return;          // безсторонние планы - не про этот экран
+    const sub=String(p.code||'').trim(); if(!sub||!_slSub(sub))return; // только подстатьи со сторонами (ФОТ/аренда/консалтинг)
+    pairs[side+'||'+sub]=pairs[side+'||'+sub]||{side,sub};
+  });
+  const out={},rawD=_pfAllocRawDirs();
+  Object.keys(pairs).forEach(k=>{
+    const side=pairs[k].side,sub=pairs[k].sub,dirRows=[];let tot=0;
+    YC.dirs.forEach(d=>{const v=YC.planSideMD(d,sub,side,month);
+      if(v!=null&&Math.abs(v)>0.005){dirRows.push({dir:d,plan:v,noOps:!rawD.has(d)});tot+=v;}});
+    if(dirRows.length)out[k]={key:k,side,sub,dirs:dirRows,plan:tot,noOpsN:dirRows.filter(x=>x.noOps).length};
+  });
+  return out;
+}
+const _pfAllocShares=e=>{const m={};if(!e||!e.plan)return m;e.dirs.forEach(x=>{m[x.dir]=x.plan/e.plan;});return m;};
+// ⚠ Доля печатается с одним знаком и без хвостового «,0»: на целых процентах строка остаётся
+//   короткой («БФЛ 60% / САУ 40%»), а на половинках не врёт - округление до целых давало
+//   «БФЛ 51% / САУ 50%» при настоящих 50,5/49,5, то есть 101% в сумме.
+const _pfAllocPct=v=>{const s=(Math.round(v*1000)/10).toLocaleString('ru-RU',{maximumFractionDigits:1});return s+'%';};
+const _pfAllocMixStr=e=>e?e.dirs.slice().sort((a,b)=>b.plan-a.plan).map(x=>x.dir+' '+_pfAllocPct(x.plan/e.plan)).join(' / '):'плана нет';
+// Полная сборка экрана. facts=false - только плановая часть (для счётчика в меню, без прохода по RAW
+// за фактом); facts=true - плюс начислено/остаток и блок «Требуют внимания».
+function _pfAllocBuild(year,month,facts){
+  const YC=_pfAllocYearCtx(year);
+  const cur=_pfAllocMix(YC,month);
+  // ⚠ Январь сравнивается с ДЕКАБРЁМ ПРОШЛОГО ГОДА. Сравнивай он с «месяцем 0» или с самим собой -
+  //   каждый январь весь список оказывался бы изменившимся, и метка обесценилась бы за один месяц.
+  const prevY=month===1?year-1:year,prevM=month===1?12:month-1;
+  const PY=month===1?_pfAllocYearCtx(prevY):YC;
+  const prev=_pfAllocMix(PY,prevM);
+  const list=[];
+  Object.keys(cur).forEach(k=>{
+    const e=cur[k];
+    if(e.dirs.length<2)return; // мононаправленные не показываем - по ним вопроса нет
+    const p=prev[k],cs=_pfAllocShares(e),ps=_pfAllocShares(p);
+    const setC=Object.keys(cs).sort().join('|'),setP=Object.keys(ps).sort().join('|');
+    let changed=false,why='';
+    if(!p){changed=true;why='в прошлом месяце плана по этой паре не было';}
+    else if(setC!==setP){changed=true;why='изменился набор направлений';}
+    else{
+      let mx=0;Object.keys(cs).forEach(d=>{const dd=Math.abs(cs[d]-(ps[d]||0));if(dd>mx)mx=dd;});
+      if(mx>=PF_ALLOC_SHARE_TOL){changed=true;why='доля сдвинулась на '+(Math.round(mx*1000)/10).toLocaleString('ru-RU',{maximumFractionDigits:1})+' п.п.';}
+    }
+    e.changed=changed;e.why=why;e.prevMix=_pfAllocMixStr(p);e.curMix=_pfAllocMixStr(e);
+    e.prevLabel=MONTHS_FULL[prevM-1].slice(0,3).toLowerCase()+(month===1?' '+prevY:'');
+    e.curLabel=MONTHS_FULL[month-1].slice(0,3).toLowerCase();
+    list.push(e);
+  });
+  // сортировка: сначала изменившиеся, потом по убыванию плана
+  list.sort((a,b)=>(a.changed===b.changed)?(b.plan-a.plan):(a.changed?-1:1));
+  const res={year,month,list,changedN:list.length?list.filter(x=>x.changed).length:0,attention:null};
+  if(!facts)return res;
+  // ── ФАКТ и «Требуют внимания» ──
+  const fIdx=_buildSideFactIdx(year,YC.dirs);
+  const factOf=(sub,side,d)=>{const SK=fIdx[d+'||'+sub];return (SK&&SK[side])?(SK[side][month]||0):0;};
+  list.forEach(e=>{e.dirs.forEach(x=>{x.fact=factOf(e.sub,e.side,x.dir);x.rem=x.plan-x.fact;});
+    e.fact=e.dirs.reduce((s,x)=>s+x.fact,0);});
+  // (1) факт есть, а плана по направлениям нет вовсе
+  const planPairs={};YC.recs.forEach(p=>{if(p&&p.level==='subarticle'&&String(p.side||'').trim())planPairs[String(p.side).trim()+'||'+String(p.code||'').trim()]=1;});
+  const noPlan=[],seenFactSides={};
+  Object.keys(fIdx).forEach(key=>{
+    const parts=key.split('||'),dir=parts[0],sub=parts[1];
+    if(!_slSub(sub))return;
+    Object.keys(fIdx[key]).forEach(side=>{
+      if(!side)return; // безымянная сторона - отдельная история, её показывает третий уровень БДР
+      const f=fIdx[key][side][month]||0; if(!(Math.abs(f)>0.005))return;
+      seenFactSides[side+'||'+sub]=(seenFactSides[side+'||'+sub]||0)+f;
+      if(planPairs[side+'||'+sub])return;
+      const k=side+'||'+sub,ex=noPlan.find(x=>x.key===k);
+      if(ex){ex.fact+=f;if(ex.dirs.indexOf(dir)<0)ex.dirs.push(dir);}
+      else noPlan.push({key:k,side,sub,dirs:[dir],fact:f});
+    });
+  });
+  noPlan.sort((a,b)=>b.fact-a.fact);
+  // (2) план размазан по нескольким направлениям, а ВЕСЬ факт месяца ушёл в одно
+  const oneDir=list.filter(e=>{if(!(Math.abs(e.fact)>0.005))return false;
+    const hit=e.dirs.filter(x=>Math.abs(x.fact)>0.005);
+    if(hit.length!==1)return false;
+    // факт мог уйти и в направление, которого в плане нет - это тоже сюда
+    return true;}).map(e=>({key:e.key,side:e.side,sub:e.sub,dir:(e.dirs.find(x=>Math.abs(x.fact)>0.005)||{}).dir,fact:e.fact,plan:e.plan,n:e.dirs.length}));
+  // (3) несопоставленные написания
+  // ⚠ side в плане вводится РУКАМИ в форме БДР, ID Second Side приходит из выгрузки Sheets.
+  //   Совпадают они по договорённости, а не по устройству: лишний пробел или «е» вместо «ё» - и план
+  //   лежит сам по себе, факт сам по себе, обе половины показывают нули, а экран выглядит рабочим.
+  //   Поэтому расхождения написаний ПОКАЗЫВАЕМ, а не сливаем в ноль.
+  const variants={};
+  const addVar=(side,sub,src)=>{const n=_pfAllocNorm(side);if(!n)return;const k=n+'||'+sub;
+    const v=(variants[k]=variants[k]||{sub,forms:{}});(v.forms[side]=v.forms[side]||{plan:0,fact:0})[src]=1;};
+  Object.keys(planPairs).forEach(k=>{const p=k.split('||');if(_slSub(p[1]))addVar(p[0],p[1],'plan');});
+  Object.keys(seenFactSides).forEach(k=>{const p=k.split('||');addVar(p[0],p[1],'fact');});
+  const spelling=[];
+  Object.keys(variants).forEach(k=>{const forms=Object.keys(variants[k].forms);
+    if(forms.length>1)spelling.push({sub:variants[k].sub,forms:forms.map(f=>({form:f,inPlan:!!variants[k].forms[f].plan,inFact:!!variants[k].forms[f].fact}))});});
+  res.attention={noPlan,oneDir,spelling,N:noPlan.length+oneDir.length+spelling.length};
+  return res;
+}
+// Разворот строки - чистый DOM-тоггл, без ре-рендера: в шаге 2 внутри строки появится поле ввода
+// суммы, и перерисовка списка стирала бы набранное.
+window.pfAllocToggle=function(i){
+  const b=document.getElementById('pfAllocDet'+i); if(!b)return;
+  const open=b.style.display==='none';
+  b.style.display=open?'':'none';
+  const t=document.getElementById('pfAllocTri'+i); if(t)t.textContent=open?'▾':'▸';
+};
+window.pfAllocSecToggle=function(id){
+  const b=document.getElementById(id); if(!b)return;
+  b.style.display=b.style.display==='none'?'':'none';
+  const t=document.getElementById(id+'Tri'); if(t)t.textContent=b.style.display==='none'?'▸':'▾';
+};
+window.pfAllocOpen=function(){
+  if(document.getElementById('pfAllocOverlay'))return;
+  const pf=_tabFilters.planfact||{};
+  const year=+pf.year||new Date().getFullYear();
+  const per=String(pf.period||'');
+  const auto=!(+per>=1&&+per<=12);              // «весь год» / матрица - берём текущий календарный месяц
+  const month=auto?(new Date().getMonth()+1):+per;
+  let D;
+  try{D=_pfAllocBuild(year,month,true);}
+  catch(e){alert('Не удалось собрать разнесение: '+(e&&e.message||e));return;}
+  window._pfAllocData=D;
+  const esc=_htmlEsc;
+  const A=D.attention||{noPlan:[],oneDir:[],spelling:[],N:0};
+  const monLbl=MONTHS_FULL[month-1]+' '+year;
+  const th='text-align:right;padding:6px 9px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);color:var(--text3);text-transform:uppercase;white-space:nowrap';
+  const money=v=>fmt(v||0);
+  // Строка стороны: свёрнута - сторона, подстатья, метка, план месяца. Разворот - таблица направлений.
+  // ⚠ Колонки «доля» здесь НЕТ сознательно: она дублирует план и на глаз считается из него же.
+  const rowHtml=(e,i)=>{
+    const mixTip=e.changed?_tipAttr([[e.prevLabel,e.prevMix],[e.curLabel,e.curMix]],e.why?['почему',e.why]:null,'Разбивка изменилась'):'';
+    const det=e.dirs.slice().sort((a,b)=>b.plan-a.plan).map(x=>`<tr style="border-top:1px solid var(--border)">
+        <td style="padding:5px 9px;font-size:11px">${esc(x.dir)}${x.noOps?' <span title="По этому направлению в данных ещё нет ни одной операции. В сводной БДР такой план не показывается вовсе - направления она берёт из операций." style="font-size:9px;color:var(--orange);cursor:help">нет операций</span>':''}</td>
+        <td style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono)">${money(x.plan)}</td>
+        <td style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono);color:var(--text2)">${money(x.fact)}</td>
+        <td style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono);font-weight:600;color:${x.rem<-0.005?'var(--outcome)':'var(--text)'}">${money(x.rem)}</td>
+      </tr>`).join('');
+    return `<div style="border:1px solid var(--border);border-radius:9px;margin-bottom:7px;overflow:hidden">
+      <div onclick="pfAllocToggle(${i})" style="display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer;background:${e.changed?'color-mix(in srgb,var(--orange) 7%,transparent)':'var(--surface)'}">
+        <span id="pfAllocTri${i}" style="color:var(--text3);font-size:11px;width:9px">▸</span>
+        <span style="font-size:12px;font-weight:600">${_slIcon(e.sub)} ${esc(e.side)}</span>
+        <span style="font-size:11px;color:var(--text3)">${esc(e.sub)}</span>
+        ${e.changed?`<span ${mixTip} style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;background:var(--orange);color:#fff;cursor:help">изменилась</span>`:''}
+        <span style="margin-left:auto;font-size:11px;color:var(--text3)">${e.dirs.length} ${_plurRu(e.dirs.length,'направление','направления','направлений')}</span>
+        <span style="font-size:12px;font-weight:700;font-family:var(--mono)">${money(e.plan)}</span>
+      </div>
+      <div id="pfAllocDet${i}" style="display:none;border-top:1px solid var(--border);background:var(--surface2)">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr><th style="${th};text-align:left">Направление</th><th style="${th}">План месяца</th><th style="${th}">Начислено</th><th style="${th}">Остаток</th></tr></thead>
+          <tbody>${det}</tbody>
+        </table>
+      </div>
+    </div>`;
+  };
+  const listHtml=D.list.length?D.list.map(rowHtml).join('')
+    :`<div style="padding:18px 12px;text-align:center;color:var(--text3);font-size:12px;border:1px solid var(--border);border-radius:9px">Ни одной стороны с планом в двух и более направлениях за ${esc(monLbl)}. Разносить нечего - вопрос возникает только там, где направлений больше одного.</div>`;
+  // «Требуют внимания» - свёрнут, раскрывается по клику
+  const attRow=(txt,sub)=>`<div style="padding:6px 10px;border-top:1px solid var(--border);font-size:11px">${txt}${sub?`<div style="color:var(--text3);font-size:10px;margin-top:1px">${sub}</div>`:''}</div>`;
+  const attHtml=A.N?`<div style="border:1px solid var(--orange);border-radius:9px;margin-top:12px;overflow:hidden">
+      <div onclick="pfAllocSecToggle('pfAllocAtt')" style="display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;background:color-mix(in srgb,var(--orange) 10%,transparent)">
+        <span id="pfAllocAttTri" style="color:var(--text3);font-size:11px">▸</span>
+        <span style="font-size:12px;font-weight:700;color:var(--text)">Требуют внимания</span>
+        <span style="font-size:11px;color:var(--text2)">${A.N}</span>
+      </div>
+      <div id="pfAllocAtt" style="display:none;background:var(--surface)">
+        ${A.noPlan.map(x=>attRow('<b>'+esc(x.side)+'</b> · '+esc(x.sub)+' - начислено <b>'+money(x.fact)+'</b>, плана по направлениям нет','факт идёт, разносить не по чему: '+esc(x.dirs.join(', ')))).join('')}
+        ${A.oneDir.map(x=>attRow('<b>'+esc(x.side)+'</b> · '+esc(x.sub)+' - весь факт месяца в «'+esc(x.dir||'-')+'»','план разложен на '+x.n+' '+_plurRu(x.n,'направление','направления','направлений')+', начислено '+money(x.fact))).join('')}
+        ${A.spelling.map(x=>attRow('Разные написания одного имени · '+esc(x.sub),x.forms.map(f=>'«'+esc(f.form)+'»'+(f.inPlan&&f.inFact?' (план и факт)':f.inPlan?' (только план)':' (только факт)')).join(' · '))).join('')}
+      </div>
+    </div>`:'';
+  const ov=document.createElement('div');ov.id='pfAllocOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:8990;background:rgba(20,25,40,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:880px;max-width:96vw;padding:20px 22px;font-family:var(--sans)">
+    <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:10px">
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:700;color:var(--text)">🧮 Разнесение начислений · ${esc(monLbl)}${auto?' <span style="font-size:11px;font-weight:400;color:var(--text3)">(в фильтре выбран не месяц - взят текущий)</span>':''}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Плановая разбивка по направлениям - по текущему плану, до начисления. Стороны с одним направлением не показаны: по ним вопроса нет.</div>
+      </div>
+      <button onclick="document.getElementById('pfAllocOverlay').remove()" title="Закрыть" style="font-size:16px;line-height:1;padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer">×</button>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px;padding:8px 12px;background:var(--surface2);border-radius:8px">
+      Сторон с разбивкой: <b>${D.list.length}</b>${D.changedN?` · из них разбивка изменилась к прошлому месяцу: <b style="color:var(--orange)">${D.changedN}</b>`:' · изменений к прошлому месяцу нет'}
+      ${D.list.some(e=>e.noOpsN)?`<div style="margin-top:5px;font-size:11px;color:var(--text3)">Часть плана заведена на направления, по которым в данных ещё нет операций (помечены «нет операций»). В сводной БДР такой план не виден - направления она берёт из операций, поэтому её суммы по этим сторонам будут меньше.</div>`:''}
+    </div>
+    ${listHtml}
+    ${attHtml}
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button onclick="document.getElementById('pfAllocOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Закрыть</button>
+    </div>
+  </div>`;
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
 window.pfNoPlanOpen=function(){
   if(!_isAdmin()){alert('Доступно только администратору.');return;}
   const NP=window._pfNoPlan; if(!NP)return;
@@ -8533,10 +8789,17 @@ function renderPlanFact(f){
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
   const _abA=window._pfAnBad||{N:0},_abHasA=_abA.N>0; // сторож сверки БДР==ОПиУ (аналитика вне категорий)
   const _ibA=window._pfIncBad||{N:0},_ibHasA=_ibA.N>0; // сторож «поступление вне 120_» (фантомные доходы)
+  // ⚠ Счётчик «Разнесение начислений» обязателен: экран, который надо ВСПОМНИТЬ открыть, задачу не
+  //   решает - бухгалтер узнаёт о новой разбивке только если цифра сама попалась на глаза.
+  //   Считаем ТОЛЬКО плановую часть (facts=false): проход по RAW за фактом на каждый рендер БДР не нужен.
+  const _alM=(+period>=1&&+period<=12)?+period:(new Date().getMonth()+1);
+  let _alN=0,_alC=0;
+  try{const _al=_pfAllocBuild(year,_alM,false);_alN=_al.list.length;_alC=_al.changedN;}
+  catch(e){console.warn('[БДР] счётчик разнесения не посчитан:',e&&e.message);}
   const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
   const actionsWrap=isAdmin?`<div style="position:relative;display:inline-block">
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
-      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)')}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)')}</div>
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','🖨 Выписка для ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)')}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)')}</div>
     </div>`:`<button onclick="pfCfoOpen()" title="Свод исполнения по ответственным" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👥 ЦФО</button><button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👁 Планы (просмотр)</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:6px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
