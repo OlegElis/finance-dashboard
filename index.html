@@ -7149,7 +7149,7 @@ function renderRegistry(f){
         <span class="reg-qhint" ${fHint}>?</span>
         ${activeCnt?`<button class="reg-btn reg-btn-reset" title="Сбросить поиск и все фильтры" onclick="regResetAll()">× Сбросить всё (${activeCnt})</button>`:''}
         <button class="reg-btn reg-btn-csv" title="Скачать весь найденный набор в CSV" onclick="registryExportAI()">⬇ Выгрузка (CSV)</button>
-        <button class="reg-btn" title="Печатная форма всего найденного набора" onclick="registryPrint()">🖨 Печать</button>
+        <button class="reg-btn" title="Печать на бумагу или сохранение в PDF (в диалоге печати выберите «Сохранить как PDF»)" onclick="registryPrint()">🖨 Печать / PDF</button>
       </div>
       <div class="reg-chips" id="regChips"></div>
       <!-- ⚠ класса .tab-filters здесь НЕТ намеренно: он несёт свои паддинги и мобильную раскладку
@@ -7285,6 +7285,18 @@ function _regSetMeta(){
   const filterLine=parts.length?parts.join(' · '):'нет';
   return{rows,period,sumIn,sumOut,sumInRaw,sumOutRaw,filterLine,ds};
 }
+// Имя файла БЕЗ расширения - одно на все выгрузки набора (CSV, печать/PDF, Excel).
+// Говорит, что внутри: дата, признак фильтра и число строк. Без фильтров - «все», иначе «отфильтровано».
+// ⚠ Признак берётся по filterLine!=='нет': «нет» - ровно то, что _regSetMeta ставит при пустом наборе фильтров.
+// ⚠ Общий хелпер, а не копия в каждой выгрузке: имена файлов одного и того же набора обязаны совпадать -
+//   по ним человек и находит пару «таблица + бумага», лежащую в одной папке.
+// ⚠ Двоеточий и слэшей в имени быть не должно: <title> окна печати становится именем PDF-файла,
+//   а двоеточие в имени файла Chrome и Safari превращают в мусор.
+function _regFileBase(meta){
+  const now=new Date(),p2=n=>String(n).padStart(2,'0');
+  const stamp=now.getFullYear()+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate());
+  return 'Реестр_'+stamp+'_'+((meta&&meta.filterLine)!=='нет'?'отфильтровано':'все')+'-'+((meta&&meta.rows||[]).length);
+}
 // Экспорт ВСЕГО найденного набора в CSV (не показанных 500 - _regRows держит полный результат отбора)
 window.registryExportAI=function(){
   const meta=_regSetMeta();
@@ -7334,10 +7346,7 @@ window.registryExportAI=function(){
   out+="# Защита: текст, начинающийся с '=', '+', '@' или '-', экранирован апострофом (формулы Excel не исполняются).\n";
   out+='# Описание столбцов:\n';
   COLS.forEach(c=>{out+='#   '+c.name+' = '+c.desc+'\n';});
-  // Имя говорит, что внутри: дата выгрузки и сколько строк. Без фильтров - «все», иначе «отфильтровано»
-  const now=new Date(),p2=n=>String(n).padStart(2,'0');
-  const stamp=now.getFullYear()+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate());
-  const fn='Реестр_'+stamp+'_'+(filterLine!=='нет'?'отфильтровано':'все')+'-'+rows.length+'.csv'; // «нет» - ровно то, что _regSetMeta ставит при пустом наборе фильтров
+  const fn=_regFileBase(meta)+'.csv';
   const blob=new Blob(['﻿'+out],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
@@ -7425,7 +7434,11 @@ window.registryPrint=function(){
       <span>Списания: <b>${esc(fmt(sumOut))}</b></span>
       <span>Итог: <b>${esc(fmt(sumIn+sumOut))}</b></span>
     </div>`;
-  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Реестр операций - ${esc(when)}</title>
+  // ⚠ <title> - это ИМЯ БУДУЩЕГО PDF-ФАЙЛА (Chrome и Safari берут его оттуда), а не заголовок на листе.
+  //   Поэтому формат тот же, что у CSV: пара «таблица + бумага» одного набора лежит в папке рядом.
+  //   Двоеточие из прежнего «Реестр операций - 04.08.2026 07:27» в имени файла превращалось в мусор.
+  //   H1 внутри документа остаётся человеческим - его как раз печатают.
+  const html=`<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>${esc(_regFileBase(meta))}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
   <style>${styleCss}</style></head><body>${bodyHtml}
