@@ -8246,8 +8246,96 @@ function _pfAllocBuild(year,month,facts){
   res.attention={noPlan,oneDir,spelling,N:noPlan.length+oneDir.length+spelling.length};
   return res;
 }
-// Разворот строки - чистый DOM-тоггл, без ре-рендера: в шаге 2 внутри строки появится поле ввода
-// суммы, и перерисовка списка стирала бы набранное.
+// ══ РАЗБИВКА СУММЫ ПО НАПРАВЛЕНИЯМ ══════════════════════════════════════════
+// Ввели сумму к начислению - получили число на каждое направление и колонку «Станет».
+// ⚠ Сумма долей обязана совпадать с введённой ДО КОПЕЙКИ. Раскладываем по весам в ЦЕЛЫХ КОПЕЙКАХ,
+//   а остаток от округления кладём в наибольшую долю, а не теряем: 100 000 на три равные доли дают
+//   33 333,34 + 33 333,33 + 33 333,33, и 0,03 рубля на четыре направления тоже сходятся.
+// ⚠ Уход остатка в минус ПОДСВЕЧИВАЕМ, но НЕ запрещаем: ни disabled, ни confirm «точно сверх плана?»,
+//   ни скрытия строк. Дашборд не блокирует платёж при красном остатке - это решение от 02.08.2026
+//   (CLAUDE.md), а не пробел. Бухгалтер видит красное и проверяет сама.
+function _pfAllocSplit(total,weights){
+  const n=weights.length,out=new Array(n).fill(0);
+  if(!n)return out;
+  const cents=Math.round((+total||0)*100);
+  let sw=0;weights.forEach(w=>{sw+=Math.max(0,w||0);});
+  if(!(sw>0)){ // весов нет вовсе (например, весь остаток выбран) - делим поровну, остаток в первую долю
+    const base=Math.floor(cents/n);for(let i=0;i<n;i++)out[i]=base;out[0]+=cents-base*n;
+    return out.map(c=>c/100);
+  }
+  const raw=weights.map(w=>Math.max(0,w||0)/sw*cents);
+  let used=0;raw.forEach((v,i)=>{out[i]=Math.floor(v);used+=out[i];});
+  let rest=cents-used;
+  // ⚠ Остаток кладём в НАИБОЛЬШУЮ долю: раздача «по кругу» размазала бы копейки по мелким
+  //   направлениям, и разбивка переставала бы совпадать с плановой пропорцией на глаз.
+  while(rest>0){let bi=0,bv=-1;out.forEach((v,i)=>{const w=Math.max(0,weights[i]||0);if(w>bv){bv=w;bi=i;}});out[bi]++;rest--;
+    if(rest>0){ // защита от вечного цикла при равных весах - раздаём по одной, начиная с крупнейшей
+      const ord=out.map((v,i)=>i).sort((a,b)=>(weights[b]||0)-(weights[a]||0));
+      for(let k=0;k<ord.length&&rest>0;k++){out[ord[k]]++;rest--;}
+    }
+  }
+  return out.map(c=>c/100);
+}
+window.pfAllocCalc=function(i){
+  const D=window._pfAllocData; if(!D||!D.list[i])return;
+  const e=D.list[i];
+  const inp=document.getElementById('pfAllocSum'+i); if(!inp)return;
+  const raw=String(inp.value||'').replace(/\s| /g,'').replace(',','.');
+  const total=parseFloat(raw);
+  const mode=(document.querySelector('input[name="pfAllocMode'+i+'"]:checked')||{}).value||'rem';
+  const box=document.getElementById('pfAllocCalcBox'+i);
+  const dirs=e.dirs.slice().sort((a,b)=>b.plan-a.plan);
+  if(!isFinite(total)||Math.abs(total)<0.005){ // пусто - колонок разбивки нет вовсе
+    dirs.forEach((x,k)=>{const c1=document.getElementById('pfAllocPart'+i+'_'+k),c2=document.getElementById('pfAllocAfter'+i+'_'+k);
+      if(c1)c1.innerHTML='<span style="color:var(--text3)">-</span>';if(c2)c2.innerHTML='<span style="color:var(--text3)">-</span>';});
+    if(box)box.textContent='';
+    e.parts=null;return;
+  }
+  // ⚠ «По остатку» - вес это НЕОТРИЦАТЕЛЬНЫЙ остаток плана: сначала туда, где ещё свободно.
+  //   Направление с перерасходом веса не получает (остаток отрицательный → 0), иначе разноска
+  //   углубляла бы уже случившийся перерасход.
+  let weights=dirs.map(x=>mode==='plan'?Math.max(0,x.plan):Math.max(0,x.rem));
+  // ⚠ Свободного остатка нет НИГДЕ (всё уже начислено или везде перерасход) - откатываемся на
+  //   ПЛАНОВУЮ долю, а не делим поровну. Равные доли выдумывают пропорцию, которой в плане нет:
+  //   на стенде Иванова с планом 30 000/20 000 и нулевыми остатками получала 25 000/25 000.
+  let fellBack=false;
+  if(mode!=='plan'&&!weights.some(w=>w>0)){weights=dirs.map(x=>Math.max(0,x.plan));fellBack=weights.some(w=>w>0);}
+  const parts=_pfAllocSplit(total,weights);
+  let sum=0;parts.forEach(v=>{sum+=v;});
+  dirs.forEach((x,k)=>{
+    const after=x.rem-parts[k];
+    const c1=document.getElementById('pfAllocPart'+i+'_'+k),c2=document.getElementById('pfAllocAfter'+i+'_'+k);
+    if(c1)c1.textContent=fmt(parts[k]);
+    if(c2){c2.textContent=fmt(after);c2.style.color=after<-0.005?'var(--outcome)':'var(--text)';c2.style.fontWeight='600';}
+  });
+  e.parts=dirs.map((x,k)=>({dir:x.dir,sum:parts[k]}));
+  const neg=dirs.filter((x,k)=>(x.rem-parts[k])<-0.005);
+  if(box)box.innerHTML='Разложено: <b>'+fmt(sum)+'</b>'+(Math.abs(sum-total)<0.005?' <span style="color:var(--income)">= введённой сумме</span>':' <span style="color:var(--outcome)">≠ '+fmt(total)+'</span>')
+    +(fellBack?' · <span style="color:var(--text3)">свободного остатка нет - разложено по плановой доле</span>':'')
+    +(neg.length?' · <span style="color:var(--outcome)">выходит за план: '+neg.map(x=>_htmlEsc(x.dir)).join(', ')+'</span>':'');
+};
+// Копирование разбивки: направление и сумма через табуляцию - дашборд в Sheets не пишет, разноску
+// вводят руками, а таб-разделённые строки вставляются в таблицу как есть.
+window.pfAllocCopy=function(i){
+  const D=window._pfAllocData,e=D&&D.list[i];
+  if(!e||!e.parts||!e.parts.length){alert('Сначала введите сумму к начислению');return;}
+  const txt=e.parts.map(p=>p.dir+'\t'+p.sum.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})).join('\n');
+  const done=()=>{const b=document.getElementById('pfAllocCopyBtn'+i);if(b){const t=b.textContent;b.textContent='✓ скопировано';setTimeout(()=>{b.textContent=t;},1500);}};
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done,()=>_pfAllocCopyFallback(txt,done));
+    else _pfAllocCopyFallback(txt,done);
+  }catch(err){_pfAllocCopyFallback(txt,done);}
+};
+// ⚠ Запасной путь: clipboard API требует защищённого контекста, а дашборд открывают и по http
+//   с локального сервера - без него кнопка молча ничего не делала бы.
+function _pfAllocCopyFallback(txt,done){
+  const ta=document.createElement('textarea');ta.value=txt;ta.style.cssText='position:fixed;left:-9999px;top:0';
+  document.body.appendChild(ta);ta.select();
+  try{document.execCommand('copy');done();}catch(e){alert('Скопируйте вручную:\n\n'+txt);}
+  ta.remove();
+}
+// Разворот строки - чистый DOM-тоггл, без ре-рендера: внутри строки лежит поле ввода суммы,
+// и перерисовка списка стирала бы набранное.
 window.pfAllocToggle=function(i){
   const b=document.getElementById('pfAllocDet'+i); if(!b)return;
   const open=b.style.display==='none';
@@ -8279,12 +8367,27 @@ window.pfAllocOpen=function(){
   // ⚠ Колонки «доля» здесь НЕТ сознательно: она дублирует план и на глаз считается из него же.
   const rowHtml=(e,i)=>{
     const mixTip=e.changed?_tipAttr([[e.prevLabel,e.prevMix],[e.curLabel,e.curMix]],e.why?['почему',e.why]:null,'Разбивка изменилась'):'';
-    const det=e.dirs.slice().sort((a,b)=>b.plan-a.plan).map(x=>`<tr style="border-top:1px solid var(--border)">
+    const det=e.dirs.slice().sort((a,b)=>b.plan-a.plan).map((x,k)=>`<tr style="border-top:1px solid var(--border)">
         <td style="padding:5px 9px;font-size:11px">${esc(x.dir)}${x.noOps?' <span title="По этому направлению в данных ещё нет ни одной операции. В сводной БДР такой план не показывается вовсе - направления она берёт из операций." style="font-size:9px;color:var(--orange);cursor:help">нет операций</span>':''}</td>
         <td style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono)">${money(x.plan)}</td>
         <td style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono);color:var(--text2)">${money(x.fact)}</td>
         <td style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono);font-weight:600;color:${x.rem<-0.005?'var(--outcome)':'var(--text)'}">${money(x.rem)}</td>
+        <td id="pfAllocPart${i}_${k}" style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono);font-weight:700"><span style="color:var(--text3)">-</span></td>
+        <td id="pfAllocAfter${i}_${k}" style="padding:5px 9px;font-size:11px;text-align:right;font-family:var(--mono)"><span style="color:var(--text3)">-</span></td>
       </tr>`).join('');
+    // Панель разбивки: сумма + способ. Способ по умолчанию «по остатку» - он прямо бьёт в перерасход,
+    // раскладывая сначала туда, где по плану ещё свободно.
+    const calc=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid var(--border);background:var(--surface)">
+        <label style="font-size:11px;color:var(--text2);font-weight:600">Сумма к начислению</label>
+        <input id="pfAllocSum${i}" type="text" inputmode="decimal" oninput="pfAllocCalc(${i})" placeholder="0,00"
+          style="width:130px;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--mono);text-align:right">
+        <span style="display:inline-flex;gap:10px;align-items:center">
+          <label style="font-size:11px;color:var(--text2);cursor:pointer"><input type="radio" name="pfAllocMode${i}" value="rem" checked onchange="pfAllocCalc(${i})" style="cursor:pointer;margin-right:4px">по остатку плана</label>
+          <label style="font-size:11px;color:var(--text2);cursor:pointer"><input type="radio" name="pfAllocMode${i}" value="plan" onchange="pfAllocCalc(${i})" style="cursor:pointer;margin-right:4px">по плановой доле</label>
+        </span>
+        <button id="pfAllocCopyBtn${i}" onclick="pfAllocCopy(${i})" title="Направление и сумма построчно, через табуляцию - вставляется в таблицу как есть" style="font-size:11px;font-weight:600;padding:5px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⧉ Скопировать разбивку</button>
+        <span id="pfAllocCalcBox${i}" style="font-size:11px;color:var(--text2)"></span>
+      </div>`;
     return `<div style="border:1px solid var(--border);border-radius:9px;margin-bottom:7px;overflow:hidden">
       <div onclick="pfAllocToggle(${i})" style="display:flex;align-items:center;gap:9px;padding:9px 12px;cursor:pointer;background:${e.changed?'color-mix(in srgb,var(--orange) 7%,transparent)':'var(--surface)'}">
         <span id="pfAllocTri${i}" style="color:var(--text3);font-size:11px;width:9px">▸</span>
@@ -8295,8 +8398,9 @@ window.pfAllocOpen=function(){
         <span style="font-size:12px;font-weight:700;font-family:var(--mono)">${money(e.plan)}</span>
       </div>
       <div id="pfAllocDet${i}" style="display:none;border-top:1px solid var(--border);background:var(--surface2)">
+        ${calc}
         <table style="width:100%;border-collapse:collapse">
-          <thead><tr><th style="${th};text-align:left">Направление</th><th style="${th}">План месяца</th><th style="${th}">Начислено</th><th style="${th}">Остаток</th></tr></thead>
+          <thead><tr><th style="${th};text-align:left">Направление</th><th style="${th}">План месяца</th><th style="${th}">Начислено</th><th style="${th}">Остаток</th><th style="${th}" title="Сколько из введённой суммы приходится на это направление">Разнести</th><th style="${th}" title="Остаток после разноски">Станет</th></tr></thead>
           <tbody>${det}</tbody>
         </table>
       </div>
