@@ -7205,16 +7205,52 @@ window.regDateRange=function(which,part,val){_tabFilters.registry[which]=_tabFil
 window.regNumRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
 window.regResetAll=function(){const _srt=(_tabFilters.registry||{}).sort||null;_tabFilters.registry={sort:_srt,q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regDD={};window._regLimit=500;renderRegistry(_tabFilters.registry);}; // _regDD - поиски внутри списков: «сбросить всё» обязано снимать и их
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
-// Экспорт ВСЕГО найденного набора в CSV (не показанных 500 - _regRows держит полный результат отбора)
-window.registryExportAI=function(){
-  // ⚠ Отбор идёт с задержкой 300 мс. Нажатие сразу после ввода выгружало бы ПРЕДЫДУЩИЙ набор,
-  // молча и правдоподобно - поэтому висящий пересчёт доводим до конца синхронно.
+// ══ ОПИСАНИЕ НАЙДЕННОГО НАБОРА - ОДИН ИСТОЧНИК НА ВСЕ ФОРМЫ ВЫВОДА ═══════════
+// Возвращает {rows, period, sumIn, sumOut, filterLine, ds} - всё, что описывает НАБОР,
+// и ничего, что относится к ФОРМАТУ (CSV-разделители, экранирование, вёрстка листа).
+// ⚠ Заведено ради второго потребителя (печатная форма): копия этих сорока строк разошлась бы
+//   с оригиналом при первой же правке фильтров, и CSV с бумагой стали бы описывать один и тот же
+//   набор по-разному - расхождение, которое никто не заметит, пока не сверят два документа.
+// ⚠ Проверки пустого набора здесь НЕТ сознательно: она остаётся у вызывающего, у каждого свой
+//   текст сообщения («нет строк для экспорта» против «нечего печатать»).
+// ⚠ Отбор идёт с задержкой 300 мс. Вызов сразу после ввода описывал бы ПРЕДЫДУЩИЙ набор,
+//   молча и правдоподобно - поэтому висящий пересчёт доводим до конца синхронно.
+function _regSetMeta(){
   if(window._regSearchT){clearTimeout(window._regSearchT);window._regSearchT=null;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');}
   const rows=window._regRows||[];
-  if(!rows.length){alert('Нет строк для экспорта - уточните поиск');return;}
   const ds=v=>{const d=parseDate(v);return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear():'';};
   const MONS=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
   const monLabel=d=>MONS[d.getMonth()]+'.'+d.getFullYear();
+  // период ОПиУ - мин/макс месяц по фактически попавшим в набор строкам
+  let minD=null,maxD=null;
+  rows.forEach(r=>{const d=parseDate(r[COL.DATE_OPIU]);if(!d)return;if(!minD||d<minD)minD=d;if(!maxD||d>maxD)maxD=d;});
+  const period=minD?(monLabel(minD)+' - '+monLabel(maxD)):'нет';
+  // контрольные суммы (списания всегда отрицательные, поступления ≥ 0)
+  let sumOut=0,sumIn=0;
+  rows.forEach(r=>{const o=parseNum(r[COL.OUTCOME])||0,ic=parseNum(r[COL.INCOME])||0;if(o)sumOut+=-Math.abs(o);if(ic)sumIn+=Math.abs(ic);});
+  // фильтр - человекочитаемо из фактического запроса поиска
+  const AL={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
+  const CN=REG_COL_NAMES; // одна карта имён на чипы и на описание фильтра
+  const EMP=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
+  const q=_regNormQuery((_tabFilters.registry&&_tabFilters.registry.q||'').trim()); // описываем то, что реально искали, а не то, что набрали
+  const parts=(q?q.split(/\s+/):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci).toLowerCase();if(AL[k]!=null){const v=t.slice(ci+1);return EMP.has(v.toLowerCase())?(CN[AL[k]]+' пусто'):(CN[AL[k]]+' содержит "'+v+'"');}}return 'любое поле содержит "'+t+'"';});
+  // мультивыбор-фильтры полей
+  const selF=(_tabFilters.registry&&_tabFilters.registry.sel)||{};
+  Object.keys(selF).forEach(c=>{const arr=selF[c]||[];if(!arr.length)return;const vals=arr.map(v=>v===''?'(пусто)':v).join(', ');parts.push((CN[+c]||('поле '+c))+' ∈ ['+vals+']');});
+  // дат-фильтры
+  const MONS_F=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+  const dfPart=(w,lbl)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const p=[];if(o.years&&o.years.length)p.push('годы '+o.years.join(','));if(o.months&&o.months.length)p.push('месяцы '+o.months.map(m=>MONS_F[m-1]).join(','));if(o.from)p.push('с '+o.from);if(o.to)p.push('по '+o.to);if(p.length)parts.push(lbl+': '+p.join(', '));};
+  dfPart('dds','Дата ДДС');dfPart('opiu','Дата ОПиУ');
+  const rg=(w,lbl,abs)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const fr=String(o.from||'').trim(),t=String(o.to||'').trim();if(!fr&&!t)return;parts.push(lbl+(abs?' (по модулю)':'')+': '+(fr?'от '+fr:'')+(fr&&t?' ':'')+(t?'до '+t:'')+' ₽');};
+  rg('inc','Поступление');rg('out','Списание',true);
+  const filterLine=parts.length?parts.join(' · '):'нет';
+  return{rows,period,sumIn,sumOut,filterLine,ds};
+}
+// Экспорт ВСЕГО найденного набора в CSV (не показанных 500 - _regRows держит полный результат отбора)
+window.registryExportAI=function(){
+  const meta=_regSetMeta();
+  const rows=meta.rows,ds=meta.ds,period=meta.period,filterLine=meta.filterLine,sumIn=meta.sumIn,sumOut=meta.sumOut;
+  if(!rows.length){alert('Нет строк для экспорта - уточните поиск');return;}
   const COLS=[
     {i:COL.DATE_DDS,name:'Дата_ДДС',desc:'дата движения денег (факт оплаты), дд.мм.гггг',date:1},
     {i:COL.DATE_OPIU,name:'Дата_ОПиУ',desc:'дата признания в ОПиУ (начисление), дд.мм.гггг',date:1},
@@ -7237,30 +7273,8 @@ window.registryExportAI=function(){
     // защита от формульных инъекций: текст, начинающийся с = + @ (или - не перед числом), Excel исполнил бы как формулу (=HYPERLINK и т.п.) - префиксуем апострофом
     if(/^[=+@\t\r]/.test(v)||(v.charAt(0)==='-'&&!/^-?\d+([.,]\d+)?$/.test(v)))v="'"+v;
     return /[";\n\r#]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
-  // период ОПиУ - мин/макс месяц по фактически выгружаемым строкам
-  let minD=null,maxD=null;
-  rows.forEach(r=>{const d=parseDate(r[COL.DATE_OPIU]);if(!d)return;if(!minD||d<minD)minD=d;if(!maxD||d>maxD)maxD=d;});
-  const period=minD?(monLabel(minD)+' - '+monLabel(maxD)):'нет';
-  // контрольные суммы (списания всегда отрицательные, поступления ≥ 0), округление до рубля, пробел-разряды
-  let sumOut=0,sumIn=0;
-  rows.forEach(r=>{const o=parseNum(r[COL.OUTCOME])||0,ic=parseNum(r[COL.INCOME])||0;if(o)sumOut+=-Math.abs(o);if(ic)sumIn+=Math.abs(ic);});
+  // период, контрольные суммы и строка фильтра приходят из _regSetMeta - описание набора одно на CSV и на печать
   const rub=n=>Math.round(n).toLocaleString('ru-RU',{maximumFractionDigits:0}).replace(/ /g,' ');
-  // фильтр - человекочитаемо из фактического запроса поиска
-  const AL={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
-  const CN=REG_COL_NAMES; // одна карта имён на чипы и на описание фильтра в CSV
-  const EMP=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
-  const q=_regNormQuery((_tabFilters.registry&&_tabFilters.registry.q||'').trim()); // описываем то, что реально искали, а не то, что набрали
-  const parts=(q?q.split(/\s+/):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci).toLowerCase();if(AL[k]!=null){const v=t.slice(ci+1);return EMP.has(v.toLowerCase())?(CN[AL[k]]+' пусто'):(CN[AL[k]]+' содержит "'+v+'"');}}return 'любое поле содержит "'+t+'"';});
-  // мультивыбор-фильтры полей
-  const selF=(_tabFilters.registry&&_tabFilters.registry.sel)||{};
-  Object.keys(selF).forEach(c=>{const arr=selF[c]||[];if(!arr.length)return;const vals=arr.map(v=>v===''?'(пусто)':v).join(', ');parts.push((CN[+c]||('поле '+c))+' ∈ ['+vals+']');});
-  // дат-фильтры
-  const MONS_F=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-  const dfPart=(w,lbl)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const p=[];if(o.years&&o.years.length)p.push('годы '+o.years.join(','));if(o.months&&o.months.length)p.push('месяцы '+o.months.map(m=>MONS_F[m-1]).join(','));if(o.from)p.push('с '+o.from);if(o.to)p.push('по '+o.to);if(p.length)parts.push(lbl+': '+p.join(', '));};
-  dfPart('dds','Дата ДДС');dfPart('opiu','Дата ОПиУ');
-  const rg=(w,lbl,abs)=>{const o=(_tabFilters.registry&&_tabFilters.registry[w])||{};const fr=String(o.from||'').trim(),t=String(o.to||'').trim();if(!fr&&!t)return;parts.push(lbl+(abs?' (по модулю)':'')+': '+(fr?'от '+fr:'')+(fr&&t?' ':'')+(t?'до '+t:'')+' ₽');};
-  rg('inc','Поступление');rg('out','Списание',true);
-  const filterLine=parts.length?parts.join(' · '):'нет';
   // ⚠ Первой строкой файла идут ЗАГОЛОВКИ КОЛОНОК, а описание выгрузки - в самый КОНЕЦ.
   // Excel определяет структуру по первой строке: с #-преамбулой сверху он раскладывал весь файл
   // в одну колонку и требовал ручного импорта. Внизу описание не мешает и не теряется - там его
@@ -7284,7 +7298,7 @@ window.registryExportAI=function(){
   // Имя говорит, что внутри: дата выгрузки и сколько строк. Без фильтров - «все», иначе «отфильтровано»
   const now=new Date(),p2=n=>String(n).padStart(2,'0');
   const stamp=now.getFullYear()+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate());
-  const fn='Реестр_'+stamp+'_'+(parts.length?'отфильтровано':'все')+'-'+rows.length+'.csv';
+  const fn='Реестр_'+stamp+'_'+(filterLine!=='нет'?'отфильтровано':'все')+'-'+rows.length+'.csv'; // «нет» - ровно то, что _regSetMeta ставит при пустом наборе фильтров
   const blob=new Blob(['﻿'+out],{type:'text/csv;charset=utf-8'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
