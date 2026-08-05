@@ -12792,8 +12792,15 @@ function cfoScreenRender(){
   //   сложения направлений. Правило выбора базы прежнее: замороженный месяц - утверждённое,
   //   иначе текущий план.
   const MS=ytd?Array.from({length:M},(_,i)=>i+1):[M];
+  // ⚠ «Плана НЕТ» (null) и «план равен НУЛЮ» - разные вещи, и путать их нельзя. Пустая ячейка
+  //   в редакторе не сохраняется вовсе, явный 0 сохраняется (_planStage), то есть «запланировали
+  //   ноль расходов» - это НАСТОЯЩИЙ план, и остаток по нему считается обычным способом, включая
+  //   отрицательный. Поэтому копим через null (правило проекта sumOrNull), а не через `||0`:
+  //   иначе отсутствующий план схлопывался бы в ноль и давал «остаток −33 000» там, где рядом
+  //   написано «плана нет».
   const planDir=(d,code)=>{const bl=rev?D.blPlanIncMD:D.blPlanMD,fc=rev?D.fcPlanIncMD:D.fcPlanMD;
-    let s=0;MS.forEach(m=>{const b=D.frozenSet.has(m)?bl(d,code,m):null;s+=(b!=null?b:(fc(d,code,m)||0));});return s;};
+    let s=null;MS.forEach(m=>{const b=D.frozenSet.has(m)?bl(d,code,m):null;const v=(b!=null)?b:fc(d,code,m);
+      if(v!=null)s=(s||0)+v;});return s;};
   const factDir=(d,code)=>{const FI=rev?D.factIncIdx:D.factIdx,a=FI[d+'||'+code];if(!a)return 0;
     let s=0;MS.forEach(m=>{s+=a[m]||0;});return s;};
   const opsDir=(d,code)=>{let o=[];MS.forEach(m=>{o=o.concat(D.opsOf(d,code,m)||[]);});
@@ -12803,33 +12810,36 @@ function cfoScreenRender(){
   ppl.forEach((P,pi)=>{const S=P[sel];
     S.codes.forEach(code=>{S.pairSet[code].forEach(d=>{
       const p=planDir(d,code),fa=factDir(d,code);
-      if(Math.abs(p)<0.005&&Math.abs(fa)<0.005)return; // пара «направление × подстатья» без плана и факта - строки нет
-      const DD=(dirs[d]=dirs[d]||{dir:d,people:{},p:0,f:0});
-      DD.p+=p;DD.f+=fa;
+      if(p==null&&Math.abs(fa)<0.005)return; // пара «направление × подстатья» без плана и факта - строки нет
+      const DD=(dirs[d]=dirs[d]||{dir:d,people:{},p:null,f:0});
+      if(p!=null)DD.p=(DD.p||0)+p; DD.f+=fa; // ⚠ сумма планов тоже через null: направление без единого плана остаётся «плана нет»
       const PP=(DD.people[pi]=DD.people[pi]||{fio:P.fio,own:P.own,pi:pi,subs:[]});
       PP.subs.push({n:code,p:p,f:fa,ops:rev?[]:opsDir(d,code)});
     });});});
-  const list=Object.keys(dirs).map(k=>dirs[k]).sort((a,b)=>Math.abs(b.p)-Math.abs(a.p)||a.dir.localeCompare(b.dir,'ru'));
+  const list=Object.keys(dirs).map(k=>dirs[k]).sort((a,b)=>Math.abs(b.p||0)-Math.abs(a.p||0)||a.dir.localeCompare(b.dir,'ru'));
   // ⚠ Цвет = состояние исполнения. У РАСХОДОВ плохо перерасходовать (факт>план - красный, остаток
   //   ≤20% - оранжевый), у ДОХОДОВ - недобрать (факт≥плана зелёный, иначе оранжевый). Правило то же,
   //   что в БДР; второй копии не заводим.
-  const col=(fa,p)=>rev?(fa>=p?'var(--income)':'var(--orange)')
-                      :(fa>p?'var(--outcome)':(p&&(p-fa)/p<=0.2?'var(--orange)':'var(--income)'));
-  const w=(fa,p)=>Math.min(100,Math.round(Math.abs(p)>0.005?fa/p*100:(fa?100:0)));
-  const cell=(l,v,style,big)=>'<div class="cfo-cell'+(big?' big':'')+'"><div class="l">'+l+'</div><div class="v"'+(style?' style="'+style+'"':'')+'>'+f2(v)+'</div></div>';
-  let TP=0,TF=0,h='';
+  const hasP=p=>p!=null&&Math.abs(p)>0.005; // есть ЧЕМ мерить исполнение (у нулевого плана процента нет по арифметике)
+  const col=(fa,p)=>p==null?'var(--text3)':(rev?(fa>=p?'var(--income)':'var(--orange)')
+                      :(fa>p?'var(--outcome)':(hasP(p)&&(p-fa)/p<=0.2?'var(--orange)':'var(--income)')));
+  const w=(fa,p)=>Math.min(100,Math.round(hasP(p)?fa/p*100:(fa?100:0)));
+  // ⚠ null - это «нет величины», и в ячейке стоит ПРОЧЕРК, а не 0,00: минус-факт в колонке «Осталось»
+  //   читается как перерасход, хотя перерасходовать нечего - плана нет.
+  const cell=(l,v,style,big)=>'<div class="cfo-cell'+(big?' big':'')+'"><div class="l">'+l+'</div><div class="v"'+(style?' style="'+style+'"':'')+'>'+(v==null?'-':f2(v))+'</div></div>';
+  let TP=null,TF=0,h='';
   list.forEach((DD,di)=>{
-    TP+=DD.p;TF+=DD.f;
+    if(DD.p!=null)TP=(TP||0)+DD.p; TF+=DD.f;
     const k='d'+di,ex=_cfoScr.open.has(k),c=col(DD.f,DD.p);
     h+='<div class="cfo-dir"><div class="cfo-dirh cfo-grid" onclick="cfoScrTog(\''+k+'\')">'
       +'<div class="cfo-dirn"><span class="ar">'+(ex?'▾':'▸')+'</span>'+esc(DD.dir)+'</div>'
       // ⚠ При НУЛЕВОМ плане подпись «получено 0% от плана» врёт - процент не ноль, плана нет вовсе.
       //   Говорим это прямо, а шкалу оставляем пустой: делить не на что.
-      +'<div><div class="cfo-bar">'+(Math.abs(DD.p)>0.005?'<i style="width:'+w(DD.f,DD.p)+'%;background:'+c+'"></i>':'')+'</div>'
-      +'<div class="cfo-barlbl">'+(Math.abs(DD.p)>0.005?((rev?'получено ':'потрачено ')+pc(DD.f/DD.p)+' от плана'):'плана нет · '+(rev?'получено ':'потрачено ')+f2(DD.f))+'</div></div>'
+      +'<div><div class="cfo-bar">'+(hasP(DD.p)?'<i style="width:'+w(DD.f,DD.p)+'%;background:'+c+'"></i>':'')+'</div>'
+      +'<div class="cfo-barlbl">'+(hasP(DD.p)?((rev?'получено ':'потрачено ')+pc(DD.f/DD.p)+' от плана'):(DD.p==null?'плана нет · ':'план 0,00 · ')+(rev?'получено ':'потрачено ')+f2(DD.f))+'</div></div>'
       +cell('План',DD.p)
       +cell(rev?'Получено':'Потрачено',DD.f,'color:'+(rev?'var(--income)':'var(--outcome)'))
-      +cell(rev?'Недобор':'Осталось',DD.p-DD.f,'color:'+((DD.p-DD.f)<0?'var(--outcome)':'var(--orange)'),true)
+      +cell(rev?'Недобор':'Осталось',DD.p==null?null:DD.p-DD.f,'color:'+((DD.p!=null&&(DD.p-DD.f)<0)?'var(--outcome)':'var(--orange)'),true)
       +'</div>';
     if(ex){
       let rows='';
@@ -12837,13 +12847,13 @@ function cfoScreenRender(){
         // ⚠ В режиме блока подстатьи разделены строкой с ФИО: агрегат прячет того, кто уже упёрся
         //   в свой план, а по этой строке видно, чьи именно подстатьи идут ниже.
         if(blk)rows+='<tr class="per"><td colspan="5">'+esc(per.fio)+(per.own?' - свои':'')+'</td></tr>';
-        per.subs.slice().sort((a,b)=>Math.abs(b.p)-Math.abs(a.p)||a.n.localeCompare(b.n,'ru')).forEach((s,si)=>{
+        per.subs.slice().sort((a,b)=>Math.abs(b.p||0)-Math.abs(a.p||0)||a.n.localeCompare(b.n,'ru')).forEach((s,si)=>{
           const sk=k+'s'+per.pi+'_'+si,sx=_cfoScr.open.has(sk),sc=col(s.f,s.p);
           rows+='<tr class="'+(s.ops.length?'cl':'')+'"'+(s.ops.length?' onclick="cfoScrTog(\''+sk+'\')"':'')+'>'
             +'<td>'+(s.ops.length?(sx?'▾ ':'▸ '):'&nbsp;&nbsp;&nbsp;')+esc(s.n)+'</td>'
-            +'<td>'+f2(s.p)+'</td><td style="color:'+(rev?'var(--income)':'var(--outcome)')+'">'+(s.f?f2(s.f):'-')+'</td>'
-            +'<td style="color:'+((s.p-s.f)<0?'var(--outcome)':'var(--orange)')+';font-weight:600">'+f2(s.p-s.f)+'</td>'
-            +'<td>'+(Math.abs(s.p)>0.005?('<span class="cfo-mini"><i style="width:'+w(s.f,s.p)+'%;background:'+sc+'"></i></span> '+pc(s.f/s.p)):'<span style="color:var(--text3)">плана нет</span>')+'</td></tr>';
+            +'<td>'+(s.p==null?'-':f2(s.p))+'</td><td style="color:'+(rev?'var(--income)':'var(--outcome)')+'">'+(s.f?f2(s.f):'-')+'</td>'
+            +'<td style="color:'+((s.p!=null&&(s.p-s.f)<0)?'var(--outcome)':'var(--orange)')+';font-weight:600">'+(s.p==null?'-':f2(s.p-s.f))+'</td>'
+            +'<td>'+(hasP(s.p)?('<span class="cfo-mini"><i style="width:'+w(s.f,s.p)+'%;background:'+sc+'"></i></span> '+pc(s.f/s.p)):'<span style="color:var(--text3)">'+(s.p==null?'плана нет':'план 0,00')+'</span>')+'</td></tr>';
           if(sx)s.ops.forEach(r=>{rows+='<tr class="op"><td>'+esc(_cfoDate(r))+' · '+esc(r[COL.SECOND_SIDE]||'')+'</td>'
             +'<td colspan="2" style="text-align:left;font-family:var(--sans)">'+esc(r[COL.PURPOSE]||'')+'</td>'
             +'<td class="neg">'+f2(Math.abs(parseNum(r[COL.OUTCOME])||0))+'</td><td></td></tr>';});
@@ -12853,8 +12863,8 @@ function cfoScreenRender(){
     h+='</div>';});
   if(!list.length)h='<div class="cfo-dir"><div style="padding:18px 16px;color:var(--text3);font-size:12px">Нет '+(rev?'доходных':'расходных')+' подстатей, назначенных этому ответственному, за выбранный период.</div></div>';
   h+='<div class="cfo-tot cfo-grid"><div class="cfo-dirn">Всего</div>'
-    +'<div><div class="cfo-bar"><i style="width:'+w(TF,TP)+'%;background:#7f93b8"></i></div></div>'
-    +cell('План',TP)+cell(rev?'Получено':'Потрачено',TF)+cell(rev?'Недобор':'Осталось',TP-TF,'',true)+'</div>';
+    +'<div><div class="cfo-bar">'+(hasP(TP)?'<i style="width:'+w(TF,TP)+'%;background:#7f93b8"></i>':'')+'</div></div>'
+    +cell('План',TP)+cell(rev?'Получено':'Потрачено',TF)+cell(rev?'Недобор':'Осталось',TP==null?null:TP-TF,'',true)+'</div>';
   const who=blk?('Блок '+D.people[0].fio+' · '+D.people.length+' '+_plurRu(D.people.length,'человек','человека','человек')):D.people[0].fio;
   const MONF=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
   const _cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
