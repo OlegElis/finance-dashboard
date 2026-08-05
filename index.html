@@ -12735,21 +12735,54 @@ window.cfoScreenOpen=function(){
   const allMonths=!pEl||pEl.value==='all';
   const pf=_tabFilters.planfact||{};
   const year=+pf.year||new Date().getFullYear();
-  // ⚠ В режиме «все месяцы» плитки и таблицы всё равно показывают ОДИН месяц - экран про «что
-  //   сейчас», а не про год. Берём текущий календарный и пишем это в подзаголовке.
-  const month=allMonths?(new Date().getMonth()+1):(+(mEl&&mEl.value)||new Date().getMonth()+1);
-  const data=_cfoStmtData({fio,isNoOwn,withSubs:true,withDetail:!detEl||detEl.checked,year,month,allMonths});
+  // ⚠ Экран всегда показывает ОДИН месяц - он про «что сейчас», а не про год.
+  // ⚠ В режиме «все месяцы» месяц НЕ берётся календарным: на данных, кончающихся февралём, в августе
+  //   экран открывался пустым - ноль в плане, ноль в факте, ни одной карточки. Селект периода спасал,
+  //   но ПЕРВЫМ человек видел пустоту и решал, что сломалось. Берём последний месяц года, где есть
+  //   факт или план у ЭТОГО ответственного; нет ничего за год - остаёмся на текущем и говорим об этом.
+  const withDetail=!detEl||detEl.checked;
+  const curM=new Date().getMonth()+1;
+  let month=allMonths?curM:(+(mEl&&mEl.value)||curM);
+  let data=_cfoStmtData({fio,isNoOwn,withSubs:true,withDetail,year,month,allMonths});
+  let emptyYear=false;
+  if(allMonths){
+    const last=_cfoLastMonthWithData(data);
+    emptyYear=(last==null);
+    if(last!=null&&last!==month){month=last;
+      // пересобираем: YTD-величины и выбор базы считаются от месяца, подменить его в готовом наборе нельзя
+      data=_cfoStmtData({fio,isNoOwn,withSubs:true,withDetail,year,month,allMonths});}
+  }
   const ov=document.getElementById('cfoStmtOverlay'); if(ov)ov.remove();
   // kind - активная вкладка («exp» расходы / «inc» доходы), mode - месяц или нарастающим итогом.
   // params хранятся, чтобы пересчитать данные при смене месяца в селекте периода.
-  _cfoScr={data,scope:'own',kind:'exp',mode:'month',open:new Set(),month,year,allMonths,
-    params:{fio,isNoOwn,withDetail:!detEl||detEl.checked,year,allMonths}};
+  _cfoScr={data,scope:'own',kind:'exp',mode:'month',open:new Set(),month,year,allMonths,emptyYear,
+    params:{fio,isNoOwn,withDetail,year,allMonths}};
   const el=document.createElement('div'); el.id='cfoScreen'; el.className='cfo-scr';
   document.body.appendChild(el);
   document.body.classList.add('cfo-print'); // печать прячет дашборд по классу, а не по body:has()
   document.addEventListener('keydown',_cfoScrEsc);
   cfoScreenRender();
 };
+// Последний месяц года, где у этого ответственного есть ФАКТ или ПЛАН (по расходам или доходам).
+// Идём с декабря: показывать надо самый свежий месяц с данными, а не первый попавшийся.
+// ⚠ Смотрим ОБА вида (exp и inc) и обе базы плана: месяц, где есть только доходный план, - тоже месяц
+//   с данными, и открываться на пустом декабре из-за того, что расходов там нет, неправильно.
+// Возвращает null, если за год нет ничего вовсе.
+function _cfoLastMonthWithData(D){
+  for(let m=12;m>=1;m--){
+    for(const P of D.people){
+      for(const sel of ['exp','inc']){
+        const S=P[sel];
+        for(const code of S.codes){
+          if(Math.abs(S.factMonth(code,m)||0)>0.005)return m;
+          if(S.fcMonth(code,m)!=null)return m;
+          if(D.frozenSet.has(m)&&S.blMonth(code,m)!=null)return m;
+        }
+      }
+    }
+  }
+  return null;
+}
 function _cfoScrEsc(e){if(e.key==='Escape')cfoScreenClose();}
 window.cfoScreenClose=function(){const el=document.getElementById('cfoScreen');if(el)el.remove();
   document.body.classList.remove('cfo-print');
@@ -12882,7 +12915,9 @@ function cfoScreenRender(){
   +'<button class="cfo-act cl" onclick="cfoScreenClose()">✕ Закрыть</button></span></div>'
   +'<div class="cfo-body">'
   +'<div class="cfo-prthead"><h1>Выписка ЦФО - '+esc(who)+' · '+esc(rev?'доходы':'расходы')+'</h1>'
-  +'<div class="s">ГК ОПОРА · управленческий учёт · '+esc(perLbl)+' · '+esc(D.dirLabel||'все направления')+' · сформировано '+new Date().toLocaleString('ru-RU')+'</div></div>'
+  +'<div class="s">ГК ОПОРА · управленческий учёт · '+esc(perLbl)+' · '+esc(D.dirLabel||'все направления')+' · сформировано '+new Date().toLocaleString('ru-RU')
+  // ⚠ Пустой экран обязан объяснить себя словами: иначе его читают как поломку, а не как «данных нет».
+  +(_cfoScr.emptyYear?' · <b>за '+D.year+' год нет ни факта, ни плана по этому ответственному</b>':'')+'</div></div>'
   +'<div class="cfo-tabs"><button class="'+(rev?'':'on')+'" onclick="cfoScrKind(\'exp\')">Расходы</button>'
   +'<button class="'+(rev?'on':'')+'" onclick="cfoScrKind(\'inc\')">Доходы</button>'
   +'<select onchange="cfoScrPeriod(this.value)">'+opts.join('')+'</select></div>'
