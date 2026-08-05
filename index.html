@@ -12643,24 +12643,27 @@ window.cfoStmtPeriodChange=function(){
   if(!pEl||!w)return;
   w.style.display=(pEl.value==='one')?'block':'none';
 };
-window.cfoStatementGen=function(){
-  const owEl=document.getElementById('cfo-stmt-owner'),mEl=document.getElementById('cfo-stmt-month'),pEl=document.getElementById('cfo-stmt-period');
-  if(!owEl)return;
-  const allMonths=!pEl||pEl.value==='all'; // «Все месяцы» - матрица × 12; иначе - конкретный месяц (как раньше)
-  const fio=owEl.value,M=allMonths?12:(+(mEl&&mEl.value)||new Date().getMonth()+1),isNoOwn=fio==='__none__',fioLabel=isNoOwn?'(не назначен)':fio;
+// ══ РАСЧЁТ ВЫПИСКИ ЦФО - ОТДЕЛЬНО ОТ HTML ═══════════════════════════════════
+// Раньше cfoStatementGen считала и рисовала одновременно, и всё нужное экрану было заперто
+// в её замыкании. Теперь расчёт живёт здесь и обслуживает ДВУХ потребителей: печатную выписку
+// (cfoStatementGen собирает из этих данных HTML окна печати) и экран выписки (cfoScreen*).
+// ⚠ Логика перенесена КАК ЕСТЬ, без улучшений: baseline против прогноза, YTD только по
+//   замороженным месяцам ≤ M, %-планы от базы выручки, жёсткий фильтр по владельцу (ownMatchP).
+//   Печатный HTML обязан совпасть с прежним ПОБАЙТНО - это и есть проверка переноса.
+// params: {fio, isNoOwn, withSubs, withDetail, year, month, allMonths, dirsScope}
+function _cfoStmtData(P){
+  P=P||{};
+  const year=+P.year||new Date().getFullYear();
+  const allMonths=!!P.allMonths;
+  const M=+P.month||(new Date().getMonth()+1);
+  const fio=P.fio,isNoOwn=!!P.isNoOwn,fioLabel=isNoOwn?'(не назначен)':fio;
+  const wantDetail=!!P.withDetail;
   const pf=_tabFilters.planfact||{};
-  const year=+pf.year||new Date().getFullYear();
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const _selD=Array.isArray(pf.dirs)?pf.dirs.filter(d=>allDirs.includes(d)):((pf.dir&&pf.dir!=='__all__'&&allDirs.includes(pf.dir))?[pf.dir]:[]); // мультивыбор; fallback на старый pf.dir
   const isAll=_selD.length===0||_selD.length>=allDirs.length;
   const dirsScope=_selD.length?_selD:allDirs;
   const dirLabel=isAll?'Все направления':(_selD.length<=3?_selD.join(', '):_selD.length+' направлений');
-  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const f=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
-  // компактный форматтер ТОЛЬКО для матрицы ×12 (узкие колонки 6.2% альбомной A4): длинные суммы не влезали в ячейку - Safari при печати не режет overflow td и цифры вылезали за границы. ≥1 млн → «Х,ХХМ», ≥100 тыс → «ХХХК», меньше - полностью с копейками. Режим «месяц» (широкие колонки) остаётся на полном f
-  const fM=v=>{if(!(typeof v==='number'&&!isNaN(v)))return '-';const a=Math.abs(v);if(a>=1e6)return (v/1e6).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+'М';if(a>=1e5)return (v/1e3).toLocaleString('ru-RU',{maximumFractionDigits:0})+'К';return f(v);};
-  const MONF=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
-  const today=new Date().toLocaleDateString('ru-RU');
   // baseline ПО МЕСЯЦАМ: объединение запечённых записей замороженных месяцев (уже money)
   const frozen=_frozenMonths(year),frozenSet=new Set(frozen),blMap=_baselineMonthsMap(year);
   const blRecs=_baselineRecords(year);
@@ -12696,7 +12699,6 @@ window.cfoStatementGen=function(){
   const factIncIdx={};
   (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; if(!an)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
   // ── Задача 5: 3-й уровень выписки - расшифровка sub-level РАСХОДНЫХ подстатей по стороне (ФОТ→сотрудник, аренда→объект, консалтинг→контрагент). Только визуальный разворот поверх посчитанных сумм - ИТОГО не меняет ──
-  const detEl=document.getElementById('cfo-stmt-detail');const wantDetail=!detEl||detEl.checked; // по умолчанию ВКЛ
   const _c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const isFotCode=_slFot,isRentCode=_slRent,isConsultCode=_slConsult,isSubLevel=_slSub,sideIcon=_slIcon,UNALLOC=_SL_UNALLOC; // общие примитивы 3-го уровня - модульный уровень, не дублируем (вариант A)
   const sideFactIdx=_buildSideFactIdx(year,dirsScope);
@@ -12709,6 +12711,72 @@ window.cfoStatementGen=function(){
   // Иначе объекты из справочника _rentObjects (и нулевые план-записи) засоряют таблицу. Общий фильтр для ФОТ/аренды/консалтинга.
   const sideHasActivity=(dirsSet,code,side)=>{let fY=0,pY=0;for(let m=1;m<=12;m++){fY+=sideFactMonth(dirsSet,code,side,m);const b=sideBlMonth(dirsSet,code,side,m);if(b)pY+=b;const c=sideFcMonth(dirsSet,code,side,m);if(c)pY+=c;}return Math.abs(fY)>0.005||Math.abs(pY)>0.005;};
   const sidesWithActivity=(dirsSet,code)=>{const S=stmtSides(dirsSet,code);const list=S.named.slice();if(S.hasUn)list.push('');return list.filter(side=>sideHasActivity(dirsSet,code,side));};
+  // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = человек секции (пусто для «не назначен»)
+  const ownerOf=(d,code)=>String((_planOwners||{})[d+'||'+code]||'').trim();
+  const ownMatchP=(d,code,person,noOwn)=>{const o=ownerOf(d,code);return noOwn?!o:(o===person);};
+  // ── СЕКЦИЯ ОДНОГО ЧЕЛОВЕКА: только расчёт, без единой строки HTML ──
+  // ⚠ Прежняя buildSection собирала в ОДНОМ цикле и суммы, и строки таблицы. Строки уехали
+  //   в генератор (secRows), суммы остались здесь - обе стороны обязаны обходить codes в одном
+  //   порядке, иначе итог разойдётся со строками, из которых он якобы сложен.
+  const buildSection=(person,noOwn,kind)=>{
+    const isInc=kind==='inc';const FI=isInc?factIncIdx:factIdx;const lvl=isInc?'income':'subarticle';const blPlanF=isInc?blPlanIncMD:blPlanMD;const fcPlanFF=isInc?fcPlanIncMD:fcPlanMD;
+    const pairSet={}; // code → Set направлений (только совпавшие по владельцу)
+    blRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
+    fcRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);}); // прогнозные-только подстатьи тоже показываем
+    Object.keys(FI).forEach(key=>{const i=key.indexOf('||'),d=key.slice(0,i),code=key.slice(i+2);if(!ownMatchP(d,code,person,noOwn))return;(pairSet[code]=pairSet[code]||new Set()).add(d);});
+    const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
+    const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
+    const fcMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=fcPlanFF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
+    const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=FI[d+'||'+code];if(a)s+=a[m]||0;});return s;};
+    const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;}; // YTD - только замороженные месяцы ≤ M
+    const factYTD=code=>{let s=0;frozen.forEach(m=>{if(m>M)return;s+=factMonth(code,m);});return s;};
+    let sBP=null,sFP=0,sBY=null,sFY=0;
+    codes.forEach(code=>{const bP=blMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),fY=factYTD(code);
+      if(bP!=null)sBP=(sBP||0)+bP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; sFY+=fY;});
+    const overCodes=codes.filter(code=>{const bY=blYTD(code);return bY!=null&&(factYTD(code)-bY)>0;});
+    return {kind:isInc?'inc':'exp',codes,sBP,sFP,sBY,sFY,overCodes,pairSet,blYTD,factYTD,blMonth,factMonth,fcMonth};
+  };
+  // состав выписки: свои + прямые подчинённые (один уровень, защита от цикла в _cfoSubsOf)
+  const subs=isNoOwn?[]:_cfoSubsOf(fio);const wantSubs=!!P.withSubs&&subs.length>0;
+  // ⚠ Порядок людей фиксирован: руководитель ПЕРВЫМ. На нём стоит признак own, по нему экран
+  //   отличает «свои подстатьи» от подчинённых, а печать - подписи секций.
+  const people=(wantSubs?[{fio,own:true,label:'Свои подстатьи'}].concat(subs.map(s=>({fio:s,own:false,label:s})))
+                       :[{fio,own:true,label:''}])
+    .map(p=>Object.assign(p,{exp:buildSection(p.fio,p.own?isNoOwn:false,'exp'),inc:buildSection(p.fio,p.own?isNoOwn:false,'inc')}));
+  // ⚠ Операции ЗА КОНКРЕТНЫЙ МЕСЯЦ - обёртка над уже построенным opsIdx, своего прохода по RAW нет.
+  const opsOf=(dir,code,m)=>{const a=opsIdx[dir+'||'+code];if(!a)return [];
+    return a.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&(d.getMonth()+1)===m;});};
+  return {year,month:M,allMonths,dirsScope,dirLabel,isAll,fio,fioLabel,isNoOwn,wantDetail,
+    people,subs,wantSubs,opsOf,opsIdx,factIdx,factIncIdx,
+    frozen,frozenSet,blMap,blRecs,hasBl,ctx,
+    blPlanMD,blPlanIncMD,fcPlanMD,fcPlanIncMD,fcRecs,
+    sidesWithActivity,sideFactMonth,sideBlMonth,sideFcMonth,ownerOf,ownMatchP};
+}
+
+window.cfoStatementGen=function(){
+  const owEl=document.getElementById('cfo-stmt-owner'),mEl=document.getElementById('cfo-stmt-month'),pEl=document.getElementById('cfo-stmt-period');
+  if(!owEl)return;
+  const allMonths=!pEl||pEl.value==='all'; // «Все месяцы» - матрица × 12; иначе - конкретный месяц (как раньше)
+  const fio=owEl.value,M=allMonths?12:(+(mEl&&mEl.value)||new Date().getMonth()+1),isNoOwn=fio==='__none__',fioLabel=isNoOwn?'(не назначен)':fio;
+  const pf=_tabFilters.planfact||{};
+  const year=+pf.year||new Date().getFullYear();
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const f=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
+  // компактный форматтер ТОЛЬКО для матрицы ×12 (узкие колонки 6.2% альбомной A4): длинные суммы не влезали в ячейку - Safari при печати не режет overflow td и цифры вылезали за границы. ≥1 млн → «Х,ХХМ», ≥100 тыс → «ХХХК», меньше - полностью с копейками. Режим «месяц» (широкие колонки) остаётся на полном f
+  const fM=v=>{if(!(typeof v==='number'&&!isNaN(v)))return '-';const a=Math.abs(v);if(a>=1e6)return (v/1e6).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+'М';if(a>=1e5)return (v/1e3).toLocaleString('ru-RU',{maximumFractionDigits:0})+'К';return f(v);};
+  const MONF=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+  const today=new Date().toLocaleDateString('ru-RU');
+  const subEl=document.getElementById('cfo-stmt-subs'),detEl=document.getElementById('cfo-stmt-detail');
+  // ⚠ Весь расчёт - в _cfoStmtData. Здесь остаётся только сборка печатного HTML: имена ниже
+  //   разобраны из данных ТЕМИ ЖЕ, что были локальными, поэтому код сборки не тронут.
+  const D=_cfoStmtData({fio,isNoOwn,withSubs:!!(subEl&&subEl.checked),withDetail:!detEl||detEl.checked,year,month:M,allMonths});
+  const dirsScope=D.dirsScope,dirLabel=D.dirLabel,isAll=D.isAll;
+  const frozen=D.frozen,frozenSet=D.frozenSet,blMap=D.blMap,blRecs=D.blRecs,hasBl=D.hasBl;
+  const factIdx=D.factIdx,factIncIdx=D.factIncIdx,opsIdx=D.opsIdx,wantDetail=D.wantDetail;
+  const sidesWithActivity=D.sidesWithActivity,sideFactMonth=D.sideFactMonth,sideBlMonth=D.sideBlMonth,sideFcMonth=D.sideFcMonth;
+  const subs=D.subs,wantSubs=D.wantSubs;
+  // алиасы общих примитивов 3-го уровня - нужны разметке расшифровок (модульный уровень, не копия логики)
+  const isSubLevel=_slSub,sideIcon=_slIcon,UNALLOC=_SL_UNALLOC;
   // дочерние строки, 7-колоночный режим (конкретный месяц). Приглушённые, факт без знак-цвета
   const dcSub=dv=>dv==null?'<td class="r sub">-</td>':'<td class="r sub" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#6f7682')+'">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
   const secSubRows=(dirsSet,code)=>{ if(!wantDetail||!isSubLevel(code))return '';
@@ -12728,9 +12796,6 @@ window.cfoStatementGen=function(){
         yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;if(fcv!=null)yfc=(yfc||0)+fcv;cells+=mSubCell(fv,pv,fr,fr?null:fcv);}
       out+='<tr class="mxsub"><td class="nm sub">'+sideIcon(code)+' '+esc(side||UNALLOC)+'</td>'+cells+mSubYear(yf,ypf,yfc)+'</tr>';});
     return out;};
-  // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = человек секции (пусто для «не назначен»)
-  const ownerOf=(d,code)=>String((_planOwners||{})[d+'||'+code]||'').trim();
-  const ownMatchP=(d,code,person,noOwn)=>{const o=ownerOf(d,code);return noOwn?!o:(o===person);};
   // цветная Δ-ячейка РАСХОДОВ (перерасход красный, экономия зелёная)
   const dCell=(dv,bold)=>dv==null?'<td class="r'+(bold?' b':'')+'">-</td>':'<td class="r'+(bold?' b':'')+'" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#23272f')+';font-weight:700">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
   // Δ-ячейка ДОХОДОВ и ЧП: цвет ОБРАТНЫЙ - перевыполнение (факт>план, dv>0) зелёное, недобор красный
@@ -12760,9 +12825,17 @@ window.cfoStatementGen=function(){
   // ── режим «конкретный месяц» (как раньше): 7 колонок ──
   const COLG='<colgroup><col style="width:22%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>';
   const THEAD='<thead><tr><th>Подстатья</th><th class="r">Утв. мес.</th><th class="r">Факт мес.</th><th class="r">Δ мес.</th><th class="r">Утв. YTD</th><th class="r">Факт YTD</th><th class="r">Δ YTD</th></tr></thead>';
+  // Строки таблицы секции. Раньше собирались внутри buildSection в одном цикле с суммами; после
+  // выноса расчёта суммы считает _cfoStmtData, а строки - здесь. ⚠ Порядок обхода codes ОБЯЗАН
+  // совпадать с тем, в котором сложены суммы, иначе ИТОГО перестанет быть суммой видимых строк.
+  const secRows=sec=>{const dc=sec.kind==='inc'?dCellInc:dCell,isInc=sec.kind==='inc';let rows='';
+    sec.codes.forEach(code=>{const bP=sec.blMonth(code,M),fP=sec.factMonth(code,M),bY=sec.blYTD(code),fY=sec.factYTD(code);
+      const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
+      rows+='<tr><td class="nm">'+esc(code)+'</td><td class="r">'+(bP!=null?f(bP):'-')+'</td><td class="r">'+f(fP)+'</td>'+dc(dP)+'<td class="r">'+(bY!=null?f(bY):'-')+'</td><td class="r">'+f(fY)+'</td>'+dc(dY)+'</tr>'+(isInc?'':secSubRows(sec.pairSet[code],code));});
+    return rows;};
   const secTable=(sec,totLabel)=>{const dSP=sec.sBP!=null?sec.sFP-sec.sBP:null,dSY=sec.sBY!=null?sec.sFY-sec.sBY:null;const dc=sec.kind==='inc'?dCellInc:dCell;
     const totRow=sec.codes.length?'<tr class="tot"><td class="nm b">'+esc(totLabel||'ИТОГО')+'</td><td class="r b">'+(sec.sBP!=null?f(sec.sBP):'-')+'</td><td class="r b">'+f(sec.sFP)+'</td>'+dc(dSP,true)+'<td class="r b">'+(sec.sBY!=null?f(sec.sBY):'-')+'</td><td class="r b">'+f(sec.sFY)+'</td>'+dc(dSY,true)+'</tr>':'';
-    const inner=sec.codes.length?(sec.rows+totRow):'<tr><td colspan="7" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
+    const inner=sec.codes.length?(secRows(sec)+totRow):'<tr><td colspan="7" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
     return '<table>'+COLG+THEAD+'<tbody>'+inner+'</tbody></table>';};
   // строка ИТОГО в 7-колоночном режиме (месяц) - для блок-итогов и ЧП; inc=true → обратный цвет Δ
   const secTotRow=(label,sBP,sFP,sBY,sFY,inc,sign)=>{const dc=inc?dCellInc:dCell;const dSP=sBP!=null?sFP-sBP:null,dSY=sBY!=null?sFY-sBY:null;const vc=v=>sign?' style="color:'+(v>=-0.0001?'#1e8a54':'#c0392b')+'"':'';return '<tr class="tot"><td class="nm b">'+esc(label)+'</td><td class="r b">'+(sBP!=null?f(sBP):'-')+'</td><td class="r b"'+vc(sFP)+'>'+f(sFP)+'</td>'+dc(dSP,true)+'<td class="r b">'+(sBY!=null?f(sBY):'-')+'</td><td class="r b"'+vc(sFY)+'>'+f(sFY)+'</td>'+dc(dSY,true)+'</tr>';};
@@ -12809,14 +12882,13 @@ window.cfoStatementGen=function(){
     let ysub=(nYpf!=null?'<span class="mp">'+fM(nYpf)+'</span>':'')+(nYfc!=null?'<span class="mpf">'+fM(nYfc)+'</span>':'');
     return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+'<td class="mx"><span class="mf" style="color:'+ycol+'">'+fM(nYf)+'</span>'+ysub+'</td></tr>';
   };
-  // состав выписки: свои + прямые подчинённые (если руководитель и галочка вкл). Один уровень, защита от цикла в _cfoSubsOf.
-  const subEl=document.getElementById('cfo-stmt-subs');const subsChecked=!!(subEl&&subEl.checked);
-  const subs=isNoOwn?[]:_cfoSubsOf(fio);const wantSubs=subsChecked&&subs.length>0;
+  // состав выписки (свои + прямые подчинённые) собран в _cfoStmtData - subs/wantSubs разобраны выше
   // рендер одного человека: ДОХОДЫ → ИТОГО ДОХОДЫ → РАСХОДЫ → ИТОГО РАСХОДЫ → ФИНАНСОВЫЙ РЕЗУЛЬТАТ ЦФО (доходы − расходы; в выписке ЦФО термин «чистая прибыль» не используем - это уровень ЦФО, не компании). Оба режима. label='' → одиночный ЦФО без префикса
   const noIncNote='<p class="noinc">Доходных подстатей нет.</p>';
-  const renderPerson=(person,noOwn,label)=>{
+  // ⚠ Секции больше не считаются здесь - приходят из _cfoStmtData вместе с человеком (PD.inc/PD.exp).
+  const renderPerson=(PD,label)=>{
     const pfx=label?esc(label)+' · ':'';const sfx=label?' · '+label:'';
-    const incSec=buildSection(person,noOwn,'inc'),expSec=buildSection(person,noOwn,'exp');
+    const incSec=PD.inc,expSec=PD.exp;
     let html='',agg;
     if(allMonths){
       const im=matrixTable(incSec,'ИТОГО ДОХОДЫ'+sfx),em=matrixTable(expSec,'ИТОГО РАСХОДЫ'+sfx);
@@ -12834,12 +12906,12 @@ window.cfoStatementGen=function(){
   };
   let bodyHtml='';const opsList=[]; // {label, sec(расходный - для операций-перерасхода)}
   if(wantSubs){
-    const people=[{p:fio,label:'Свои подстатьи'}].concat(subs.map(s=>({p:s,label:s})));
+    const people=D.people; // порядок задан данными: руководитель первым, затем подчинённые
     if(allMonths){
       // блок-режим, матрица: помесячные итоги доходов/расходов блока агрегируем из посекционных totF/totP
       const bIF=new Array(13).fill(0),bIP=new Array(13).fill(null),bIFC=new Array(13).fill(null);let bIYf=0,bIYpf=null,bIYfc=null;
       const bEF=new Array(13).fill(0),bEP=new Array(13).fill(null),bEFC=new Array(13).fill(null);let bEYf=0,bEYpf=null,bEYfc=null;
-      people.forEach(pe=>{const r=renderPerson(pe.p,false,pe.label);bodyHtml+=r.html;const im=r.agg.inc,em=r.agg.exp;
+      people.forEach(pe=>{const r=renderPerson(pe,pe.label);bodyHtml+=r.html;const im=r.agg.inc,em=r.agg.exp;
         for(let m=1;m<=12;m++){bIF[m]+=im.totF[m]||0;if(im.totP[m]!=null)bIP[m]=(bIP[m]||0)+im.totP[m];if(im.totFC[m]!=null)bIFC[m]=(bIFC[m]||0)+im.totFC[m];bEF[m]+=em.totF[m]||0;if(em.totP[m]!=null)bEP[m]=(bEP[m]||0)+em.totP[m];if(em.totFC[m]!=null)bEFC[m]=(bEFC[m]||0)+em.totFC[m];}
         bIYf+=im.yf||0;if(im.ypf!=null)bIYpf=(bIYpf||0)+im.ypf;if(im.yfc!=null)bIYfc=(bIYfc||0)+im.yfc;bEYf+=em.yf||0;if(em.ypf!=null)bEYpf=(bEYpf||0)+em.ypf;if(em.yfc!=null)bEYfc=(bEYfc||0)+em.yfc;
         opsList.push({label:pe.label,sec:r.expSec});});
@@ -12847,7 +12919,7 @@ window.cfoStatementGen=function(){
       bodyHtml+='<h2>Итого по блоку · '+esc(fioLabel)+'</h2>'+mTotTable(blkRows);
     }else{
       let biBP=null,biFP=0,biBY=null,biFY=0,beBP=null,beFP=0,beBY=null,beFY=0;
-      people.forEach(pe=>{const r=renderPerson(pe.p,false,pe.label);bodyHtml+=r.html;const i=r.agg.inc,e=r.agg.exp;
+      people.forEach(pe=>{const r=renderPerson(pe,pe.label);bodyHtml+=r.html;const i=r.agg.inc,e=r.agg.exp;
         if(i.sBP!=null)biBP=(biBP||0)+i.sBP; biFP+=i.sFP; if(i.sBY!=null)biBY=(biBY||0)+i.sBY; biFY+=i.sFY;
         if(e.sBP!=null)beBP=(beBP||0)+e.sBP; beFP+=e.sFP; if(e.sBY!=null)beBY=(beBY||0)+e.sBY; beFY+=e.sFY;
         opsList.push({label:pe.label,sec:r.expSec});});
@@ -12856,7 +12928,7 @@ window.cfoStatementGen=function(){
       bodyHtml+='<h2>Итого по блоку · '+esc(fioLabel)+'</h2>'+secTotTable(blkRows);
     }
   }else{
-    const r=renderPerson(fio,isNoOwn,'');
+    const r=renderPerson(D.people[0],'');
     bodyHtml=r.html;
     opsList.push({label:null,sec:r.expSec});
   }
