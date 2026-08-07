@@ -815,6 +815,28 @@
        за ячейки - та же ловушка уже описана у печати БДР и Реестра. */
     .cfo-t td,.cfo-t th{font-size:7pt}
     .cfo-scr,.cfo-t{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    /* ⚠ Шкала исполнения на бумаге не работает: полоска сжимается до сантиметра и не показывает
+       ничего, а подпись рядом ломается в три строки («потрачено / 106% от / плана»). Полоску
+       убираем, подпись печатаем одной строкой, освободившееся место отдаём числам. */
+    .cfo-scr .cfo-bar{display:none}
+    .cfo-scr .cfo-barlbl{white-space:nowrap;margin-top:0}
+    .cfo-scr .cfo-grid{grid-template-columns:150px 1fr 165px 165px 190px}
+    /* разрядка (letter-spacing) задумана для крупных подписей; на печатном кегле 6.5-7pt она
+       растягивает заголовки в «П О Д С Т А Т Ь Я» */
+    .cfo-t th,.cfo-cell .l{letter-spacing:0}
+    /* ⚠ Ширина листа A4 (~794px при полях 12мм) МЕНЬШЕ мобильного порога 820px, поэтому на печати
+       включаются мобильные карточки (.mcards, класс вешает mobileCardify) и таблица подстатей
+       рассыпается в столбик «подпись - значение»: план, факт и остаток встают друг под другом
+       отдельными строками. На экране этого не видно НИКОГДА - там окно шире порога, и поймать
+       можно только распечаткой. Возвращаем табличную раскладку: на листе есть место под пять
+       колонок. !important тут обязателен - у мобильных правил он свой. */
+    .cfo-scr .cfo-t{display:table!important}
+    .cfo-scr .cfo-t tbody{display:table-row-group!important}
+    .cfo-scr .cfo-t tr{display:table-row!important;padding:0!important}
+    .cfo-scr .cfo-t td{display:table-cell!important;text-align:right;max-width:none!important}
+    .cfo-scr .cfo-t td:first-child,.cfo-scr .cfo-t td.pp{text-align:left!important}
+    .cfo-scr .cfo-t td::before{content:none!important} /* подписи полей из мобильных карточек - на листе есть шапка */
+    .cfo-scr .cfo-mini{display:none} /* та же шкала, что и .cfo-bar: на бумаге не показывает ничего, процент рядом остаётся */
   }
 </style>
 </head>
@@ -12783,6 +12805,7 @@ function _cfoScreenShow(O){
   el.id='cfoScreen'; el.className='cfo-scr';
   if(!el.parentNode)document.body.appendChild(el);
   document.body.classList.add('cfo-print'); // печать прячет дашборд по классу, а не по body:has()
+  _cfoPageRuleOn(); // A4 портрет + поля 12мм, пока экран открыт (см. _cfoPageRuleOn)
   document.addEventListener('keydown',_cfoScrEsc);
   cfoScreenRender();
 }
@@ -12817,6 +12840,23 @@ function _cfoLastMonthWithData(D){
   return null;
 }
 function _cfoScrEsc(e){if(e.key==='Escape')cfoScreenClose();}
+// ── Лист выписки: A4 портрет, поля 12мм ──────────────────────────────────────
+// Без явного @page лист держится на автоподгоне масштаба, и человек, поставивший в диалоге
+// печати «Масштаб: 100%», получит обрезанную правую колонку.
+// ⚠ Правило живёт ОТДЕЛЬНЫМ <style> и только пока открыт экран, а не в общем блоке страницы:
+//   @page - правило ДОКУМЕНТА, и из общего <style> оно навязало бы портрет и поля 12мм ЛЮБОЙ
+//   печати дашборда, включая вкладку Банка - она печатает саму страницу, а не отдельное окно.
+//   Пока экран открыт, ничего другого напечатать нельзя (слой полноэкранный), поэтому область
+//   действия правила ровно та, что нужна.
+// ⚠ Именно ПОРТРЕТ: пять колонок в него ложатся, альбом тут не нужен. И на верхнем уровне,
+//   не внутри @media print - Safari игнорирует @page внутри медиа-запроса.
+function _cfoPageRuleOn(){
+  if(document.getElementById('cfoPageRule'))return;
+  const s=document.createElement('style');s.id='cfoPageRule';
+  s.textContent='@page{size:A4 portrait;margin:12mm}';
+  document.head.appendChild(s);
+}
+function _cfoPageRuleOff(){const s=document.getElementById('cfoPageRule');if(s)s.remove();}
 // ── ПЕЧАТЬ ЭКРАНА: имя будущего PDF-файла ────────────────────────────────────
 // ⚠ Экран печатает САМУ страницу, поэтому имя файла Chrome и Safari берут из <title> документа,
 //   а он у дашборда один на все отчёты - без подмены каждая выписка уезжает в архив бухгалтера
@@ -12852,7 +12892,7 @@ window.cfoScrPrint=function(){
   window.print();
 };
 window.cfoScreenClose=function(){const el=document.getElementById('cfoScreen');if(el)el.remove();
-  document.body.classList.remove('cfo-print');
+  document.body.classList.remove('cfo-print');_cfoPageRuleOff();
   document.removeEventListener('keydown',_cfoScrEsc);_cfoScr=null;};
 // ⚠ Смена режима СБРАСЫВАЕТ раскрытые строки: иначе после переключения на «только свои» на экране
 //   остаются развёрнутыми подстатьи подчинённых.
