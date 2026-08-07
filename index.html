@@ -12942,6 +12942,12 @@ function cfoScreenRender(){
   const pc=v=>(v*100).toLocaleString('ru-RU',{maximumFractionDigits:0})+'%';
   const ppl=blk?D.people:D.people.filter(p=>p.own);
   const hasSubs=D.people.some(p=>!p.own);
+  // ⚠ Имя человека на экран и на лист берётся ТОЛЬКО отсюда, во всех трёх местах (плашка шапки,
+  //   заголовок печатного листа, строка-разделитель с ФИО внутри блока). У варианта «не назначен»
+  //   в people[].fio лежит служебное значение селекта (__none__), а человекочитаемое имя приходит
+  //   из _cfoStmtData отдельным полем fioLabel - имя PDF-файла (_cfoPrintName) берёт его же.
+  //   Раньше экран и заголовок листа показывали __none__ прямо человеку.
+  const nameOf=p=>(D.isNoOwn&&p&&p.own)?D.fioLabel:(p?p.fio:'');
   const sel=rev?'inc':'exp';
   // ── ПЛАН и ФАКТ по КОНКРЕТНОМУ НАПРАВЛЕНИЮ (не сумма по всем, как в секциях выписки) ──
   // ⚠ Своей арифметики тут нет: те же blPlanMD/fcPlanMD/factIdx из _cfoStmtData, просто без
@@ -13012,7 +13018,7 @@ function cfoScreenRender(){
       pers.forEach(per=>{
         // ⚠ В режиме блока подстатьи разделены строкой с ФИО: агрегат прячет того, кто уже упёрся
         //   в свой план, а по этой строке видно, чьи именно подстатьи идут ниже.
-        if(blk)rows+='<tr class="per"><td colspan="5">'+esc(per.fio)+(per.own?' - свои':'')+'</td></tr>';
+        if(blk)rows+='<tr class="per"><td colspan="5">'+esc(nameOf(per))+(per.own?' - свои':'')+'</td></tr>';
         per.rows.forEach((s,si)=>{
           const sk=k+'s'+per.pi+'_'+si,sx=_cfoScr.open.has(sk),sc=col(s.f,s.p);
           rows+='<tr class="'+(s.ops.length?'cl':'')+'"'+(s.ops.length?' onclick="cfoScrTog(\''+sk+'\')"':'')+'>'
@@ -13036,7 +13042,12 @@ function cfoScreenRender(){
     +'<div><div class="cfo-bar">'+(hasP(TP)?'<i style="width:'+w(TF,TP)+'%;background:#7f93b8"></i>':'')+'</div></div>'
     +cell('План',TP)+cell(rev?'Получено':'Потрачено',TF)+cell(rev?'Недобор':'Осталось',TP==null?null:TP-TF,'',true)+'</div>';
   _cfoScr.keys=keys; // состав раскрываемых строк этой вкладки - его читает кнопка «Развернуть всё»
-  const who=blk?('Блок '+D.people[0].fio+' · '+D.people.length+' '+_plurRu(D.people.length,'человек','человека','человек')):D.people[0].fio;
+  // ⚠ Было «Блок Старкова И. В.» - после «Блок» нужен родительный падеж, а склонять фамилии кодом
+  //   надёжно нельзя (и не надо пытаться). Обходим формулировкой: «Выписка по блоку: <ФИО>» -
+  //   падеж не нужен вовсе. Формулировка ОДНА на экран и на лист.
+  const whoName=nameOf(D.people[0]);
+  const blkLine=whoName+' · '+D.people.length+' '+_plurRu(D.people.length,'человек','человека','человек');
+  const who=blk?('Выписка по блоку: '+blkLine):whoName; // плашка в шапке экрана
   const MONF=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
   const _cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
   const perLbl=ytd?(_cap(MONF[0])+'-'+MONF[M-1]+' '+D.year):(_cap(MONF[M-1])+' '+D.year);
@@ -13053,7 +13064,10 @@ function cfoScreenRender(){
   +'<button class="cfo-act" onclick="cfoScrPrint()">🖨 Печать</button>'
   +'<button class="cfo-act cl" onclick="cfoScreenClose()">✕ Закрыть</button></span></div>'
   +'<div class="cfo-body">'
-  +'<div class="cfo-prthead"><h1>Выписка ЦФО - '+esc(who)+' · '+esc(rev?'доходы':'расходы')+'</h1>'
+  // ⚠ Заголовок листа собирается отдельно от плашки, а не из готового who: подстановка «Выписка
+  //   по блоку: …» в шаблон «Выписка ЦФО - …» дала бы «Выписка ЦФО - Выписка по блоку: …».
+  //   Слова про блок при этом ТЕ ЖЕ, что на экране - лист и экран обязаны читаться одинаково.
+  +'<div class="cfo-prthead"><h1>'+(blk?('Выписка по блоку: '+esc(blkLine)):('Выписка ЦФО - '+esc(whoName)))+' · '+esc(rev?'доходы':'расходы')+'</h1>'
   +'<div class="s">ГК ОПОРА · управленческий учёт · '+esc(perLbl)+' · '+esc(D.dirLabel||'все направления')+' · сформировано '+new Date().toLocaleString('ru-RU')
   // ⚠ Пустой экран обязан объяснить себя словами: иначе его читают как поломку, а не как «данных нет».
   +(_cfoScr.emptyYear?' · <b>за '+D.year+' год нет ни факта, ни плана по этому ответственному</b>':'')+'</div></div>'
