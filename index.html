@@ -12814,6 +12814,40 @@ function _cfoLastMonthWithData(D){
   return null;
 }
 function _cfoScrEsc(e){if(e.key==='Escape')cfoScreenClose();}
+// ── ПЕЧАТЬ ЭКРАНА: имя будущего PDF-файла ────────────────────────────────────
+// ⚠ Экран печатает САМУ страницу, поэтому имя файла Chrome и Safari берут из <title> документа,
+//   а он у дашборда один на все отчёты - без подмены каждая выписка уезжает в архив бухгалтера
+//   под именем «УПР.Финансы». Прочие печатные формы проекта имя строят (_regFileBase, fileName
+//   в печати БДР и выписки), эта осталась последней.
+// Формат: Выписка_ЦФО_<ФИО>_<ГГГГ-ММ>_<расходы|доходы>[_блок].
+function _cfoPrintName(){
+  const S=_cfoScr||{},D=S.data||{};
+  const fio=D.isNoOwn?(D.fioLabel||'не назначен'):String((D.people&&D.people[0]&&D.people[0].fio)||'').trim();
+  // пробелы и точки → подчёркивания (инициалы «А.П.» иначе дают точки в имени файла и путают
+  // расширение), запрещённые в имени файла символы убираем совсем
+  const nm=fio.replace(/[\\/:*?"<>|]/g,'').replace(/[.\s]+/g,'_').replace(/_+/g,'_').replace(/^_+|_+$/g,'');
+  const ym=(S.year||new Date().getFullYear())+'-'+String(S.month||1).padStart(2,'0');
+  return 'Выписка_ЦФО_'+(nm||'без_имени')+'_'+ym+'_'+(S.kind==='inc'?'доходы':'расходы')+(S.scope==='blk'?'_блок':'');
+}
+// ⚠ Прежний заголовок возвращаем на afterprint, а НЕ строкой после window.print(): в Safari вызов
+//   возвращается до закрытия диалога печати, и после отмены вкладка осталась бы с чужим именем.
+//   Дублируем через matchMedia('print') - Safari печатает иначе и afterprint может не прийти вовсе
+//   (та же страховка стоит у графиков Банка). Возврат идемпотентен - какой путь сработает, неважно.
+window.cfoScrPrint=function(){
+  if(!_cfoScr)return;
+  const was=document.title;
+  const mm=window.matchMedia?window.matchMedia('print'):null;
+  let done=false;
+  const onMM=e=>{if(!e.matches)back();};
+  function back(){ if(done)return; done=true; document.title=was;
+    window.removeEventListener('afterprint',back);
+    try{ if(mm&&mm.removeEventListener)mm.removeEventListener('change',onMM); }catch(e){}
+  }
+  document.title=_cfoPrintName();
+  window.addEventListener('afterprint',back);
+  try{ if(mm&&mm.addEventListener)mm.addEventListener('change',onMM); }catch(e){}
+  window.print();
+};
 window.cfoScreenClose=function(){const el=document.getElementById('cfoScreen');if(el)el.remove();
   document.body.classList.remove('cfo-print');
   document.removeEventListener('keydown',_cfoScrEsc);_cfoScr=null;};
@@ -12941,7 +12975,7 @@ function cfoScreenRender(){
   +'<span class="cfo-who">'+esc(who)+' <button onclick="cfoScreenClose();cfoStatementOpen()">сменить</button></span>'
   +(hasSubs?'<span class="cfo-seg"><button class="'+(blk?'':'on')+'" onclick="cfoScrScope(\'own\')">Только свои</button><button class="'+(blk?'on':'')+'" onclick="cfoScrScope(\'blk\')">Блок целиком</button></span>':'')
   +(blk?'<span class="cfo-warn">⚠ Виден бюджет подчинённых - показывайте только руководителю блока</span>':'')
-  +'<span class="cfo-sp"><button class="cfo-act" onclick="window.print()">🖨 Печать</button>'
+  +'<span class="cfo-sp"><button class="cfo-act" onclick="cfoScrPrint()">🖨 Печать</button>'
   +'<button class="cfo-act cl" onclick="cfoScreenClose()">✕ Закрыть</button></span></div>'
   +'<div class="cfo-body">'
   +'<div class="cfo-prthead"><h1>Выписка ЦФО - '+esc(who)+' · '+esc(rev?'доходы':'расходы')+'</h1>'
