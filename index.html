@@ -1054,6 +1054,23 @@ const isOpeningBalance=name=>{const x=String(name||'').toLowerCase();return x.in
 // молча разводит «ИТОГО РАСХОДЫ» БДР и «РАСХОДЫ» ОПиУ. Сторожа брака: правило «ancat» в Аномалиях + «⚠ Аналитика вне ОПиУ» в БДР.
 // ЕДИНЫЙ источник списка - не дублировать в рендерах, иначе сторож разойдётся с расчётом.
 const OPIU_CATS=['Прямые / Переменные','Прямые / Постоянные','Косвенные / Переменные','Косвенные / Постоянные','Налоги / проценты / амортизация','EBITDA-корректировки','Вывод чистой прибыли'];
+// ══ РАСХОД СО ЗНАКОМ - ЕДИНЫЙ ПРИМИТИВ ══════════════════════════════════════
+// Учётная конвенция: положительное «Списание» - это ВОЗВРАТ, он УМЕНЬШАЕТ расход своего периода,
+// а не отбрасывается. expOf(r) > 0 - трата, < 0 - возврат. Раньше расход считался как
+// «строки с out<0, сумма Math.abs(out)», то есть возврат не попадал в расчёт вовсе.
+// ⚠ Звать у ВСЕХ потребителей расхода - в этом и смысл примитива. Накопители, которые хранят
+//   расход ОТРИЦАТЕЛЬНЫМ (ОПиУ perOut, Юнит-экономика costs), пишут `-expOf(r)`, а не parseNum:
+//   иначе grep по expOf не находит половину конвенции и через месяц она разъезжается (в этом
+//   проекте так уже трижды расходились суммы в CSV, печати и книге Excel).
+// ⚠ Условие потребителя - `const v=expOf(r); if(!v)return;`, а НЕ снятие фильтра целиком:
+//   прежний `out<0` отсекал ещё и НУЛИ. Пустив нулевые списания в циклы, мы завели бы ключи,
+//   которых не было (коды в _planCodes, строки-нули в БДР, счётчики «Факта без плана»,
+//   периоды в cmpPset Структуры расходов) - деньги не поехали бы, а состав строк да.
+// ⚠ Что НЕ является потребителем и остаётся на Math.abs: оборот для выбора представителя лейбла
+//   статьи (модуль там = масштаб активности), ключ поиска зеркала в Аномалиях, модель Депозитов АУ
+//   (у неё возврат идёт ПОСТУПЛЕНИЕМ - своя двусторонняя механика), Дебиторка БФЛ (возврат по
+//   отдельной подстатье 112_Возвраты клиентам) и Займы сотрудникам (знаковая модель inc+out).
+const expOf=r=>-(parseNum(r[COL.OUTCOME])||0);
 let RAW=[];
 let activeTab='bank';
 // ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи по стороне (ФОТ→сотрудник 👤, аренда→объект 🏢, консалтинг→контрагент 👤). ЕДИНЫЙ источник для Выписки ЦФО, редактора планов и сводной БДР - иначе две копии классификации разъедутся (как было бы с OPIU_CATS). Матрицу «все месяцы» это не касается.
@@ -1063,7 +1080,7 @@ const _slSub=c=>_slFot(c)||_slRent(c)||_slConsult(c);
 const _slIcon=c=>_slRent(c)?'🏢':'👤';
 const _SL_UNALLOC='(не распределено)';
 // факт по стороне: {dir||ARTICLE_NAME → {сторона → [13 мес]}} - списания sub-level подстатей (вывод прибыли исключён), за год+направления
-function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const out=parseNum(r[COL.OUTCOME]);if(!(out<0))return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(!an||!_slSub(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=Math.abs(out);});return idx;}
+function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const v=expOf(r);if(!v)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(!an||!_slSub(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=v;});return idx;}
 // план по стороне: записи level='subarticle' с этой стороной, конвертер cvt(d,rec,m). Σ по сторонам = план кода → дочерние строки сходятся к строке-подстатье.
 function _planSideMD(recsAll,cvt){return (d,code,side,m)=>{const recs=recsAll.filter(p=>p.level==='subarticle'&&p.dir===d&&p.code===code&&String(p.side||'')===side);if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};}
 // стороны кода: факт ∪ baseline ∪ прогноз ∪ объекты аренды (для 223); hasUn - есть план/факт без стороны
@@ -1160,7 +1177,13 @@ const BANK_MOVE_COLOR='#a86b1a'; // тёмный янтарь. НЕ брать -
 function isMoveRow(r){return String(r[COL.TYPE]||'').trim().toLowerCase()==='перемещение';}
 // Разложение строки на три ряда. Σ трёх рядов = прежней сумме двух: (inc−out) при inc=Σ INCOME, out=Σ|OUTCOME| по всем строкам
 // равно (inc'−out'+mov), где штрих - только не-перемещения, а mov - чистое сальдо перемещений. Поэтому «Остаток ДС» не меняется.
-function bankSplit(row){const i=parseNum(row[COL.INCOME]),o=Math.abs(parseNum(row[COL.OUTCOME]));
+// ⚠ out - это expOf (расход со знаком), а НЕ Math.abs: у обычного списания (−X) он даёт прежние +X
+//   и столбик по-прежнему рисуется вверх, а у ВОЗВРАТА (положительное списание) даёт −X и уменьшает
+//   столбик месяца. С модулем графики противоречили своду на той же вкладке: свод копит сырое
+//   `e.out+=out` и возврат из списаний вычитает, а столбики его прибавляли - расхождение в две суммы
+//   возврата. Заодно чинится инвариант из строки выше: «Остаток ДС» (inc−out+mov) тождественно равен
+//   Σ INCOME + Σ OUTCOME только при знаковом out; с модулем линия расходилась с Сальдо на 2×возврат.
+function bankSplit(row){const i=parseNum(row[COL.INCOME]),o=expOf(row);
   return isMoveRow(row)?{inc:0,out:0,mov:i-o}:{inc:i,out:o,mov:0};}
 // Канал поступлений счёта. Возвращает: 'da' | 'cash' | 'card' | 'unknown'.
 // ⚠ ЕДИНСТВЕННОЕ место правила - не размазывать разбор имени по коду.
@@ -2596,28 +2619,36 @@ function renderBank(f){
   const nowR=_asOfD<new Date()?_asOfD:new Date();
   const periodEnd=new Date(nowR.getFullYear(),nowR.getMonth(),0); // последний день предыдущего месяца
   const periodStart=new Date(periodEnd.getTime()-89*86400000); // 90 дней назад
-  const monthlyOut={};
-  let totalOut90=0;
+  // ⚠ Расход и возвраты копятся ВРОЗЬ, база - их разность. Копить сразу нетто нельзя: после
+  //   перехода на конвенцию знака (положительное списание = возврат) строка «Расход за 90 дней»
+  //   в попапе молча стала бы нетто, и из чего получилась база, не сказало бы ни одно место.
+  const monthlyOut={};  // НЕТТО по месяцу (расход − возвраты) - строки попапа
+  let out90=0,ret90=0;  // валовой расход и валовые возвраты за окно
   rawAll.forEach(r=>{
-    const out=parseNum(r[COL.OUTCOME]);
-    if(out>=0)return;
+    const v=expOf(r);
+    if(!v)return;
     const d=parseDate(r[COL.DATE_DDS]);
     if(!d||d<periodStart||d>periodEnd)return;
-    totalOut90+=Math.abs(out);
+    if(v>0)out90+=v;else ret90+=-v;
     const mk=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    monthlyOut[mk]=(monthlyOut[mk]||0)+Math.abs(out);
+    monthlyOut[mk]=(monthlyOut[mk]||0)+v;
   });
   const monthKeys=Object.keys(monthlyOut);
-  const avgMonthlyOut=totalOut90/90*30; // среднедневной × 30
+  const base90=out90-ret90; // база расчёта: крупный возврат в окне честно удлиняет Runway
+  const avgMonthlyOut=base90/90*30; // среднедневной × 30
   const cashRunwayDays=avgMonthlyOut>0?Math.round(currentBalance/(avgMonthlyOut/30)):null;
-  const runwayColor=cashRunwayDays===null?'var(--text3)':cashRunwayDays>90?'var(--income)':cashRunwayDays>30?'#e87c25':'var(--outcome)';
-  const runwayLabel=cashRunwayDays===null?'-':cashRunwayDays>365?`${Math.round(cashRunwayDays/30)} мес.`:`${cashRunwayDays} дн.`;
-  const runwayHint=cashRunwayDays===null?'Нет данных':cashRunwayDays>90?'Устойчиво':cashRunwayDays>30?'Внимание':'Критично';
+  const _rw=_runwayView({cashRunwayDays,out90,ret90}); // метка/цвет/причина прочерка - один источник на карточку и попап
+  const runwayColor=_rw.color,runwayLabel=_rw.label,runwayHint=_rw.hint;
+  // Подсказка карточки: разложение базы. Числа полные (правило проекта), компонент - не нативный title.
+  const _runwayTip=_tipAttr([['Расход за 90 дней',fmt(-out90)],['Возвраты за 90 дней',fmt(ret90)]],
+    ['База расчёта',fmt(-base90)],'Cash Runway · база расчёта',[['нажмите для подробностей','']]);
 
   // Данные для попапа
+  // ⚠ Месяц с отрицательным нетто (возвраты перекрыли расход) показываем ЗЕЛЁНЫМ: цвет = знак значения.
+  //   Порядок строк - по ключу месяца, а не по величине, поэтому такой месяц остаётся на своём месте.
   const runwayMonthRows=Object.entries(monthlyOut).sort((a,b)=>a[0].localeCompare(b[0]))
-    .map(([mk,v])=>{const[yr,mo]=mk.split('-');return`<tr><td style="padding:3px 10px;font-size:11px;color:var(--text2)">${MONTHS_FULL[+mo-1]} ${yr}</td><td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--outcome)">${fmt(-v)}</td></tr>`;}).join('');
-  window._cashRunwayData={currentBalance,avgMonthlyOut,cashRunwayDays,runwayMonthRows,monthCount:monthKeys.length,totalOut90,periodStart,periodEnd};
+    .map(([mk,v])=>{const[yr,mo]=mk.split('-');return`<tr><td style="padding:3px 10px;font-size:11px;color:var(--text2)">${MONTHS_FULL[+mo-1]} ${yr}</td><td style="padding:3px 10px;font-size:11px;text-align:right;color:${v>=0?'var(--outcome)':'var(--income)'}">${fmt(-v)}</td></tr>`;}).join('');
+  window._cashRunwayData={currentBalance,avgMonthlyOut,cashRunwayDays,runwayMonthRows,monthCount:monthKeys.length,out90,ret90,base90,periodStart,periodEnd};
 
   // Лимиты по всем реквизитам (счета ООО/ИП, карты ФЛ, кассы и т.д.)
   const kassaList=[...gDa,...gNet].filter(a=>a.raw!==''); // {name, inc, out, total} - реквизиты с движением (gAlloc = без реквизитов)
@@ -2855,7 +2886,7 @@ function renderBank(f){
     <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
     <div class="kpi-card orange" style="cursor:pointer" onclick="showAccInventory()" ${_accTip}><div class="kpi-label">Счетов</div><div class="kpi-value">${_accVal}</div><div class="kpi-sub">${_accSub} ⚙</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
-    <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" title="Нажмите для подробностей"><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" ${_runwayTip}><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
   </div>`;
 
@@ -3166,13 +3197,31 @@ window.ddsTgl=function(nodeId){
   }
 };
 
+// ══ ВИД карточки Cash Runway - ЕДИНЫЙ ИСТОЧНИК ══════════════════════════════
+// Метка (с потолком), цвет (пороги 90/30 дн.) и причина прочерка. Потребителей ДВА - KPI-карточка
+// в renderBank и попап showCashRunwayPopup; до 12.08.2026 формулы метки и цвета стояли в обеих
+// точках копиями и совпадали по совпадению, а не по устройству (в этом проекте так уже расходились
+// суммы в CSV, печати и книге Excel - трижды подряд).
+// ⚠ Потолок «> 10 лет» БЕЗ подписи не заводить: сам по себе он прячет причину, а не объясняет её.
+//   Разложение базы (расход / возвраты / база) обязаны показывать ОБА потребителя - карточка
+//   подсказкой-компонентом, попап отдельными строками.
+// ⚠ У прочерка ДВЕ разные причины, и подменять их друг другом нельзя: расхода в окне нет вовсе -
+//   или возвраты за 90 дней перекрыли расход (база ≤ 0, следствие конвенции знака).
+const RUNWAY_CAP=3650; // потолок метки, дн. (10 лет)
+function _runwayView(d){
+  const n=d?d.cashRunwayDays:null;
+  if(n===null||n===undefined)return{label:'-',color:'var(--text3)',
+    hint:(d&&d.ret90>0&&d.ret90>=d.out90)?'Возвраты выше расхода':'Нет данных'};
+  return{label:n>RUNWAY_CAP?'> 10 лет':(n>365?`${Math.round(n/30)} мес.`:`${n} дн.`),
+    color:n>90?'var(--income)':n>30?'#e87c25':'var(--outcome)',
+    hint:n>90?'Устойчиво':n>30?'Внимание':'Критично'};
+}
 // Cash Runway popup
 window.showCashRunwayPopup=function(){
   const d=window._cashRunwayData;
   if(!d)return;
   const fmt2=v=>v!==null&&v!==undefined?_z0(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
-  const runwayColor=d.cashRunwayDays===null?'var(--text3)':d.cashRunwayDays>90?'var(--income)':d.cashRunwayDays>30?'#e87c25':'var(--outcome)';
-  const runwayLabel=d.cashRunwayDays===null?'-':d.cashRunwayDays>365?`${Math.round(d.cashRunwayDays/30)} мес.`:`${d.cashRunwayDays} дн.`;
+  const _rw=_runwayView(d),runwayColor=_rw.color,runwayLabel=_rw.label;
   const overlay=document.createElement('div');
   overlay.className='txn-card-overlay';
   overlay.innerHTML=`<div class="txn-card" style="max-width:480px">
@@ -3191,7 +3240,11 @@ window.showCashRunwayPopup=function(){
           <span style="color:var(--text3)">Период расчёта:</span>
           <span style="font-weight:600;text-align:right;color:var(--text2)">${d.periodStart?toIso(d.periodStart).split('-').reverse().join('.'):'-'} - ${d.periodEnd?toIso(d.periodEnd).split('-').reverse().join('.'):'-'} (90 дн.)</span>
           <span style="color:var(--text3)">Расход за 90 дней:</span>
-          <span style="font-weight:700;color:var(--outcome);text-align:right">${fmt2(-d.totalOut90)}</span>
+          <span style="font-weight:700;color:var(--outcome);text-align:right">${fmt2(-d.out90)}</span>
+          <span style="color:var(--text3)">Возвраты за 90 дней:</span>
+          <span style="font-weight:700;color:var(--income);text-align:right">${fmt2(d.ret90)}</span>
+          <span style="color:var(--text3)">База расчёта (расход − возвраты):</span>
+          <span style="font-weight:700;color:${d.base90>=0?'var(--outcome)':'var(--income)'};text-align:right">${fmt2(-d.base90)}</span>
           <span style="color:var(--text3)">Среднемесячный расход:</span>
           <span style="font-weight:700;color:var(--outcome);text-align:right">${fmt2(-d.avgMonthlyOut)}</span>
           <span style="color:var(--text3)">Формула:</span>
@@ -4488,7 +4541,9 @@ function renderOPIU(f){
     const ac=String(row[COL.ARTICLE_CODE]||'').trim();
     const an=String(row[COL.ARTICLE_NAME]||'').trim();
     const analytics=String(row[COL.ANALYTICS]||'').trim();
-    const inc=parseNum(row[COL.INCOME]),out=parseNum(row[COL.OUTCOME]);
+    // ⚠ perOut хранит расход ОТРИЦАТЕЛЬНЫМ, поэтому `-expOf(row)`, а не parseNum: конвенция знака
+    //   обязана находиться грепом по expOf и в накопителях с минусом, иначе половина её разъедется.
+    const inc=parseNum(row[COL.INCOME]),out=-expOf(row);
     if((type==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){
       rev.perInc[pk]=(rev.perInc[pk]||0)+inc;
       const sub=an||ac||'Без подстатьи';
@@ -4496,7 +4551,7 @@ function renderOPIU(f){
       rev.arts[sub].perInc[pk]=(rev.arts[sub].perInc[pk]||0)+inc;
       rev.arts[sub].rows.push(row);
     }
-    if(type==='списание'&&out<0&&analytics&&exp[analytics]){
+    if(type==='списание'&&out!==0&&analytics&&exp[analytics]){
       exp[analytics].perOut[pk]=(exp[analytics].perOut[pk]||0)+out;
       const art=ac||'Без статьи';
       if(!exp[analytics].arts[art])exp[analytics].arts[art]={perOut:{},subs:{}};
@@ -4853,11 +4908,12 @@ function renderTarget(f){
     const d=parseDate(row[COL.DATE_OPIU]); if(!d)return;
     if(selYears.length&&!selYears.includes(d.getFullYear()))return;
     if(selMonths.length&&!selMonths.includes(d.getMonth()+1))return;
-    const inc=parseNum(row[COL.INCOME]), out=parseNum(row[COL.OUTCOME]);
+    const inc=parseNum(row[COL.INCOME]);
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(), an=String(row[COL.ARTICLE_NAME]||'').trim();
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))revFact+=inc;
-    if(t==='списание'&&out<0&&EXP_CATS.indexOf(String(row[COL.ANALYTICS]||'').trim())>=0){
-      const av=Math.abs(out), art=ac||'Без статьи', sub=an||'Без подстатьи';
+    const av0=expOf(row); // расход со знаком: возврат уменьшает сумму статьи/подстатьи
+    if(t==='списание'&&av0&&EXP_CATS.indexOf(String(row[COL.ANALYTICS]||'').trim())>=0){
+      const av=av0, art=ac||'Без статьи', sub=an||'Без подстатьи';
       const a=artMap[art]||(artMap[art]={total:0,subs:{}}); a.total+=av; a.subs[sub]=(a.subs[sub]||0)+av;
     }
   });
@@ -4998,7 +5054,7 @@ window.fotShowEmployee=function(name){
   if(!rows.length)return;
   const esc=s=>String(s||'').replace(/</g,'&lt;');
   const byDir={};let total=0;
-  rows.forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'Не указано').trim();const v=Math.abs(parseNum(r[COL.OUTCOME]));byDir[dir]=(byDir[dir]||0)+v;total+=v;});
+  rows.forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'Не указано').trim();const v=expOf(r);byDir[dir]=(byDir[dir]||0)+v;total+=v;});
   const arr=Object.entries(byDir).sort((a,b)=>b[1]-a[1]);
   const tABS=total||1;
   const body=arr.map(([d,v])=>`<tr>
@@ -5033,7 +5089,7 @@ function renderFOT(f){
   const dataBase=RAW.filter(row=>{
     const type=String(row[COL.TYPE]||'').trim().toLowerCase();
     if(type!=='списание')return false;
-    if(parseNum(row[COL.OUTCOME])>=0)return false;
+    if(!expOf(row))return false; // нулевые списания за бортом, возврат (положительное списание) - внутрь: он уменьшает ФОТ периода
     const d=parseDate(row[COL.DATE_OPIU]);if(!d)return false;
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
     return FOT_PREFIXES.some(p=>ac.startsWith(p)||an.startsWith(p));
@@ -5135,9 +5191,9 @@ function renderFOT(f){
   RAW.forEach(row=>{
     const t=String(row[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;
     const d=parseDate(row[COL.DATE_OPIU]);if(!d||!fotInScope(d))return;
-    const o=parseNum(row[COL.OUTCOME]),inc=parseNum(row[COL.INCOME]);
+    const o=expOf(row),inc=parseNum(row[COL.INCOME]);
     const _anl=String(row[COL.ANALYTICS]||'').toLowerCase();
-    if(t==='списание'&&o<0&&!(_anl.includes('вывод')&&_anl.includes('прибыл')))totalExpAbs+=Math.abs(o); // вывод прибыли (дивиденды) - не расход, как в ОПиУ
+    if(t==='списание'&&o&&!(_anl.includes('вывод')&&_anl.includes('прибыл')))totalExpAbs+=o; // вывод прибыли (дивиденды) - не расход, как в ОПиУ
     const ac=String(row[COL.ARTICLE_CODE]||'').trim(),an=String(row[COL.ARTICLE_NAME]||'').trim();
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))totalRev+=inc;
   });
@@ -5291,15 +5347,17 @@ function renderExpenses(f){
   const cats={};let totalExp=0;
   data.forEach(r=>{
     const type=String(r[COL.TYPE]||'').trim().toLowerCase();
-    const out=parseNum(r[COL.OUTCOME]);
-    if(type!=='списание'||out>=0||_expIsVyvod(r))return;
+    const out=expOf(r); // расход со знаком: >0 трата, <0 возврат
+    if(type!=='списание'||!out||_expIsVyvod(r))return;
     const cat=l1key(r);
     if(!cats[cat])cats[cat]={total:0,subs:{}};
     cats[cat].total+=out;
     if(hasL2){const sub=l2key(r);cats[cat].subs[sub]=(cats[cat].subs[sub]||0)+out;}
     totalExp+=out;
   });
-  const catArr=Object.entries(cats).map(([k,v])=>({name:k,total:Math.abs(v.total),subs:v.subs})).filter(c=>c.total>0).sort((a,b)=>b.total-a.total);
+  // ⚠ Категория с ОТРИЦАТЕЛЬНЫМ итогом (возвраты перекрыли траты) отсеивается тем же `total>0`, что и нулевая:
+  //   доля в круговой диаграмме у неё не определена. Подстатьи знак сохраняют - там это видно числом.
+  const catArr=Object.entries(cats).map(([k,v])=>({name:k,total:v.total,subs:v.subs})).filter(c=>c.total>0).sort((a,b)=>b.total-a.total);
   const totalExpAbs=Math.abs(totalExp)||1;
   const revAbs=Math.abs(totalRev)||1;
 
@@ -5307,7 +5365,7 @@ function renderExpenses(f){
   const cmpMode=f.periodType||'year';
   const cmpPK=row=>{const d=parseDate(row[COL.DATE_OPIU]);if(!d)return null;const y=d.getFullYear(),m=d.getMonth()+1;if(cmpMode==='year')return String(y);if(cmpMode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
   const perCat={},perSub={};const cmpPset=new Set();
-  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const out=parseNum(r[COL.OUTCOME]);if(type!=='списание'||out>=0||_expIsVyvod(r))return;const pk=cmpPK(r);if(!pk)return;cmpPset.add(pk);const cat=l1key(r);(perCat[cat]=perCat[cat]||{});perCat[cat][pk]=(perCat[cat][pk]||0)+Math.abs(out);const sub=String(r[COL.ARTICLE_NAME]||'Без подстатьи').trim();(perSub[sub]=perSub[sub]||{});perSub[sub][pk]=(perSub[sub][pk]||0)+Math.abs(out);});
+  data.forEach(r=>{const type=String(r[COL.TYPE]||'').trim().toLowerCase();const out=expOf(r);if(type!=='списание'||!out||_expIsVyvod(r))return;const pk=cmpPK(r);if(!pk)return;cmpPset.add(pk);const cat=l1key(r);(perCat[cat]=perCat[cat]||{});perCat[cat][pk]=(perCat[cat][pk]||0)+out;const sub=String(r[COL.ARTICLE_NAME]||'Без подстатьи').trim();(perSub[sub]=perSub[sub]||{});perSub[sub][pk]=(perSub[sub][pk]||0)+out;});
   const cmpPeriods=[...cmpPset].sort((a,b)=>periodSortKey(a,cmpMode).localeCompare(periodSortKey(b,cmpMode)));
 
   // Фильтр-бар + направление
@@ -5398,7 +5456,7 @@ function renderExpenses(f){
       <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500};color:var(--outcome);font-variant-numeric:tabular-nums">${fmt(-c.total)}</td>
       <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500}">${fmtPct(c.total/totalExpAbs)}</td>
       <td style="padding:5px 10px;font-size:11px;text-align:right;font-weight:${hasL2?700:500};color:var(--text3)">${totalRev?fmtPct(c.total/revAbs):'-'}</td></tr>`;
-    if(hasL2)Object.entries(c.subs).map(([s,v])=>[s,Math.abs(v)]).sort((a,b)=>b[1]-a[1]).forEach(([s,v])=>{
+    if(hasL2)Object.entries(c.subs).sort((a,b)=>b[1]-a[1]).forEach(([s,v])=>{ // знак сохраняем: подстатья с нетто-возвратом должна быть видна как возврат, а не перевёрнута модулем
       body+=`<tr><td style="padding:3px 10px 3px 26px;font-size:11px;color:var(--text2)">${_htmlEsc(s)}</td>
         <td style="padding:3px 10px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums">${fmt(-v)}</td>
         <td style="padding:3px 10px;font-size:11px;text-align:right;color:var(--text3)">${fmtPct(v/totalExpAbs)}</td>
@@ -8237,11 +8295,11 @@ function _pfAllocYearCtx(year){
     const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!rev[dir])return;
     const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
     const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
-    const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=expOf(r);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[dir][m]+=inc;
-    if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');
-      if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[dir][m]+=Math.abs(out);}
+    if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');
+      if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[dir][m]+=out;}
   });
   const recs=(_planRecords||[]).filter(p=>p&&p.year===year);
   const revBaseM=(d,m)=>{const r=recs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;
@@ -8695,8 +8753,12 @@ function renderPlanFact(f){
     if(level==='article'&&gkey&&ac){const _amt=Math.abs(inc)+Math.abs(out);if(_amt){(artRepAmt[gkey]=artRepAmt[gkey]||{})[ac]=(artRepAmt[gkey][ac]||0)+_amt;}} // представитель лейбла статьи = ARTICLE_CODE с макс. оборотом в c3-группе
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?gkey:an;if(ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}
       if(level==='article'&&sn){(incSubN[sn]=incSubN[sn]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+sn]=pfTxn['inc|'+sn]||[]).push(r);const K=rd+'||'+sn;(_pdInc[K]=_pdInc[K]||new Array(13).fill(0))[m]+=inc;}}
-    if(t==='списание'&&out<0){
-      const c=level==='article'?gkey:an,av=Math.abs(out);
+    // ⚠ av - расход СО ЗНАКОМ (expOf): >0 трата, <0 возврат. Строкой выше `out` остаётся сырым
+    //   намеренно - там модуль означает ОБЪЁМ активности кода для выбора представителя лейбла статьи,
+    //   и возврат обязан этот объём увеличивать, а не вычитать.
+    const av=expOf(r);
+    if(t==='списание'&&av){
+      const c=level==='article'?gkey:an;
       const anl=nrm(r[COL.ANALYTICS]),isVyvod=anl.includes('вывод')&&anl.includes('прибыл'); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
       if(isVyvod){if(c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
         if(level==='article'&&sn){(vyvodSubN[sn]=vyvodSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+sn]=pfTxn['vyv|'+sn]||[]).push(r);const K=rd+'||'+sn;(_pdVyv[K]=_pdVyv[K]||new Array(13).fill(0))[m]+=av;}}
@@ -8725,12 +8787,12 @@ function renderPlanFact(f){
       const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
       const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
       const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
-      const out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
+      const out=expOf(r),inc=parseNum(r[COL.INCOME]);
       // расходы
-      if(t==='списание'&&out<0&&!isOpeningBalance(an)){
+      if(t==='списание'&&out&&!isOpeningBalance(an)){
         const anl=nrm(r[COL.ANALYTICS]);
         if(!(anl.includes('вывод')&&anl.includes('прибыл'))){ // вывод 127 - распределение, не расход
-          const av=Math.abs(out);
+          const av=out;
           if(!an){_npEmpty.sum+=av;_npEmpty.cnt++;_npEmpty.rows.push(r);}
           else _npBump(_npExpAcc,an,av,rd,r);
           if(!OPIU_CATS.includes(String(r[COL.ANALYTICS]||'').trim())){_anBad.sum+=av;_anBad.cnt++;_anBad.rows.push(r);} // строка дошла сюда = БДР её посчитал; аналитика вне точного списка = ОПиУ отбросит
@@ -9357,9 +9419,9 @@ function renderPlanFact(f){
     const baseDirM=(d,m)=>{if(!PB)return null;const all=PB.R.filter(p=>p.dir===d&&p.level===sLvl&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
     // факт (направление) по этой подстатье помесячно - целевой проход по RAW (одна подстатья, дёшево); тот же критерий, что БДР-факт
     const dirFact={};
-    RAW.forEach(r=>{const d=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirsToAgg.indexOf(d)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;const dt=parseDate(r[COL.DATE_OPIU]);if(!dt||dt.getFullYear()!==year)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(an!==sub)return;const m=dt.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]),ac=String(r[COL.ARTICLE_CODE]||'').trim();const arr=dirFact[d]||(dirFact[d]=new Array(13).fill(0));
+    RAW.forEach(r=>{const d=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirsToAgg.indexOf(d)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;const dt=parseDate(r[COL.DATE_OPIU]);if(!dt||dt.getFullYear()!==year)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(an!==sub)return;const m=dt.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=expOf(r),ac=String(r[COL.ARTICLE_CODE]||'').trim();const arr=dirFact[d]||(dirFact[d]=new Array(13).fill(0));
       if(sKind==='inc'){if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))arr[m]+=inc;}
-      else if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');const isV=anl.includes('вывод')&&anl.includes('прибыл');if(sKind==='vyv'?isV:!isV)arr[m]+=Math.abs(out);}});
+      else if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');const isV=anl.includes('вывод')&&anl.includes('прибыл');if(sKind==='vyv'?isV:!isV)arr[m]+=out;}});
     const factOf=d=>{const a=dirFact[d];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
     const factMonth=(d,m)=>{const a=dirFact[d];return a?(a[m]||0):0;};
     // прогноз (направление) помесячно - аналог baseDirM, но из прогноза (plans+cvtD); для devBase остатка незамороженного месяца
@@ -10230,7 +10292,9 @@ function renderMarketing(f){
   const mktSpendMatch=sub=>sub.startsWith('300_')||sub==='111_Заработная плата ОМ';
   baseData.forEach(row=>{
     const pk=getPK(row);if(!pk)return;
-    const out=parseNum(row[COL.OUTCOME]);if(out>=0)return;
+    // ⚠ costs хранят расход ОТРИЦАТЕЛЬНЫМ, поэтому `-expOf(row)`, а не parseNum: конвенция знака
+    //   должна находиться грепом по expOf и здесь (возврат уменьшает CPF/CPO и долю в выручке).
+    const out=-expOf(row);if(!out)return;
     const sub=String(row[COL.ARTICLE_NAME]||'').trim();
     if(mktSpendMatch(sub)){
       costs.mktShare[pk]=(costs.mktShare[pk]||0)+out;
@@ -11065,9 +11129,17 @@ function renderAnomaly(f){
     {id:'a300',label:'Статья 300 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='300',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
     {id:'a112',label:'Статья 112 → Прямые / Переменные',where:r=>!isMove(r)&&code3(r)==='112',checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Прямые / Переменные'}]},
     // Сторож сверки БДР==ОПиУ: ОПиУ включает списание только при ТОЧНОМ совпадении аналитики с OPIU_CATS, БДР - все списания кроме вывода 127. Аналитика вне списка (опечатка/регистр/пусто) молча разводит отчёты
-    {id:'ancat',label:'Списание → аналитика из категорий ОПиУ (точное написание)',where:r=>!isMove(r)&&S(r[COL.TYPE]).toLowerCase()==='списание'&&parseNum(r[COL.OUTCOME])<0,checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'одна из категорий ОПиУ (точное написание)',ok:a=>OPIU_CATS.includes(String(a||'').trim())}]},
+    // ⚠ Условие - ЛЮБОЕ ненулевое списание, а не только отрицательное: с конвенцией «положительное
+    //   списание = возврат» возврат уменьшает БДР, но в ОПиУ попадает лишь при точном совпадении
+    //   аналитики. Отбирай правило по знаку - и возврат с кривой аналитикой разводил бы отчёты молча,
+    //   ровно мимо того сторожа, который для этого и заведён.
+    {id:'ancat',label:'Списание → аналитика из категорий ОПиУ (точное написание)',where:r=>!isMove(r)&&S(r[COL.TYPE]).toLowerCase()==='списание'&&parseNum(r[COL.OUTCOME])!==0,checks:[{field:COL.ANALYTICS,fieldName:'Аналитика',expect:'одна из категорий ОПиУ (точное написание)',ok:a=>OPIU_CATS.includes(String(a||'').trim())}]},
     {id:'sro',label:'112_Платежи в СРО → направление АУ/САУ',where:r=>!isMove(r)&&norm(r[COL.ARTICLE_NAME]).includes('сро'),checks:[{field:COL.ACTIVITY_DIR,fieldName:'Направление',expect:'АУ / САУ',ok:a=>{const p=String(a||'').trim().toLowerCase().split(/[\s\-]/)[0];return p==='ау'||p==='сау';}}]},
-    {id:'outsign',label:'Списание → должно быть со знаком «−» (возвраты помечаются)',where:r=>!isMove(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'отрицательное (со знаком «−»)',ok:a=>parseNum(a)<=0}]},
+    // ⚠ С 12.08.2026 положительное списание - это ВОЗВРАТ, он уменьшает расход своего периода (см. expOf).
+    //   Правило поэтому НЕ про ошибку знака: оно показывает строки, которые двигают деньги в отчётах,
+    //   и просит подтвердить, что это действительно возврат, а не опечатка ввода. Убирать его нельзя -
+    //   раньше такая строка просто не участвовала в расчётах, теперь ошибка ввода молча срежет расход.
+    {id:'outsign',label:'Списание со знаком «+» → проверить, что это возврат',where:r=>!isMove(r)&&parseNum(r[COL.OUTCOME])>0,checks:[{field:COL.OUTCOME,fieldName:'Списание',expect:'возврат - уменьшает расход периода (проверить и отметить)',ok:a=>parseNum(a)<=0}]},
     {id:'incsub',label:'Поступление → подстатья 120_* (доход)',where:r=>!isMove(r)&&S(r[COL.TYPE]).toLowerCase()==='поступление'&&parseNum(r[COL.INCOME])>0,checks:[{field:COL.ARTICLE_NAME,fieldName:'Подстатья',expect:'начинается с 120_ (доход)',ok:a=>String(a||'').trim().startsWith('120_')}]}, // не-120 поступление фантомно попадает в ДОХОДЫ БДР/ОПиУ и завышает выручку - брак данных, чинить в источнике
     {id:'div',label:'Статья 127 → Вывод чистой прибыли · 002_Финансовая деятельность · контрагент',where:is127,checks:[
       {field:COL.ANALYTICS,fieldName:'Аналитика',expect:'Вывод чистой прибыли'},
@@ -11843,7 +11915,7 @@ function _baselineBakeMonth(year,m){
   year=+year;m=+m;
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))];
   const ctx={};allDirs.forEach(dir=>{const rev=new Array(13).fill(0),npExp=new Array(13).fill(0);
-    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const mm=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=parseNum(r[COL.OUTCOME]); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[mm]+=inc; if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[mm]+=Math.abs(out);} });
+    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const mm=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[mm]+=inc; if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[mm]+=out;} });
     ctx[dir]={rev,npExp};});
   const _rpM=(d,mo)=>{const r=(_planRecords||[]).find(p=>p.dir===d&&p.year===year&&p.level==='revenue'&&p.month===mo);return(r&&r.value>0)?r.value:null;};
   const baseM=(d,mo)=>{const rp=_rpM(d,mo);if(rp!=null)return rp;const ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,mo):0;if(ip>0)return ip;return (ctx[d]?ctx[d].rev[mo]:0)||0;};
@@ -11862,7 +11934,7 @@ function _baselineBakeMonth(year,m){
 // факт расходов месяца m (все направления, без «вывода прибыли») + число операций - для factAtApproval/предупреждения
 function _baselineFactMonth(year,m){
   year=+year;m=+m;let sum=0,cnt=0;
-  (RAW||[]).forEach(r=>{const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const out=parseNum(r[COL.OUTCOME]);if(!(out<0))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year||(d.getMonth()+1)!==m)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;sum+=Math.abs(out);cnt++;});
+  (RAW||[]).forEach(r=>{const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const out=expOf(r);if(!out)return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year||(d.getMonth()+1)!==m)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;sum+=out;cnt++;});
   return {sum,cnt};
 }
 function startBaselineSync(){
@@ -12069,7 +12141,7 @@ function _planCodes(dir,level){
   RAW.forEach(r=>{
     if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
     if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;
-    if(parseNum(r[COL.OUTCOME])>=0)return;
+    if(!expOf(r))return; // код попадает в набор и по возврату - иначе подстатья, где за период были только возвраты, исчезла бы из редактора планов
     const c=level==='article'?String(r[COL.ARTICLE_CODE]||'').trim():String(r[COL.ARTICLE_NAME]||'').trim();
     if(c)set[c]=1;
   });
@@ -12288,11 +12360,11 @@ function _planRenderMatrix(){
     const rd=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!rd)return;
     const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
     const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
-    const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=parseNum(r[COL.OUTCOME]);
+    const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=expOf(r);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(),key=level==='article'?ac:an;
     const F=fad(rd);
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){F.rev[m]+=inc;if(key)(F.inc[key]=F.inc[key]||new Array(13).fill(0))[m]+=inc;}
-    if(t==='списание'&&out<0){const av=Math.abs(out);if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&isSubLevel(key)){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}const al=nrmA(r[COL.ANALYTICS]);if(!(al.includes('вывод')&&al.includes('прибыл')))F.npExp[m]+=av;}
+    if(t==='списание'&&out){const av=out;if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&isSubLevel(key)){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}const al=nrmA(r[COL.ANALYTICS]);if(!(al.includes('вывод')&&al.includes('прибыл')))F.npExp[m]+=av;}
   });
   const factOf=(rdir,rl,code,m)=>{const F=FAD[rdir];if(!F)return 0;if(rl==='revenue')return F.rev[m]||0;const a=(rl==='income'?F.inc:F.exp)[code];return a?(a[m]||0):0;};
   const factYr=(rdir,rl,code)=>{let s=0;for(let m=1;m<=12;m++)s+=factOf(rdir,rl,code,m);return s;};
@@ -12620,10 +12692,10 @@ window.planPrintOwners=function(){
       if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
       const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
       const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
-      const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=parseNum(r[COL.OUTCOME]);
+      const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r);
       const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim();
       if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc;
-      if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=Math.abs(out);}
+      if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=out;}
     });
     ctx[dir]={rev,npExp};});
   // база %выручки - каскад как в отчёте/редакторе: план «Выручка» → Σ планов доходов → факт; %ЧП - по факту
@@ -13124,7 +13196,7 @@ function _cfoStmtData(P){
   // контекст факта (выручка/непрофильный расход по месяцам) - для %-планов
   const ctx={};
   dirsScope.forEach(dir=>{const rev=new Array(13).fill(0),npExp=new Array(13).fill(0);
-    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=parseNum(r[COL.OUTCOME]); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc; if(t==='списание'&&out<0){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=Math.abs(out);} });
+    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc; if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=out;} });
     ctx[dir]={rev,npExp};});
   // baseline-конвертер %-планов от СНИМКОВОЙ базы выручки (income/revenue из blRecs); pct_profit - от факта
   const blIncBaseM=(d,m)=>{const rc=blRecs.filter(p=>p.dir===d&&p.level==='income');let v=0;if(rc.length){const byc={};rc.forEach(p=>{const k=p.code+'|'+(p.side||'');(byc[k]=byc[k]||[]).push(p);});Object.values(byc).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)v+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)v+=yr.value/12;}});}return v;};
@@ -13147,7 +13219,7 @@ function _cfoStmtData(P){
   const fcPlanMD=fcPlanF('subarticle'),fcPlanIncMD=fcPlanF('income');
   // факт + операции: dir||ARTICLE_NAME → [13] месяцев и список строк (вывод прибыли исключён, как в отчёте)
   const factIdx={},opsIdx={};
-  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=parseNum(r[COL.OUTCOME]); if(!(out<0))return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIdx[key]=factIdx[key]||new Array(13).fill(0))[m]+=Math.abs(out); (opsIdx[key]=opsIdx[key]||[]).push(r); });
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=expOf(r); if(!out)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIdx[key]=factIdx[key]||new Array(13).fill(0))[m]+=out; (opsIdx[key]=opsIdx[key]||[]).push(r); });
   // факт ДОХОДОВ: dir||ARTICLE_NAME → [13] месяцев (поступления, тот же критерий что в ОПиУ/БДР; перемещения и начальный остаток исключены). Отдельный проход - расходный factIdx не трогаем
   const factIncIdx={};
   (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; if(!an)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
