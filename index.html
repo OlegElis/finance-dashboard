@@ -5337,7 +5337,7 @@ window.pfActionsToggle=function(){const dd=document.getElementById('pf-actions-d
     document.addEventListener('click',h);},0);};
 window.pfMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.planfact[field]=checked;};
 window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.pfMultiChange(ddId,btnId,field,labelAll);};
-window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];_tabFilters.planfact.owners=[];_tabFilters.planfact.sides=[];renderPlanFact(getFilters());};
+window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];_tabFilters.planfact.owners=[];_tabFilters.planfact.sides=[];_tabFilters.planfact.rowDim='article';renderPlanFact(getFilters());};
 // ══ ФИЛЬТР «КОНТРАГЕНТ» (ID_SecondSide) в БДР - СВОЯ машинерия списка ══════════
 // ⚠ Почему не pfOptList+expFilterList, как у статьи/подстатьи/ЦФО: там десятки значений, а сторон
 //   тысячи. Общая схема рисует ВСЕ пункты в DOM и прячет неподходящие поиском - это 3-5 тысяч
@@ -5365,15 +5365,22 @@ window.pfSideRender=function(q){
   list.innerHTML=head+sel.map(v=>row(v,true)).join('')+(sel.length&&shown.length?'<div style="height:1px;background:var(--divider);margin:3px 0"></div>':'')+shown.map(v=>row(v,false)).join('')
     +(!found.length&&!sel.length?'<div style="padding:8px 10px;font-size:11px;color:var(--text3)">Ничего не найдено</div>':'');
 };
+// ⚠ РОВНО ОДИН контрагент → разрез «По направлениям» ВКЛЮЧАЕТСЯ САМ. Это единственный вид, ради
+//   которого фильтр и нужен: человек выбирает фамилию, чтобы увидеть, как она делится по направлениям.
+//   Заставлять его после этого искать серый переключатель - значит спрятать ответ за вторым кликом.
+//   Снятие фильтра возвращает «По статьям». При двух и более выбранных режим НЕ трогаем - человек
+//   уже настроил вид руками, и переставлять его под ним нельзя.
+function _pfSideAutoDim(n){const f=_tabFilters.planfact;if(n===1)f.rowDim='dir';else if(n===0)f.rowDim='article';}
 window.pfSideToggle=function(v,on){
   const cur=new Set(_tabFilters.planfact.sides||[]);
   if(on)cur.add(v);else cur.delete(v);
   _tabFilters.planfact.sides=[...cur];
+  _pfSideAutoDim(cur.size);
   const btn=document.getElementById('pf-side-btn');
   if(btn)btn.textContent=(cur.size?cur.size+' выбрано':'Все контрагенты')+' ▾';
   window.pfSideRender(); // пересобираем: снятый уходит вниз, выбранный поднимается наверх
 };
-window.pfSideClear=function(){_tabFilters.planfact.sides=[];const btn=document.getElementById('pf-side-btn');if(btn)btn.textContent='Все контрагенты ▾';window.pfSideRender();};
+window.pfSideClear=function(){_tabFilters.planfact.sides=[];_pfSideAutoDim(0);const btn=document.getElementById('pf-side-btn');if(btn)btn.textContent='Все контрагенты ▾';window.pfSideRender();};
 window.pfSetRowDim=function(v){_tabFilters.planfact.rowDim=(v==='dir'?'dir':'article');renderPlanFact(getFilters());}; // измерение строк сводной: по статьям ⇄ по направлениям (только при 1 выбранной подстатье)
 window.expFilterList=function(ddId,q){const dd=document.getElementById(ddId);if(!dd)return;q=(q||'').toLowerCase();dd.querySelectorAll('label').forEach(l=>{l.style.display=l.textContent.toLowerCase().includes(q)?'':'none';});};
 window.expResetExtra=function(){_tabFilters.expenses.articles=[];_tabFilters.expenses.subarticles=[];renderExpenses(getFilters());};
@@ -8895,6 +8902,30 @@ function renderPlanFact(f){
     _sideGroupSubs(artCode).forEach(sc=>{const v=_sidePlanP(recsFn,sideMD,'subarticle',sc);if(v!=null)tot=(tot||0)+v;});return tot;};
   const _sideArtM=(recsFn,sideMD,artCode,m)=>{if(!_sideArtKnown(artCode))return null;let tot=null;
     _sideGroupSubs(artCode).forEach(sc=>{const v=_sidePlanSub(recsFn,sideMD,'subarticle',sc,m);if(v!=null)tot=(tot||0)+v;});return tot;};
+  // ── Разрез ПО НАПРАВЛЕНИЯМ под фильтром «Контрагент» ─────────────────────────
+  // ⚠ Ради этого разреза фильтр и заводился: выбрал фамилию - увидел, как её ФОТ делится по
+  //   направлениям. Один набор примитивов на ОБА случая (выбрана подстатья / выбран только
+  //   контрагент), иначе две копии правила разъедутся, как уже было с классификацией стороны.
+  // ⚠ Факт берётся из _pd*-карт: они гасятся флагом sp в проходе по RAW, то есть УЖЕ порезаны
+  //   по стороне. Собственный проход по RAW тут завёл бы вторую, несогласованную выборку.
+  const _sideDirFactM=(kind,d,subs,m)=>{const mp=_pdFactMap(kind);let s=0;subs.forEach(sn=>{const a=mp[d+'||'+sn];if(a)s+=a[m]||0;});return s;};
+  const _sideDirPlanM=(sideMD,d,subs,m)=>{if(!_sideDirKnown(subs))return null;let tot=null;
+    subs.forEach(sn=>{selSide.forEach(side=>{const v=sideMD(d,sn,side,m);if(v!=null)tot=(tot||0)+v;});});return tot;};
+  // Правило прочерка то же, что у строки-статьи: есть подстатья вне _slSub - план направления неизвестен целиком.
+  const _sideDirKnown=subs=>subs.length>0&&subs.every(_slSub);
+  const _sidePer2=fn=>{if(!isYear)return fn(+period);let t=null;for(let m=1;m<=12;m++){const v=fn(m);if(v!=null)t=(t||0)+v;}return t;}; // период: год = Σ месяцев, «плана нет» ≠ 0
+  // подстатьи направления (по факту, прошедшему фильтр) + подстатьи со стороной из планов
+  const _sideDirSubs=(kind,d)=>{const mp=_pdFactMap(kind),pre=d+'||',s=new Set();
+    for(const k in mp)if(k.indexOf(pre)===0)s.add(k.slice(pre.length));
+    // ⚠ Планы добавляем ТОЛЬКО СВОЕГО вида. Без этой проверки план ФОТ попадал и в секцию
+    //   «Распределение прибыли», и она печаталась фантомом: те же плановые числа при нулевом факте.
+    //   Признак вывода - тот же, что в разрезе одной подстатьи (isVyvodCode ∪ факт в vyvodSubN).
+    if(kind==='exp'||kind==='vyv')plans.forEach(p=>{
+      if(p.level!=='subarticle'||p.dir!==d)return;
+      if(!selSide.has(String(p.side||'').trim()))return;
+      const isV=isVyvodCode(p.code)||!!vyvodSubN[p.code];
+      if(isV===(kind==='vyv'))s.add(p.code);});
+    return [...s];};
   // baseline-аксессоры (null, если ни один месяц не заморожен)
   const _blSideMD=PB?_planSideMD(PB.R,(d,r,m)=>PB.cvtD(r,m)):null;
   const bPlanExp=code=>PB?PB.planExp(code):null;
@@ -9012,7 +9043,7 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-art-btn" onclick="pfMultiToggle('pf-art-dd')" style="${pfBtnStyle}">${pfArtBtn}</button><div id="pf-art-dd" style="${pfDDstyle}">${pfArtDD}</div></div>
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Подстатья:</label>
     <div style="position:relative;display:inline-block"><button id="pf-sub-btn" onclick="pfMultiToggle('pf-sub-dd')" style="${pfBtnStyle}">${pfSubBtn}</button><div id="pf-sub-dd" style="${pfDDstyle}">${pfSubDD}</div></div>
-    ${!isMonthly?(()=>{const de=(selSub.size===1&&_tabFilters.planfact.rowDim==='dir')?'dir':'article';const one=selSub.size===1;const seg=(v,lbl,en)=>`<button ${en?'':'disabled'} onclick="${en?`pfSetRowDim('${v}')`:''}" style="font-size:10px;font-weight:600;padding:3px 9px;border:none;cursor:${en?'pointer':'not-allowed'};font-family:var(--sans);background:${de===v?'var(--accent)':'transparent'};color:${de===v?'#fff':'var(--text2)'}">${lbl}</button>`;return `<span title="${one?'Разрез строк сводной: по статьям или по направлениям (для выбранной подстатьи)':'Разрез «по направлениям» доступен при выборе ровно одной подстатьи'}" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;${one?'':'opacity:.55'}">${seg('article','По статьям',true)}${seg('dir','По направлениям',one)}</span>`;})():''}
+    ${!isMonthly?(()=>{const one=(selSub.size===1)||selSide.size>0;/* разрез доступен при одной подстатье ИЛИ при выбранном контрагенте */const de=(one&&_tabFilters.planfact.rowDim==='dir')?'dir':'article';const seg=(v,lbl,en)=>`<button ${en?'':'disabled'} onclick="${en?`pfSetRowDim('${v}')`:''}" style="font-size:10px;font-weight:600;padding:3px 9px;border:none;cursor:${en?'pointer':'not-allowed'};font-family:var(--sans);background:${de===v?'var(--accent)':'transparent'};color:${de===v?'#fff':'var(--text2)'}">${lbl}</button>`;return `<span title="${one?'Разрез строк сводной: по статьям или по направлениям (для выбранной подстатьи или выбранного контрагента)':'Разрез «по направлениям» доступен при выборе ровно одной подстатьи или контрагента'}" style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;${one?'':'opacity:.55'}">${seg('article','По статьям',true)}${seg('dir','По направлениям',one)}</span>`;})():''}
     ${pfOwners.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">ЦФО:</label>
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${pfSides.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Контрагент:</label>
@@ -9327,9 +9358,12 @@ function renderPlanFact(f){
   const vyvodRows=vyvodBody?(secRow('Распределение прибыли (вывод)')+vyvodBody+dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv'),skind:'vyv'})):'';
   // ── Режим «по направлениям»: строки = направления по ОДНОЙ выбранной подстатье (значения - по этой подстатье в направлении) ──
   // Доступен только при ровно одной выбранной подстатье; иначе измерение молча = «по статьям». Матрицу «все месяцы» не трогает.
-  const dirMode=(selSub.size===1)&&(_tabFilters.planfact.rowDim==='dir')&&!isMonthly;
+  // ⚠ Разрез «по направлениям» доступен при ОДНОЙ выбранной подстатье ИЛИ при выбранном контрагенте.
+  //   Матрицы «все месяцы» он по-прежнему не касается (там строки - месяцы).
+  const dirMode=((selSub.size===1)||selSide.size>0)&&(_tabFilters.planfact.rowDim==='dir')&&!isMonthly;
+  const dirModeSub=dirMode&&selSub.size===1; // разрез одной подстатьи (прежнее поведение)
   let dirTbody='';
-  if(dirMode){
+  if(dirModeSub){
     const sub=[...selSub][0];
     const subIsVyv=isVyvodCode(sub)||!!vyvodSubN[sub];
     const subIsInc=!subIsVyv&&(!!incSubN[sub]||String(sub).startsWith(REVENUE_PREFIX)||plans.some(p=>p.level==='income'&&p.code===sub)||(PB&&PB.R.some(p=>p.level==='income'&&p.code===sub)));
@@ -9342,18 +9376,23 @@ function renderPlanFact(f){
         return tot;}
       sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else recs.forEach(r=>{if(r.month>=1)v=(v||0)+cvt(r,r.month);});if(v!=null)tot=(tot||0)+v;});
       return tot;};
-    const planDir=d=>planDirFrom(plans,cvtD,d);
-    const baseDir=d=>PB?planDirFrom(PB.R,PB.cvtD,d):null;
-    const baseDirM=(d,m)=>{if(!PB)return null;const all=PB.R.filter(p=>p.dir===d&&p.level===sLvl&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
+    // ⚠ Под фильтром «Контрагент» план направления идёт ПО СТОРОНЕ, а не по всем записям кода:
+    //   planDirFrom складывает записи всех сотрудников, и без этой развилки строка направления
+    //   показывала бы полный план подстатьи рядом с фактом одного человека.
+    const _sSubs=[sub];
+    const planDir=d=>selSide.size?_sidePer2(m=>_sideDirPlanM(_fcSideMD,d,_sSubs,m)):planDirFrom(plans,cvtD,d);
+    const baseDir=d=>!PB?null:(selSide.size?_sidePer2(m=>_sideDirPlanM(_blSideMD,d,_sSubs,m)):planDirFrom(PB.R,PB.cvtD,d));
+    const baseDirM=(d,m)=>{if(!PB)return null;if(selSide.size)return _sideDirPlanM(_blSideMD,d,_sSubs,m);const all=PB.R.filter(p=>p.dir===d&&p.level===sLvl&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
     // факт (направление) по этой подстатье помесячно - целевой проход по RAW (одна подстатья, дёшево); тот же критерий, что БДР-факт
     const dirFact={};
-    RAW.forEach(r=>{const d=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirsToAgg.indexOf(d)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;const dt=parseDate(r[COL.DATE_OPIU]);if(!dt||dt.getFullYear()!==year)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(an!==sub)return;const m=dt.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=expOf(r),ac=String(r[COL.ARTICLE_CODE]||'').trim();const arr=dirFact[d]||(dirFact[d]=new Array(13).fill(0));
+    RAW.forEach(r=>{const d=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirsToAgg.indexOf(d)<0)return;if(!sidePassRow(r))return; // ⚠ фильтр по стороне: без него строка направления показывала бы факт всей подстатьи
+      const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;const dt=parseDate(r[COL.DATE_OPIU]);if(!dt||dt.getFullYear()!==year)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(an!==sub)return;const m=dt.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=expOf(r),ac=String(r[COL.ARTICLE_CODE]||'').trim();const arr=dirFact[d]||(dirFact[d]=new Array(13).fill(0));
       if(sKind==='inc'){if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))arr[m]+=inc;}
       else if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');const isV=anl.includes('вывод')&&anl.includes('прибыл');if(sKind==='vyv'?isV:!isV)arr[m]+=out;}});
     const factOf=d=>{const a=dirFact[d];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
     const factMonth=(d,m)=>{const a=dirFact[d];return a?(a[m]||0):0;};
     // прогноз (направление) помесячно - аналог baseDirM, но из прогноза (plans+cvtD); для devBase остатка незамороженного месяца
-    const planDirM=(d,m)=>{const all=plans.filter(p=>p.dir===d&&p.level===sLvl&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;};
+    const planDirM=(d,m)=>{if(selSide.size)return _sideDirPlanM(_fcSideMD,d,_sSubs,m);const all=plans.filter(p=>p.dir===d&&p.level===sLvl&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;};
     // база направления по ОДНОЙ стороне (пара колонок) - зеркало _subOneBaseM на уровне направления; без фолбэка на другую сторону
     const dirOneBaseM=(d,m,utv)=>{const v=utv?baseDirM(d,m):planDirM(d,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
     const remDirBy=(d,baseM)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=baseM(d,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factMonth(d,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;});return{pM,fM,kind:sKind,src:_remSrc(su,sp)};}; // Σ_m база − Σ_m факт; факт только где есть база (#1)
@@ -9369,6 +9408,39 @@ function renderPlanFact(f){
     const _tRem=_remMergeP(sKind,dirRows.map(remDirOf)); // ИТОГО остаток за период = Σ по направлениям ПО ОБЕИМ базам (совпадает со строкой подстатьи в «по статьям»)
     const totalDir=dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:_tRem,skind:sKind}); // статус/Δ по типу выбранной подстатьи (vyv - нейтрально)
     dirTbody=(dirRows.length?secRow((isRev?'Доход':sKind==='vyv'?'Вывод':'Расход')+' · '+esc(sub)+' - по направлениям')+body+totalDir:`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По подстатье «${esc(sub)}» нет ни плана, ни факта в выбранных направлениях</td></tr>`);
+  }
+  // ── Разрез «по направлениям» при выбранном КОНТРАГЕНТЕ и без выбранной подстатьи ──────────────
+  // Строки - направления, значения - ВСЁ, что прошло фильтр (все подстатьи этого контрагента).
+  // ⚠ Секции по типу (доходы / расходы / вывод) отдельные: смешивать их в одной колонке нельзя -
+  //   у них разный знак и разный светофор. Пустые секции не печатаются.
+  // ⚠ КОНТРОЛЬ: Σ строк секции обязана совпасть со строкой «ИТОГО … по фильтру» режима «по статьям».
+  //   И факт, и план идут из тех же примитивов, что там, - второй выборки данных здесь нет.
+  else if(dirMode){
+    const KINDS=[['inc','Доход','Доходы'],['exp','Расход','Расходы'],['vyv','Вывод','Распределение прибыли (вывод)']];
+    const sideLabel=selSide.size===1?[...selSide][0]:(selSide.size+' контрагента(ов)');
+    let html='';
+    KINDS.forEach(([kind,word,secTitle])=>{
+      const isRev=kind==='inc';
+      const subsOf=d=>_sideDirSubs(kind,d);
+      const factM=(d,m)=>_sideDirFactM(kind,d,subsOf(d),m);
+      const factOf=d=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=factM(d,m);return s;}return factM(d,+period);};
+      // доходы по стороне не планируются (план со стороной есть только у _slSub-расходов) → прочерк
+      const planM=(d,m)=>kind==='inc'?null:_sideDirPlanM(_fcSideMD,d,subsOf(d),m);
+      const baseM=(d,m)=>(!PB||kind==='inc')?null:_sideDirPlanM(_blSideMD,d,subsOf(d),m);
+      const planOfD=d=>_sidePer2(m=>planM(d,m));
+      const baseOfD=d=>PB?_sidePer2(m=>baseM(d,m)):null;
+      const oneBase=(d,m,utv)=>{const v=utv?baseM(d,m):planM(d,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
+      const remBy=(d,bm)=>{let pM=null,fM=0,su=0,sp2=0;remMonths.forEach(m=>{const r=bm(d,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factM(d,m);if(r.src==='utv')su++;else if(r.src==='prog')sp2++;});return{pM,fM,kind,src:_remSrc(su,sp2)};};
+      const remOf=d=>({u:remBy(d,(dd,m)=>oneBase(dd,m,true)),t:remBy(d,(dd,m)=>oneBase(dd,m,false)),
+        d:remBy(d,(dd,m)=>_pickDev(frozenSet.has(m),oneBase(dd,m,true),oneBase(dd,m,false)))});
+      const rows2=dirsToAgg.filter(d=>{const f=factOf(d),p=planOfD(d),b=baseOfD(d);return Math.abs(f||0)>0.005||(p!=null&&Math.abs(p)>0.005)||(b!=null&&Math.abs(b)>0.005);}).sort((a,b)=>a.localeCompare(b,'ru'));
+      if(!rows2.length)return;
+      const body2=rows2.map(d=>dRow(d,baseOfD(d),planOfD(d),factOf(d),isRev,false,kind,null,{dir:d,rem:remOf(d)})).join('');
+      const tB=sumOrNull(rows2,d=>baseOfD(d)),tP=sumOrNull(rows2,d=>planOfD(d)),tF=rows2.reduce((s,d)=>s+factOf(d),0);
+      html+=secRow(word+' · '+esc(sideLabel)+' - по направлениям')+body2
+        +dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:_remMergeP(kind,rows2.map(remOf)),skind:kind});
+    });
+    dirTbody=html||`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">У выбранного контрагента нет ни плана, ни факта в выбранных направлениях</td></tr>`;
   }
   // при активном фильтре по статье/подстатье/ЦФО - показываем отфильтрованные строки + ИТОГО ПО ФИЛЬТРУ (по отфильтрованному набору, per-dir-точные). ЧП под фильтром не показываем (ЧП подмножества бессмысленна; настоящая ЧП - в KPI).
   const incTotalRowF=dRow('ИТОГО ДОХОДЫ по фильтру',sumIncBase,sumIncPlan,sumIncFact,true,true,null,null,{rem:remSum(incRowsArr,'inc')});
