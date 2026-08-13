@@ -8637,6 +8637,10 @@ function renderPlanFact(f){
   const expByDirSub={}; // 'направление||подстатья(an)' → расходы по месяцам (свод «Исполнение по ЦФО»)
   const _pdExp={},_pdInc={},_pdVyv={}; // 'направление||sn' (sn=an||ac, КАК factSubN) → расход/доход/вывод по месяцам - для точного per-dir owner-cut под фильтром ЦФО (пустая подстатья → sn=ac → NOOWN, чтобы контроль «Σ по ЦФО = ИТОГО» держался)
   const factSubN={},incSubN={},vyvodSubN={}; // по ПОДСТАТЬЕ (ARTICLE_NAME) - для инлайн-разворота статья→подстатья в режиме «Статья»
+  // Расход по месяцам ПО КОМПАНИИ (без фильтра «Контрагент») - ровно те же строки, что копит factByCode,
+  // но без гейта sp. Нужен KPI-карточкам «Исполнение YTD» и «Прогноз года»: они по решению проекта
+  // всегда по компании, а factByCode с 8786e50 режется по стороне, и факт там ехал бы против полного плана.
+  const factExpAllM=new Array(13).fill(0);
   RAW.forEach(r=>{
     const rd=String(r[COL.ACTIVITY_DIR]||'').trim();
     if(!dirsToAgg.includes(rd))return;
@@ -8664,6 +8668,7 @@ function renderPlanFact(f){
       if(isVyvod){if(sp&&c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
         if(sp&&level==='article'&&sn){(vyvodSubN[sn]=vyvodSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+sn]=pfTxn['vyv|'+sn]||[]).push(r);const K=rd+'||'+sn;(_pdVyv[K]=_pdVyv[K]||new Array(13).fill(0))[m]+=av;}}
       else{
+        if(c)factExpAllM[m]+=av; // ⚠ БЕЗ sp: на этом стоят KPI «по компании» (YTD-исполнение и прогноз года) - см. factExpArrY
         if(sp&&c){(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+c]=pfTxn['exp|'+c]||[]).push(r);}
         if(sp&&level==='article'&&sn){(factSubN[sn]=factSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+sn]=pfTxn['exp|'+sn]||[]).push(r);const Kp=rd+'||'+sn;(_pdExp[Kp]=_pdExp[Kp]||new Array(13).fill(0))[m]+=av;}
         npExpMonth[m]+=av;npD[m]+=av; // ⚠ БЕЗ sp - на этом стоят KPI по компании и базы %-планов
@@ -9107,7 +9112,10 @@ function renderPlanFact(f){
   const planSeries=(codes,pm,py)=>{const arr=new Array(13).fill(0);codes.forEach(c=>{const ms=[];let has=false;for(let m=1;m<=12;m++){const v=pm(c,m);ms.push(v);if(v!=null)has=true;}if(has){for(let m=1;m<=12;m++)arr[m]+=ms[m-1]||0;}else{const y=py(c);if(y!=null)for(let m=1;m<=12;m++)arr[m]+=y/12;}});return arr;};
   const expPlanArrY=planSeries(_codeAll,(c,m)=>planExpM(c,m),c=>planExp(c)); // YTD/прогноз - по ПОЛНЫМ наборам (KPI «по компании»), фильтр статьи/подстатьи/ЦФО не влияет
   const incPlanArrY=_incAll.length?planSeries(_incAll,(c,m)=>planIncM(c,m),c=>planInc(c)):planSeries(['__rev__'],(c,m)=>planMonth('revenue','__rev__',m),c=>planYear('revenue','__rev__'));
-  const factExpArrY=new Array(13).fill(0);for(let m=1;m<=12;m++){let s=0;_codeAll.forEach(c=>{const a=factByCode[c];if(a)s+=a[m]||0;});factExpArrY[m]=s;}
+  // ⚠ Берём factExpAllM (без фильтра по стороне), а НЕ сумму factByCode по _codeAll: под фильтром
+  //   «Контрагент» и факт, и сам набор кодов урезаны, и YTD сравнивал бы расход одного человека
+  //   с планом всей компании. Без фильтра числа тождественны прежним - копятся те же строки.
+  const factExpArrY=factExpAllM;
   const sumR=(a,f,t)=>{let s=0;for(let m=f;m<=t;m++)s+=a[m]||0;return s;};
   const ytdPlanExp=sumR(expPlanArrY,1,L),ytdFactExp=sumR(factExpArrY,1,L);
   const ytdFactInc=sumR(revByMonth,1,L);
@@ -9117,11 +9125,18 @@ function renderPlanFact(f){
   const basePlanArrY=planSeries(_codeAll,(c,m)=>bPlanExpM(c,m),c=>bPlanExp(c)); // незамороженные месяцы = 0 (записей нет); полный набор (KPI по компании)
   // YTD-исполнение считаем ТОЛЬКО по ПЛАНИРУЕМЫМ замороженным месяцам (ретроспективные исключены - их план=факт, дал бы фальшивые ~100%)
   let ytdPlanBase=0,ytdFactFrozen=0; _planableFr.forEach(m=>{ytdPlanBase+=basePlanArrY[m]||0;ytdFactFrozen+=factExpArrY[m]||0;});
-  const showYtd=hasBaseline&&isYear&&ytdPlanBase>0;
+  // ⚠ От ВЫБРАННОГО периода YTD не зависит по определению: он считается с начала года
+  //   по ПЛАНИРУЕМЫМ замороженным месяцам (_planableFr) и выбранный месяц игнорирует.
+  //   Гейт на isYear был не смыслом, а совпадением: пока вкладка открывалась матрицей,
+  //   он никогда не срабатывал. С умолчанием «текущий месяц» (1a3ae1e) он погасил обе
+  //   карточки при первом открытии и подписал это как «нет плана» - неправду о данных.
+  //   Свой период карточка называет сама (подпись «по планируемым (…)»), спутать
+  //   с выбранным месяцем нельзя.
+  const showYtd=hasBaseline&&ytdPlanBase>0;
   // YTD «Исполнение доходов» - симметрично расходам: факт доходов (revByMonth) vs baseline доходов, только по ПЛАНИРУЕМЫМ месяцам
   const baseIncArrY=hasBaseline?(_incAll.length?planSeries(_incAll,(c,m)=>bPlanIncM(c,m),c=>bPlanInc(c)):planSeries(['__rev__'],(c,m)=>PB.planMonth('revenue','__rev__',m),c=>PB.planYear('revenue','__rev__'))):new Array(13).fill(0);
   let ytdPlanBaseInc=0,ytdFactFrozenInc=0; _planableFr.forEach(m=>{ytdPlanBaseInc+=baseIncArrY[m]||0;ytdFactFrozenInc+=revByMonth[m]||0;});
-  const showYtdInc=hasBaseline&&isYear&&ytdPlanBaseInc>0;
+  const showYtdInc=hasBaseline&&ytdPlanBaseInc>0; // тот же довод, что у showYtd выше
   const _allRetro=hasBaseline&&_frozen.length>0&&_planableFr.length===0; // все замороженные - ретроспектива → исполнение считать не по чему
   const _ytdEmptySub=_allRetro?'нет планируемых месяцев':(hasBaseline?'нет плана по планируемым':'месяцы не утверждены');
   const showFc=isYear&&year===nowD.getFullYear()&&L<=11&&(sumPlanFull>0||(incTotalPlanFull||0)>0);
