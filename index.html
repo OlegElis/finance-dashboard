@@ -5337,7 +5337,7 @@ window.pfActionsToggle=function(){const dd=document.getElementById('pf-actions-d
     document.addEventListener('click',h);},0);};
 window.pfMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.planfact[field]=checked;};
 window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.pfMultiChange(ddId,btnId,field,labelAll);};
-window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];_tabFilters.planfact.owners=[];_tabFilters.planfact.sides=[];_tabFilters.planfact.rowDim='article';renderPlanFact(getFilters());};
+window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];_tabFilters.planfact.owners=[];_tabFilters.planfact.sides=[];renderPlanFact(getFilters());}; // rowDim вернёт на «По статьям» правило по состоянию в renderPlanFact - второй копии тут не заводим
 // ══ ФИЛЬТР «КОНТРАГЕНТ» (ID_SecondSide) в БДР - СВОЯ машинерия списка ══════════
 // ⚠ Почему не pfOptList+expFilterList, как у статьи/подстатьи/ЦФО: там десятки значений, а сторон
 //   тысячи. Общая схема рисует ВСЕ пункты в DOM и прячет неподходящие поиском - это 3-5 тысяч
@@ -5365,22 +5365,19 @@ window.pfSideRender=function(q){
   list.innerHTML=head+sel.map(v=>row(v,true)).join('')+(sel.length&&shown.length?'<div style="height:1px;background:var(--divider);margin:3px 0"></div>':'')+shown.map(v=>row(v,false)).join('')
     +(!found.length&&!sel.length?'<div style="padding:8px 10px;font-size:11px;color:var(--text3)">Ничего не найдено</div>':'');
 };
-// ⚠ РОВНО ОДИН контрагент → разрез «По направлениям» ВКЛЮЧАЕТСЯ САМ. Это единственный вид, ради
-//   которого фильтр и нужен: человек выбирает фамилию, чтобы увидеть, как она делится по направлениям.
-//   Заставлять его после этого искать серый переключатель - значит спрятать ответ за вторым кликом.
-//   Снятие фильтра возвращает «По статьям». При двух и более выбранных режим НЕ трогаем - человек
-//   уже настроил вид руками, и переставлять его под ним нельзя.
-function _pfSideAutoDim(n){const f=_tabFilters.planfact;if(n===1)f.rowDim='dir';else if(n===0)f.rowDim='article';}
+// ⚠ Разрез «По направлениям» при одном выбранном контрагенте включается САМ - но правило живёт
+//   в renderPlanFact (выводится из набора сторон при каждом рендере), а НЕ здесь. Ставить его в
+//   обработчике выбора нельзя: тогда режим зависит от того, каким путём фильтр оказался выставлен,
+//   и после перезагрузки страницы человек снова видит «По статьям».
 window.pfSideToggle=function(v,on){
   const cur=new Set(_tabFilters.planfact.sides||[]);
   if(on)cur.add(v);else cur.delete(v);
   _tabFilters.planfact.sides=[...cur];
-  _pfSideAutoDim(cur.size);
   const btn=document.getElementById('pf-side-btn');
   if(btn)btn.textContent=(cur.size?cur.size+' выбрано':'Все контрагенты')+' ▾';
   window.pfSideRender(); // пересобираем: снятый уходит вниз, выбранный поднимается наверх
 };
-window.pfSideClear=function(){_tabFilters.planfact.sides=[];_pfSideAutoDim(0);const btn=document.getElementById('pf-side-btn');if(btn)btn.textContent='Все контрагенты ▾';window.pfSideRender();};
+window.pfSideClear=function(){_tabFilters.planfact.sides=[];const btn=document.getElementById('pf-side-btn');if(btn)btn.textContent='Все контрагенты ▾';window.pfSideRender();};
 window.pfSetRowDim=function(v){_tabFilters.planfact.rowDim=(v==='dir'?'dir':'article');renderPlanFact(getFilters());}; // измерение строк сводной: по статьям ⇄ по направлениям (только при 1 выбранной подстатье)
 window.expFilterList=function(ddId,q){const dd=document.getElementById(ddId);if(!dd)return;q=(q||'').toLowerCase();dd.querySelectorAll('label').forEach(l=>{l.style.display=l.textContent.toLowerCase().includes(q)?'':'none';});};
 window.expResetExtra=function(){_tabFilters.expenses.articles=[];_tabFilters.expenses.subarticles=[];renderExpenses(getFilters());};
@@ -8591,6 +8588,15 @@ function renderPlanFact(f){
   //   фильтры станут разными на вид при одинаковом виде, а ЧП смешает полную выручку с урезанным расходом.
   const selSide=new Set(_tabFilters.planfact.sides||[]);
   const sidePassRow=r=>!selSide.size||selSide.has(String(r[COL.SECOND_SIDE]||'').trim());
+  // ── Разрез «По направлениям» при одном контрагенте: правило по СОСТОЯНИЮ, а не по событию ──
+  // ⚠ Раньше режим ставился в обработчике выбора стороны, и после любой перезагрузки страницы
+  //   (или любого другого пути, которым фильтр оказался выставлен) человек снова видел «По статьям» -
+  //   то есть не тот вид, ради которого фильтр и нужен. Теперь режим выводится из набора сторон при
+  //   каждом рендере: сменился набор - автоматика сработала заново.
+  // ⚠ Ручной выбор уважаем: pfSetRowDim меняет rowDim, но НЕ трогает подпись набора, поэтому
+  //   автоматика молчит до тех пор, пока не сменится сам набор контрагентов.
+  {const sig=[...selSide].sort().join(''),F=_tabFilters.planfact;
+   if(F._sideSig!==sig){F._sideSig=sig;if(selSide.size===1)F.rowDim='dir';else if(!selSide.size)F.rowDim='article';}}
   // ── ФАКТ из RAW (по дате ОПиУ, выбранное направление+год, перемещения исключены) ──
   const nrm=s=>String(s||'').toLowerCase().replace(/[^а-яёa-z0-9]/gi,'');
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';}; // первые 3 цифры кода - единственный ключ связи статья↔подстатья
@@ -8957,9 +8963,14 @@ function renderPlanFact(f){
   // План, равный НУЛЮ, - валидное значение и обязан дойти до итога как 0 (это не «плана нет»). Слой planMonth/planYear/planAgg
   // эту дисциплину уже соблюдает (tot=null, tot=(tot||0)+v только при v!=null) - здесь она просто не была продолжена.
   const sumOrNull=(arr,get)=>{let s=null;arr.forEach(r=>{const v=get(r);if(v!=null)s=(s||0)+v;});return s;};
-  const sumVyvodPlan=sumOrNull(vyvodArr,r=>r.plan),sumVyvodFact=vyvodArr.reduce((s,r)=>s+r.fact,0),sumVyvodBase=hasBaseline?sumOrNull(vyvodArr,r=>r.base):null;
+  const sumVyvodPlan=(selSide.size&&vyvodArr.some(r=>!_sideArtKnown(r.code)))?null:sumOrNull(vyvodArr,r=>r.plan),sumVyvodFact=vyvodArr.reduce((s,r)=>s+r.fact,0),sumVyvodBase=hasBaseline?((selSide.size&&vyvodArr.some(r=>!_sideArtKnown(r.code)))?null:sumOrNull(vyvodArr,r=>r.base)):null;
   const revRow={plan:planOf('revenue','__rev__'),fact:revFact(),base:bPlanRev()};
-  const sumPlan=sumOrNull(rowsArr,r=>r.plan),sumFact=rowsArr.reduce((s,r)=>s+r.fact,0),sumBase=hasBaseline?sumOrNull(rowsArr,r=>r.base):null;
+  // ⚠ Под фильтром «Контрагент» у ИТОГО план ПРОЧЕРК, если в наборе есть статья со смешанной
+  //   группой: sumOrNull складывает известные и пропускает null, и итог получился бы планом
+  //   ПОЛОВИНЫ подстатей рядом с ПОЛНЫМ фактом набора - завышенная «экономия» на ровном месте.
+  //   То же правило уже стоит на строке-статье (_sideArtKnown) и на остатке (remSum).
+  const _sideMixed=selSide.size?(arr=>arr.some(r=>!_sideArtKnown(r.code))):(()=>false);
+  const sumPlan=_sideMixed(rowsArr)?null:sumOrNull(rowsArr,r=>r.plan),sumFact=rowsArr.reduce((s,r)=>s+r.fact,0),sumBase=hasBaseline?(_sideMixed(rowsArr)?null:sumOrNull(rowsArr,r=>r.base)):null;
   // ── ДОХОДЫ по кодам (симметрично расходам) ──
   const incFactOf=code=>{if(level==='article'&&selOwn.size)return _factSubOwnSum('inc',code);const a=incByCode[code];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
   const incSet={};Object.keys(incByCode).forEach(c=>incSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='income')incSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='income'){const t=c3(p.code);if(t)incSet[t]=1;}});
@@ -9294,6 +9305,17 @@ function renderPlanFact(f){
   //    Внутри пары src зафиксирован колонкой, поэтому 'mix' здесь возникнуть не может (в отличие от devBase).
   const _subOneBaseM=(lvl,sub,m,utv)=>{
     if(utv&&!PB)return{v:null,src:null};
+    // ⚠ Под фильтром «Контрагент» база остатка И СТАТУСА - ТОТ ЖЕ план, что показан в строке.
+    //   Без этой развилки в одной строке жили два разных плана: показанный (по стороне) и тот, от
+    //   которого считается остаток (полный по подстатье). На боевых данных это дало «план −120 000,
+    //   факт −132 000» рядом с «экономия 98,2%» и остатком 7 054 742 - число из миллионов в строке
+    //   одного человека. У подстатьи вне _slSub плана по стороне НЕТ, значит нет остатка и статуса:
+    //   прочерк, а не ноль (ноль означал бы «запланировано ноль» и дал бы перерасход на весь факт).
+    if(selSide.size){
+      if(lvl!=='subarticle'||!_slSub(sub))return{v:null,src:null};
+      const v=utv?_sidePlanSub(PB.recsOf,_blSideMD,'subarticle',sub,m):_sidePlanSub(recsOf,_fcSideMD,'subarticle',sub,m);
+      return{v,src:v==null?null:(utv?'utv':'prog')};
+    }
     const v=utv?_subPlanM(PB.recsOf,PB.cvtD,PB.planMonth,lvl,sub,m):_subPlanM(recsOf,cvtD,planMonth,lvl,sub,m);
     return{v,src:v==null?null:(utv?'utv':'prog')};};
   // остаток по произвольной помесячной базе; #1 (факт только за месяцы, где ЕСТЬ база) живёт внутри цикла и переносится на обе стороны сам
@@ -9309,8 +9331,15 @@ function renderPlanFact(f){
   // ПАРА остатков {u:от утверждённого, t:от текущего плана} - именно её несёт opts.rem у dRow. Обе стороны идут через один примитив → Σ подстатей = статья по каждой.
   const _remMergeP=(kind,parts)=>({u:_remMerge(kind,parts.map(p=>p&&p.u)),t:_remMerge(kind,parts.map(p=>p&&p.t)),d:_remMerge(kind,parts.map(p=>p&&p.d))});
   const subRemFor=(kind,s)=>({u:remOfSubBy(kind,s,_bmUtv),t:remOfSubBy(kind,s,_bmTek),d:remOfSubBy(kind,s,_bmDev)});
-  const artRemFor=(kind,c)=>_remMergeP(kind,subsOfArt(kind,c).filter(subOwnerPass).map(sub=>subRemFor(kind,sub)));
-  const remSum=(arr,kind)=>_remMergeP(kind,arr.map(r=>artRemFor(kind,r.code)));
+  // ⚠ Под фильтром «Контрагент» у статьи со СМЕШАННОЙ группой остатка нет - ровно как плана.
+  //   _remMerge пропускает части с pM==null, поэтому без этого выхода строка показала бы остаток по
+  //   известной половине подстатей рядом с ПОЛНЫМ фактом строки, то есть завышенную «экономию».
+  //   Пустой merge даёт pM=null → прочерк в обеих колонках остатка и «план не задан» в статусе.
+  const artRemFor=(kind,c)=>(selSide.size&&!_sideArtKnown(c))?_remMergeP(kind,[])
+    :_remMergeP(kind,subsOfArt(kind,c).filter(subOwnerPass).map(sub=>subRemFor(kind,sub)));
+  // «ИТОГО … по фильтру»: то же правило на весь набор - хоть одна статья со смесью и остаток прочерк.
+  const remSum=(arr,kind)=>(selSide.size&&arr.some(r=>!_sideArtKnown(r.code)))?_remMergeP(kind,[])
+    :_remMergeP(kind,arr.map(r=>artRemFor(kind,r.code)));
   // ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи (111 сотрудники / 223 объекты / консалтинг контрагенты) по стороне. Переиспускает модульные примитивы (_buildSideFactIdx/_planSideMD/_sideUniverse). Per-dir по ownDirsOf(sub) - Σ сторон = подстатья и под фильтром ЦФО. Матрицу «все месяцы» НЕ трогает.
   const subExp=(level==='article')?(window._pfSubExp||(window._pfSubExp=new Set())):null; // разворот подстатьи → стороны; переживает ре-рендер (как _pfArtExp)
   const _sfIdx=_buildSideFactIdx(year,dirsToAgg);
