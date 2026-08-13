@@ -9115,7 +9115,7 @@ function renderPlanFact(f){
   const _planableFr=_frozen.filter(m=>!(_blMap[m]&&_blMap[m].retro)); // замороженные, которые реально планировались (без ретроспективы) - для метрики исполнения
   const planableLbl=hasBaseline?_monthsRangeLabel(_planableFr):'';
   const _retroN=_frozen.length-_planableFr.length;
-  const baselineStatus=`<span style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются по замороженным месяцам ('+frozenLbl+')'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'+(_retroN?(' · из них ретро: '+_retroN):'')):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
+  const baselineStatus=`<span style="font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются по замороженным месяцам ('+frozenLbl+')'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'+(_retroN?(' · из них ретро: '+_retroN):'')):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
   // бейдж устаревания архива настроек (админу): архив не скачивали >30 дней или никогда
   const _bkStale=_backupStaleDays();
   const backupBadge=(isAdmin&&(_bkStale===null||_bkStale>30))?`<span onclick="pfBackupDownloadOpen()" title="Архив настроек давно не скачивался - config/* (планы, baseline, ЦФО и т.д.) не защищён. Кликните, чтобы скачать." style="cursor:pointer;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;color:#fff;background:var(--outcome)">💾 Архив настроек: ${_bkStale===null?'не скачивался':(_bkStale+' дн. назад')}</span>`:'';
@@ -9150,10 +9150,18 @@ function renderPlanFact(f){
     ${pfSides.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Контрагент:</label>
     <div style="position:relative;display:inline-block"><button id="pf-side-btn" onclick="pfMultiToggle('pf-side-dd');pfSideRender('')" title="Сторона операции (ID_SecondSide): сотрудник, объект аренды, подрядчик" style="${pfBtnStyle}">${pfSideBtn}</button><div id="pf-side-dd" style="${pfDDstyle};min-width:300px">${pfSideDD}</div></div>`:''}
     ${(selArt.size||selSub.size||selOwn.size||selSide.size)?`<button onclick="pfResetExtra()" style="font-size:10px;line-height:15px;padding:2px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
-    ${baselineStatus}${backupBadge}${actionsWrap}
   </div>`;
+  // ── Статус заморозки + архив + «⚙ Действия» - СВОЯ полоса под фильтрами ───────────────
+  // ⚠ Раньше троица стояла последними элементами переносящегося фильтр-бара, а у статуса был
+  //   margin-left:auto. При flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки, поэтому блок оказывался
+  //   то справа, то слева - в зависимости от того, сколько фильтров уместилось выше. Собственная
+  //   полоса с justify-content:flex-end даёт ему постоянное место при любой ширине и любом наборе.
+  // ⚠ Габариты - тот же эталон, что у фильтр-бара (см. комментарий над .reg-searchbar).
+  // ⚠ Обёртка меню (position:relative) переехала ВМЕСТЕ с кнопкой - pf-actions-dd якорится на ней,
+  //   и разлучать их нельзя: меню оторвётся от кнопки.
+  const actionsBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:3px var(--secpx);min-height:31px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">${baselineStatus}${backupBadge}${actionsWrap}</div>`;
 
-  if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
+  if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+actionsBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
 
   // ── YTD и прогноз года: истёкшие ПОЛНЫЕ месяцы (текущий не берём - факт неполный); годовые планы без помесячной разбивки распределяются равномерно /12 ──
   const nowD=new Date();
@@ -9939,7 +9947,7 @@ function renderPlanFact(f){
     <b>Фильтр по контрагенту:</b> план по контрагенту ведётся только у ФОТ, аренды и консалтинга - по остальным подстатьям показан факт, план - прочерк (не ноль: отклонение, процент исполнения и остаток по ним не считаются).
     ${_unnamedList.length?`<div style="margin-top:4px">⚠ План заведён на подстатью без фамилий, поэтому по стороне его нет: <b>${_unnamedList.map(esc).join('</b>, <b>')}</b>. Чтобы план делился по людям, его надо расписать пофамильно в редакторе планов.</div>`:''}
   </div>`:'';
-  el.innerHTML=filterBar+banner+baselineBanner+sideNote+kpiHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
+  el.innerHTML=filterBar+actionsBar+banner+baselineBanner+sideNote+kpiHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
 
   // ══ ГРАФИК 1: Чистая прибыль - накопительно (по всему направлению, фильтр статьи игнорируется) ══
   ['_pfChart','_pfChartInc','_pfChartNP','_pfChartDev'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
