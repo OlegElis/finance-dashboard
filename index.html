@@ -9132,21 +9132,38 @@ function renderPlanFact(f){
   // От неё считается top 2-го ряда - величина не подобрана на глаз, а сходится с паддингом, поэтому при зуме оба ряда масштабируются вместе.
   const PF_TH1='height:26px;line-height:12px';
   const PF_TH2='height:26px;line-height:12px;top:26px'; // top ПОСЛЕ ${th} - перебивает его top:0, иначе 2-й ряд лип бы поверх 1-го
-  const PF_TOL=0.05; // допуск отклонения: до ±5% = «в норме» (не красим экономией/перерасходом)
+  const PF_WARN=0.20; // остаток ≤ 20% базы = «подходит к пределу» (жёлтый).
+                      // Порог ОДИН на «Статус» и на «Остаток»: у них общий смысл, разные
+                      // цифры дали бы «бейдж зелёный, а остаток рядом жёлтый».
+  const kop=v=>Math.round((v||0)*100)/100; // копейка в копейку: сравниваем округлённые
+                                           // до копеек значения, иначе хвост float на сумме
+                                           // из десятков тысяч строк даёт ложный «перерасход +0,0%»
+  const PF_OK='#2e9e6b',PF_WRN='#e8862b',PF_BAD='#d35450'; // = зелёный / var(--orange) / красный «Остатка»
   const jesc2=s=>String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   // Классификация исполнения - ЕДИНЫЙ источник для бейджа «Статус» И для подсветки ячейки «Факт».
-  // Порог один (PF_TOL) и живёт только здесь: свой порог у подсветки дал бы «ячейка подсвечена, а рядом написано в норме».
+  // Порог один (PF_WARN) и живёт только здесь: свой порог у подсветки дал бы «ячейка подсвечена, а рядом написано в норме».
   // База приходит АРГУМЕНТОМ, поэтому при переводе статуса на другую базу подсветка переедет вместе с ним - отдельного условия для неё нет.
+  // ⚠ Допуска НЕТ: считаем копейка в копейку. Прежний PF_TOL=±5% давал синий «в норме» и оставлял
+  //   ячейку «Факт» неокрашенной, то есть цветов было фактически два. Критичность статей определяет
+  //   человек, поэтому порог ОДИН на все статьи, без списка «критичных».
+  // ⚠ plan и fact приходят ПОЛОЖИТЕЛЬНЫМИ величинами и у дохода, и у расхода (минус ставится при выводе).
   const statusOf=(plan,fact,revenue)=>{
-    if(plan==null||plan===0)return{k:'none'};
-    const p=Math.abs(fact-plan)/Math.abs(plan);
-    if(p<=PF_TOL)return{k:'tol',p};
-    const over=revenue?fact<plan:fact>plan; // доход - плохо недовыполнить, расход - плохо перерасходовать
-    return{k:over?'bad':'good',p,col:over?'#d35450':'#2e9e6b',
-      txt:revenue?(over?'недовыполнен −'+fmtPct(p):'выполнен +'+fmtPct((fact-plan)/plan)):(over?'перерасход +'+fmtPct(p):'экономия '+fmtPct(p))};
+    if(plan==null)return{k:'none'};
+    const p=kop(plan),f=kop(fact);
+    // База РОВНО НОЛЬ - валидный лимит (как в remTd), а не «плана нет»: любой факт по нему - перерасход.
+    // Процента здесь нет по построению - делить не на что.
+    if(p===0)return f>0?{k:'bad',col:PF_BAD,txt:'перерасход +'+fmt(f)}:{k:'ok',col:PF_OK,txt:'в рамках плана'};
+    const done=f/p,left=(p-f)/p;
+    if(!revenue){ // РАСХОД: плохо потратить больше плана
+      if(f>p)return{k:'bad',col:PF_BAD,txt:'перерасход +'+fmt(f-p)+' (+'+fmtPct((f-p)/p)+')'};
+      if(left<=PF_WARN)return{k:'warn',col:PF_WRN,txt:'лимит на исходе · исполнено '+fmtPct(done)};
+      return{k:'ok',col:PF_OK,txt:'в рамках плана · исполнено '+fmtPct(done)};
+    }
+    // ДОХОД - зеркально: плохо собрать меньше плана
+    if(f>=p)return{k:'ok',col:PF_OK,txt:'план выполнен · '+fmtPct(done)};
+    return{k:left<=PF_WARN?'warn':'bad',col:left<=PF_WARN?PF_WRN:PF_BAD,txt:'недобор −'+fmt(p-f)+' (−'+fmtPct(left)+')'};
   };
   const statusBadge=s=>s.k==='none'?`<span style="padding:1px 8px;border-radius:8px;font-size:10px;background:var(--surface2);color:var(--text3)">план не задан</span>`
-    :s.k==='tol'?`<span style="padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600;color:#3a6ea5;background:color-mix(in srgb,#3a6ea5 10%,transparent)" title="Отклонение в пределах допуска ±5%">в норме ±${fmtPct(s.p)}</span>`
     :`<span style="padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600;color:${s.col};background:color-mix(in srgb,${s.col} 12%,transparent)">${s.txt}</span>`;
   const statusCell=(plan,fact,revenue)=>statusBadge(statusOf(plan,fact,revenue));
   // Остаток лимита за ВЫБРАННЫЙ период: planM(devBase) − factM. Цвет по остатку относительно плана периода. applic=false → прочерк.
@@ -9179,7 +9196,10 @@ function renderPlanFact(f){
     if(kind==='inc'){ // доход - ЗЕРКАЛЬНЫЙ светофор: «осталось собрать до плана»; недобор красный, выполнение зелёное
       if(!hasP)return remDashL(lbl,main); // без цели недобор не измерить
       const rem=planM-factM; // >0 недобор, ≤0 план выполнен/перевыполнен
-      if(rem>0.0001)return`<td style="${td};text-align:right;color:var(--outcome);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Осталось собрать','осталось',fmt(rem),'недобор')}>${fmt(rem)}</td>`;
+      // ⚠ Жёлтая середина по тому же PF_WARN, что и у расхода: недобор в пределах 20% плана - это
+      //   «почти собрали», а не провал. Без неё у дохода было два цвета против трёх у расхода.
+      if(rem>0.0001){const near=Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=PF_WARN;
+        return`<td style="${td};text-align:right;color:${near?'var(--orange)':'var(--outcome)'};${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Осталось собрать','осталось',fmt(rem),'недобор')}>${fmt(rem)}</td>`;}
       const incTxt=rem<-0.0001?'+'+fmt(-rem):fmt(0);
       return`<td style="${td};text-align:right;color:var(--income);${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Осталось собрать','осталось',incTxt,'план выполнен')}>${incTxt}</td>`;
     }
@@ -9190,7 +9210,7 @@ function renderPlanFact(f){
     const rem=planM-factM;
     let col,txt,note='';
     if(rem<-0.0001){col='var(--outcome)';txt='−'+fmt(Math.abs(rem));note='перерасход';}
-    else if(Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=0.20){col='var(--orange)';txt=fmt(rem);note='лимит на исходе';} // guard: при базе 0 деление дало бы Infinity
+    else if(Math.abs(planM)>0.0001&&rem/Math.abs(planM)<=PF_WARN){col='var(--orange)';txt=fmt(rem);note='лимит на исходе';} // guard: при базе 0 деление дало бы Infinity; порог общий со «Статусом»
     else{col='var(--income)';txt=fmt(rem);}
     return`<td style="${td};text-align:right;color:${col};${FW.slice(1)}${pst}${CD}"${DL}${NOCLK} ${mkTip('Остаток лимита','остаток',txt,note)}>${txt}</td>`;
   };
@@ -9632,7 +9652,9 @@ function renderPlanFact(f){
       let tp=null,tf=0,tb=null,trp=null,trf=0,tSu=0,tSp=0;
       names.forEach(o=>{const A=agg[o];if(A.plan!=null)tp=(tp||0)+A.plan;tf+=A.fact;if(A.base!=null)tb=(tb||0)+A.base;if(A.remPlan!=null)trp=(trp||0)+A.remPlan;trf+=A.remFact;tSu+=A.remSu||0;tSp+=A.remSp||0;});
       // рендер 6 ячеек агрегата (Утв.|Прогноз|Факт|Δ|Остаток|Статус)
-      const cfoCells=A=>{const d2=A.base!=null?A.fact-A.base:null;const inT=A.base?Math.abs(d2)/Math.abs(A.base)<=PF_TOL:false;const dc=A.base==null?'var(--text3)':inT?'var(--text2)':(A.fact>A.base?'var(--outcome)':'var(--income)');
+      // ⚠ Δ красится ПО ЗНАКУ, без допуска: допуска больше нет нигде (см. statusOf). Равенство копейка
+      //   в копейку - нейтральный цвет. Статус этой таблицы идёт через statusCell и берёт новую логику сам.
+      const cfoCells=A=>{const d2=A.base!=null?A.fact-A.base:null;const dc=A.base==null?'var(--text3)':(kop(A.fact)>kop(A.base)?'var(--outcome)':kop(A.fact)<kop(A.base)?'var(--income)':'var(--text2)');
         return `<td style="${td};text-align:right">${A.base!=null?fmt(-A.base):dash}</td>
           <td style="${td};text-align:right">${A.plan!=null?fmt(-A.plan):dash}</td>
           <td style="${td};text-align:right">${fmt(-A.fact)}</td>
