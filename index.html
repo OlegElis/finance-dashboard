@@ -9150,12 +9150,19 @@ function renderPlanFact(f){
   const statusOf=(plan,fact,revenue)=>{
     if(plan==null)return{k:'none'};
     const p=kop(plan),f=kop(fact);
-    // База РОВНО НОЛЬ - валидный лимит (как в remTd), а не «плана нет»: любой факт по нему - перерасход.
-    // Процента здесь нет по построению - делить не на что.
-    if(p===0)return f>0?{k:'bad',col:PF_BAD,txt:'перерасход +'+fmt(f)}:{k:'ok',col:PF_OK,txt:'в рамках плана'};
-    const done=f/p,left=(p-f)/p;
+    // База РОВНО НОЛЬ - валидный лимит (как в remTd), а не «плана нет». Процента здесь нет
+    // по построению - делить не на что. ⚠ Ветка РАЗВЕДЕНА по revenue: для дохода нулевая цель
+    // любым сбором ВЫПОЛНЕНА, и общий «перерасход» красил бы доходную строку без плана красным.
+    if(p===0){
+      if(!revenue)return f>0?{k:'bad',col:PF_BAD,txt:'перерасход +'+fmt(f)}:{k:'ok',col:PF_OK,txt:'в рамках плана'};
+      return f>0?{k:'ok',col:PF_OK,txt:'план выполнен · сверх цели +'+fmt(f)}:{k:'ok',col:PF_OK,txt:'план выполнен'};
+    }
+    // ⚠ Знаменатели по МОДУЛЮ базы: с конвенцией знака (возврат уменьшает расход) база может стать
+    //   отрицательной, и без модуля процент печатался как «+-100.0%» - знак давала база, а не отклонение.
+    //   Знак задаётся явными '+'/'−' в тексте.
+    const ap=Math.abs(p),done=f/ap,left=(ap-Math.abs(f))/ap;
     if(!revenue){ // РАСХОД: плохо потратить больше плана
-      if(f>p)return{k:'bad',col:PF_BAD,txt:'перерасход +'+fmt(f-p)+' (+'+fmtPct((f-p)/p)+')'};
+      if(f>p)return{k:'bad',col:PF_BAD,txt:'перерасход +'+fmt(f-p)+' (+'+fmtPct((f-p)/ap)+')'};
       if(left<=PF_WARN)return{k:'warn',col:PF_WRN,txt:'лимит на исходе · исполнено '+fmtPct(done)};
       return{k:'ok',col:PF_OK,txt:'в рамках плана · исполнено '+fmtPct(done)};
     }
@@ -9280,7 +9287,11 @@ function renderPlanFact(f){
     // Инлайн обязателен: .report-table td задаёт font-weight:600 всем ячейкам, без явного значения подстатьи остались бы жирными.
     // Первую колонку (названия) НЕ трогаем - там иерархия уже показана отступом и треугольником.
     const numW=bold?700:(opts.child||opts.grand)?400:600;
-    const factCol=(st&&st.col)?';color:'+st.col:''; // цвет ЧИСЛА по той же классификации, что и бейдж: 'none' (плана нет) и 'tol' (в норме) цвета не дают, число остаётся тёмным
+    // цвет ЧИСЛА по той же классификации, что и бейдж, но только для warn/bad:
+    // 'ok' - ожидаемое состояние большинства строк, красить его = залить столбец
+    // и потерять сигнал; плюс зелёное число в проекте уже значит «приход».
+    // Классификация остаётся ЕДИНОЙ (тот же statusOf, тот же PF_WARN) - расходится только объём краски.
+    const factCol=(st&&st.col&&st.k!=='ok')?';color:'+st.col:'';
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${esc(label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
