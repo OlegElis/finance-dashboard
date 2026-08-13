@@ -9463,9 +9463,19 @@ function renderPlanFact(f){
     });
     return h;
   };
-  const incBodyRows=incRowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
+  // ── Счётчик в шапке таблицы: считаем РЕАЛЬНО ОТРИСОВАННЫЕ строки ────────────
+  // ⚠ Раньше шапка печатала длины incRowsArr/rowsArr - наборов уровня СТАТЕЙ, а тело строится из
+  //   другого: строки, отсеянные _rowDead, из тела выпадают, а в разрезе «По направлениям» строки
+  //   вообще не статьи. На боевых 13.08 это дало «1 дох. · 8 расх.» при трёх показанных строках и
+  //   полностью отсутствующей доходной секции. Каждая ветка, строящая tbody, проставляет счётчики сама.
+  // ⚠ Ветка, которая не может дать счётчик дёшево, оставляет null - шапка тогда не печатает ничего:
+  //   молча неверный счётчик хуже отсутствующего.
+  let _cntInc=null,_cntExp=null,_cntDir=null;
+  const _aliveInc=incRowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)),_aliveExp=rowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base));
+  _cntInc=_aliveInc.length;_cntExp=_aliveExp.length;
+  const incBodyRows=_aliveInc.map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
   const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalBase,incTotalPlan,revRow.fact,true,true,null,null,{rem:remSum(incRowsArr,'inc')}); // доходы теперь тоже показывают остаток «осталось собрать» (#3 - единое поведение с «по направлениям»)
-  const bodyRows=rowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
+  const bodyRows=_aliveExp.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
   const totalRow=dRow('ИТОГО РАСХОДЫ',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,'exp')});
   const netRow=dRow('ЧИСТАЯ ПРИБЫЛЬ',netBaseV,netPlanV,netFactV,true,true,null,null,{signColor:true,skind:'net'});
   const vyvodBody=vyvodArr.length?vyvodArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)).map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'vyv')).join(''):'';
@@ -9516,6 +9526,8 @@ function renderPlanFact(f){
     // строки = направления с планом ИЛИ фактом (объединение, никого не прячем)
     const dirOwnPass=d=>{if(!selOwn.size)return true;const o=(_planOwners||{})[d+'||'+sub];return o?selOwn.has(o):selOwn.has(NOOWN);}; // «по направлениям»: при фильтре ЦФО показываем только направления, где ответственный этой подстатьи прошёл фильтр
     const dirRows=dirsToAgg.filter(d=>{if(!dirOwnPass(d))return false;const fv=factOf(d),pv=planDir(d),bv=baseDir(d);return fv||pv!=null||bv!=null;}).sort((a,b)=>a.localeCompare(b,'ru'));
+    // счётчик шапки: строки этого разреза - НАПРАВЛЕНИЯ одного вида (вид задан выбранной подстатьей)
+    _cntDir=dirRows.length;_cntInc=(sKind==='inc')?dirRows.length:0;_cntExp=(sKind==='inc')?0:dirRows.length;
     const body=dirRows.map(d=>dRow(d,baseDir(d),planDir(d),factOf(d),isRev,false,sKind,sub,{dir:d,rem:remFor(d)})).join('');
     // ИТОГО по направлениям - контроль: обязан совпасть со строкой этой подстатьи в режиме «по статьям». sumOrNull: «плана нет» ≠ 0
     const tB=sumOrNull(dirRows,d=>baseDir(d)),tP=sumOrNull(dirRows,d=>planDir(d)),tF=dirRows.reduce((s,d)=>s+factOf(d),0);
@@ -9530,6 +9542,7 @@ function renderPlanFact(f){
   // ⚠ КОНТРОЛЬ: Σ строк секции обязана совпасть со строкой «ИТОГО … по фильтру» режима «по статьям».
   //   И факт, и план идут из тех же примитивов, что там, - второй выборки данных здесь нет.
   else if(dirMode){
+    _cntInc=0;_cntExp=0;_cntDir=0; // сбрасываем счётчики уровня статей - строки здесь другие (направления)
     const KINDS=[['inc','Доход','Доходы'],['exp','Расход','Расходы'],['vyv','Вывод','Распределение прибыли (вывод)']];
     const sideLabel=selSide.size===1?[...selSide][0]:(selSide.size+' контрагента(ов)');
     let html='';
@@ -9549,6 +9562,9 @@ function renderPlanFact(f){
         d:remBy(d,(dd,m)=>_pickDev(frozenSet.has(m),oneBase(dd,m,true),oneBase(dd,m,false)))});
       const rows2=dirsToAgg.filter(d=>{const f=factOf(d),p=planOfD(d),b=baseOfD(d);return Math.abs(f||0)>0.005||(p!=null&&Math.abs(p)>0.005)||(b!=null&&Math.abs(b)>0.005);}).sort((a,b)=>a.localeCompare(b,'ru'));
       if(!rows2.length)return;
+      // счётчик шапки: у контрагента секций может быть до трёх, строки каждой - направления
+      _cntDir=(_cntDir||0)+rows2.length;
+      if(kind==='inc')_cntInc=(_cntInc||0)+rows2.length;else _cntExp=(_cntExp||0)+rows2.length;
       const body2=rows2.map(d=>dRow(d,baseOfD(d),planOfD(d),factOf(d),isRev,false,kind,null,{dir:d,rem:remOf(d)})).join('');
       const tB=sumOrNull(rows2,d=>baseOfD(d)),tP=sumOrNull(rows2,d=>planOfD(d)),tF=rows2.reduce((s,d)=>s+factOf(d),0);
       html+=secRow(word+' · '+esc(sideLabel)+' - по направлениям')+body2
@@ -9770,7 +9786,21 @@ function renderPlanFact(f){
           <tbody>${body}</tbody></table></div>`};
     }
   }
-  const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${esc(dirLabel)} · ${periodLbl}</span><span class="table-count">${incRowsArr.length} дох. · ${rowsArr.length} расх.${level==='article'?' · ▸ клик по статье - подстатьи':''}</span></div>
+  // Счётчик шапки - из счётчиков отрисованных строк. Подпись называет ТО, что посчитано:
+  // в разрезе по направлениям это направления (со склонением), в обычном режиме - статьи по видам.
+  // Хвост про клик - только там, где клик действительно разворачивает подстатьи.
+  const _dirWord=n=>{const a=n%10,b=n%100;return (b>=11&&b<=14)?'направлений':a===1?'направление':(a>=2&&a<=4)?'направления':'направлений';};
+  const pfCount=(()=>{
+    if(dirMode){
+      if(!_cntDir)return ''; // строк нет - в теле стоит заглушка, она и объясняет
+      // Разбивка по видам - только когда виды РЕАЛЬНО смешаны. При одном виде она повторяла бы то же
+      // число вторым числом («3 направления · 3 расх.»), и это читается как дефект, а не как уточнение.
+      return _cntDir+' '+_dirWord(_cntDir)+((_cntInc&&_cntExp)?(' · '+_cntInc+' дох. · '+_cntExp+' расх.'):'');
+    }
+    if(_cntInc==null||_cntExp==null)return '';
+    return _cntInc+' дох. · '+_cntExp+' расх.'+(level==='article'?' · ▸ клик по статье - подстатьи':'');
+  })();
+  const tableHtml=`<div class="table-wrap" style="margin-top:10px"><div class="table-header"><span class="table-title">БДР · ${esc(dirLabel)} · ${periodLbl}</span><span class="table-count">${pfCount}</span></div>
     <div class="table-scroll" style="overflow:auto;max-height:min(75vh,calc(100vh - 170px))"><table class="report-table pf-main" style="white-space:nowrap;width:100%;border-collapse:separate;border-spacing:0">
       ${PF_COLG}
       <thead><tr>
