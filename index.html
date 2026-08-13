@@ -1342,7 +1342,7 @@ const _tabFilters={
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
-  planfact:{dir:'',year:0,level:'article',period:'monthly',articles:[],subarticles:[],sides:[],rowDim:'article'},
+  planfact:{dir:'',year:0,level:'article',period:'',articles:[],subarticles:[],sides:[],rowDim:'article'}, // period:'' = «ещё не выбрано»; умолчание (текущий месяц) считается ОДИН РАЗ в renderPlanFact
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
   bflmodel:{view:'depts',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
   registry:{q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}}
@@ -8556,6 +8556,20 @@ window.pfNoPlanCSV=function(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},200);
 };
+// Последний месяц ГОДА, в котором есть хоть какой-то факт (по дате ОПиУ) - для умолчания периода БДР,
+// когда данные закончились в прошлом году: «текущий месяц» там бессмысленен.
+// ⚠ _cfoLastMonthWithData переиспользовать нельзя - у неё другой ВХОД: она сканирует готовую структуру
+//   выписки ЦФО (D.people/exp/inc), а здесь нужен проход по RAW. Общего кода у них нет, только идея.
+function _pfLastMonthWithData(year){
+  let last=0;
+  (RAW||[]).forEach(r=>{
+    const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
+    if(!parseNum(r[COL.INCOME])&&!expOf(r))return;
+    const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return;
+    const m=d.getMonth()+1; if(m>last)last=m;
+  });
+  return last||12;
+}
 function renderPlanFact(f){
   const el=document.getElementById('tabPlanfact');
   if(!RAW||!RAW.length){el.innerHTML=emptyState('Нет данных','Подключите таблицу (шестерёнка → Подключение)');return;}
@@ -8567,7 +8581,17 @@ function renderPlanFact(f){
   const years=dataYears.includes(cy)?dataYears.slice():[cy,...dataYears].sort((a,b)=>b-a);
   // дефолт года - последний год С ДАННЫМИ (или текущий, если данных нет). Направление по умолчанию НЕ задаём: пусто = все (свод по компании)
   if(!f.year||!years.includes(f.year))f.year=dataYears.includes(cy)?cy:(dataYears[0]||cy);
-  const year=f.year,level='article',period=f.period||'year'; // режим зафиксирован на «Статья» (+ инлайн-разворот подстатей); селект «Уровень» убран из UI, ветка 'subarticle' оставлена в коде, но недостижима. Сохранённый f.level игнорируется
+  // ── Умолчание периода: ТЕКУЩИЙ МЕСЯЦ, а не матрица «все месяцы» ──────────────
+  // ⚠ Ставится ОДИН РАЗ за загрузку (образец - _defPeriodDone Банка): считай мы его на каждом
+  //   рендере, выбранные вручную «Все месяцы» откатывались бы селектом обратно при любой смене
+  //   направления, статьи или года. Порядок важен: год уже резолвлен строкой выше, месяц зависит от него.
+  // ⚠ Год не текущий (данные кончились в прошлом) - «текущий месяц» бессмысленен, берём последний
+  //   месяц этого года с фактом.
+  if(!f._defPeriodDone){f._defPeriodDone=1;
+    const _now=new Date();
+    f.period=(f.year===_now.getFullYear())?String(_now.getMonth()+1):String(_pfLastMonthWithData(f.year));
+  }
+  const year=f.year,level='article',period=f.period; // period уже проставлен умолчанием выше - второго умолчания («||'year'») здесь быть не должно, оно открывало бы вкладку годом // режим зафиксирован на «Статья» (+ инлайн-разворот подстатей); селект «Уровень» убран из UI, ветка 'subarticle' оставлена в коде, но недостижима. Сохранённый f.level игнорируется
   // ── мультивыбор направлений: f.dirs = массив; пусто → все (свод). Если f.dirs не задан - оставляем пустым (НЕ мигрируем из f.dir, чтобы при первом входе был свод, а не одиночное направление) ──
   let selDirs=Array.isArray(f.dirs)?f.dirs.filter(d=>dirs.includes(d)):[];
   f.dirs=selDirs.slice();
