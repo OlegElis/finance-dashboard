@@ -2045,6 +2045,47 @@ function _pfPresetSnapshotHtml(){
   const warn=_pfStateIsEmpty(st)?'<div style="font-size:12px;color:var(--orange);border:1px solid var(--orange);border-radius:6px;padding:7px 10px;background:rgba(232,134,43,.08);margin-bottom:8px">⚠ Фильтры сейчас не заданы - пресет запомнит «показать всё». Настройте отбор на вкладке БДР и откройте это окно снова.</div>':'';
   return warn+rows;
 }
+// ── Сохранение пресета БДР ПРЯМО С ВКЛАДКИ ──────────────────────────────────
+// ⚠ Порядок действий развёрнут: было «открыл панель → узнал, что отбор пуст → закрыл → настроил →
+//   открыл снова», стало «настроил на вкладке → сохранил». Панель остаётся для переименования и
+//   удаления - она и открывается вторым пунктом меню.
+// ⚠ Никакого confirm/prompt: системные окна блокируют страницу целиком, и то же предупреждение
+//   человек читал бы дважды (плашка в панели + модальное окно). Здесь плашка ОДНА - в этом окне.
+window.pfPresetSaveOpen=function(){
+  const empty=_pfStateIsEmpty();
+  const ov=document.createElement('div');ov.className='txn-card-overlay';
+  ov.innerHTML=`<div class="txn-card" style="max-width:520px">
+    <div class="txn-card-head"><h3>Сохранить отбор БДР как пресет</h3>
+      <button class="txn-card-close" onclick="this.closest('.txn-card-overlay').remove()">✕</button></div>
+    <div style="padding:14px 18px 18px">
+      ${empty?`<div style="font-size:12px;color:var(--orange);border:1px solid var(--orange);border-radius:6px;padding:7px 10px;background:rgba(232,134,43,.08);margin-bottom:10px">⚠ Фильтры сейчас не заданы - пресет запомнит «показать всё».</div>`:''}
+      <div style="font-size:11px;color:var(--text3);margin-bottom:4px">Что будет сохранено</div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:12px">${_pfPresetSnapshotHtml()}</div>
+      <input id="pfPresetName" type="text" placeholder="Название пресета" style="width:100%;box-sizing:border-box;font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+      <div id="pfPresetErr" style="display:none;font-size:11px;color:var(--outcome);margin-top:5px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button onclick="this.closest('.txn-card-overlay').remove()" style="font-size:12px;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer">Отмена</button>
+        <button onclick="pfPresetSaveApply(this)" style="font-size:12px;font-weight:600;padding:5px 14px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;cursor:pointer">Сохранить</button>
+      </div>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const inp=ov.querySelector('#pfPresetName');if(inp){inp.focus();inp.addEventListener('keydown',e=>{if(e.key==='Enter')pfPresetSaveApply(inp);});}
+};
+window.pfPresetSaveApply=function(el){
+  const ov=el.closest('.txn-card-overlay'),inp=ov.querySelector('#pfPresetName'),err=ov.querySelector('#pfPresetErr');
+  const name=(inp.value||'').trim();
+  if(!name){err.textContent='Введите название пресета';err.style.display='block';inp.focus();return;}
+  if(!Array.isArray(_presets.planfact))_presets.planfact=[];
+  const id='p'+Date.now()+Math.floor(Math.random()*1000);
+  _presets.planfact.push({id,name,f:_pfStateSnapshot()});
+  _presetsSave();
+  // ⚠ Пресет сразу становится АКТИВНЫМ: сохраняем и снимок подписи фильтров, иначе _presetActive
+  //   при первом же сравнении посчитает его снятым, и селект показал бы «не выбран» на своём же отборе.
+  _activePreset.planfact=id;_activePresetSig.planfact=_filterSig('planfact');
+  ov.remove();
+  renderPlanFact(getFilters());
+  try{_injectPresetBar();}catch(e){}
+};
 function _regBlankState(){return {q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false},sort:null};}
 function _regStateSnapshot(){const F=_tabFilters.registry||{};return JSON.parse(JSON.stringify({
   q:F.q||'',sel:F.sel||{},dds:F.dds||{},opiu:F.opiu||{},inc:F.inc||{},out:F.out||{},sort:F.sort||null}));}
@@ -2205,7 +2246,9 @@ window._presetSave=function(tab){
   // ⚠ У Реестра пресет снимает отбор, настроенный НА ВКЛАДКЕ, а панель выглядит как банковская,
   // где отбор наоборот ЗАДАЮТ в ней. На этом уже потерялся один пресет: человек открыл панель
   // при пустом отборе, ввёл имя и получил запись «показать всё».
-  if(tab==='planfact'&&_pfStateIsEmpty()&&!confirm('Фильтры БДР не заданы, пресет запомнит «показать всё». Всё равно сохранить?'))return;
+  // ⚠ У planfact системного confirm НЕТ: предупреждение о пустом отборе показывает плашка -
+  //   в панели (снимок) и в окне сохранения из меню «Действия». Два одинаковых предупреждения
+  //   подряд человек читает как ошибку интерфейса, а confirm ещё и блокирует страницу.
   if(tab==='registry'&&_regStateIsEmpty()&&!confirm('Отбор пустой, пресет запомнит «показать всё». Всё равно сохранить?'))return;
   const f=(tab==='registry')?_regStateSnapshot():(tab==='planfact')?_pfStateSnapshot():{};
   const _snapTab=(tab==='registry'||tab==='planfact'); // у этих вкладок пресет снимает отбор С ВКЛАДКИ, полей формы нет
@@ -9183,7 +9226,7 @@ function renderPlanFact(f){
   const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
   const actionsWrap=isAdmin?`<div style="position:relative;display:inline-block">
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;line-height:15px;font-weight:600;padding:2px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
-      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','👤 Выписка ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)')}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)')}</div>
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','👤 Выписка ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}${_actItem('pfPresetSaveOpen()','💾 Сохранить текущий отбор как пресет','var(--accent)')}${_actItem("showPresetsPanel('planfact')",'⚙ Пресеты отчётов','var(--text2)')}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)')}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)')}</div>
     </div>`:`<button onclick="pfCfoOpen()" title="Свод исполнения по ответственным" style="font-size:11px;line-height:15px;font-weight:600;padding:2px 12px;border:1px solid var(--accent);border-radius:5px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👥 ЦФО</button><button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👁 Планы (просмотр)</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:10px;padding:3px var(--secpx);min-height:31px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
