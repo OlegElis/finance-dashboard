@@ -994,11 +994,14 @@
     </div>
   </nav>
   <div class="sidebar-footer">
-    <button class="status-pill" id="statusPill" onclick="refreshData()" title="Обновить данные из Google Sheets">
+    <button class="status-pill" id="statusPill" onclick="refreshData()" title="Обновить данные (источник - под плашкой)">
       <span class="status-dot" id="statusDot"></span>
       <span id="statusText">Не подключено</span>
       <span class="status-refresh" id="statusRefresh">↻</span>
     </button>
+    <!-- Откуда пришли данные: «Sheets» или «Снимок · обновлён ЧЧ:ММ». Без этой строки при отладке
+         непонятно, ЧТО именно смотришь - оба пути дают одинаковые числа, и в этом весь смысл. -->
+    <div id="srcBadge" style="display:none;font-size:10px;line-height:13px;color:var(--text3);padding:1px 2px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
     <button class="foot-settings" id="logoSetupBtn" onclick="showSettingsMenu()" title="Настройки" aria-label="Настройки">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Настройки
@@ -1022,6 +1025,20 @@
         <div class="form-group">
           <label>API Key</label>
           <input type="password" id="apiKey" placeholder="AIzaSy…" />
+        </div>
+      </div>
+      <!-- Источник данных - НАСТРОЙКА, а не замена: старый путь (Sheets API) остаётся в коде целиком
+           и рабочим, он же единственная точка отката. Виден только админу (правит config/dataSource). -->
+      <div class="form-group" id="srcSwitch" style="display:none;margin-top:6px">
+        <label>Источник данных</label>
+        <select id="srcSel" onchange="dataSourceSet(this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none">
+          <option value="sheets">Google Sheets - как сейчас</option>
+          <option value="snapshot">Снимок в Firebase - быстрее</option>
+        </select>
+        <div class="setup-hint" style="margin-top:8px">
+          <strong>Снимок</strong> - тот же <code>RawData</code>, подготовленный скриптом раз в 15 минут и сжатый в Firebase.<br>
+          <strong>Откат</strong> - переключить обратно; при любом сбое снимка дашборд сам грузит из Sheets и говорит об этом.<br>
+          <strong>Справочники</strong> <code>RawData_BFL</code> и <code>RawData_ID_Offer</code> в обоих режимах грузятся из Sheets - ключ и доступ к таблице пока нужны.
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:2px">
@@ -1553,7 +1570,7 @@ window.downloadBackup=async function(){
   }catch(e){alert('Не удалось сформировать бэкап: '+((e&&e.message)||e));}
 };
 
-// Кнопка «Обновить данные»: заново тянем RawData из Google Sheets (по сохранённым реквизитам)
+// Кнопка «Обновить данные»: заново тянем RawData ТЕКУЩИМ источником (снимок или Sheets - см. _dataSource)
 window.refreshData=function(){
   loadSavedCredentials(); // восстановить sheetId/apiKey в инпутах на случай очистки
   const p=document.getElementById('statusPill');
@@ -1569,6 +1586,199 @@ function loadSavedCredentials(){
   return{sheetId,apiKey};
 }
 
+// ─────────────────────── Источник данных: Sheets API ↔ снимок в RTDB ───────────────────────
+// ⚠ ЭТО НАСТРОЙКА, А НЕ ЗАМЕНА. Оба пути живут рядом и дают ОДИНАКОВЫЙ массив; снимок - тот же
+//   RawData, подготовленный apps-script/snapshot-rtdb.gs (JSON → gzip → base64 кусками) заранее,
+//   чтобы не ждать выгрузку 23,5 МБ и пересчёт формул на каждом открытии. Старый путь не удалять,
+//   пока снимок не отработает неделю и пока в нём не появятся ВСЕ три набора: он единственная
+//   точка отката, и любой сбой снимка сваливается именно на него (см. _snapFallback).
+// ⚠ Снимок = МАСТЕР целиком = общий лист RawData. Сотруднику с ПЕРСОНАЛЬНОЙ вкладкой
+//   (window._dataSheet='RawData_Фамилия') он не подходит - там были бы чужие данные, поэтому
+//   снимок гейтится по имени листа, а не только по настройке.
+const SNAP_ROOT='snapshots/rawdata';
+window._dataSource=(localStorage.getItem('fin_dataSource')==='snapshot')?'snapshot':'sheets'; // зеркало = последнее известное облако (config/dataSource)
+window._rawSource='';      // чем СЕЙЧАС загружены данные: 'sheets' | 'snapshot'
+window._snapCur=null;      // meta применённого поколения
+window._snapFallback='';   // непусто = снимок не дался, работаем запасным путём (причина внутри)
+function _snapEnabled(sheet){return window._dataSource==='snapshot'&&sheet==='RawData'&&_fbCloudOn();}
+
+// Чтение ветки RTDB со сроком: офлайн промис Firebase просто ВИСИТ (та же механика, что у записи),
+// и без ограничения дашборд остался бы на «Загрузка…» навсегда вместо честного отката на Sheets.
+function _snapRead(path,ms){
+  return new Promise((res,rej)=>{
+    let done=false;
+    const t=setTimeout(()=>{if(!done){done=true;rej(new Error('база не ответила за '+Math.round((ms||20000)/1000)+' с ('+path+')'));}},ms||20000);
+    try{fbApp();firebase.database().ref(path).once('value')
+      .then(s=>{if(!done){done=true;clearTimeout(t);res(s.val());}})
+      .catch(e=>{if(!done){done=true;clearTimeout(t);rej(e);}});
+    }catch(e){if(!done){done=true;clearTimeout(t);rej(e);}}
+  });
+}
+// Склейка кусков поколения.
+// ⚠ Ключи числовые (0..N), и RTDB отдаёт такую ветку МАССИВОМ, а не объектом (та же ловушка, что
+//   с config/plansBaseline). Принимаем обе формы и склеиваем строго по ЧИСЛОВОМУ порядку ключа:
+//   порядок обхода объекта тут не гарантия, а склеенный не в том порядке base64 распакуется
+//   в мусор или не распакуется вовсе.
+function _snapJoin(v,n){
+  if(!v)throw new Error('поколение пустое - публикация не доехала');
+  const keys=Object.keys(v).filter(k=>/^\d+$/.test(k)).map(Number).sort((a,b)=>a-b);
+  if(!keys.length)throw new Error('в поколении нет кусков');
+  if(n&&keys.length!==n)throw new Error('кусков '+keys.length+', а meta обещала '+n);
+  let out='';
+  for(let i=0;i<keys.length;i++){
+    if(keys[i]!==i)throw new Error('пропущен кусок '+i+' (пришёл '+keys[i]+')');
+    const c=v[keys[i]];
+    if(typeof c!=='string')throw new Error('кусок '+i+' не строка');
+    out+=c;
+  }
+  return out;
+}
+// pako - ленивой загрузкой с CDN и ТОЛЬКО как запасной путь: DecompressionStream есть в живых
+// Chrome и Safari, тянуть библиотеку на старте ради старого браузера - платить всем за одного.
+// Схема ровно как у _loadSheetJS: один промис на все вызовы, при ошибке сбрасывается.
+let _pakoP=null;
+function _loadPako(){
+  if(window.pako)return Promise.resolve();
+  if(_pakoP)return _pakoP;
+  _pakoP=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js';
+    s.onload=()=>res();
+    s.onerror=()=>{_pakoP=null;rej(new Error('pako не загрузился'));};
+    document.head.appendChild(s);
+  });
+  return _pakoP;
+}
+async function _gunzipText(bytes){
+  if(typeof DecompressionStream==='function'){
+    const st=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return await new Response(st).text();
+  }
+  await _loadPako();
+  return new TextDecoder('utf-8').decode(window.pako.ungzip(bytes));
+}
+function _b64Bytes(b64){
+  const bin=atob(b64),out=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);
+  return out;
+}
+// Полный путь снимка: meta → куски → склейка → base64 → gzip → JSON. Возвращает {rows,meta}.
+// Любой сбой здесь - исключение: вызывающий откатывается на Sheets, человек без данных не остаётся.
+async function _snapLoadRows(){
+  const t0=performance.now();
+  const meta=await _snapRead(SNAP_ROOT+'/meta');
+  if(!meta||!meta.gen)throw new Error('нет meta - снимок ещё не публиковался или нет прав на ветку');
+  const raw=await _snapRead(SNAP_ROOT+'/gen/'+meta.gen,60000); // 4 МБ по медленной сети - срок шире, чем у meta
+  const b64=_snapJoin(raw,meta.chunks);
+  const rows=JSON.parse(await _gunzipText(_b64Bytes(b64)));
+  if(!Array.isArray(rows)||!rows.length)throw new Error('снимок распакован, но это не массив строк');
+  if(meta.rows&&rows.length!==meta.rows)throw new Error('в снимке '+rows.length+' строк, а meta обещала '+meta.rows);
+  console.log('[снимок] поколение '+meta.gen+': '+rows.length+' строк, '+Math.round((meta.bytes||b64.length)/1024)+' КБ, '+Math.round(performance.now()-t0)+' мс');
+  return {rows,meta};
+}
+// Старый путь - как был, слово в слово, только вынесен в функцию: у него теперь ДВА вызывающих
+// (обычная загрузка и сверка _cmpSources), и вторая копия запроса разъехалась бы с первой.
+async function _sheetsLoadRows(sheetId,apiKey,sheet){
+  const url=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(sheet)}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`;
+  const resp=await fetch(url);
+  if(!resp.ok){const e=await resp.json();throw new Error(e.error?.message||resp.statusText);}
+  const json=await resp.json();
+  return json.values||[];
+}
+// Индикатор источника рядом с плашкой статуса.
+function _srcBadgeUpd(){
+  const el=document.getElementById('srcBadge');
+  const sel=document.getElementById('srcSel'); if(sel)sel.value=window._dataSource;
+  const sw=document.getElementById('srcSwitch'); if(sw)sw.style.display=_isAdmin()?'block':'none';
+  if(!el)return;
+  if(!window._rawSource){el.style.display='none';return;}
+  el.style.display='block';
+  if(window._snapFallback){ // видимое сообщение: молчаливая деградация хуже отсутствия функции
+    el.textContent='⚠ Sheets - запасной путь';
+    el.style.color='var(--orange)';
+    el.title='Снимок недоступен: '+window._snapFallback+'\nДанные загружены из Google Sheets - цифры верные, просто дольше.';
+    return;
+  }
+  el.style.color='var(--text3)';
+  if(window._rawSource==='snapshot'){
+    const m=window._snapCur||{};
+    const t=m.updatedAt?new Date(m.updatedAt):null;
+    const hhmm=t&&!isNaN(t)?(String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')):'-';
+    el.textContent='Снимок · обновлён '+hhmm;
+    el.title='Поколение '+(m.gen||'?')+', строк '+(m.rows||'?')+(m.updatedAt?', опубликовано '+new Date(m.updatedAt).toLocaleString('ru-RU'):'');
+  }else{
+    el.textContent='Sheets';
+    el.title='Данные загружены напрямую из Google Sheets';
+  }
+}
+// Переключение источника (админ): пишем в облако, зеркалим и ПЕРЕЗАГРУЖАЕМ данные выбранным путём.
+window.dataSourceSet=function(v){
+  v=(v==='snapshot')?'snapshot':'sheets';
+  if(v===window._dataSource){_srcBadgeUpd();return;}
+  window._dataSource=v;
+  try{localStorage.setItem('fin_dataSource',v);}catch(e){_lsWarn('fin_dataSource',e);}
+  if(_isAdmin())_fbSetSafe('config/dataSource',v,'Источник данных');
+  _srcBadgeUpd();
+  refreshData();
+};
+// Подписка на config/dataSource: админ переключил - остальные сессии переезжают сами.
+// ⚠ Данные перезагружаются, только если они УЖЕ загружены; и не под открытым окном (_whenUiFree).
+function startDataSourceSync(){
+  if(window._dsSyncStarted)return; window._dsSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
+    fbApp();
+    firebase.database().ref('config/dataSource').on('value',s=>{
+      const v=(s.val()==='snapshot')?'snapshot':'sheets';
+      if(v===window._dataSource){_srcBadgeUpd();return;}
+      window._dataSource=v;
+      try{localStorage.setItem('fin_dataSource',v);}catch(e){_lsWarn('fin_dataSource',e);}
+      _srcBadgeUpd();
+      console.log('[источник] переключён на «'+v+'» - перезагружаю данные');
+      if(window._appBooted&&typeof RAW!=='undefined'&&RAW.length)_whenUiFree(()=>refreshData());
+    });
+  }catch(e){console.warn('[dataSource] синк не активен:',e&&e.message);}
+}
+// Открыто ли что-то, из-под чего нельзя выдёргивать данные. Возвращает ПРИЧИНУ (для журнала) или ''.
+function _uiBusy(){
+  if(window._planEditorOpen)return 'открыт редактор планов';
+  if(document.querySelector('.txn-card-overlay'))return 'открыто модальное окно';
+  if(document.querySelector('.cfo-scr'))return 'открыт экран выписки ЦФО';
+  if(document.getElementById('accessPanelOverlay'))return 'открыта панель доступа';
+  return '';
+}
+// Отложить работу до закрытия окна. Опрос, а не MutationObserver: наблюдатели на #mainContent
+// в этом проекте уже дважды зацикливались, а цена опроса раз в 1,5 с - ноль.
+// Очередь на одну задачу: вторая смена поколения просто заменяет отложенную, а не копится.
+function _whenUiFree(fn){
+  const why=_uiBusy();
+  if(!why){fn();return;}
+  window._uiFreeJob=fn;
+  if(window._uiFreeTimer)return;
+  console.log('[обновление] отложено: '+why);
+  window._uiFreeTimer=setInterval(()=>{
+    if(_uiBusy())return;
+    clearInterval(window._uiFreeTimer);window._uiFreeTimer=null;
+    const job=window._uiFreeJob;window._uiFreeJob=null;
+    if(job)job();
+  },1500);
+}
+// Снимок/восстановление прокрутки: рендереры перестраивают innerHTML целиком, и без этого
+// живое обновление швыряло бы человека в начало таблицы. Развороты строк переживают ре-рендер
+// сами (_pfArtExp/_pfSubExp и прочие живут в глобалях), фильтры - в _tabFilters.
+function _uiScrollSnap(){
+  const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1));
+  if(!cont)return null;
+  const main=document.getElementById('mainContent');
+  return {cont,main:main?main.scrollTop:0,tops:Array.from(cont.querySelectorAll('.table-scroll')).map(e=>e.scrollTop)};
+}
+function _uiScrollRestore(s){
+  if(!s||!s.cont)return;
+  const main=document.getElementById('mainContent'); if(main)main.scrollTop=s.main;
+  const els=Array.from(s.cont.querySelectorAll('.table-scroll'));
+  els.forEach((e,i)=>{if(s.tops[i]!=null)e.scrollTop=s.tops[i];}); // сопоставление по порядку: рендерер тот же, состав контейнеров тот же
+}
+
 async function connectAndLoad(){
   const sheetId=document.getElementById('sheetId').value.trim();
   const apiKey=document.getElementById('apiKey').value.trim();
@@ -1576,12 +1786,18 @@ async function connectAndLoad(){
   setStatus('loading','Загрузка...');
   try{
     const sheet=window._dataSheet||'RawData'; // персональная вкладка пользователя или общий RawData (админ)
-    const url=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(sheet)}?key=${apiKey}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`;
-    const resp=await fetch(url);
-    if(!resp.ok){const e=await resp.json();throw new Error(e.error?.message||resp.statusText);}
-    const json=await resp.json();
-    const rows=json.values||[];
+    let rows=null,src='sheets';
+    // ── Снимок. Любой сбой (нет meta, нет прав, куски не склеились, распаковка упала) - НЕ ошибка
+    //    загрузки, а откат на Sheets в этой сессии: человек не должен остаться без данных из-за
+    //    того, что мы поменяли транспорт. Причина уходит в бейдж источника и в консоль.
+    if(_snapEnabled(sheet)){
+      try{const s=await _snapLoadRows();rows=s.rows;src='snapshot';window._snapCur=s.meta;window._snapFallback='';}
+      catch(e){window._snapFallback=(e&&e.message)||String(e);window._snapCur=null;
+        console.warn('[снимок] не прочитан, откат на Sheets:',e);}
+    }else{window._snapFallback='';window._snapCur=null;}
+    if(!rows)rows=await _sheetsLoadRows(sheetId,apiKey,sheet);
     if(rows.length<2)throw new Error('Нет данных в листе «'+sheet+'»');
+    window._rawSource=src;
     // сверка структуры листа: COL - фиксированные индексы, переставленная колонка молча ломает ВСЕ отчёты.
     // Эталон - заголовки первой ПОЛНОЙ загрузки (per sheet, localStorage); при расхождении - предупреждение.
     // ⚠ Данные собираются через IMPORTRANGE: во время пересчёта импорта заголовки временно приходят пустыми/#ERROR!/Loading… -
@@ -1727,6 +1943,7 @@ async function loadBflDeals(sheetId,apiKey){
 
 function onDataLoaded(){
   setStatus('ok',`${RAW.length.toLocaleString('ru-RU')} строк`);
+  _srcBadgeUpd(); // откуда пришли данные - под плашкой статуса
   buildFilterOptions(RAW);
   document.getElementById('setupWrap').classList.add('hidden');
   document.getElementById('dashWrap').classList.remove('hidden');
@@ -11832,6 +12049,7 @@ function fbApp(){ if(!window.firebase)return null; if(!firebase.apps||!firebase.
 // Запуск дашборда: подключение к данным (бывш. init). Идемпотентно
 function bootApp(){
   if(window._appBooted)return; window._appBooted=true;
+  try{_srcBadgeUpd();}catch(e){} // переключатель источника в «Подключении» - до всякой загрузки (его видит админ и на пустом экране)
   const{sheetId,apiKey}=loadSavedCredentials();
   if(sheetId&&apiKey){
     document.getElementById('setupWrap').classList.add('hidden');
@@ -14036,7 +14254,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync(); startDataSourceSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -14090,7 +14308,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync(); startDataSourceSync();
       });
     }else{
       if(gate)gate.style.display='flex';
