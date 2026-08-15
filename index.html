@@ -999,7 +999,7 @@
       <span id="statusText">Не подключено</span>
       <span class="status-refresh" id="statusRefresh">↻</span>
     </button>
-    <!-- Откуда пришли данные: «Sheets» или «Снимок · обновлён ЧЧ:ММ». Без этой строки при отладке
+    <!-- На какой момент данные: «Данные на ЧЧ:ММ» (быстрый путь) или «Прямой путь». Без этой строки при отладке
          непонятно, ЧТО именно смотришь - оба пути дают одинаковые числа, и в этом весь смысл. -->
     <div id="srcBadge" style="display:none;font-size:10px;line-height:13px;color:var(--text3);padding:1px 2px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
     <button class="foot-settings" id="logoSetupBtn" onclick="showSettingsMenu()" title="Настройки" aria-label="Настройки">
@@ -1032,13 +1032,16 @@
       <div class="form-group" id="srcSwitch" style="display:none;margin-top:6px">
         <label>Источник данных</label>
         <select id="srcSel" onchange="dataSourceSet(this.value)" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:9px 12px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none">
-          <option value="sheets">Google Sheets - как сейчас</option>
-          <option value="snapshot">Снимок в Firebase - быстрее</option>
+          <option value="sheets">Прямой · из таблицы, медленно</option>
+          <option value="snapshot">Быстрый · подготовленные данные</option>
         </select>
+        <!-- Пояснение про ПОВЕДЕНИЕ, а не про устройство; имена листов оставлены сознательно -
+             Олег ими оперирует, а это окно кроме него никто не открывает. -->
         <div class="setup-hint" style="margin-top:8px">
-          <strong>Снимок</strong> - тот же <code>RawData</code>, подготовленный скриптом раз в 15 минут и сжатый в Firebase.<br>
-          <strong>Откат</strong> - переключить обратно; при любом сбое снимка дашборд сам грузит из Sheets и говорит об этом.<br>
-          <strong>Справочники</strong> <code>RawData_BFL</code> и <code>RawData_ID_Offer</code> в обоих режимах грузятся из Sheets - ключ и доступ к таблице пока нужны.
+          <strong>Быстрый</strong> - данные <code>RawData</code> готовятся заранее и обновляются раз в 15 минут; дашборд открывается за секунду, под плашкой статуса написано, на какой они момент.<br>
+          <strong>Прямой</strong> - те же данные читаются из таблицы целиком при каждом открытии: всегда на текущий момент, но ждать долго.<br>
+          <strong>Если что-то пойдёт не так</strong> - дашборд сам переключится на прямой путь, покажет данные и честно скажет об этом; настройка при этом не меняется.<br>
+          <strong>Справочники</strong> <code>RawData_BFL</code> и <code>RawData_ID_Offer</code> в обоих режимах читаются напрямую из таблицы - ключ и доступ к ней пока нужны.
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:2px">
@@ -1796,10 +1799,13 @@ function _srcBadgeUpd(){
   if(!el)return;
   if(!window._rawSource){el.style.display='none';return;}
   el.style.display='block';
+  // ⚠ В подписи НЕ называем механику: человеку важно не откуда взялись данные, а НА КАКОЙ ОНИ МОМЕНТ.
+  //   Техническая подробность (поколение, строки, размер, причина отката) не выбрасывается, а уезжает
+  //   в title: при разборе полётов она нужна, а искать её в консоли неудобно.
   if(window._snapFallback){ // видимое сообщение: молчаливая деградация хуже отсутствия функции
-    el.textContent='⚠ Sheets - запасной путь';
+    el.textContent='⚠ Запасной путь · данные напрямую из таблицы';
     el.style.color='var(--orange)';
-    el.title='Снимок недоступен: '+window._snapFallback+'\nДанные загружены из Google Sheets - цифры верные, просто дольше.';
+    el.title='Быстрый путь недоступен, причина: '+window._snapFallback+'\nДанные прочитаны напрямую из таблицы - они свежие и верные, просто загрузка дольше.';
     return;
   }
   el.style.color='var(--text3)';
@@ -1807,11 +1813,15 @@ function _srcBadgeUpd(){
     const m=window._snapCur||{};
     const t=m.updatedAt?new Date(m.updatedAt):null;
     const hhmm=t&&!isNaN(t)?(String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')):'-';
-    el.textContent='Снимок · обновлён '+hhmm;
-    el.title='Поколение '+(m.gen||'?')+', строк '+(m.rows||'?')+(m.updatedAt?', опубликовано '+new Date(m.updatedAt).toLocaleString('ru-RU'):'');
+    el.textContent='Данные на '+hhmm;
+    el.title='Быстрый путь: данные подготовлены заранее.'+
+      '\nПоколение: '+(m.gen||'?')+
+      '\nСтрок: '+(m.rows?Number(m.rows).toLocaleString('ru-RU'):'?')+
+      (m.bytes?'\nРазмер: '+Math.round(m.bytes/1024).toLocaleString('ru-RU')+' КБ':'')+
+      (m.updatedAt&&t&&!isNaN(t)?'\nПодготовлены: '+t.toLocaleString('ru-RU'):'');
   }else{
-    el.textContent='Sheets';
-    el.title='Данные загружены напрямую из Google Sheets';
+    el.textContent='Прямой путь';
+    el.title='Данные читаются напрямую из таблицы - на текущий момент, но загрузка дольше.';
   }
 }
 // Переключение источника (админ): пишем в облако, зеркалим и ПЕРЕЗАГРУЖАЕМ данные выбранным путём.
