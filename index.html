@@ -1741,6 +1741,53 @@ async function _sheetsLoadRows(sheetId,apiKey,sheet){
   const json=await resp.json();
   return json.values||[];
 }
+// ── ВРЕМЕННО, на приёмку перехода: сверка двух путей. Зовётся из консоли: _cmpSources().
+// Удалить вместе со старым путём, когда снимок отработает неделю и туда приедут все три набора.
+// ⚠ ОДНО расхождение ЗАКОНОМЕРНО и ошибкой НЕ является: Sheets API отбрасывает пустые ячейки
+//   в конце строки (строка приходит короче 15), а снимок всегда даёт ровно 15 с пустыми ''.
+//   Поэтому сверяем ПО ПОЗИЦИЯМ с приведением отсутствующего к '' - без этого получили бы
+//   тысячи ложных расхождений и не увидели за ними настоящих.
+// ⚠ А вот ДАТЫ расхождением быть не должны: Sheets зовётся с SERIAL_NUMBER, и публикующий скрипт
+//   специально переводит Date в серийный номер (serial_ в snapshot-rtdb.gs). Вылезла разница
+//   в колонках ДДС/ОПиУ - смотреть туда в первую очередь, это не «мелочь округления».
+window._cmpSources=async function(){
+  const CN=['ДДС','ОПиУ','Тип','ID_Offer','Поступление','Списание','ФНС','Реквизиты','Статья','Подстатья','Аналитика','Контрагент','Назначение','Направление','Фин.операция'];
+  const sheetId=(localStorage.getItem('fin_sheetId')||'').trim(),apiKey=(localStorage.getItem('fin_apiKey')||'').trim();
+  const sheet=window._dataSheet||'RawData';
+  if(!sheetId||!apiKey){console.error('[сверка] нет реквизитов подключения - Sheets не запросить');return null;}
+  console.log('[сверка] тяну оба пути (снимок - МИМО кеша, чтобы сверять реально опубликованное)…');
+  const t0=performance.now();
+  let A,S;
+  try{[A,S]=await Promise.all([_sheetsLoadRows(sheetId,apiKey,sheet),_snapLoadRows({noCache:true})]);}
+  catch(e){console.error('[сверка] не удалось загрузить оба пути:',e);return null;}
+  const B=S.rows,cell=(r,i)=>{const v=r&&r[i];return(v===undefined||v===null)?'':v;};
+  const diffs=[],byCol={};let short=0;
+  const n=Math.max(A.length,B.length);
+  for(let r=0;r<n;r++){
+    const ra=A[r],rb=B[r];
+    if(!ra||!rb){diffs.push({row:r+1,col:-1,name:'(строки нет)',sheets:ra?'есть':'нет',snapshot:rb?'есть':'нет'});continue;}
+    if(ra.length<15)short++;
+    for(let i=0;i<15;i++){
+      const x=cell(ra,i),y=cell(rb,i);
+      if(x===y)continue;
+      byCol[i]=(byCol[i]||0)+1;
+      if(diffs.length<50)diffs.push({row:r+1,col:i,name:CN[i],sheets:x,snapshot:y,типы:(typeof x)+' / '+(typeof y)});
+    }
+  }
+  const total=Object.keys(byCol).reduce((s,k)=>s+byCol[k],0);
+  console.log('[сверка] строк: Sheets '+A.length+' · снимок '+B.length+(A.length===B.length?' (совпало)':' ⚠ РАЗНОЕ ЧИСЛО СТРОК'));
+  console.log('[сверка] хвост пустых ячеек: '+short+' строк пришли из Sheets короче 15 колонок - это закономерно, за расхождение не считается');
+  if(!total&&A.length===B.length){
+    console.log('%c[сверка] РАСХОЖДЕНИЙ НЕТ: оба пути дали одинаковый массив ('+Math.round(performance.now()-t0)+' мс)','color:#2e9e6b;font-weight:600');
+  }else{
+    console.warn('[сверка] расхождений: '+total+(diffs.length>=50?' (показаны первые 50)':''));
+    const d=diffs[0];
+    if(d)console.warn('[сверка] ПЕРВОЕ: строка '+d.row+' (строка листа '+(d.row)+'), колонка '+(d.col+1)+' «'+d.name+'»\n  Sheets  : '+JSON.stringify(d.sheets)+'\n  снимок  : '+JSON.stringify(d.snapshot)+'\n  типы    : '+(d.типы||'-'));
+    Object.keys(byCol).forEach(k=>console.warn('  колонка '+(+k+1)+' «'+CN[k]+'»: '+byCol[k]+' расхождений'+((+k===0||+k===1)?' ⚠ это ДАТЫ - проверять serial_ в snapshot-rtdb.gs':'')));
+    if(console.table)console.table(diffs.slice(0,20));
+  }
+  return {rowsSheets:A.length,rowsSnapshot:B.length,diffs,byCol,shortRows:short,gen:S.meta&&S.meta.gen};
+};
 // Индикатор источника рядом с плашкой статуса.
 function _srcBadgeUpd(){
   const el=document.getElementById('srcBadge');
