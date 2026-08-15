@@ -1662,19 +1662,75 @@ function _b64Bytes(b64){
   for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);
   return out;
 }
-// Полный путь снимка: meta → куски → склейка → base64 → gzip → JSON. Возвращает {rows,meta}.
+// ── Кеш поколения в браузере. Без него снимок теряет смысл: каждое открытие снова качало бы 4 МБ,
+//    а бесплатный тариф RTDB даёт 10 ГБ исходящего в месяц (три человека онлайн его выберут).
+// ⚠ Только IndexedDB. localStorage не годится дважды: лимит около 5 МБ и синхронный доступ -
+//    он подвесил бы вкладку прямо на разборе.
+// ⚠ Храним СЖАТЫЕ байты, а не разобранный массив и не текст JSON. Замер (61 тыс. синтетических
+//    строк, headless Chrome 15.08.2026): gzip-байты - запись 3 мс, чтение+распаковка+разбор 62 мс,
+//    на диске 1,30 МБ; текст JSON - 20/26 мс и 13,1 МБ; готовый массив - 29/18 мс. По времени
+//    разница неразличима на фоне сетевой загрузки (секунды), по диску - десятикратная, а на диске
+//    лежат чужие финансовые данные, переживающие закрытие браузера. Отсюда и выбор.
+// ⚠ Кеш - УСКОРЕНИЕ, а не условие работы: любая беда с IndexedDB (приватное окно, запрет, квота)
+//    гасится молча и роняет нас на обычную загрузку, но не на Sheets и уж точно не в ошибку.
+const SNAP_DB='finSnapshot',SNAP_STORE='snap',SNAP_KEY='cur';
+function _snapIdb(){
+  return new Promise((res,rej)=>{
+    if(!window.indexedDB)return rej(new Error('IndexedDB недоступна'));
+    const q=indexedDB.open(SNAP_DB,1);
+    q.onupgradeneeded=()=>{const db=q.result;if(!db.objectStoreNames.contains(SNAP_STORE))db.createObjectStore(SNAP_STORE);};
+    q.onsuccess=()=>res(q.result);
+    q.onerror=()=>rej(q.error||new Error('IndexedDB не открылась'));
+  });
+}
+function _snapWho(){ // чей это кеш: у сотрудников свой лист, и чужой снимок им показывать нельзя
+  let em='';try{em=((window.firebase&&firebase.auth&&firebase.auth().currentUser&&firebase.auth().currentUser.email)||'').toLowerCase();}catch(e){}
+  return em+'|'+(window._dataSheet||'RawData');
+}
+async function _snapCacheGet(gen){
+  try{
+    const db=await _snapIdb();
+    const rec=await new Promise((res,rej)=>{const tx=db.transaction(SNAP_STORE,'readonly');const r=tx.objectStore(SNAP_STORE).get(SNAP_KEY);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+    db.close();
+    if(!rec||rec.gen!==gen||rec.who!==_snapWho()||!rec.gz)return null;
+    return new Uint8Array(rec.gz);
+  }catch(e){console.warn('[снимок] кеш не прочитан:',e&&e.message);return null;}
+}
+async function _snapCachePut(gen,bytes){
+  try{
+    const db=await _snapIdb();
+    await new Promise((res,rej)=>{
+      const tx=db.transaction(SNAP_STORE,'readwrite');
+      // ОДНА запись под фиксированным ключом: новое поколение затирает старое, а не копится
+      tx.objectStore(SNAP_STORE).put({gen,who:_snapWho(),gz:bytes.buffer.slice(0),savedAt:Date.now()},SNAP_KEY);
+      tx.oncomplete=res;tx.onerror=()=>rej(tx.error);
+    });
+    db.close();
+  }catch(e){console.warn('[снимок] кеш не записан:',e&&e.message);}
+}
+// Стереть кеш целиком. Зовётся на выходе: дисковый кеш чужих данных, переживший смену пользователя, -
+// ровно та беда, на которой проект уже горел (новый пользователь видел RAW предыдущего).
+function _snapCacheWipe(){
+  try{if(window.indexedDB)indexedDB.deleteDatabase(SNAP_DB);}catch(e){console.warn('[снимок] кеш не удалён:',e&&e.message);}
+}
+// Полный путь снимка: meta → (кеш | куски → склейка → base64) → gzip → JSON. Возвращает {rows,meta}.
 // Любой сбой здесь - исключение: вызывающий откатывается на Sheets, человек без данных не остаётся.
-async function _snapLoadRows(){
+async function _snapLoadRows(opt){
+  opt=opt||{};
   const t0=performance.now();
   const meta=await _snapRead(SNAP_ROOT+'/meta');
   if(!meta||!meta.gen)throw new Error('нет meta - снимок ещё не публиковался или нет прав на ветку');
-  const raw=await _snapRead(SNAP_ROOT+'/gen/'+meta.gen,60000); // 4 МБ по медленной сети - срок шире, чем у meta
-  const b64=_snapJoin(raw,meta.chunks);
-  const rows=JSON.parse(await _gunzipText(_b64Bytes(b64)));
+  let bytes=opt.noCache?null:await _snapCacheGet(meta.gen),cached=!!bytes;
+  if(!bytes){
+    const raw=await _snapRead(SNAP_ROOT+'/gen/'+meta.gen,60000); // 4 МБ по медленной сети - срок шире, чем у meta
+    bytes=_b64Bytes(_snapJoin(raw,meta.chunks));
+  }
+  const rows=JSON.parse(await _gunzipText(bytes));
   if(!Array.isArray(rows)||!rows.length)throw new Error('снимок распакован, но это не массив строк');
   if(meta.rows&&rows.length!==meta.rows)throw new Error('в снимке '+rows.length+' строк, а meta обещала '+meta.rows);
-  console.log('[снимок] поколение '+meta.gen+': '+rows.length+' строк, '+Math.round((meta.bytes||b64.length)/1024)+' КБ, '+Math.round(performance.now()-t0)+' мс');
-  return {rows,meta};
+  if(!cached&&!opt.noCache)_snapCachePut(meta.gen,bytes); // без await: кеш не должен задерживать показ данных
+  console.log('[снимок] поколение '+meta.gen+(cached?' ИЗ КЕША':'')+': '+rows.length+' строк, '+Math.round((meta.bytes||bytes.length)/1024)+' КБ, '+Math.round(performance.now()-t0)+' мс');
+  return {rows,meta,cached};
 }
 // Старый путь - как был, слово в слово, только вынесен в функцию: у него теперь ДВА вызывающих
 // (обычная загрузка и сверка _cmpSources), и вторая копия запроса разъехалась бы с первой.
@@ -12246,6 +12302,7 @@ window.appLogout=function(){
   try{if(window._presenceStop)window._presenceStop();}catch(e){} // гасим пульс презенса под старым email
   window._appBooted=false; window._dataSheet=''; // следующий вход перезагрузит данные СВОЕЙ вкладки (раньше новый пользователь видел RAW предыдущего до «↻ Обновить»)
   _lsWipeMirrors(); // зеркала настроек и данных не остаются на машине после выхода; облако (config/*) не трогаем - оттуда всё вернётся
+  _snapCacheWipe(); // и кеш снимка в IndexedDB: следующий пользователь не должен найти на диске данные предыдущего
   try{ if(window.firebase&&firebase.auth) firebase.auth().signOut(); }catch(e){}
 };
 // Вход через Google (всплывающее окно)
