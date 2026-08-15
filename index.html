@@ -1791,9 +1791,39 @@ function startDataSourceSync(){
       try{localStorage.setItem('fin_dataSource',v);}catch(e){_lsWarn('fin_dataSource',e);}
       _srcBadgeUpd();
       console.log('[источник] переключён на «'+v+'» - перезагружаю данные');
-      if(window._appBooted&&typeof RAW!=='undefined'&&RAW.length)_whenUiFree(()=>refreshData());
+      if(window._appBooted&&typeof RAW!=='undefined'&&RAW.length)_whenUiFree(()=>_reloadKeepUi());
     });
   }catch(e){console.warn('[dataSource] синк не активен:',e&&e.message);}
+}
+// Подписка на meta снимка: скрипт опубликовал новое поколение - дашборд подтягивает его САМ, без F5.
+// ⚠ Слушаем только КРОШЕЧНУЮ meta (семь полей), а не данные: подписка на ветку с кусками означала бы
+//   скачивание 4 МБ при каждом изменении у каждого открытого дашборда - ровно то, из-за чего
+//   раскладка и разведена на указатель и данные (10 ГБ исходящего в месяц на бесплатном тарифе).
+function startSnapshotSync(){
+  if(window._snapSyncStarted)return; window._snapSyncStarted=true;
+  try{
+    if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
+    fbApp();
+    firebase.database().ref(SNAP_ROOT+'/meta').on('value',s=>{
+      const m=s.val();
+      if(!m||!m.gen)return;
+      if(window._dataSource!=='snapshot')return;                       // сидим на Sheets - смена поколения нас не касается
+      if(window._rawSource!=='snapshot')return;                        // мы на запасном пути; вернёт нас туда следующая полная загрузка, а не эхо meta
+      if(!window._appBooted||typeof RAW==='undefined'||!RAW.length)return; // ещё не грузились - первое чтение сделает connectAndLoad
+      if(window._snapCur&&window._snapCur.gen===m.gen)return;           // эхо собственной загрузки
+      console.log('[снимок] опубликовано новое поколение '+m.gen+' (было '+((window._snapCur&&window._snapCur.gen)||'-')+')');
+      _whenUiFree(()=>_reloadKeepUi());
+    });
+  }catch(e){console.warn('[снимок] подписка не активна:',e&&e.message);}
+}
+// Перезагрузка данных с сохранением того, что человек настроил руками.
+// Фильтры живут в _tabFilters, развороты строк - в глобальных Set (_pfArtExp и прочие), и то и другое
+// переживает ре-рендер само; теряется только ПРОКРУТКА - её и снимаем.
+async function _reloadKeepUi(){
+  if(window._reloading)return; window._reloading=true;
+  const scr=_uiScrollSnap();
+  try{ loadSavedCredentials(); await connectAndLoad(); }
+  finally{ window._reloading=false; try{_uiScrollRestore(scr);}catch(e){} }
 }
 // Открыто ли что-то, из-под чего нельзя выдёргивать данные. Возвращает ПРИЧИНУ (для журнала) или ''.
 function _uiBusy(){
@@ -14311,7 +14341,7 @@ function watchForceLogout(authMs){
     window._dataSheet='RawData';
     // авторизации нет (fail-open) - показываем «Подключение» (нужно для первичной настройки)
     const sb=document.getElementById('logoSetupBtn'); if(sb)sb.style.display='inline-flex';
-    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync(); startDataSourceSync();
+    bootApp(); startPresence(''); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync(); startDataSourceSync(); startSnapshotSync();
     return;
   }
   if(gate)gate.style.display='flex'; // сразу закрываем дашборд экраном входа
@@ -14365,7 +14395,7 @@ function watchForceLogout(authMs){
         if(setupBtn)setupBtn.style.display=isAdmin?'inline-flex':'none';
         // слежение за рубильником по времени входа этой сессии (серверное auth_time)
         user.getIdTokenResult().then(r=>{ const ms=Date.parse(r.authTime)||Date.now(); watchForceLogout(ms); }).catch(()=>watchForceLogout(Date.now()));
-        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync(); startDataSourceSync();
+        bootApp(); startPresence(display); startLimitsSync(); startConfigSync(); startPlansSync(); startBaselineSync(); startPresetsSync(); startOwnersSync(); startCfoHierarchySync(); startNotesSync(); startCfoSync(); startAnomalyAckSync(); startRentObjectsSync(); startTargetLockedSync(); startBflModelSync(); startBackupLogSync(); startMktCountsSync(); startAccountsSync(); startDataSourceSync(); startSnapshotSync();
       });
     }else{
       if(gate)gate.style.display='flex';
