@@ -999,8 +999,10 @@
       <span id="statusText">Не подключено</span>
       <span class="status-refresh" id="statusRefresh">↻</span>
     </button>
-    <!-- На какой момент данные: «Данные на ЧЧ:ММ» (быстрый путь) или «Прямой путь». Без этой строки при отладке
-         непонятно, ЧТО именно смотришь - оба пути дают одинаковые числа, и в этом весь смысл. -->
+    <!-- На какой момент данные: «Данные на 20:23» / «Данные на вчера, 20:23» / «Данные на 13.08, 20:23»
+         (быстрый путь) или «Прямой путь». Без этой строки при отладке непонятно, ЧТО именно смотришь -
+         оба пути дают одинаковые числа, и в этом весь смысл. Дата опускается только у сегодняшнего
+         снимка, см. _srcBadgeUpd. -->
     <div id="srcBadge" style="display:none;font-size:10px;line-height:13px;color:var(--text3);padding:1px 2px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
     <button class="foot-settings" id="logoSetupBtn" onclick="showSettingsMenu()" title="Настройки" aria-label="Настройки">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -1791,7 +1793,25 @@ window._cmpSources=async function(){
   }
   return {rowsSheets:A.length,rowsSnapshot:B.length,diffs,byCol,shortRows:short,gen:S.meta&&S.meta.gen};
 };
+// Возраст по-человечески: «только что» / «5 минут назад» / «3 часа назад» / «2 дня назад».
+// ⚠ Русское окончание склоняется ЧИСЛОМ, и «11-14» - всегда третья форма («11 дней», не «11 день»),
+//   поэтому таблица форм, а не сокращение «дн.»: подпись читают в title, там место для слова целиком.
+function _agoRu(ms){
+  const mi=Math.floor(ms/60000); if(mi<1)return 'только что';
+  const pl=(n,f)=>{const a=n%10,b=n%100;return n+' '+(a===1&&b!==11?f[0]:(a>=2&&a<=4&&(b<12||b>14)?f[1]:f[2]));};
+  if(mi<60)return pl(mi,['минуту','минуты','минут'])+' назад';
+  const h=Math.floor(mi/60); if(h<24)return pl(h,['час','часа','часов'])+' назад';
+  return pl(Math.floor(h/24),['день','дня','дней'])+' назад';
+}
 // Индикатор источника рядом с плашкой статуса.
+// ⚠ Подпись отвечает на ОДИН вопрос - НА КАКОЙ МОМЕНТ данные, и у быстрого пути этот момент равен
+//   моменту последнего ИЗМЕНЕНИЯ данных, а не моменту последней проверки: снимок публикуется, только
+//   когда мастер реально поменялся (см. контрольную сумму в apps-script/snapshot-rtdb.gs), и ночь без
+//   правок честно оставляет вчерашнее время. Старое время здесь - НЕ признак сбоя.
+// ⚠ Дата в подписи опускается только у СЕГОДНЯШНЕГО снимка. Без неё вчерашний снимок неотличим от
+//   свежего - ровно тот случай, ради которого подпись и заведена (скриншот 15.08.2026).
+//   Сутки считаются КАЛЕНДАРНЫЕ (по локальным компонентам даты, как daysB в Займах/Дебиторке):
+//   по разнице в 24 часа в 00:30 вчерашний снимок назывался бы сегодняшним.
 function _srcBadgeUpd(){
   const el=document.getElementById('srcBadge');
   const sel=document.getElementById('srcSel'); if(sel)sel.value=window._dataSource;
@@ -1812,13 +1832,19 @@ function _srcBadgeUpd(){
   if(window._rawSource==='snapshot'){
     const m=window._snapCur||{};
     const t=m.updatedAt?new Date(m.updatedAt):null;
-    const hhmm=t&&!isNaN(t)?(String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0')):'-';
-    el.textContent='Данные на '+hhmm;
+    const ok=!!(t&&!isNaN(t));
+    const p2=n=>String(n).padStart(2,'0');
+    const hhmm=ok?(p2(t.getHours())+':'+p2(t.getMinutes())):'-';
+    const dnum=x=>Math.floor(Date.UTC(x.getFullYear(),x.getMonth(),x.getDate())/86400000);
+    // Строка узкая (сайдбар, text-overflow:ellipsis) - длиннее «Данные на вчера, 20:23» не расти.
+    const dd=ok?dnum(new Date())-dnum(t):0;
+    el.textContent='Данные на '+(!ok?'-':(dd===0?hhmm:(dd===1?'вчера, '+hhmm:(p2(t.getDate())+'.'+p2(t.getMonth()+1)+', '+hhmm))));
     el.title='Быстрый путь: данные подготовлены заранее.'+
       '\nПоколение: '+(m.gen||'?')+
       '\nСтрок: '+(m.rows?Number(m.rows).toLocaleString('ru-RU'):'?')+
       (m.bytes?'\nРазмер: '+Math.round(m.bytes/1024).toLocaleString('ru-RU')+' КБ':'')+
-      (m.updatedAt&&t&&!isNaN(t)?'\nПодготовлены: '+t.toLocaleString('ru-RU'):'');
+      (ok?'\nПодготовлены: '+p2(t.getDate())+'.'+p2(t.getMonth()+1)+'.'+t.getFullYear()+', '+hhmm+
+          ' ('+_agoRu(Date.now()-t.getTime())+')':'');
   }else{
     el.textContent='Прямой путь';
     el.title='Данные читаются напрямую из таблицы - на текущий момент, но загрузка дольше.';
