@@ -55,6 +55,23 @@
  *   - повторный запуск publishSnapshot() без правок в мастере НИЧЕГО не публикует и пишет
  *     в журнал «данные не менялись» (см. п. «контрольная сумма» ниже).
  *
+ * КОНТРОЛЬНАЯ СУММА - MD5 ВСЕГО МАССИВА (sum_), а не число строк и суммы денег.
+ * ⚠ Так было до 16.08.2026, и это был немой отказ: сумма считалась как «строк + Σ поступлений +
+ *   Σ списаний», поэтому правка любой НЕЧИСЛОВОЙ ячейки (ID_Offer, статья, контрагент, назначение,
+ *   счёт, направление, ФНС) не меняла ни одного слагаемого - скрипт уходил в ветку «данные не
+ *   менялись» и не публиковал НИКОГДА, пока не сдвинутся деньги или число строк. Поймано на
+ *   практике 15.08.2026: правка ID_Offer в двух строках до дашборда не доехала.
+ *   Теперь сверка идёт по MD5 от того самого JSON, который и уезжает в базу, - меняется что
+ *   угодно в любой ячейке, меняется и сумма. Число строк и суммы денег в ней остались префиксом:
+ *   по MD5 не видно НИЧЕГО, а по префиксу в журнале сразу читается масштаб изменения.
+ * ⚠ ФОРМАТ 'sum' СМЕНИЛСЯ, поэтому ПЕРВЫЙ прогон после выкладки опубликует снимок независимо от
+ *   того, менялись данные или нет (старое значение с новым не совпадёт по построению). Это не
+ *   сбой; заодно этим прогоном доедут потерянные правки. Дальше всё как обычно.
+ * ⚠ Цена: JSON.stringify теперь считается на КАЖДОМ прогоне, а не только при публикации
+ *   (раньше он стоял после проверки). Времена пишутся в журнал каждым прогоном - см. «чтение /
+ *   сумма» в строке лога; при 96 прогонах в сутки следить, чтобы суточный расход не подошёл
+ *   к квоте 90 минут.
+ *
  * ОТКАТ (полный, за минуту)
  *   Снять триггер publishSnapshot и удалить ветку snapshots в консоли Firebase. Всё.
  *   Дашборд этого не заметит - он на снимок ещё не смотрит, а мастер и лист 00.UnifiedData
@@ -135,8 +152,14 @@ function snapshotStatus() {
   var lastAbort = p.getProperty('lastAbort');
   if (lastAbort) Logger.log('последний отказ: ' + lastAbort);
 
+  var t0  = Date.now();
   var src = read_();
-  Logger.log('в мастере сейчас: ' + src.rows.length + ' строк (лист - ' + src.srcRows + '), сумма=' + sum_(src.rows));
+  var tRead = Date.now() - t0;
+  var t1  = Date.now();
+  var sum = sum_(src.rows, JSON.stringify(src.rows));
+  var tSum = Date.now() - t1;
+  Logger.log('в мастере сейчас: ' + src.rows.length + ' строк (лист - ' + src.srcRows + '), сумма=' + sum);
+  Logger.log('время: чтение ' + tRead + ' мс / сумма (stringify+MD5) ' + tSum + ' мс');
   if (meta && meta.rows !== src.rows.length) {
     Logger.log('⚠ расхождение: в снимке ' + meta.rows + ' строк, в мастере ' + src.rows.length);
   }
@@ -152,10 +175,21 @@ function run_(force) {
   if (!lock.tryLock(30 * 1000)) { Logger.log('Прогон пропущен: занят другим выполнением'); return null; }
 
   try {
-    var p    = PropertiesService.getScriptProperties();
+    var p  = PropertiesService.getScriptProperties();
+    var t0 = Date.now();
+
     var src  = read_();
     var rows = src.rows;
-    var sum  = sum_(rows);
+    var tRead = Date.now() - t0;
+
+    // ⚠ JSON считается ЗДЕСЬ, ДО проверки «не менялось»: контрольная сумма - MD5 от него (см. шапку).
+    //   Значит его цену платит каждый прогон, а не только публикующий; отсюда и замеры в журнале.
+    //   Gzip остаётся ниже - его до проверки считать незачем, он дороже всего в скрипте.
+    var t1   = Date.now();
+    var json = JSON.stringify(rows);
+    var sum  = sum_(rows, json);
+    var tSum = Date.now() - t1;
+    var times = 'чтение ' + tRead + ' мс / сумма ' + tSum + ' мс';
 
     // meta прошлой публикации нужна и сторожу (сравнение числа строк), и проверке «не менялось»
     var prev = rtdbGet_(ROOT + '/meta');
@@ -165,7 +199,8 @@ function run_(force) {
     //   наше поколение: иначе после удаления ветки (или чужой перезаписи) сумма совпадала бы вечно,
     //   и скрипт молча не публиковал бы никогда - самый неприятный из возможных отказов, немой.
     if (!force && sum === p.getProperty('sum') && prev && prev.gen === p.getProperty('gen')) {
-      Logger.log('Данные не менялись (' + rows.length + ' строк, сумма ' + sum + ') - публикации нет');
+      Logger.log('Данные не менялись (' + rows.length + ' строк, сумма ' + sum + ') - публикации нет · ' +
+                 times + ' · прогон ' + (Date.now() - t0) + ' мс');
       return null;
     }
 
@@ -174,9 +209,8 @@ function run_(force) {
       if (why) return abort_(why, rows, prev);
     }
 
-    // ── Упаковка. JSON → gzip → base64. Тот же массив, что отдаёт Sheets API в values.
-    var json  = JSON.stringify(rows);
-    var b64   = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(json, 'application/json')).getBytes());
+    // ── Упаковка. gzip → base64. Тот же массив, что отдаёт Sheets API в values.
+    var b64 = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(json, 'application/json')).getBytes());
     var parts = {};
     var n = 0;
     for (var i = 0; i < b64.length; i += CHUNK) { parts[String(n++)] = b64.substr(i, CHUNK); }
@@ -211,7 +245,8 @@ function run_(force) {
     prune_(gen, prev && prev.gen);
     Logger.log('Снимок опубликован: поколение ' + gen + ' · ' + rows.length + ' строк · ' +
                n + ' кусков · ' + Math.round(b64.length / 1024) + ' КБ (json ' +
-               Math.round(json.length / 1024 / 1024) + ' МБ)');
+               Math.round(json.length / 1024 / 1024) + ' МБ) · ' + times +
+               ' · прогон ' + (Date.now() - t0) + ' мс');
     return meta;
 
   } catch (e) {
@@ -280,18 +315,25 @@ function isBlankRow_(row) {
 }
 
 /**
- * Контрольная сумма: число строк + суммы ПОСТУПЛЕНИЙ и СПИСАНИЙ.
- * Строки-то добавляются в конец, но правка суммы В СЕРЕДИНЕ базы числа строк не меняет -
- * поэтому одного счётчика мало. Копейки округляем: на 60 тыс. слагаемых хвост float
- * гуляет в последних разрядах и давал бы «данные изменились» на каждом прогоне.
+ * Контрольная сумма: строк | Σ поступлений | Σ списаний | MD5 всего массива.
+ * ⚠ РЕШАЕТ сумма ТОЛЬКО последняя часть - MD5 от того самого JSON, который уезжает в базу.
+ *   Первые три - для человека в журнале: MD5 не говорит ничего, а по ним сразу видно масштаб
+ *   изменения. До 16.08.2026 суммой были только они, и правка любой нечисловой ячейки скрипт
+ *   не будила - см. подробности в шапке файла.
+ * Копейки в суммах округляем: на 60 тыс. слагаемых хвост float гуляет в последних разрядах.
+ * ⚠ json приходит АРГУМЕНТОМ, а не считается здесь: он же нужен вызывающему для gzip, и второй
+ *   stringify на 23,5 МБ - это лишние секунды на каждом прогоне.
  */
-function sum_(rows) {
+function sum_(rows, json) {
   var inc = 0, out = 0;
   for (var r = 1; r < rows.length; r++) {
     inc += Number(rows[r][C_INCOME])  || 0;
     out += Number(rows[r][C_OUTCOME]) || 0;
   }
-  return rows.length + '|' + inc.toFixed(2) + '|' + out.toFixed(2);
+  var md5 = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, json)
+    .map(function (b) { return ('0' + (b & 0xFF).toString(16)).slice(-2); })
+    .join('');
+  return rows.length + '|' + inc.toFixed(2) + '|' + out.toFixed(2) + '|' + md5;
 }
 
 /** Нормализованная строка заголовков - тем же способом, что сверяет дашборд (NBSP, регистр, пробелы). */
