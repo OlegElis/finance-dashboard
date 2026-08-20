@@ -5357,6 +5357,53 @@ function renderOPIU(f){
   rows+=expCatRows('Вывод чистой прибыли','op-wd');
   }
 
+  // ═══ «ЧТО ИЗМЕНИЛОСЬ»: разложение изменения ЧП по строкам за ОДИН период ═══
+  // ⚠ Блок про ОДИН период (последний закрытый из показанных), а не про всю таблицу - иначе
+  //   непонятно, к чему относятся рубли. Период и база названы в заголовке.
+  // ⚠ Вклад в изменение прибыли = Δ строки В КОНВЕНЦИИ ОПиУ (расходы отрицательные), поэтому
+  //   сумма вкладов ТОЖДЕСТВЕННО равна изменению ЧП: net = выручка + шесть расходных категорий.
+  //   «Вывод чистой прибыли» (127) в ЧП не входит и в разложение не берётся - иначе строки
+  //   перестали бы складываться в заголовок.
+  // ⚠ ПОКАЗЫВАЕМ при этом изменение САМОЙ строки в её естественных терминах: у расхода «+210 000»
+  //   означает «расход вырос на 210 000» (это −Δ), у выручки «−60 000» - «выручка упала».
+  //   Знак вклада и знак показанного числа у расходов РАЗНЫЕ, и путать их нельзя.
+  const dynSummary=(()=>{
+    if(!dyn)return '';
+    const curPk=[...periods].reverse().find(p=>{const b=basePkOf(p);return pkClosed(p)&&b&&dynPeriods.has(b);});
+    if(!curPk)return '';
+    const bpk=basePkOf(curPk);
+    const items=[];
+    const put=(name,cur,base,kind)=>{const d=(cur||0)-(base||0);if(Math.abs(d)<OPIU_DYN_MIN_BASE)return;
+      items.push({name,d,show:kind==='exp'?-d:d});};
+    Object.keys(rev.arts).forEach(sub=>put(sub,rev.arts[sub].perInc[curPk],
+      (DYNA.rev.arts[sub]||{perInc:{}}).perInc[bpk],'inc'));
+    if(flat){ // тот же уровень, что видно в таблице: плоский список - статьи
+      [[expAbove,DYNM.above],[expBelow,DYNM.below]].forEach(([o,dO])=>Object.keys(o.arts).forEach(art=>
+        put(art,o.arts[art].perOut[curPk],((dO.arts||{})[art]||{perOut:{}}).perOut[bpk],'exp')));
+    }else{ // по аналитике - категории (вывод прибыли не входит в ЧП, поэтому и не в разложении)
+      CATS.filter(c=>c!=='Вывод чистой прибыли').forEach(cat=>
+        put(cat,exp[cat].perOut[curPk],DYNA.exp[cat].perOut[bpk],'exp'));
+    }
+    const worse=items.filter(i=>i.d<0).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+    const better=items.filter(i=>i.d>0).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+    const dNet=(netMap[curPk]||0)-(DYNM.net[bpk]||0);
+    const line=(arr,label,col)=>{
+      if(!arr.length)return '';
+      const top=arr.slice(0,5).map(i=>`${_htmlEsc(i.name)} <span style="font-family:var(--mono);color:${col}">${rubSgnO(i.show)}</span>`).join(', ');
+      // ⚠ Молча обрезанный список читается как полный - остаток называем числом
+      const rest=arr.length>5?` <span style="color:var(--text3)">· показаны 5 крупнейших из ${arr.length}</span>`:'';
+      return `<div style="margin-top:3px"><b style="color:var(--text2)">${label}:</b> ${top}${rest}</div>`;
+    };
+    const netCol=dNet>0?'var(--income)':dNet<0?'var(--outcome)':'var(--text3)';
+    return `<div class="table-wrap" style="margin-top:10px"><div style="padding:8px 12px;font-size:11px;line-height:1.5">
+      <div><b style="color:var(--text2)">${_htmlEsc(curPk)}</b> к <b style="color:var(--text2)">${_htmlEsc(bpk)}</b>: чистая прибыль
+        <span style="font-family:var(--mono);font-weight:700;color:${netCol}">${rubSgnO(dNet)}</span>
+        <span style="color:var(--text3)">· ${flat?'по статьям':'по аналитике'} · строки мельче ${fmt(OPIU_DYN_MIN_BASE)} не показаны</span></div>
+      ${line(worse,'Ухудшили','var(--outcome)')}${line(better,'Улучшили','var(--income)')}
+      ${(!worse.length&&!better.length)?'<div style="margin-top:3px;color:var(--text3)">Заметных изменений нет</div>':''}
+    </div></div>`;
+  })();
+
   el.innerHTML=extraFiltersOPIU+kpiHtml+`<div class="table-wrap">
     <div class="table-header"><span class="table-title">Отчёт о прибылях и убытках</span><span class="table-count">${data.length.toLocaleString('ru-RU')} строк</span></div>
     <div class="table-scroll" style="overflow-x:auto">
@@ -5366,7 +5413,7 @@ function renderOPIU(f){
         <tbody>${rows}</tbody>
       </table>
     </div>
-  </div>`;
+  </div>`+dynSummary;
 }
 
 // ===== Целевой ОПиУ (план от обратного): задаём целевую ЧП %, считаем допустимые расходы и распределяем по структуре факта =====
