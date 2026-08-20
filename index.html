@@ -4976,9 +4976,11 @@ function renderOPIU(f){
     }
   };
 
+  const _tA0=performance.now();
   const AGG=aggregate(data);
   const rev=AGG.rev,exp=AGG.exp,periodsSet=AGG.periodsSet;
   if(postOn)injectPost(AGG,true);
+  const _tAgg=performance.now()-_tA0;
 
   const periods=[...periodsSet].sort((a,b)=>opiuSortKey(a).localeCompare(opiuSortKey(b)));
   const nPeriods=periods.length;
@@ -5017,6 +5019,7 @@ function renderOPIU(f){
   //   ТОЛЬКО фильтр лет и месяцев; направления остаются - сравнивать надо тот же контур.
   const dyn=(f.dyn==='prev'||f.dyn==='yoy')?f.dyn:'';
   let DYNA=null,DYNM=null,dynPeriods=null;
+  const _tB0=performance.now();
   if(dyn){
     let dRows=baseData;
     if(f.activityDirs&&f.activityDirs.length)dRows=dRows.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
@@ -5025,6 +5028,8 @@ function renderOPIU(f){
     DYNM=derive(DYNA);
     dynPeriods=DYNA.periodsSet;
   }
+  const _tBase=performance.now()-_tB0;
+  const _tD0=performance.now(); // дальше только сборка разметки - её и меряем отдельно от агрегатов
   // Дата ВНУТРИ периода по его ключу. От неё считается и шаг назад, и конец периода:
   // позиция в массиве колонок для этого не годится - колонки пустого месяца просто нет,
   // и апрель сравнился бы с февралём молча.
@@ -5467,6 +5472,15 @@ function renderOPIU(f){
       </table>
     </div>
   </div>`+dynSummary;
+  // ⚠ Две цифры порознь, а не одна общая: они лечатся РАЗНЫМ. Время в агрегате базы - кандидат
+  //   на кэш (база не зависит от фильтра лет и месяцев, только от набора направлений и вида
+  //   периода, поэтому пересчитывать её при смене года незачем). Время в отрисовке - это уже
+  //   про число строк и спарклайны. Печатается только при включённой динамике: в обычном
+  //   режиме второго агрегата нет вовсе.
+  if(dyn)console.log('[ОПиУ] динамика '+dyn+' · агрегат показа '+Math.round(_tAgg)+' мс · агрегат базы '+
+    Math.round(_tBase)+' мс · отрисовка '+Math.round(performance.now()-_tD0)+' мс · строк '+data.length+
+    ' (в базе '+(DYNA?dynPeriods.size:0)+' периодов) · колонок '+nPeriods+' · разрез '+mode+
+    ' · направлений '+((f.activityDirs&&f.activityDirs.length)||'все'));
 }
 
 // ===== Целевой ОПиУ (план от обратного): задаём целевую ЧП %, считаем допустимые расходы и распределяем по структуре факта =====
