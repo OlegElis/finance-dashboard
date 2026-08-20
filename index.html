@@ -5174,10 +5174,10 @@ function renderOPIU(f){
   //   показанных колонок, а это главный контроль слоя.
   const dynTotal=(perMap,baseMap)=>{
     if(!dyn)return null;
-    let c=0,b=0,n=0,skip=0;
-    periods.forEach(p=>{const st=dynState(p);if(!st.ok){skip++;return;}
+    let c=0,b=0,n=0,skipF=0,skipB=0;
+    periods.forEach(p=>{const st=dynState(p);if(!st.ok){if(st.future)skipF++;else skipB++;return;}
       c+=(perMap[p]||0);b+=((baseMap&&baseMap[st.bpk])||0);n++;});
-    return n?{c,b,d:c-b,n,skip}:null;
+    return n?{c,b,d:c-b,n,skipF,skipB}:null;
   };
   const dynTotalLine=(perMap,baseMap,kind)=>{
     const t=dynTotal(perMap,baseMap);
@@ -5186,7 +5186,9 @@ function renderOPIU(f){
     const col=(!dynSignOk||better===null)?'var(--text3)':(better?'var(--income)':'var(--outcome)');
     const pct=dynPct(t.d,t.b,t.c),zeroBase=Math.abs(t.b)<0.005;
     const txt=rubSgnO(t.d)+(zeroBase?' новое':(pct?' ('+pct+')':''));
-    const foot=[['сравниваются колонок: '+t.n+(t.skip?' (пропущено '+t.skip+' - нет базы)':''),'']];
+    const foot=[['сравниваются колонок: '+t.n+
+      (t.skipF?' · будущих не сравниваем: '+t.skipF:'')+
+      (t.skipB?' · без базового периода: '+t.skipB:''),'']];
     if(dynCut&&periods.indexOf(dynCut.pk)>=0)foot.push(['текущий период - по '+_dmy(dynCut.cutD),'']);
     const tip=_tipAttr([['За период',fmt(t.c)],['База',fmt(t.b)]],['Изменение',rubSgnO(t.d),pct||''],
       DYN_KINDS[kind]?('строка: '+DYN_KINDS[kind]):'',foot);
@@ -5206,12 +5208,23 @@ function renderOPIU(f){
   const rngLbl=(pk,cutD)=>{const a=anchorOf(pk);return a?_dm(a)+'-'+_dmy(cutD):String(pk);};
   const dynState=pk=>{
     if(!dyn)return {ok:false};
+    const a=anchorOf(pk),cutTo=dynCut?dynCut.cutD:_dynToday;
+    // ⚠ БУДУЩИЕ ПЕРИОДЫ В ДИНАМИКЕ НЕ СРАВНИВАЮТСЯ, и причина у этого ОТДЕЛЬНАЯ от усечения
+    //   текущего периода - не путать эти два случая:
+    //     текущий период неполон ПО ВРЕМЕНИ - он идёт прямо сейчас, состав операций у него
+    //       нормальный, поэтому обе стороны усекаются по дату отсечки и сравнение честное;
+    //     будущий период неполон ПО СОСТАВУ - в него разнесены расходы, признанные вперёд
+    //       (маркетинг оплачивают на годы вперёд, и дата ОПиУ законно уходит в будущее),
+    //       а выручки в нём нет никакой. Усечение тут не спасает: усекать нечего, сравнивать
+    //       не с чем, и любая дельта была бы разговором о неполном составе, а не об изменении.
+    //   ⚠ Проверка стоит ПЕРВОЙ и опирается на дату отсечки, а не на «крайнюю правую колонку»:
+    //     позиция колонки - случайность сортировки, и по ней правило молчало бы там, где не надо.
+    if(a&&cutTo&&a>cutTo)return {ok:false,future:true,why:'будущий период, сравнение не считается'};
     const bpk=basePkOf(pk);
     if(!bpk||!dynPeriods||!dynPeriods.has(bpk))return {ok:false,why:'нет данных за базовый период'};
     if(pkClosed(pk))return {ok:true,bpk,trunc:false};
     if(dynCut&&dynCut.pk===pk)return {ok:true,bpk,trunc:true};           // текущий - по дату отсечки
-    if(pkOfDate(_dynToday)===pk)return {ok:false,why:'в периоде ещё нет операций'};
-    return {ok:false,why:'период ещё не начался'};
+    return {ok:false,why:'в периоде ещё нет операций'};
   };
   const dynLine=(v,bmap,pk,kind)=>{
     if(!dyn)return '';
