@@ -5064,6 +5064,27 @@ function renderOPIU(f){
     return e<=_dynToday;
   };
   const rubSgnO=v=>(v<0?'−':'+')+fmt(Math.abs(v)); // типографский минус U+2212, как в БДР
+  // ⚠ СТОРОЖ КОНВЕНЦИИ ЗНАКА. Цвет держится на том, что расходы хранятся ОТРИЦАТЕЛЬНЫМИ
+  //   (perOut = -expOf): только поэтому рост расхода даёт Δ<0 и красный. Начни кто-нибудь
+  //   показывать расходы модулем - правило сломается ГРОМКО, а не молча: перед покраской
+  //   проходим по уже посчитанному агрегату, и если среди расходных значений есть
+  //   положительные, таблица НЕ КРАСИТСЯ ВОВСЕ (нейтральный цвет) плюс одно предупреждение
+  //   в консоль. Отсутствие цвета лучше неверного: неверный цвет никто не перепроверяет.
+  const dynSignOk=(()=>{
+    if(!dyn)return true;
+    const bad=[];
+    const scan=(agg,who)=>{if(!agg)return;CATS.forEach(cat=>{const cd=agg.exp[cat];if(!cd)return;
+      const look=(m,path)=>{for(const pk in m)if(m[pk]>0.005){bad.push(who+' · '+path+' · '+pk+' = '+fmt(m[pk]));return;}};
+      look(cd.perOut,cat);
+      Object.keys(cd.arts).forEach(art=>{const ad=cd.arts[art];look(ad.perOut,cat+' / '+art);
+        Object.keys(ad.subs).forEach(sub=>look(ad.subs[sub].perOut,cat+' / '+art+' / '+sub));});});};
+    scan(AGG,'показ');scan(DYNA,'база');
+    if(!bad.length)return true;
+    console.warn('[ОПиУ] динамика: среди расходных строк есть ПОЛОЖИТЕЛЬНЫЕ значения ('+bad.length+
+      ') - конвенция «расход отрицательный» нарушена, и правило «рост расхода = красный» на ней не держится. '+
+      'Цвет отключён по всей таблице. Первые случаи: '+bad.slice(0,5).join(' | '));
+    return false;
+  })();
   // ── Спарклайн строки: 12 последних периодов ТЕКУЩЕГО разреза.
   // ⚠ ТОЛЬКО инлайн-SVG. В таблице десятки строк, и столько холстов Chart.js положили бы рендер
   //   вкладки, а каждому пришлось бы вести жизненный цикл (create/destroy на каждый ре-рендер).
@@ -5086,7 +5107,7 @@ function renderOPIU(f){
     const Y=v=>(SPARK_H-2-((v-mn)/rng)*(SPARK_H-4)).toFixed(1);
     const pts=vals.map((v,i)=>X(i)+','+Y(v)).join(' ');
     const dEnd=vals[vals.length-1]-vals[0];
-    const col=Math.abs(dEnd)<0.005?'var(--text3)':(dEnd>0?(kind==='exp'?'var(--outcome)':'var(--income)')
+    const col=(!dynSignOk||Math.abs(dEnd)<0.005)?'var(--text3)':(dEnd>0?(kind==='exp'?'var(--outcome)':'var(--income)')
                                                        :(kind==='exp'?'var(--income)':'var(--outcome)'));
     const svg=`<svg width="${SPARK_W}" height="${SPARK_H}" viewBox="0 0 ${SPARK_W} ${SPARK_H}" style="display:block" aria-hidden="true">`+
       `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>`+
@@ -5110,7 +5131,7 @@ function renderOPIU(f){
     if(!bpk||!dynPeriods.has(bpk))return dynMute('·','нет данных за базовый период');
     const b=(bmap&&bmap[bpk])||0,d=v-b;
     if(!b&&!v)return '';
-    const col=Math.abs(d)<0.005?'var(--text3)':(d>0?'var(--income)':'var(--outcome)');
+    const col=(!dynSignOk||Math.abs(d)<0.005)?'var(--text3)':(d>0?'var(--income)':'var(--outcome)');
     let txt;
     if(Math.abs(b)<0.005)txt=rubSgnO(d)+' новое';                       // ноль в базе - процента нет и быть не может
     else if(Math.abs(b)<OPIU_DYN_MIN_BASE)txt=rubSgnO(d);               // малая база - только рубли (см. OPIU_DYN_MIN_BASE)
@@ -5420,12 +5441,13 @@ function renderOPIU(f){
     const dNet=(netMap[curPk]||0)-(DYNM.net[bpk]||0);
     const line=(arr,label,col)=>{
       if(!arr.length)return '';
-      const top=arr.slice(0,5).map(i=>`${_htmlEsc(i.name)} <span style="font-family:var(--mono);color:${col}">${rubSgnO(i.show)}</span>`).join(', ');
+      const cc=dynSignOk?col:'var(--text3)';
+      const top=arr.slice(0,5).map(i=>`${_htmlEsc(i.name)} <span style="font-family:var(--mono);color:${cc}">${rubSgnO(i.show)}</span>`).join(', ');
       // ⚠ Молча обрезанный список читается как полный - остаток называем числом
       const rest=arr.length>5?` <span style="color:var(--text3)">· показаны 5 крупнейших из ${arr.length}</span>`:'';
-      return `<div style="margin-top:3px"><b style="color:var(--text2)">${label}:</b> ${top}${rest}</div>`;
+        return `<div style="margin-top:3px"><b style="color:var(--text2)">${label}:</b> ${top}${rest}</div>`;
     };
-    const netCol=dNet>0?'var(--income)':dNet<0?'var(--outcome)':'var(--text3)';
+    const netCol=(!dynSignOk||Math.abs(dNet)<0.005)?'var(--text3)':(dNet>0?'var(--income)':'var(--outcome)');
     return `<div class="table-wrap" style="margin-top:10px"><div style="padding:8px 12px;font-size:11px;line-height:1.5">
       <div><b style="color:var(--text2)">${_htmlEsc(curPk)}</b> к <b style="color:var(--text2)">${_htmlEsc(bpk)}</b>: чистая прибыль
         <span style="font-family:var(--mono);font-weight:700;color:${netCol}">${rubSgnO(dNet)}</span>
