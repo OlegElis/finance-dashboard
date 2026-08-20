@@ -4903,17 +4903,61 @@ function renderOPIU(f){
   };
 
   // --- data aggregation ---
+  const dyn=(f.dyn==='prev'||f.dyn==='yoy')?f.dyn:'';
+  // ── КАЛЕНДАРЬ ПЕРИОДОВ. Стоит ВЫШЕ агрегации: от него зависит усечение текущего периода,
+  //    а усечение - необязательный параметр самой aggregate (второй копии расчёта нет).
+  const anchorOf=pk=>{
+    pk=String(pk||'');
+    if(mode==='year')return /^\d{4}$/.test(pk)?new Date(+pk,0,1):null;
+    if(mode==='quarter'){const m=pk.match(/^Q(\d) (\d{4})$/);return m?new Date(+m[2],(+m[1]-1)*3,1):null;}
+    if(mode==='day'){const m=pk.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);return m?new Date(+m[3],+m[2]-1,+m[1]):null;}
+    if(mode==='week'){const m=pk.match(/^Нед (\d+) (\d{4})$/);if(!m)return null;
+      const jan4=new Date(+m[2],0,4),dow=jan4.getDay()||7,mon=new Date(jan4); // 4 января всегда в первой ISO-неделе
+      mon.setDate(jan4.getDate()-dow+1+(+m[1]-1)*7);return mon;}
+    const mm=pk.match(/^(.+) (\d{4})$/);if(!mm)return null;
+    const i=MONTHS_FULL.indexOf(mm[1]);return i<0?null:new Date(+mm[2],i,1);
+  };
+  // ⚠ ОДИН шаг назад на всё: и ключ базового периода, и дата отсечки базы считаются им же.
+  //   Разъедься эти две вещи - усечение сравнивало бы август с июлем по разным отрезкам.
+  const addMonthsO=(d,n)=>{const x=new Date(d.getFullYear(),d.getMonth()+n,1);
+    const last=new Date(x.getFullYear(),x.getMonth()+1,0).getDate(); // 31 марта − 1 мес = 28/29 февраля, а не 3 марта
+    x.setDate(Math.min(d.getDate(),last));x.setHours(0,0,0,0);return x;};
+  const shiftBackO=d=>{
+    if(dyn==='yoy')return mode==='week'?new Date(d.getTime()-364*86400000):addMonthsO(d,-12);
+    if(mode==='year')return addMonthsO(d,-12);
+    if(mode==='quarter')return addMonthsO(d,-3);
+    if(mode==='week')return new Date(d.getTime()-7*86400000);
+    if(mode==='day'){const x=new Date(d);x.setDate(x.getDate()-1);return x;}
+    return addMonthsO(d,-1);
+  };
+  const basePkOf=pk=>{const a=anchorOf(pk);return a?pkOfDate(shiftBackO(a)):null;};
+  // ⚠ Закрыт = период истёк ПОЛНОСТЬЮ. Незакрытый больше не даёт прочерк: он сравнивается
+  //   по усечённому отрезку (см. дату отсечки ниже).
+  const _dynToday=(()=>{const t=new Date();t.setHours(0,0,0,0);return t;})();
+  const pkClosed=pk=>{
+    const a=anchorOf(pk);if(!a)return false;
+    const e=new Date(a);
+    if(mode==='year')e.setFullYear(e.getFullYear()+1);
+    else if(mode==='quarter')e.setMonth(e.getMonth()+3);
+    else if(mode==='week')e.setDate(e.getDate()+7);
+    else if(mode==='day')e.setDate(e.getDate()+1);
+    else e.setMonth(e.getMonth()+1);
+    return e<=_dynToday;
+  };
   const CATS=OPIU_CATS; // единый глобальный список (см. определение OPIU_CATS) - на нём же стоит сторож сверки БДР==ОПиУ
   // ⚠ Агрегация вынесена в ФУНКЦИЮ ровно ради слоя динамики: он считает те же суммы по НЕОБРЕЗАННОМУ
   //   фильтром лет/месяцев набору (база сравнения почти всегда лежит за пределами выбранного года).
   //   Второй копии формул нет и заводить нельзя - расходятся молча.
-  const aggregate=rowsArr=>{
+  const aggregate=(rowsArr,cap)=>{
   const rev={perInc:{},arts:{}};
   const exp={};CATS.forEach(c=>exp[c]={perOut:{},arts:{}});
   const periodsSet=new Set();
 
   rowsArr.forEach(row=>{
     const pk=getOPIUPeriodKey(row);if(!pk)return;
+    // ⚠ Усечение: у ОДНОГО периода (текущего незавершённого - или его базы) есть верхняя граница
+    //   даты. Строки после неё не участвуют ни в суммах, ни в составе колонок.
+    if(cap&&cap.pk===pk){const d=parseDate(row[COL.DATE_OPIU]);if(!d||d.getTime()>cap.ms)return;}
     periodsSet.add(pk);
     const type=String(row[COL.TYPE]||'').trim().toLowerCase();
     const ac=String(row[COL.ARTICLE_CODE]||'').trim();
@@ -4946,7 +4990,7 @@ function renderOPIU(f){
   // --- Инъекция расчётного транзита почты (после агрегации, ДО расчёта карт/периодов - чтобы вошло в EBITDA/ЧП) ---
   // ⚠ applyYM=false зовётся только слоем динамики: базовый период лежит ВНЕ выбранных лет/месяцев,
   //   и отбор квалифицирующих кейсов по ним отсёк бы транзит ровно в той половине, с которой сравниваем.
-  const injectPost=(agg,applyYM)=>{
+  const injectPost=(agg,applyYM,cap)=>{
     const rev=agg.rev,exp=agg.exp,periodsSet=agg.periodsSet;
     // квалифицирующие БФЛ-кейсы: подстатья «112_Депозиты и госпошлины», |списание| 25000/50000, ID_Offer непустой; те же фильтры периода; дедуп по ID → период по DATE_OPIU
     const qual={};
@@ -4958,6 +5002,7 @@ function renderOPIU(f){
       if(applyYM&&opiuSelMonths.length&&!opiuSelMonths.includes(d.getMonth()+1))return;
       if(String(row[COL.ARTICLE_NAME]||'').trim()!==POST_TRIGGER_SUB)return;
       if(!POST_AMTS.includes(Math.abs(parseNum(row[COL.OUTCOME]))))return;
+      if(cap&&getOPIUPeriodKey(row)===cap.pk&&d.getTime()>cap.ms)return; // та же граница, что у aggregate
       const offer=String(row[COL.OFFER_ID]||'').trim(); if(!offer)return;
       if(!(offer in qual))qual[offer]=getOPIUPeriodKey(row);
     });
@@ -4976,10 +5021,35 @@ function renderOPIU(f){
     }
   };
 
+  // ── ДАТА ОТСЕЧКИ: последняя дата операции в текущем периоде, но НЕ ПОЗЖЕ сегодняшней.
+  //    Текущий период считается по неё включительно, базовый - по тот же день, сдвинутый назад
+  //    тем же shiftBackO. Так август 1-18 сравнивается с августом 1-18 годом ранее, а не с
+  //    полным августом. ⚠ Дата берётся ИЗ ДАННЫХ и показывается в шапке колонки: если ввод
+  //    отстаёт, человек должен это видеть, а не гадать, почему упало.
+  // ⚠ Правило одно на все разрезы - квартал и год усекаются так же.
+  let dRows=baseData;
+  if(f.activityDirs&&f.activityDirs.length)dRows=dRows.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
+  const dynCut=(()=>{
+    if(!dyn)return null;
+    const curPk=pkOfDate(_dynToday);if(!curPk)return null;
+    const endToday=new Date(_dynToday);endToday.setHours(23,59,59,999);
+    let mx=0;
+    dRows.forEach(r=>{const d=parseDate(r[COL.DATE_OPIU]);if(!d)return;
+      const t=d.getTime();if(t>endToday.getTime()||t<=mx)return;
+      if(getOPIUPeriodKey(r)!==curPk)return;mx=t;});
+    if(!mx)return null; // в текущем периоде операций до сегодня нет - сравнивать нечего
+    const cutD=new Date(mx);cutD.setHours(0,0,0,0);
+    const eod=d=>{const x=new Date(d);x.setHours(23,59,59,999);return x.getTime();};
+    const bpk=basePkOf(curPk);
+    return {pk:curPk,ms:eod(cutD),cutD,bpk,baseCutD:shiftBackO(cutD),baseMs:eod(shiftBackO(cutD))};
+  })();
+  const capCur=dynCut?{pk:dynCut.pk,ms:dynCut.ms}:null;
+  const capBase=(dynCut&&dynCut.bpk)?{pk:dynCut.bpk,ms:dynCut.baseMs}:null;
+
   const _tA0=performance.now();
-  const AGG=aggregate(data);
+  const AGG=aggregate(data,capCur);
   const rev=AGG.rev,exp=AGG.exp,periodsSet=AGG.periodsSet;
-  if(postOn)injectPost(AGG,true);
+  if(postOn)injectPost(AGG,true,capCur);
   const _tAgg=performance.now()-_tA0;
 
   const periods=[...periodsSet].sort((a,b)=>opiuSortKey(a).localeCompare(opiuSortKey(b)));
@@ -5017,7 +5087,6 @@ function renderOPIU(f){
   // ⚠ ГЛАВНОЕ: база сравнения почти всегда лежит ЗА пределами фильтра лет/месяцев (выбрали 2026 -
   //   данные 2025 отфильтрованы). Поэтому второй агрегат считается по baseData, из которого снят
   //   ТОЛЬКО фильтр лет и месяцев; направления остаются - сравнивать надо тот же контур.
-  const dyn=(f.dyn==='prev'||f.dyn==='yoy')?f.dyn:'';
   let DYNA=null,DYNM=null,dynPeriods=null;
   // ⚠ СТОРОЖ КОНВЕНЦИИ ЗНАКА. Цвет держится на том, что расходы хранятся ОТРИЦАТЕЛЬНЫМИ
   //   (perOut = -expOf): только поэтому рост расхода даёт Δ<0 и красный. Сломай кто-нибудь
@@ -5036,10 +5105,8 @@ function renderOPIU(f){
   let dynSignOk=true;
   const _tB0=performance.now();
   if(dyn){
-    let dRows=baseData;
-    if(f.activityDirs&&f.activityDirs.length)dRows=dRows.filter(r=>f.activityDirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()));
-    DYNA=aggregate(dRows);
-    if(postOn)injectPost(DYNA,false); // база лежит вне выбранных лет - отбирать транзит по ним нельзя
+    DYNA=aggregate(dRows,capBase);
+    if(postOn)injectPost(DYNA,false,capBase); // база лежит вне выбранных лет - отбирать транзит по ним нельзя
     DYNM=derive(DYNA);
     dynPeriods=DYNA.periodsSet;
     // ⚠ Сторож ходит ТОЛЬКО по строкам типа «расход» (категории OPIU_CATS и их статьи с
@@ -5065,41 +5132,6 @@ function renderOPIU(f){
   // Дата ВНУТРИ периода по его ключу. От неё считается и шаг назад, и конец периода:
   // позиция в массиве колонок для этого не годится - колонки пустого месяца просто нет,
   // и апрель сравнился бы с февралём молча.
-  const anchorOf=pk=>{
-    pk=String(pk||'');
-    if(mode==='year')return /^\d{4}$/.test(pk)?new Date(+pk,0,1):null;
-    if(mode==='quarter'){const m=pk.match(/^Q(\d) (\d{4})$/);return m?new Date(+m[2],(+m[1]-1)*3,1):null;}
-    if(mode==='day'){const m=pk.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);return m?new Date(+m[3],+m[2]-1,+m[1]):null;}
-    if(mode==='week'){const m=pk.match(/^Нед (\d+) (\d{4})$/);if(!m)return null;
-      const jan4=new Date(+m[2],0,4),dow=jan4.getDay()||7,mon=new Date(jan4); // 4 января всегда в первой ISO-неделе
-      mon.setDate(jan4.getDate()-dow+1+(+m[1]-1)*7);return mon;}
-    const mm=pk.match(/^(.+) (\d{4})$/);if(!mm)return null;
-    const i=MONTHS_FULL.indexOf(mm[1]);return i<0?null:new Date(+mm[2],i,1);
-  };
-  const basePkOf=pk=>{
-    const a=anchorOf(pk);if(!a)return null;
-    const d=new Date(a);
-    if(dyn==='yoy'){ if(mode==='week')d.setDate(d.getDate()-364); else d.setFullYear(d.getFullYear()-1); }
-    else if(mode==='year')d.setFullYear(d.getFullYear()-1);
-    else if(mode==='quarter')d.setMonth(d.getMonth()-3);
-    else if(mode==='week')d.setDate(d.getDate()-7);
-    else if(mode==='day')d.setDate(d.getDate()-1);
-    else d.setMonth(d.getMonth()-1);
-    return pkOfDate(d);
-  };
-  // ⚠ НЕЗАКРЫТЫЙ ПЕРИОД В СРАВНЕНИЕ НЕ БЕРЁМ: половина августа против полного июля даёт
-  //   фальшивый обвал. Закрыт = истёк ПОЛНОСТЬЮ (конец периода не позже сегодняшнего дня).
-  const _dynToday=(()=>{const t=new Date();t.setHours(0,0,0,0);return t;})();
-  const pkClosed=pk=>{
-    const a=anchorOf(pk);if(!a)return false;
-    const e=new Date(a);
-    if(mode==='year')e.setFullYear(e.getFullYear()+1);
-    else if(mode==='quarter')e.setMonth(e.getMonth()+3);
-    else if(mode==='week')e.setDate(e.getDate()+7);
-    else if(mode==='day')e.setDate(e.getDate()+1);
-    else e.setMonth(e.getMonth()+1);
-    return e<=_dynToday;
-  };
   const rubSgnO=v=>(v<0?'−':'+')+fmt(Math.abs(v)); // типографский минус U+2212, как в БДР
   // ── СПРАВОЧНИК ТИПОВ СТРОК. Тип задаётся ЯВНО в месте вызова и НИКОГДА не выводится из знака
   //    значения. Иначе убыточная ЧП (значение отрицательное) попадала бы в «расходные», правило
@@ -5142,11 +5174,25 @@ function renderOPIU(f){
   //   Δ<0 и строка красная, а рост выручки даёт Δ>0 и зелёный. Одна проверка знака вместо признака
   //   категории. ⚠ Начни кто-нибудь показывать расходы модулем - правило сломается МОЛЧА, и тогда
   //   сюда нужен явный признак природы строки (принадлежность к OPIU_CATS).
+  // ── Состояние колонки: с чем сравнивать и можно ли вообще. ОДНО место на ячейку, ИТОГО и блок -
+  //    иначе они разъедутся, и «сумма дельт колонок = дельта ИТОГО» перестанет сходиться.
+  const _dmy=d=>String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();
+  const _dm=d=>String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0');
+  const rngLbl=(pk,cutD)=>{const a=anchorOf(pk);return a?_dm(a)+'-'+_dmy(cutD):String(pk);};
+  const dynState=pk=>{
+    if(!dyn)return {ok:false};
+    const bpk=basePkOf(pk);
+    if(!bpk||!dynPeriods||!dynPeriods.has(bpk))return {ok:false,why:'нет данных за базовый период'};
+    if(pkClosed(pk))return {ok:true,bpk,trunc:false};
+    if(dynCut&&dynCut.pk===pk)return {ok:true,bpk,trunc:true};           // текущий - по дату отсечки
+    if(pkOfDate(_dynToday)===pk)return {ok:false,why:'в периоде ещё нет операций'};
+    return {ok:false,why:'период ещё не начался'};
+  };
   const dynLine=(v,bmap,pk,kind)=>{
     if(!dyn)return '';
-    if(!pkClosed(pk))return dynMute('·','период не закрыт - сравнение не считаем');
-    const bpk=basePkOf(pk);
-    if(!bpk||!dynPeriods.has(bpk))return dynMute('·','нет данных за базовый период');
+    const st=dynState(pk);
+    if(!st.ok)return dynMute('·',st.why||'');
+    const bpk=st.bpk;
     const b=(bmap&&bmap[bpk])||0,d=v-b;
     if(!b&&!v)return '';
     const better=dynBetter(d,kind);
@@ -5154,11 +5200,16 @@ function renderOPIU(f){
     const pct=dynPct(d,b,v);
     const zeroBase=Math.abs(b)<0.005;
     const flip=v*b<0;
-    const txt=rubSgnO(d)+(zeroBase?' новое':(pct?' ('+pct+')':''));
+    // ⚠ У усечённого периода в ячейке стоит «*» - иначе неполный отрезок читался бы как полный.
+    //   Что именно с чем сравнивается, написано в подсказке и в шапке колонки.
+    const txt=rubSgnO(d)+(zeroBase?' новое':(pct?' ('+pct+')':''))+(st.trunc?' *':'');
     const foot=[];
+    if(st.trunc)foot.push(['период не завершён - сравниваются равные отрезки','']);
     if(flip&&!zeroBase)foot.push(['переход через ноль - процент не считаем','']);
     else if(!zeroBase&&!pct)foot.push(['база меньше '+fmt(OPIU_DYN_MIN_BASE)+' - процент не показываем','']);
-    const tip=_tipAttr([['Период',String(pk)],['База: '+bpk,fmt(b)],['Стало',fmt(v)]],
+    const pLbl=st.trunc?rngLbl(pk,dynCut.cutD):String(pk);
+    const bLbl=st.trunc?rngLbl(bpk,dynCut.baseCutD):String(bpk);
+    const tip=_tipAttr([['Период',pLbl],['База: '+bLbl,fmt(b)],['Стало',fmt(v)]],
       ['Изменение',rubSgnO(d),pct||''],DYN_KINDS[kind]?('строка: '+DYN_KINDS[kind]):'',foot);
     return `<div style="${DYN_LINE}color:${col}" ${tip}>${txt}</div>`;
   };
@@ -5242,7 +5293,12 @@ function renderOPIU(f){
   // --- thead ---
   const thead=`<thead><tr style="position:sticky;top:0;z-index:2">
     <th style="text-align:left;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:240px">Раздел / Статья</th>
-    ${periods.map(p=>`<th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">${p}</th>`).join('')}
+    ${periods.map(p=>{
+      // ⚠ Дата отсечки показывается В ШАПКЕ: она взята ИЗ ДАННЫХ, и если ввод отстаёт, это должно
+      //   быть видно сразу, а не выясняться из подсказки.
+      const tr=dyn&&dynCut&&dynCut.pk===p;
+      return `<th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">${p}${tr?`<div style="font-weight:400;font-size:9px;color:var(--text3)">по ${_dmy(dynCut.cutD)}</div>`:''}</th>`;
+    }).join('')}
     <th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;border-left:1px solid var(--border)">ИТОГО</th>
   </tr></thead>`;
 
@@ -5446,9 +5502,9 @@ function renderOPIU(f){
   //   Знак вклада и знак показанного числа у расходов РАЗНЫЕ, и путать их нельзя.
   const dynSummary=(()=>{
     if(!dyn)return '';
-    const curPk=[...periods].reverse().find(p=>{const b=basePkOf(p);return pkClosed(p)&&b&&dynPeriods.has(b);});
+    const curPk=[...periods].reverse().find(p=>dynState(p).ok);
     if(!curPk)return '';
-    const bpk=basePkOf(curPk);
+    const st0=dynState(curPk),bpk=st0.bpk;
     const items=[];
     const put=(name,cur,base,kind)=>{const d=(cur||0)-(base||0);if(Math.abs(d)<OPIU_DYN_MIN_BASE)return;
       items.push({name,d,show:kind==='exp'?-d:d});};
@@ -5474,7 +5530,7 @@ function renderOPIU(f){
     };
     const netCol=(!dynSignOk||Math.abs(dNet)<0.005)?'var(--text3)':(dNet>0?'var(--income)':'var(--outcome)');
     return `<div class="table-wrap" style="margin-top:10px"><div style="padding:8px 12px;font-size:11px;line-height:1.5">
-      <div><b style="color:var(--text2)">${_htmlEsc(curPk)}</b> к <b style="color:var(--text2)">${_htmlEsc(bpk)}</b>: чистая прибыль
+      <div><b style="color:var(--text2)">${_htmlEsc(st0.trunc?rngLbl(curPk,dynCut.cutD):curPk)}</b> к <b style="color:var(--text2)">${_htmlEsc(st0.trunc?rngLbl(bpk,dynCut.baseCutD):bpk)}</b>: чистая прибыль
         <span style="font-family:var(--mono);font-weight:700;color:${netCol}">${rubSgnO(dNet)}</span>
         <span style="color:var(--text3)">· ${flat?'по статьям':'по аналитике'} · строки мельче ${fmt(OPIU_DYN_MIN_BASE)} не показаны</span></div>
       ${line(worse,'Ухудшили','var(--outcome)')}${line(better,'Улучшили','var(--income)')}
