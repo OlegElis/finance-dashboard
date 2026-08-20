@@ -4984,7 +4984,7 @@ function renderOPIU(f){
 
   const periods=[...periodsSet].sort((a,b)=>opiuSortKey(a).localeCompare(opiuSortKey(b)));
   const nPeriods=periods.length;
-  const totalCols=2+nPeriods+((f.dyn==='prev'||f.dyn==='yoy')?1:0); // +1 - колонка спарклайна (только при включённой динамике)
+  const totalCols=2+nPeriods;
 
   // --- computed maps ---
   const addMaps=(...maps)=>{const r={};maps.forEach(m=>Object.entries(m).forEach(([p,v])=>{r[p]=(r[p]||0)+v;}));return r;};
@@ -5098,37 +5098,6 @@ function renderOPIU(f){
     return e<=_dynToday;
   };
   const rubSgnO=v=>(v<0?'−':'+')+fmt(Math.abs(v)); // типографский минус U+2212, как в БДР
-  // ── Спарклайн строки: 12 последних периодов ТЕКУЩЕГО разреза.
-  // ⚠ ТОЛЬКО инлайн-SVG. В таблице десятки строк, и столько холстов Chart.js положили бы рендер
-  //   вкладки, а каждому пришлось бы вести жизненный цикл (create/destroy на каждый ре-рендер).
-  // ⚠ Периоды берутся из НЕОБРЕЗАННОГО набора (как и база сравнения): под фильтром «только 2026»
-  //   график иначе схлопнулся бы до восьми точек и перестал быть историей. Об этом сказано
-  //   в подсказке колонки.
-  const sparkPeriods=dyn?[...dynPeriods].sort((a,b)=>opiuSortKey(a).localeCompare(opiuSortKey(b))).slice(-12):[];
-  const SPARK_W=74,SPARK_H=18;
-  const sparkTd=(dynMap,kind)=>{
-    if(!dyn)return '';
-    const empty=`<td style="padding:2px 6px;border-left:1px solid var(--border)"></td>`;
-    if(!dynMap||sparkPeriods.length<2)return empty;
-    // ⚠ Расходы хранятся ОТРИЦАТЕЛЬНЫМИ: чтобы «рост вверх» означал рост расхода (и красился
-    //   красным), ряд расходной строки берётся со знаком минус - это ВЕЛИЧИНА траты. Возврат
-    //   при этом честно уходит ниже нуля, чего модуль не показал бы.
-    const vals=sparkPeriods.map(p=>{const v=dynMap[p]||0;return kind==='exp'?-v:v;});
-    if(vals.every(v=>Math.abs(v)<0.005))return empty;
-    const mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1;
-    const X=i=>(2+i/(vals.length-1)*(SPARK_W-4)).toFixed(1);
-    const Y=v=>(SPARK_H-2-((v-mn)/rng)*(SPARK_H-4)).toFixed(1);
-    const pts=vals.map((v,i)=>X(i)+','+Y(v)).join(' ');
-    const dEnd=vals[vals.length-1]-vals[0];
-    const col=(!dynSignOk||Math.abs(dEnd)<0.005)?'var(--text3)':(dEnd>0?(kind==='exp'?'var(--outcome)':'var(--income)')
-                                                       :(kind==='exp'?'var(--income)':'var(--outcome)'));
-    const svg=`<svg width="${SPARK_W}" height="${SPARK_H}" viewBox="0 0 ${SPARK_W} ${SPARK_H}" style="display:block" aria-hidden="true">`+
-      `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>`+
-      `<circle cx="${X(vals.length-1)}" cy="${Y(vals[vals.length-1])}" r="1.9" fill="${col}"/></svg>`;
-    // Числа по периодам - через единый компонент: нативный title с числами запрещён правилом подсказок
-    const tip=_tipAttr(sparkPeriods.map((p,i)=>[p,fmt(kind==='exp'?-vals[i]:vals[i])]),null,'12 последних периодов');
-    return `<td style="padding:2px 6px;border-left:1px solid var(--border);vertical-align:middle" ${tip}>${svg}</td>`;
-  };
   const DYN_LINE='font-size:9px;line-height:1.05;font-family:var(--mono);font-weight:400;';
   const dynMute=(txt,title)=>`<div style="${DYN_LINE}color:var(--text3)" title="${title}">${txt}</div>`;
   // Вторая строка под числом: рубли и процент изменения к базовому периоду.
@@ -5234,13 +5203,13 @@ function renderOPIU(f){
   const thead=`<thead><tr style="position:sticky;top:0;z-index:2">
     <th style="text-align:left;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;min-width:240px">Раздел / Статья</th>
     ${periods.map(p=>`<th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap">${p}</th>`).join('')}
-    <th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;border-left:1px solid var(--border)">ИТОГО</th>${dyn?`<th title="Последние 12 периодов разреза. Берутся из полных данных, поэтому не схлопываются под фильтром года или месяца" style="text-align:center;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;border-left:1px solid var(--border)">12 периодов</th>`:''}
+    <th style="text-align:right;padding:4px 8px;font-size:10px;font-weight:600;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;border-left:1px solid var(--border)">ИТОГО</th>
   </tr></thead>`;
 
   // --- helpers ---
   // baseMap - карта того же ряда по НЕОБРЕЗАННОМУ набору (слой динамики). При выключенной динамике
   // функция обязана отдавать ПРЕЖНЮЮ разметку дословно - на этом стоит проверка «выключено = как было».
-  const periodCellsOPIU=(perMap,bg='',bold=false,nodeId='',baseMap=null,kind='exp')=>{
+  const periodCellsOPIU=(perMap,bg='',bold=false,nodeId='',baseMap=null)=>{
     const style=`text-align:right;padding:3px 8px;white-space:nowrap;font-size:10px;${bg?'background:'+bg+';':''}${bold?'font-weight:700;':''}`;
     const styleD=style+'vertical-align:top;'; // разное число строк в соседних ячейках - без этого строка разъезжается по вертикали
     return periods.map(p=>{
@@ -5254,11 +5223,11 @@ function renderOPIU(f){
     }).join('')+(()=>{
       const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
       const color=tot>0?'color:var(--income)':tot<0?'color:var(--outcome)':'';
-      return`<td style="${style}${color};border-left:1px solid var(--border)">${tot!==0?fmt(tot):''}</td>`+sparkTd(baseMap,kind);
+      return`<td style="${style}${color};border-left:1px solid var(--border)">${tot!==0?fmt(tot):''}</td>`;
     })();
   };
 
-  const computedRow=(label,perMap,bg,bold=true,baseMap=null)=>`<tr><td style="padding:5px 10px;font-weight:${bold?700:600};font-size:11px;background:${bg};position:sticky;left:0;z-index:1;border-top:2px solid var(--border)">${label}</td>${periodCellsOPIU(perMap,bg,bold,'',baseMap,'inc')}</tr>`;
+  const computedRow=(label,perMap,bg,bold=true,baseMap=null)=>`<tr><td style="padding:5px 10px;font-weight:${bold?700:600};font-size:11px;background:${bg};position:sticky;left:0;z-index:1;border-top:2px solid var(--border)">${label}</td>${periodCellsOPIU(perMap,bg,bold,'',baseMap)}</tr>`;
 
   const pctRow=(label,perNumerator,perDenominator)=>{
     const style=`text-align:right;padding:2px 8px;white-space:nowrap;font-size:10px;color:var(--text3);background:#fafafa`;
@@ -5268,7 +5237,7 @@ function renderOPIU(f){
     }).join('');
     const totNum=Object.values(perNumerator).reduce((a,b)=>a+b,0);
     const totDen=Object.values(perDenominator).reduce((a,b)=>a+b,0);
-    return`<tr><td style="padding:2px 10px;font-size:10px;color:var(--text3);background:#fafafa;position:sticky;left:0">${label}</td>${cells}<td style="${style};border-left:1px solid var(--border)">${totDen!==0?fmtPct(totNum/Math.abs(totDen)):''}</td>${dyn?`<td style="background:#fafafa;border-left:1px solid var(--border)"></td>`:''}</tr>`;
+    return`<tr><td style="padding:2px 10px;font-size:10px;color:var(--text3);background:#fafafa;position:sticky;left:0">${label}</td>${cells}<td style="${style};border-left:1px solid var(--border)">${totDen!==0?fmtPct(totNum/Math.abs(totDen)):''}</td></tr>`;
   };
 
   const sectionHead=label=>`<tr><td colspan="${totalCols}" style="padding:6px 10px;font-weight:700;font-size:11px;background:#f5f5f5;color:var(--text2);border-top:2px solid var(--border)">${label}</td></tr>`;
@@ -5338,7 +5307,7 @@ function renderOPIU(f){
       window._opiuTxnMap[subNodeId]={label:sub,artLabel:'Выручка',secLabel:'ВЫРУЧКА',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
       html+=`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
         <td style="padding:3px 8px 3px 24px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${_htmlEsc(sub)} <span style="font-size:9px;color:var(--accent)">↗</span></td>
-        ${periodCellsOPIU(subData.perInc,'',false,subNodeId,dSub&&dSub.perInc,'inc')}
+        ${periodCellsOPIU(subData.perInc,'',false,subNodeId,dSub&&dSub.perInc)}
       </tr>`;
     });
     return html;
@@ -5348,19 +5317,19 @@ function renderOPIU(f){
   const BG_REV='#e8f5ee',BG_EXP='#fdecea',BG_EBITDA='#e7eaf1',BG_NET='#262c3b';
   const sumNameTd=(label,bg,color='var(--text)')=>`<td style="padding:6px 10px;font-weight:700;font-size:11px;white-space:nowrap;background:${bg};color:${color};position:sticky;left:0;z-index:1">${label}</td>`;
   const sumValCell=(v,bg,extra='',sub='')=>{const color=v>0?'var(--income)':v<0?'var(--outcome)':'var(--text3)';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${bg};color:${color};font-variant-numeric:tabular-nums;${sub?'vertical-align:top;':''}${extra}">${v!==0||sub?(v!==0?fmt(v):'·'):''}${sub}</td>`;};
-  const summaryRow=(label,perMap,bg,textColor='var(--text)',baseMap=null,kind='inc')=>{
+  const summaryRow=(label,perMap,bg,textColor='var(--text)',baseMap=null)=>{
     const cells=periods.map(p=>sumValCell(perMap[p]||0,bg,'',dyn?dynLine(perMap[p]||0,baseMap,p):'')).join('');
     const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
-    return`<tr>${sumNameTd(label,bg,textColor)}${cells}${sumValCell(tot,bg,'border-left:2px solid rgba(0,0,0,0.1)')}${sparkTd(baseMap,kind)}</tr>`;
+    return`<tr>${sumNameTd(label,bg,textColor)}${cells}${sumValCell(tot,bg,'border-left:2px solid rgba(0,0,0,0.1)')}</tr>`;
   };
   let cumNet=0;
   const cumulNetCells=periods.map(p=>{cumNet+=(netMap[p]||0);const color=cumNet>0?'#a8d5b5':cumNet<0?'#f5a0a0':'#aaa';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_NET};color:${color};font-variant-numeric:tabular-nums">${cumNet!==0?fmt(cumNet):''}</td>`;}).join('');
-  const cumulNetRow=`<tr>${sumNameTd('НАРАСТАЮЩАЯ ЧИСТАЯ ПРИБЫЛЬ',BG_NET,'#e0e8f8')}${cumulNetCells}<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_NET};color:${cumNet>0?'#a8d5b5':cumNet<0?'#f5a0a0':'#aaa'};border-left:2px solid #2a4a7f;font-variant-numeric:tabular-nums">${cumNet!==0?fmt(cumNet):''}</td>${dyn?`<td style="background:${BG_NET};border-left:1px solid var(--border)"></td>`:''}</tr>`;
+  const cumulNetRow=`<tr>${sumNameTd('НАРАСТАЮЩАЯ ЧИСТАЯ ПРИБЫЛЬ',BG_NET,'#e0e8f8')}${cumulNetCells}<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_NET};color:${cumNet>0?'#a8d5b5':cumNet<0?'#f5a0a0':'#aaa'};border-left:2px solid #2a4a7f;font-variant-numeric:tabular-nums">${cumNet!==0?fmt(cumNet):''}</td></tr>`;
   let cumEb=0;
   const cumulEbCells=periods.map(p=>{cumEb+=(ebitdaMap[p]||0);const color=cumEb>0?'var(--income)':cumEb<0?'var(--outcome)':'var(--text3)';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_EBITDA};color:${color};font-variant-numeric:tabular-nums">${cumEb!==0?fmt(cumEb):''}</td>`;}).join('');
-  const cumulEbRow=`<tr>${sumNameTd('НАРАСТАЮЩАЯ EBITDA',BG_EBITDA,'var(--accent)')}${cumulEbCells}<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_EBITDA};color:${cumEb>0?'var(--income)':cumEb<0?'var(--outcome)':'var(--text3)'};border-left:2px solid rgba(0,0,0,0.1);font-variant-numeric:tabular-nums">${cumEb!==0?fmt(cumEb):''}</td>${dyn?`<td style="background:${BG_EBITDA};border-left:1px solid var(--border)"></td>`:''}</tr>`;
+  const cumulEbRow=`<tr>${sumNameTd('НАРАСТАЮЩАЯ EBITDA',BG_EBITDA,'var(--accent)')}${cumulEbCells}<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_EBITDA};color:${cumEb>0?'var(--income)':cumEb<0?'var(--outcome)':'var(--text3)'};border-left:2px solid rgba(0,0,0,0.1);font-variant-numeric:tabular-nums">${cumEb!==0?fmt(cumEb):''}</td></tr>`;
   const summaryBlock=summaryRow('ВЫРУЧКА',rev.perInc,BG_REV,'var(--text)',DYNA&&DYNA.rev.perInc)+
-    summaryRow('РАСХОДЫ',totalExpMap,BG_EXP,'var(--text)',DYNM&&DYNM.totalExp,'exp')+
+    summaryRow('РАСХОДЫ',totalExpMap,BG_EXP,'var(--text)',DYNM&&DYNM.totalExp)+
     summaryRow('EBITDA',ebitdaMap,BG_EBITDA,'var(--accent)',DYNM&&DYNM.ebitda)+
     cumulEbRow+
     summaryRow('ЧИСТАЯ ПРИБЫЛЬ',netMap,BG_EBITDA,'var(--text)',DYNM&&DYNM.net)+
@@ -5374,7 +5343,7 @@ function renderOPIU(f){
   // ВЫРУЧКА
   rows+=`<tr class="dds-sec" data-node="${revNodeId}" onclick="opiuTgl('${revNodeId}')" style="cursor:pointer">
     <td style="padding:6px 10px;font-weight:800;font-size:12px;color:var(--income);background:#ddf5e8;position:sticky;left:0;z-index:1;border-top:3px solid var(--income);cursor:pointer;white-space:nowrap"><span class="dds-arrow">▶</span>ВЫРУЧКА</td>
-    ${periodCellsOPIU(rev.perInc,'#ddf5e8',true,'',DYNA&&DYNA.rev.perInc,'inc')}
+    ${periodCellsOPIU(rev.perInc,'#ddf5e8',true,'',DYNA&&DYNA.rev.perInc)}
   </tr>`;
   rows+=revSubRows(revNodeId);
 
