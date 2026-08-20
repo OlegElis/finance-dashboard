@@ -5042,6 +5042,9 @@ function renderOPIU(f){
     if(postOn)injectPost(DYNA,false); // база лежит вне выбранных лет - отбирать транзит по ним нельзя
     DYNM=derive(DYNA);
     dynPeriods=DYNA.periodsSet;
+    // ⚠ Сторож ходит ТОЛЬКО по строкам типа «расход» (категории OPIU_CATS и их статьи с
+    //   подстатьями). Результаты (валовая, EBITDA, ЧП) сюда не попадают по построению: у них
+    //   знак значения - это прибыль или убыток, а не конвенция хранения расхода.
     let nz=0,neg=0;const ex=[];
     CATS.forEach(cat=>{const cd=DYNA.exp[cat];if(!cd)return;
       const look=(m,path)=>{for(const pk in m){const v=m[pk];if(Math.abs(v)<=0.005)continue;nz++;
@@ -5098,6 +5101,39 @@ function renderOPIU(f){
     return e<=_dynToday;
   };
   const rubSgnO=v=>(v<0?'−':'+')+fmt(Math.abs(v)); // типографский минус U+2212, как в БДР
+  // ── СПРАВОЧНИК ТИПОВ СТРОК. Тип задаётся ЯВНО в месте вызова и НИКОГДА не выводится из знака
+  //    значения. Иначе убыточная ЧП (значение отрицательное) попадала бы в «расходные», правило
+  //    цвета переворачивалось бы, и одна и та же строка вела бы себя по-разному в прибыльном
+  //    и убыточном месяце - то есть цвет зависел бы от того, какой месяц открыт.
+  //      'inc' - выручка: рост значения лучше;
+  //      'exp' - расход: хранится ОТРИЦАТЕЛЬНЫМ, рост расхода делает значение меньше - хуже;
+  //      'res' - РЕЗУЛЬТАТ (маржинальный доход, валовая, EBITDA, ЧП, любые подытоги):
+  //              рост значения лучше независимо от того, прибыль это или убыток.
+  // ⚠ Во всех трёх «лучше» = Δ>0, и это следствие ОДНОЙ конвенции хранения, а не совпадение.
+  //   Тип всё равно передаётся явно: он решает, как изменение ПОКАЗЫВАЕТСЯ в блоке «что
+  //   изменилось» (у расхода - в его терминах, то есть −Δ), и не даёт вернуться к выводу типа
+  //   из данных. Неизвестный тип - предупреждение в консоль, а не молчаливый выбор ветки.
+  const DYN_KINDS={inc:'выручка',exp:'расход',res:'результат'};
+  const dynBetter=(d,kind)=>{ // «лучше» → true, «хуже» → false, «без изменения» → null
+    if(!DYN_KINDS[kind]){console.warn('[ОПиУ] динамика: неизвестный тип строки «'+kind+'»');return null;}
+    if(Math.abs(d)<0.005)return null;
+    return d>0; // inc: выручка выросла · exp: расход упал (значение выросло) · res: результат вырос
+  };
+  // ⚠ ПРОЦЕНТ - ТОЛЬКО ОТ МОДУЛЯ БАЗЫ, иначе уменьшение убытка даёт минус при росте показателя.
+  //   И три случая, когда процента НЕТ вовсе (остаются рубли):
+  //     - база ноль (это «новое»);
+  //     - база меньше OPIU_DYN_MIN_BASE (рост с тысячи до трёх это +200%, он забьёт рост
+  //       с миллиона до 1,2 млн);
+  //     - база и текущее значение РАЗНОГО ЗНАКА - переход через ноль, процент там математически
+  //       бессмыслен (убыток −2 000 000 → прибыль +500 000 давал «+125%», число ни о чём).
+  const dynPct=(d,b,v)=>{
+    if(Math.abs(b)<0.005||Math.abs(b)<OPIU_DYN_MIN_BASE)return null;
+    if(v*b<0)return null;
+    // ⚠ До 100% печатаем десятую (216 245 от 1 287 000 это «+16,8%», а не «+17%» - на таких
+    //   числах десятая читается), выше - целое: у «+230%» она уже шум.
+    const a=Math.abs(d)/Math.abs(b)*100;
+    return (d>0?'+':d<0?'−':'')+(a<100?a.toFixed(1).replace('.',','):Math.round(a))+'%';
+  };
   const DYN_LINE='font-size:9px;line-height:1.05;font-family:var(--mono);font-weight:400;';
   const dynMute=(txt,title)=>`<div style="${DYN_LINE}color:var(--text3)" title="${title}">${txt}</div>`;
   // Вторая строка под числом: рубли и процент изменения к базовому периоду.
@@ -5106,20 +5142,24 @@ function renderOPIU(f){
   //   Δ<0 и строка красная, а рост выручки даёт Δ>0 и зелёный. Одна проверка знака вместо признака
   //   категории. ⚠ Начни кто-нибудь показывать расходы модулем - правило сломается МОЛЧА, и тогда
   //   сюда нужен явный признак природы строки (принадлежность к OPIU_CATS).
-  const dynLine=(v,bmap,pk)=>{
+  const dynLine=(v,bmap,pk,kind)=>{
     if(!dyn)return '';
     if(!pkClosed(pk))return dynMute('·','период не закрыт - сравнение не считаем');
     const bpk=basePkOf(pk);
     if(!bpk||!dynPeriods.has(bpk))return dynMute('·','нет данных за базовый период');
     const b=(bmap&&bmap[bpk])||0,d=v-b;
     if(!b&&!v)return '';
-    const col=(!dynSignOk||Math.abs(d)<0.005)?'var(--text3)':(d>0?'var(--income)':'var(--outcome)');
-    let txt;
-    if(Math.abs(b)<0.005)txt=rubSgnO(d)+' новое';                       // ноль в базе - процента нет и быть не может
-    else if(Math.abs(b)<OPIU_DYN_MIN_BASE)txt=rubSgnO(d);               // малая база - только рубли (см. OPIU_DYN_MIN_BASE)
-    else txt=rubSgnO(d)+' ('+(d>0?'+':d<0?'−':'')+Math.round(Math.abs(d)/Math.abs(b)*100)+'%)';
-    const tip=_tipAttr([['Период',String(pk)],['База: '+bpk,fmt(b)],['Стало',fmt(v)]],['Изменение',rubSgnO(d),
-      Math.abs(b)<OPIU_DYN_MIN_BASE?'':((d>0?'+':d<0?'−':'')+Math.round(Math.abs(d)/Math.abs(b)*100)+'%')]);
+    const better=dynBetter(d,kind);
+    const col=(!dynSignOk||better===null)?'var(--text3)':(better?'var(--income)':'var(--outcome)');
+    const pct=dynPct(d,b,v);
+    const zeroBase=Math.abs(b)<0.005;
+    const flip=v*b<0;
+    const txt=rubSgnO(d)+(zeroBase?' новое':(pct?' ('+pct+')':''));
+    const foot=[];
+    if(flip&&!zeroBase)foot.push(['переход через ноль - процент не считаем','']);
+    else if(!zeroBase&&!pct)foot.push(['база меньше '+fmt(OPIU_DYN_MIN_BASE)+' - процент не показываем','']);
+    const tip=_tipAttr([['Период',String(pk)],['База: '+bpk,fmt(b)],['Стало',fmt(v)]],
+      ['Изменение',rubSgnO(d),pct||''],DYN_KINDS[kind]?('строка: '+DYN_KINDS[kind]):'',foot);
     return `<div style="${DYN_LINE}color:${col}" ${tip}>${txt}</div>`;
   };
   const dirVarMap=MAPS.dirVar,dirFixMap=MAPS.dirFix,indVarMap=MAPS.indVar,indFixMap=MAPS.indFix;
@@ -5209,12 +5249,12 @@ function renderOPIU(f){
   // --- helpers ---
   // baseMap - карта того же ряда по НЕОБРЕЗАННОМУ набору (слой динамики). При выключенной динамике
   // функция обязана отдавать ПРЕЖНЮЮ разметку дословно - на этом стоит проверка «выключено = как было».
-  const periodCellsOPIU=(perMap,bg='',bold=false,nodeId='',baseMap=null)=>{
+  const periodCellsOPIU=(perMap,bg='',bold=false,nodeId='',baseMap=null,kind='exp')=>{
     const style=`text-align:right;padding:3px 8px;white-space:nowrap;font-size:10px;${bg?'background:'+bg+';':''}${bold?'font-weight:700;':''}`;
     const styleD=style+'vertical-align:top;'; // разное число строк в соседних ячейках - без этого строка разъезжается по вертикали
     return periods.map(p=>{
       const v=perMap[p]||0;
-      const sub=dyn?dynLine(v,baseMap,p):'';
+      const sub=dyn?dynLine(v,baseMap,p,kind):'';
       if(v===0&&!sub)return`<td style="${style}"></td>`;
       const color=v>0?'color:var(--income)':v<0?'color:var(--outcome)':'color:var(--text3)';
       const clk=nodeId?` onclick="event.stopPropagation();opiuShowTxnModal('${nodeId}','${String(p).replace(/'/g,"\\'")}')" title="Операции: ${String(p).replace(/"/g,'')}"`:'';
@@ -5227,7 +5267,10 @@ function renderOPIU(f){
     })();
   };
 
-  const computedRow=(label,perMap,bg,bold=true,baseMap=null)=>`<tr><td style="padding:5px 10px;font-weight:${bold?700:600};font-size:11px;background:${bg};position:sticky;left:0;z-index:1;border-top:2px solid var(--border)">${label}</td>${periodCellsOPIU(perMap,bg,bold,'',baseMap)}</tr>`;
+  // ⚠ Все расчётные строки - тип 'res' (результат): и промежуточные (маржинальный доход,
+  //   валовая, EBITDA), и итоговая ЧП. В «расходных» им делать нечего - у убыточного месяца
+  //   правило цвета перевернулось бы.
+  const computedRow=(label,perMap,bg,bold=true,baseMap=null)=>`<tr><td style="padding:5px 10px;font-weight:${bold?700:600};font-size:11px;background:${bg};position:sticky;left:0;z-index:1;border-top:2px solid var(--border)">${label}</td>${periodCellsOPIU(perMap,bg,bold,'',baseMap,'res')}</tr>`;
 
   const pctRow=(label,perNumerator,perDenominator)=>{
     const style=`text-align:right;padding:2px 8px;white-space:nowrap;font-size:10px;color:var(--text3);background:#fafafa`;
@@ -5307,7 +5350,7 @@ function renderOPIU(f){
       window._opiuTxnMap[subNodeId]={label:sub,artLabel:'Выручка',secLabel:'ВЫРУЧКА',rows:subData.rows,pks:subData.rows.map(getOPIUPeriodKey)};
       html+=`<tr class="dds-sub dds-child-${parentNodeId}" style="display:none;cursor:pointer" onclick="opiuShowTxnModal('${subNodeId}')" title="Нажмите: вся подстатья (или кликните по сумме периода)">
         <td style="padding:3px 8px 3px 24px;font-size:10px;cursor:pointer;position:sticky;left:0;z-index:1;background:var(--surface);white-space:nowrap">▸ ${_htmlEsc(sub)} <span style="font-size:9px;color:var(--accent)">↗</span></td>
-        ${periodCellsOPIU(subData.perInc,'',false,subNodeId,dSub&&dSub.perInc)}
+        ${periodCellsOPIU(subData.perInc,'',false,subNodeId,dSub&&dSub.perInc,'inc')}
       </tr>`;
     });
     return html;
@@ -5317,8 +5360,8 @@ function renderOPIU(f){
   const BG_REV='#e8f5ee',BG_EXP='#fdecea',BG_EBITDA='#e7eaf1',BG_NET='#262c3b';
   const sumNameTd=(label,bg,color='var(--text)')=>`<td style="padding:6px 10px;font-weight:700;font-size:11px;white-space:nowrap;background:${bg};color:${color};position:sticky;left:0;z-index:1">${label}</td>`;
   const sumValCell=(v,bg,extra='',sub='')=>{const color=v>0?'var(--income)':v<0?'var(--outcome)':'var(--text3)';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${bg};color:${color};font-variant-numeric:tabular-nums;${sub?'vertical-align:top;':''}${extra}">${v!==0||sub?(v!==0?fmt(v):'·'):''}${sub}</td>`;};
-  const summaryRow=(label,perMap,bg,textColor='var(--text)',baseMap=null)=>{
-    const cells=periods.map(p=>sumValCell(perMap[p]||0,bg,'',dyn?dynLine(perMap[p]||0,baseMap,p):'')).join('');
+  const summaryRow=(label,perMap,bg,textColor='var(--text)',baseMap=null,kind='res')=>{
+    const cells=periods.map(p=>sumValCell(perMap[p]||0,bg,'',dyn?dynLine(perMap[p]||0,baseMap,p,kind):'')).join('');
     const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
     return`<tr>${sumNameTd(label,bg,textColor)}${cells}${sumValCell(tot,bg,'border-left:2px solid rgba(0,0,0,0.1)')}</tr>`;
   };
@@ -5328,11 +5371,11 @@ function renderOPIU(f){
   let cumEb=0;
   const cumulEbCells=periods.map(p=>{cumEb+=(ebitdaMap[p]||0);const color=cumEb>0?'var(--income)':cumEb<0?'var(--outcome)':'var(--text3)';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_EBITDA};color:${color};font-variant-numeric:tabular-nums">${cumEb!==0?fmt(cumEb):''}</td>`;}).join('');
   const cumulEbRow=`<tr>${sumNameTd('НАРАСТАЮЩАЯ EBITDA',BG_EBITDA,'var(--accent)')}${cumulEbCells}<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_EBITDA};color:${cumEb>0?'var(--income)':cumEb<0?'var(--outcome)':'var(--text3)'};border-left:2px solid rgba(0,0,0,0.1);font-variant-numeric:tabular-nums">${cumEb!==0?fmt(cumEb):''}</td></tr>`;
-  const summaryBlock=summaryRow('ВЫРУЧКА',rev.perInc,BG_REV,'var(--text)',DYNA&&DYNA.rev.perInc)+
-    summaryRow('РАСХОДЫ',totalExpMap,BG_EXP,'var(--text)',DYNM&&DYNM.totalExp)+
-    summaryRow('EBITDA',ebitdaMap,BG_EBITDA,'var(--accent)',DYNM&&DYNM.ebitda)+
+  const summaryBlock=summaryRow('ВЫРУЧКА',rev.perInc,BG_REV,'var(--text)',DYNA&&DYNA.rev.perInc,'inc')+
+    summaryRow('РАСХОДЫ',totalExpMap,BG_EXP,'var(--text)',DYNM&&DYNM.totalExp,'exp')+
+    summaryRow('EBITDA',ebitdaMap,BG_EBITDA,'var(--accent)',DYNM&&DYNM.ebitda,'res')+
     cumulEbRow+
-    summaryRow('ЧИСТАЯ ПРИБЫЛЬ',netMap,BG_EBITDA,'var(--text)',DYNM&&DYNM.net)+
+    summaryRow('ЧИСТАЯ ПРИБЫЛЬ',netMap,BG_EBITDA,'var(--text)',DYNM&&DYNM.net,'res')+
     cumulNetRow+
     `<tr><td colspan="${totalCols}" style="height:4px;background:var(--border)"></td></tr>`;
 
@@ -5343,7 +5386,7 @@ function renderOPIU(f){
   // ВЫРУЧКА
   rows+=`<tr class="dds-sec" data-node="${revNodeId}" onclick="opiuTgl('${revNodeId}')" style="cursor:pointer">
     <td style="padding:6px 10px;font-weight:800;font-size:12px;color:var(--income);background:#ddf5e8;position:sticky;left:0;z-index:1;border-top:3px solid var(--income);cursor:pointer;white-space:nowrap"><span class="dds-arrow">▶</span>ВЫРУЧКА</td>
-    ${periodCellsOPIU(rev.perInc,'#ddf5e8',true,'',DYNA&&DYNA.rev.perInc)}
+    ${periodCellsOPIU(rev.perInc,'#ddf5e8',true,'',DYNA&&DYNA.rev.perInc,'inc')}
   </tr>`;
   rows+=revSubRows(revNodeId);
 
