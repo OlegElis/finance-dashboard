@@ -5167,6 +5167,31 @@ function renderOPIU(f){
     return (d>0?'+':d<0?'−':'')+(a<100?a.toFixed(1).replace('.',','):Math.round(a))+'%';
   };
   const DYN_LINE='font-size:9px;line-height:1.05;font-family:var(--mono);font-weight:400;';
+  // ⚠ ДЕЛЬТА В КОЛОНКЕ ИТОГО. База - тот же НАБОР периодов, сдвинутый назад (для «к прошлому году»
+  //   при фильтре янв-авг 2026 это янв-авг 2025, а не весь 2025), плюс усечённый текущий период
+  //   считается по свою дату отсечки с ОБЕИХ сторон. Колонка, у которой сравнения нет (прочерк),
+  //   не участвует НИ В ОДНОЙ из сторон - иначе дельта ИТОГО перестала бы быть суммой дельт
+  //   показанных колонок, а это главный контроль слоя.
+  const dynTotal=(perMap,baseMap)=>{
+    if(!dyn)return null;
+    let c=0,b=0,n=0,skip=0;
+    periods.forEach(p=>{const st=dynState(p);if(!st.ok){skip++;return;}
+      c+=(perMap[p]||0);b+=((baseMap&&baseMap[st.bpk])||0);n++;});
+    return n?{c,b,d:c-b,n,skip}:null;
+  };
+  const dynTotalLine=(perMap,baseMap,kind)=>{
+    const t=dynTotal(perMap,baseMap);
+    if(!t)return dyn?dynMute('·','сравнивать не с чем: ни у одной колонки нет базового периода'):'';
+    const better=dynBetter(t.d,kind);
+    const col=(!dynSignOk||better===null)?'var(--text3)':(better?'var(--income)':'var(--outcome)');
+    const pct=dynPct(t.d,t.b,t.c),zeroBase=Math.abs(t.b)<0.005;
+    const txt=rubSgnO(t.d)+(zeroBase?' новое':(pct?' ('+pct+')':''));
+    const foot=[['сравниваются колонок: '+t.n+(t.skip?' (пропущено '+t.skip+' - нет базы)':''),'']];
+    if(dynCut&&periods.indexOf(dynCut.pk)>=0)foot.push(['текущий период - по '+_dmy(dynCut.cutD),'']);
+    const tip=_tipAttr([['За период',fmt(t.c)],['База',fmt(t.b)]],['Изменение',rubSgnO(t.d),pct||''],
+      DYN_KINDS[kind]?('строка: '+DYN_KINDS[kind]):'',foot);
+    return `<div style="${DYN_LINE}color:${col}" ${tip}>${txt}</div>`;
+  };
   const dynMute=(txt,title)=>`<div style="${DYN_LINE}color:var(--text3)" title="${title}">${txt}</div>`;
   // Вторая строка под числом: рубли и процент изменения к базовому периоду.
   // ⚠ ЦВЕТ = ЗНАК Δ, и это и ЕСТЬ правило «цвет зависит от природы строки»: расходы в ОПиУ хранятся
@@ -5319,6 +5344,8 @@ function renderOPIU(f){
     }).join('')+(()=>{
       const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
       const color=tot>0?'color:var(--income)':tot<0?'color:var(--outcome)':'';
+      const totSub=dyn?dynTotalLine(perMap,baseMap,kind):'';
+      if(dyn)return`<td style="${styleD}${color};border-left:1px solid var(--border)"><div style="line-height:1.15">${tot!==0?fmt(tot):'·'}</div>${totSub}</td>`;
       return`<td style="${style}${color};border-left:1px solid var(--border)">${tot!==0?fmt(tot):''}</td>`;
     })();
   };
@@ -5419,7 +5446,7 @@ function renderOPIU(f){
   const summaryRow=(label,perMap,bg,textColor='var(--text)',baseMap=null,kind='res')=>{
     const cells=periods.map(p=>sumValCell(perMap[p]||0,bg,'',dyn?dynLine(perMap[p]||0,baseMap,p,kind):'')).join('');
     const tot=Object.values(perMap).reduce((a,b)=>a+b,0);
-    return`<tr>${sumNameTd(label,bg,textColor)}${cells}${sumValCell(tot,bg,'border-left:2px solid rgba(0,0,0,0.1)')}</tr>`;
+    return`<tr>${sumNameTd(label,bg,textColor)}${cells}${sumValCell(tot,bg,'border-left:2px solid rgba(0,0,0,0.1)',dyn?dynTotalLine(perMap,baseMap,kind):'')}</tr>`;
   };
   let cumNet=0;
   const cumulNetCells=periods.map(p=>{cumNet+=(netMap[p]||0);const color=cumNet>0?'#a8d5b5':cumNet<0?'#f5a0a0':'#aaa';return`<td style="padding:6px 8px;font-weight:700;font-size:11px;text-align:right;white-space:nowrap;background:${BG_NET};color:${color};font-variant-numeric:tabular-nums">${cumNet!==0?fmt(cumNet):''}</td>`;}).join('');
