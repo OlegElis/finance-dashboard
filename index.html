@@ -12723,6 +12723,11 @@ window.showPresenceList=function(keepOpen){
   pop.style.right=Math.max(8,(window.innerWidth-rc.right))+'px';
 };
 // Статистика активности сотрудника (история посещений из activity/{email}) - только админу
+// ⚠ Окно ЗАДАНО НЕ ЗДЕСЬ: историю подрезает скрипт снимка (apps-script/snapshot-rtdb.gs,
+// pruneActivity_, ACT_KEEP_DAYS=90), а дашборд только ЧИТАЕТ то, что осталось, и обязан честно
+// назвать срок. Число продублировано сознательно - иначе подпись пришлось бы тянуть из Apps
+// Script через отдельный канал ради одной цифры; меняете ретенцию в скрипте - меняйте и тут.
+const ACT_WINDOW_DAYS=90;
 window.showEmployeeActivity=function(email,name){
   if(!email)return;
   const ex=document.getElementById('empActOverlay'); if(ex)ex.remove();
@@ -12740,14 +12745,14 @@ window.showEmployeeActivity=function(email,name){
   firebase.database().ref('activity/'+ekey).once('value').then(s=>{
     const v=s.val()||{};const days=v.days||{};
     const dayKeys=Object.keys(days).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).sort((a,b)=>b.localeCompare(a));
-    if(!dayKeys.length){setBody('Пока нет данных об активности. История посещений копится с момента включения логирования (после этого обновления).');return;}
+    if(!dayKeys.length){setBody('Пока нет данных об активности. История посещений хранится '+ACT_WINDOW_DAYS+' суток - всё, что старше, чистится автоматически.');return;}
     let totalSessions=0,totalMs=0;const devSet={};
     const rows=dayKeys.map(dk=>{const sess=days[dk]||{};const ids=Object.keys(sess);let dms=0,lastTs=0;ids.forEach(id=>{const x=sess[id]||{};const span=Math.max((x.last||0)-(x.first||x.last||0),20000);dms+=span;if((x.last||0)>lastTs)lastTs=x.last||0;if(x.dev)devSet[x.dev]=1;});totalSessions+=ids.length;totalMs+=dms;return{dk,sessions:ids.length,ms:dms,last:lastTs};});
     const maxMs=Math.max(...rows.map(r=>r.ms),1);
     const kpi=`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">${[['Последний визит',v.lastSeen?fmtDt(v.lastSeen):'-'],['Активных дней',dayKeys.length],['Всего сессий',totalSessions],['Время онлайн (≈)',fmtDur(totalMs)]].map(([l,val])=>`<div style="flex:1;min-width:120px;background:var(--surface2);border-radius:8px;padding:8px 10px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600">${l}</div><div style="font-size:14px;font-weight:600;color:var(--text);font-family:var(--mono)">${val}</div></div>`).join('')}</div>`;
     const devTxt=Object.keys(devSet).length?Object.keys(devSet).map(esc).join(' · '):'-';
     const listHtml=rows.slice(0,30).map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-top:1px solid var(--divider)"><span style="width:74px;font-family:var(--mono);font-size:11px;color:var(--text)">${fmtDay(r.dk)}</span><div style="flex:1;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden"><div style="height:100%;width:${Math.round(r.ms/maxMs*100)}%;background:var(--accent)"></div></div><span style="font-size:10px;color:var(--text3);white-space:nowrap;width:130px;text-align:right">${r.sessions} сес. · ${fmtDur(r.ms)}</span></div>`).join('');
-    setBody(kpi+`<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600;margin:2px 0 3px">Устройства</div><div style="margin-bottom:12px;color:var(--text);font-size:11px">${devTxt}</div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600;margin-bottom:2px">По дням (≈ время онлайн, до 30)</div>${listHtml}<div style="font-size:10px;color:var(--text3);margin-top:8px">Время приблизительное - по пульсу присутствия (каждые 20 сек). Накапливается с момента включения логирования.</div>`);
+    setBody(kpi+`<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600;margin:2px 0 3px">Устройства</div><div style="margin-bottom:12px;color:var(--text);font-size:11px">${devTxt}</div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--label);font-weight:600;margin-bottom:2px">По дням (≈ время онлайн, до 30)</div>${listHtml}<div style="font-size:10px;color:var(--text3);margin-top:8px">Время приблизительное - по пульсу присутствия (каждые 20 сек). Все цифры выше - за последние ${ACT_WINDOW_DAYS} суток: история старше этого срока чистится автоматически.</div>`);
   }).catch(e=>{setBody('Не удалось загрузить статистику. Нужно правило чтения <code>activity</code> для админа в Realtime Database.');});
 };
 
