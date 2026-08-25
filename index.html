@@ -6251,6 +6251,35 @@ window.pfActionsToggle=function(){const dd=document.getElementById('pf-actions-d
     if(!d)return document.removeEventListener('click',h);
     if(!d.contains(e.target)&&!(b&&b.contains(e.target))){d.style.display='none';document.removeEventListener('click',h);}};
     document.addEventListener('click',h);},0);};
+// ─── Недоступные пункты меню «⚙ Действия» ────────────────────────────────────
+// ⚠ ОСНОВАНИЙ ДВА, И ОНИ РАЗНЫЕ - подменять одно другим нельзя, потому что подпись при этом
+//   становится ложью: `rules` - пункт пишет в `config/*`, и запись туда правилами RTDB разрешена
+//   только админу (отказ пришёл бы ОТ БАЗЫ, интерфейс лишь показывает это заранее); `backup` -
+//   правами не ограничено вовсе, это НАШЕ решение, и текст обязан говорить именно так.
+// ⚠ Пункты-ЧТЕНИЕ (диагностики брака данных, разнесение начислений, свод и выписка ЦФО, просмотр
+//   планов) сюда не попадают: они открыты всем, у них гейта нет. Появится соблазн «на всякий
+//   случай» пометить и их - см. CLAUDE.md, блок «Меню ⚙ Действия»: это ровно та ложь, ради
+//   устранения которой ограничение и снимали.
+const PF_LOCKS={
+  rules:{note:'доступно администратору',h:'Пункт доступен только администратору',ask:'За доступом - к администратору',
+    b:'Этот пункт меняет ОБЩИЕ настройки - планы, утверждённые месяцы, пресеты. Запись настроек в общую базу разрешена правилами только администратору: нажми вы пункт, отказ пришёл бы ОТ БАЗЫ, а не от интерфейса. Поэтому он показан неактивным, а не спрятан - чтобы было видно, что он есть.'},
+  backup:{note:'скачивает администратор',h:'Архив настроек скачивает администратор',ask:'Нужен архив - попросите администратора',
+    b:'Архив - это выгрузка ВСЕХ настроек целиком: доступы, иерархия ЦФО, планы, пресеты. Правами чтение архива не ограничено - так решили мы, потому что содержимое шире того, что нужно для работы с данными. Формулировка выбрана намеренно: «доступно администратору» здесь было бы утверждением о правах, которых на чтение нет.'}
+};
+window.pfActionLocked=function(key){
+  const lc=PF_LOCKS[key]; if(!lc)return;
+  const ex=document.getElementById('pfLockedOverlay'); if(ex)ex.remove();
+  const ov=document.createElement('div'); ov.className='txn-card-overlay'; ov.id='pfLockedOverlay';
+  ov.innerHTML='<div class="txn-card" style="max-width:520px">'+
+    '<div class="txn-card-head"><h3>'+_htmlEsc(lc.h)+'</h3><button class="txn-card-close" onclick="this.closest(\'.txn-card-overlay\').remove()">✕</button></div>'+
+    '<div style="padding:16px 20px 20px">'+
+      '<p style="font-size:12px;color:var(--text2);margin:0 0 12px;line-height:1.6">'+_htmlEsc(lc.b)+'</p>'+
+      '<p style="font-size:12px;color:var(--text2);margin:0 0 12px;line-height:1.6">'+_htmlEsc(lc.ask)+': <b>'+_htmlEsc(ADMIN_EMAIL)+'</b>.</p>'+
+      '<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:11px;color:var(--text2);line-height:1.6">Без ограничений вам доступны: диагностики брака данных (факт без плана, аналитика вне ОПиУ, поступление вне 120_), разнесение начислений, свод и выписка ЦФО, просмотр планов.</div>'+
+    '</div></div>';
+  ov.addEventListener('mousedown',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
 window.pfMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.planfact[field]=checked;};
 window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.pfMultiChange(ddId,btnId,field,labelAll);};
 window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];_tabFilters.planfact.owners=[];_tabFilters.planfact.sides=[];renderPlanFact(getFilters());}; // rowDim вернёт на «По статьям» правило по состоянию в renderPlanFact - второй копии тут не заводим
@@ -8791,7 +8820,9 @@ window.pfNoPlanShowTxn=function(kind,idx){
 // вне точного списка OPIU_CATS (опечатка/регистр/пустое поле). Расчёты НЕ трогает - только показывает брак данных,
 // из-за которого «ИТОГО РАСХОДЫ факт» БДР > «РАСХОДЫ» ОПиУ ровно на эту сумму. Чинить в источнике (колонка «Аналитика»). ──
 window.pfAnBadOpen=function(){
-  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  // ⚠ ГЕЙТА АДМИНА ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО (25.08.2026, вместе с открытием меню всем): это
+  //   ЧТЕНИЕ, защитой гейт не был (данные читает любой вошедший), а нужен этот экран прежде
+  //   всего тому, кто данные вводит. Не возвращать - разбор в CLAUDE.md, блок «Меню ⚙ Действия».
   const AB=window._pfAnBad; if(!AB)return;
   if(document.getElementById('pfAnBadOverlay'))return;
   const rows=[...(AB.rows||[])].sort((a,b)=>{const da=parseDate(a[COL.DATE_OPIU]),db=parseDate(b[COL.DATE_OPIU]);return (da?da.getTime():0)-(db?db.getTime():0);});
@@ -8834,7 +8865,9 @@ window.pfAnBadOpen=function(){
 };
 // ── ⚠ Поступление вне 120_ (сторож фантомных доходов): поступления с подстатьёй НЕ 120_* фантомно попадают в ДОХОДЫ БДР/ОПиУ и завышают выручку. Расчёт НЕ трогает - только показывает брак. Чинить в источнике (подстатья должна быть 120_). ──
 window.pfIncBadOpen=function(){
-  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  // ⚠ ГЕЙТА АДМИНА ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО (25.08.2026, вместе с открытием меню всем): это
+  //   ЧТЕНИЕ, защитой гейт не был (данные читает любой вошедший), а нужен этот экран прежде
+  //   всего тому, кто данные вводит. Не возвращать - разбор в CLAUDE.md, блок «Меню ⚙ Действия».
   const AB=window._pfIncBad; if(!AB)return;
   if(document.getElementById('pfIncBadOverlay'))return;
   const rows=[...(AB.rows||[])].sort((a,b)=>{const da=parseDate(a[COL.DATE_OPIU]),db=parseDate(b[COL.DATE_OPIU]);return (da?da.getTime():0)-(db?db.getTime():0);});
@@ -9385,7 +9418,9 @@ window.pfAllocOpen=function(){
   document.body.appendChild(ov);
 };
 window.pfNoPlanOpen=function(){
-  if(!_isAdmin()){alert('Доступно только администратору.');return;}
+  // ⚠ ГЕЙТА АДМИНА ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО (25.08.2026, вместе с открытием меню всем): это
+  //   ЧТЕНИЕ, защитой гейт не был (данные читает любой вошедший), а нужен этот экран прежде
+  //   всего тому, кто данные вводит. Не возвращать - разбор в CLAUDE.md, блок «Меню ⚙ Действия».
   const NP=window._pfNoPlan; if(!NP)return;
   if(document.getElementById('pfNoPlanOverlay'))return;
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -9994,11 +10029,22 @@ function renderPlanFact(f){
   let _alN=0,_alC=0;
   try{const _al=_pfAllocBuild(year,_alM,false);_alN=_al.list.length;_alC=_al.changedN;}
   catch(e){console.warn('[БДР] счётчик разнесения не посчитан:',e&&e.message);}
-  const _actItem=(onclick,html,accent)=>`<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${accent};cursor:pointer;font-family:var(--sans);white-space:nowrap">${html}</button>`;
-  const actionsWrap=isAdmin?`<div style="position:relative;display:inline-block">
+  // ⚠ ПУНКТ МОЖЕТ БЫТЬ НЕАКТИВЕН, И ТОГДА ОН ОБЯЗАН ОТВЕТИТЬ НА КЛИК (`pfActionLocked`): пункт,
+  //   который выглядит кнопкой и молчит на нажатие, - то же молчание, с которым в проекте борются
+  //   в расчётах, только в интерфейсе. Пометка справа называет основание, а не «нельзя».
+  const _actItem=(onclick,html,accent,lock)=>{const lc=lock?PF_LOCKS[lock]:null;return `<button onclick="var _d=document.getElementById('pf-actions-dd');if(_d)_d.style.display='none';${lc?`pfActionLocked('${lock}')`:onclick}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-size:12px;font-weight:600;padding:8px 14px;border:none;border-bottom:1px solid var(--border);background:transparent;color:${lc?'var(--text3)':accent};cursor:${lc?'not-allowed':'pointer'};font-family:var(--sans);white-space:nowrap${lc?';opacity:.7':''}">${html}${lc?`<span style="margin-left:auto;padding-left:12px;font-size:9px;font-weight:600;color:var(--text3)">${lc.note}</span>`:''}</button>`;};
+  // ⚠ МЕНЮ ВИДНО ВСЕМ (25.08.2026), права при этом НЕ МЕНЯЛИСЬ - изменилась только видимость.
+  //   Два класса пунктов, и путать их нельзя: класс 1 пишет в `config/*` и у не-админа НЕАКТИВЕН
+  //   (правила RTDB и правда откажут - подпись говорит правду о правах); класс 2 - ЧТЕНИЕ, открыт
+  //   всем БЕЗ всякой пометки. Пометка «доступно администратору» на пункте, который никакими
+  //   правами не ограничен, была бы утверждением о правах там, где есть только наше решение,
+  //   и лечится это снятием ограничения, а не формулировкой. Разбор - в CLAUDE.md.
+  const lk=isAdmin?null:'rules';   // класс 1: запись в config/*, у не-админа неактивен
+  const lkBk=isAdmin?null:'backup';// «Скачать архив» - НАШЕ решение, а не права (правилами закрыта лишь отметка backupLog)
+  const actionsWrap=`<div style="position:relative;display:inline-block">
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;line-height:15px;font-weight:600;padding:2px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
-      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)')}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)')}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)')}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)')}${_actItem('cfoStatementOpen()','👤 Выписка ЦФО','var(--accent)')}${_actItem('showPlansPanel()','✏ Редактировать планы','var(--accent)')}${_actItem('pfPresetSaveOpen()','💾 Сохранить текущий отбор как пресет','var(--accent)')}${_actItem("showPresetsPanel('planfact')",'⚙ Пресеты отчётов','var(--text2)')}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)')}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)')}</div>
-    </div>`:`<button onclick="pfCfoOpen()" title="Свод исполнения по ответственным" style="font-size:11px;line-height:15px;font-weight:600;padding:2px 12px;border:1px solid var(--accent);border-radius:5px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👥 ЦФО</button><button onclick="showPlansPanel()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">👁 Планы (просмотр)</button>`;
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)',lk)}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)',null)}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)',null)}${_actItem('cfoStatementOpen()','👤 Выписка ЦФО','var(--accent)',null)}${_actItem('showPlansPanel()',(isAdmin?'✏ Редактировать планы':'👁 Планы (просмотр)'),'var(--accent)',null)}${_actItem('pfPresetSaveOpen()','💾 Сохранить текущий отбор как пресет','var(--accent)',lk)}${_actItem("showPresetsPanel('planfact')",'⚙ Пресеты отчётов','var(--text2)',lk)}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)',lkBk)}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)',lk)}</div>
+    </div>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:10px;padding:3px var(--secpx);min-height:31px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <div style="position:relative;display:inline-block"><button id="pf-dir-btn" onclick="pfMultiToggle('pf-dir-dd')" title="Направления (мультивыбор; пусто = все)" style="${pfBtnStyle}">${pfDirBtn}</button><div id="pf-dir-dd" style="${pfDDstyle}">${pfDirDD}</div></div>
@@ -13874,7 +13920,9 @@ window.planPrintOwners=function(){
 };
 // ===== Персональная выписка для ЦФО (BDR) - только его подстатьи, baseline vs факт, A4 portrait. Отдельно от planPrintOwners (форма сбора плана) =====
 window.cfoStatementOpen=function(){
-  if(!_isAdmin()){alert('Выписку формирует только администратор.');return;}
+  // ⚠ ГЕЙТА АДМИНА ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО (25.08.2026, вместе с открытием меню всем): это
+  //   ЧТЕНИЕ, защитой гейт не был (данные читает любой вошедший), а нужен этот экран прежде
+  //   всего тому, кто данные вводит. Не возвращать - разбор в CLAUDE.md, блок «Меню ⚙ Действия».
   if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
   if(document.getElementById('cfoStmtOverlay'))return;
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
