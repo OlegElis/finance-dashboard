@@ -1008,6 +1008,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Настройки
     </button>
+    <!-- Версия страницы: какую КОПИЮ index.html видит ЭТОТ человек. Заведено 25.08.2026 после
+         вопроса «почему меню выглядит по-разному у двоих»: без такой строки ответ приходилось
+         выводить из того, кто какие пункты помнит. Видна ВСЕМ (шестерёнка выше - только админу),
+         подробности по клику. -->
+    <div id="buildBadge" onclick="buildInfoShow()" title="Версия этой страницы - нажмите, чтобы сравнить с репозиторием" style="font-size:10px;line-height:13px;color:var(--text3);padding:2px 2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer"></div>
   </div>
 </aside>
 <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
@@ -14800,6 +14805,92 @@ function watchForceLogout(authMs){
     });
   }catch(e){console.warn('[forceLogout] не активен:',e&&e.message);}
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// ВЕРСИЯ СБОРКИ. Отвечает на один вопрос: одну ли копию страницы видят два человека.
+// ⚠ Штамп НЕ вписывается в файл руками и не должен: константу, которую надо не забыть обновить,
+//   однажды забудут - и она соврёт про версию тем увереннее, чем дольше её не трогали (правило
+//   проекта: врущее сообщение хуже отсутствующего). Поэтому личность копии берётся ИЗ САМОЙ
+//   КОПИИ: `document.lastModified` - это заголовок Last-Modified, с которым файл пришёл с Pages
+//   (у копии из кэша - её собственный), `encodedBodySize` - её размер в байтах. Пара «дата ·
+//   размер» - ровно то, чем Pages помечает файл в ETag, то есть готовый идентификатор выкладки.
+// ⚠ Хэш КОММИТА в файле лежать не может по построению (хэш считается от коммита, который ещё не
+//   создан), поэтому он спрашивается у публичного API GitHub и относится к РЕПОЗИТОРИЮ, а не к
+//   этой копии - в подписях это названо разными словами. Нет сети или исчерпан лимит API (60
+//   запросов в час на адрес) - строка просто короче, дата копии остаётся и сравнима глазами.
+const BUILD_REPO='OlegElis/finance-dashboard';
+const BUILD_SKEW_MS=5*60*1000; // выкладка на Pages идёт около минуты - раньше этого «старее» не пишем
+let _buildRepo=null; // {sha7,ms,title} последнего коммита в main; null - не спросили или не ответили
+function _buildPage(){
+  const ms=Date.parse(document.lastModified)||0;
+  let size=0; try{const n=(performance.getEntriesByType('navigation')||[])[0]; size=(n&&(n.encodedBodySize||n.decodedBodySize))||0;}catch(e){}
+  return {ms,size,id:(ms?Math.floor(ms/1000).toString(16):'?')+(size?('-'+size.toString(16)):'')};
+}
+function _buildFmt(ms){ if(!ms)return '-'; const d=new Date(ms);
+  const p2=v=>String(v).padStart(2,'0');
+  return p2(d.getDate())+'.'+p2(d.getMonth()+1)+'.'+d.getFullYear()+' '+p2(d.getHours())+':'+p2(d.getMinutes()); }
+function _buildStale(){ const p=_buildPage(); return !!(_buildRepo&&_buildRepo.ms&&p.ms&&p.ms<_buildRepo.ms-BUILD_SKEW_MS); }
+function _buildBadgeUpd(){
+  const el=document.getElementById('buildBadge'); if(!el)return;
+  const p=_buildPage(),st=_buildStale();
+  el.textContent='Версия '+_buildFmt(p.ms)+(_buildRepo?(' · '+_buildRepo.sha7):'')+(st?' · ⚠ старее':'');
+  el.style.color=st?'var(--orange)':'var(--text3)';
+}
+function _buildRepoFetch(){
+  return new Promise(res=>{
+    let ac=null,t=0;
+    try{ ac=('AbortController' in window)?new AbortController():null; }catch(e){}
+    if(ac)t=setTimeout(()=>{try{ac.abort();}catch(e){}},6000);
+    fetch('https://api.github.com/repos/'+BUILD_REPO+'/commits?per_page=1',ac?{signal:ac.signal}:undefined)
+      .then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status)))
+      .then(a=>{const c=a&&a[0]; if(!c||!c.sha)throw new Error('пустой ответ');
+        const cm=c.commit||{},cd=(cm.committer&&cm.committer.date)||(cm.author&&cm.author.date)||'';
+        _buildRepo={sha7:String(c.sha).slice(0,7),ms:Date.parse(cd)||0,title:String(cm.message||'').split('\n')[0]};})
+      .catch(e=>{_buildRepo=null;console.debug('[версия] последний коммит не спросили:',e&&e.message);})
+      .then(()=>{if(t)clearTimeout(t);res(_buildRepo);});
+  });
+}
+// Подробности по клику: что за копия, что в репозитории и что делать, если копия старая.
+window.buildInfoShow=function(){
+  const ex=document.getElementById('buildInfoOverlay'); if(ex)ex.remove();
+  const p=_buildPage(),r=_buildRepo,st=_buildStale();
+  const mac=/Mac|iPhone|iPad/i.test(navigator.platform||navigator.userAgent||'');
+  const hard=mac?'⌘ + Shift + R':'Ctrl + Shift + R';
+  const row=(l,v)=>'<span style="color:var(--text3)">'+l+'</span><span style="font-family:var(--mono);font-weight:600;text-align:right;color:var(--text)">'+v+'</span>';
+  const repoRows=r
+    ?row('Последний коммит:',_htmlEsc(r.sha7))+row('Его дата:',_buildFmt(r.ms))+
+     '<span style="color:var(--text3)">Заголовок:</span><span style="text-align:right;color:var(--text2);font-size:11px">'+_htmlEsc(r.title||'-')+'</span>'
+    :'<span style="color:var(--text3)">Репозиторий:</span><span style="text-align:right;color:var(--text2);font-size:11px">не спросили - нет сети или исчерпан лимит API GitHub. Дату копии слева это не отменяет: сравните её с датой у второго человека.</span>';
+  const verdict=!r?'<b>Сравнить с репозиторием не удалось.</b> Две копии всё равно сравниваются между собой - по дате и идентификатору выше.'
+    :(st?('<b style="color:var(--orange)">Ваша копия старее последнего коммита.</b> Обновите страницу жёстко: <b>'+hard+'</b>. Если после обновления надпись осталась - выкладка на GitHub Pages ещё идёт или не прошла, это уже не про ваш браузер.')
+        :'<b style="color:var(--income)">Копия свежая</b> - она не старее последнего коммита в репозитории.');
+  const ov=document.createElement('div'); ov.className='txn-card-overlay'; ov.id='buildInfoOverlay';
+  ov.innerHTML='<div class="txn-card" style="max-width:520px">'+
+    '<div class="txn-card-head"><h3>Версия страницы</h3><button class="txn-card-close" onclick="this.closest(\'.txn-card-overlay\').remove()">✕</button></div>'+
+    '<div style="padding:16px 20px 20px">'+
+      '<p style="font-size:12px;color:var(--text2);margin:0 0 14px;line-height:1.6">Строка отвечает на вопрос «одну ли версию мы видим». <b>Слева - про ЭТУ копию страницы</b> (дата и размер того файла, который отдал браузеру GitHub Pages или его кэш), <b>справа - про репозиторий</b>. Это разные вещи: копия может отстать от репозитория, если страница открыта давно и не перезагружалась.</p>'+
+      '<div style="background:var(--surface2);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:12px">'+
+        '<div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:baseline">'+
+          row('Эта копия страницы:',_buildFmt(p.ms))+
+          row('Её размер, байт:',p.size?p.size.toLocaleString('ru-RU'):'-')+
+          row('Идентификатор копии:',_htmlEsc(p.id))+
+          '<span style="grid-column:1/3;border-top:1px solid var(--border);margin:4px 0"></span>'+
+          repoRows+
+        '</div>'+
+      '</div>'+
+      '<p style="font-size:12px;color:var(--text2);margin:0;line-height:1.6">'+verdict+'</p>'+
+    '</div></div>';
+  ov.addEventListener('mousedown',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
+(function buildInfoInit(){
+  const p=_buildPage();
+  console.log('[версия] эта копия страницы: '+_buildFmt(p.ms)+' · '+p.id+(p.size?(' · '+p.size.toLocaleString('ru-RU')+' Б'):''));
+  _buildBadgeUpd();
+  _buildRepoFetch().then(r=>{
+    _buildBadgeUpd();
+    if(r)console.log('[версия] последний коммит в репозитории: '+r.sha7+' от '+_buildFmt(r.ms)+' - '+r.title+(_buildStale()?' ⚠ ваша копия СТАРЕЕ, обновите страницу':''));
+  });
+})();
 (function authGate(){
   const gate=document.getElementById('authGate');
   const authEnabled=!!(window.firebase&&firebase.auth&&FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.authDomain);
