@@ -10809,6 +10809,16 @@ function renderPlanFact(f){
   const _cardCss='position:relative;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px';
   // бейдж для графиков, которые ОСОЗНАННО игнорируют фильтр статьи/подстатьи/ЦФО (ЧП-накопит и Динамика сбора; график Отклонений фильтры учитывает - его не подписываем). Показываем только когда такой фильтр активен.
   const _chartFiltBadge=pfFilterOn?`<div style="font-size:9.5px;font-weight:600;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:2px 8px;margin-bottom:6px;display:inline-block" title="Этот график считается по всей компании (направление/год/период); фильтр статьи/подстатьи/ЦФО на него НЕ влияет">⚠ не учитывает фильтры статьи/подстатьи/ЦФО</div>`:'';
+  // ⚠ ПОДПИСЬ ПОД ГРАФИКОМ - ОДИН ИСТОЧНИК НА ДВА МЕСТА: её ставит и разметка карточки
+  //   (первый рендер), и смена режима (renderCollectChart). Двумя литералами они уже начали
+  //   расходиться - в режиме «по месяцам» подпись обещала «Зелёный ≥100%», когда barCol давно
+  //   считал по 95%. Одна константа - одна правда (та же логика, что у pruneStateLine_).
+  const RULE='План месячный из БДР: у замороженного месяца - утверждённый (снимок на дату утверждения, не меняется), у остальных - текущий.';
+  // ⚠ Про шкалу сказано ОТДЕЛЬНОЙ фразой и только в режиме дней: коридор и медиана собраны из
+  //   ДОЛЕЙ ОТ ПЛАНА прошлых месяцев, а планы у них утверждённые. Перевести шкалу на текущий план
+  //   значило бы сравнивать сегодняшний процент с историей, посчитанной от других знаменателей.
+  const NOTE_DAYS='Факт - по дате ДДС. '+RULE+' Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев. Коридор и медиана «типично» построены на УТВЕРЖДЁННЫХ планах прошлых месяцев, поэтому проценты шкалы отсчитываются от утверждённого плана.';
+  const NOTE_MONTHS='Столбик - % исполнения месячного плана по подстатье. '+RULE+' * - текущий план разошёлся с утверждённым, оба числа в подсказке. Зелёный ≥95%, жёлтый 90-95%, красный <90%. Текущий месяц штриховкой - неполный.';
   const collectCard=collectSubs.length?`<div style="${_cardCss}">${_enlBtn('collect')}
       <div id="pfCollectTitle" style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px;padding-right:30px">📈 Динамика сбора внутри месяца (по дате поступления денег, ДДС)</div>${_chartFiltBadge}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -10823,7 +10833,7 @@ function renderPlanFact(f){
       <div id="pfCollectLegend" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px"></div>
       <div style="height:300px;cursor:zoom-in" title="Клик - увеличить" onclick="pfEnlarge('collect')"><canvas id="pfCollectChart"></canvas></div>
       <div id="pfCollectConcl" style="font-size:13px;font-weight:700;margin-top:10px;line-height:1.4"></div>
-      <div id="pfCollectNote" style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px">Факт - по дате ДДС. План месячный из БДР: у замороженного месяца - утверждённый (снимок на дату утверждения, не меняется), у остальных - текущий. Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев.</div></div>`:`<div style="${_cardCss}"><div style="font-size:12px;font-weight:600;color:var(--text2)">📈 Динамика сбора</div><div style="height:300px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:12px">Нет доходных подстатей</div></div>`;
+      <div id="pfCollectNote" style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px">${NOTE_DAYS}</div></div>`:`<div style="${_cardCss}"><div style="font-size:12px;font-weight:600;color:var(--text2)">📈 Динамика сбора</div><div style="height:300px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:12px">Нет доходных подстатей</div></div>`;
   // Графики - сворачиваемый блок: в фиксированном layout вкладки (десктоп) места под таблицей нет,
   // свёрнутый details даёт таблице всю высоту; состояние переживает ре-рендер через _tabFilters.planfact
   const chartsOpen=!!f.chartsOpen;
@@ -10959,9 +10969,6 @@ function renderPlanFact(f){
 
   // ── График «Динамика сбора внутри месяца»: кумулятивный %-план сбора по дням, факт по ДДС, план месячный из БДР ──
   // Замыкает dirsToAgg/year/frozenSet/PB/planMonth/f текущего рендера. Пересобирает ТОЛЬКО себя (смена подстатьи не ре-рендерит вкладку).
-  // ⚠ Текст правила выбора плана - ОДНОЙ строкой на обе подписи режимов: разъедься они,
-  //   две подписи отвечали бы на один вопрос по-разному (та же логика, что у pruneStateLine_).
-  const RULE='План месячный из БДР: у замороженного месяца - утверждённый (снимок на дату утверждения, не меняется), у остальных - текущий.';
   function renderCollectChart(){
     const cv=document.getElementById('pfCollectChart'),legEl=document.getElementById('pfCollectLegend'),cEl=document.getElementById('pfCollectConcl');
     if(window._pfCollectChart){try{window._pfCollectChart.destroy();}catch(e){}window._pfCollectChart=null;}
@@ -10974,7 +10981,7 @@ function renderPlanFact(f){
     // режим: 'days' (кумулятив по дням) | 'months' (исполнение месячного плана столбиками)
     const mode=(f.collectMode==='months')?'months':'days';
     {const _tEl=document.getElementById('pfCollectTitle');if(_tEl)_tEl.textContent=(mode==='months')?'📈 Исполнение плана по месяцам (факт по ДДС)':'📈 Динамика сбора внутри месяца (по дате поступления денег, ДДС)';
-     const _nEl=document.getElementById('pfCollectNote');if(_nEl)_nEl.textContent=(mode==='months')?('Столбик - % исполнения месячного плана по подстатье. '+RULE+' * - текущий план разошёлся с утверждённым, оба числа в подсказке. Зелёный ≥95%, жёлтый 90-95%, красный <90%. Текущий месяц штриховкой - неполный.'):('Факт - по дате ДДС. '+RULE+' Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев.');
+     const _nEl=document.getElementById('pfCollectNote');if(_nEl)_nEl.textContent=(mode==='months')?NOTE_MONTHS:NOTE_DAYS;
      const _mWrap=document.getElementById('pfCollMode');if(_mWrap)_mWrap.querySelectorAll('button').forEach(b=>{const on=b.dataset.m===mode;b.style.background=on?'var(--accent)':'transparent';b.style.color=on?'#fff':'var(--text2)';});}
     if(!code){if(legEl)legEl.innerHTML='<span style="font-size:11px;color:var(--text2)">Нет доходных подстатей</span>';return;}
     // факт по ДДС (фактический приход денег), кумулятив по дням, только выбранная подстатья. Критерий поступления - как везде в БДР
@@ -11152,11 +11159,25 @@ function renderPlanFact(f){
         if(medPlan!=null){const diff=pctPlan-medPlan,col2=diff<-0.05?'var(--outcome)':diff>0.05?'var(--income)':'var(--text2)';
           const typRub=medPlan/100*plan,diffRub=Math.abs(diff)/100*plan;
           const tail2=diff<-0.05?('Отставание '+pct1(Math.abs(diff))+' п.п. = '+rub0(diffRub)):diff>0.05?('Опережение '+pct1(diff)+' п.п. = '+rub0(diffRub)):'На уровне типичного';
-          h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+col2+'">Типично на эту дату: '+pct1(medPlan)+'% ('+rub0(typRub)+'). '+tail2+'.</div>';}
+          h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+col2+'">Типично на эту дату: '+pct1(medPlan)+'% ('+rub0(typRub)+'). '+tail2+'.</div>';
+          // ⚠ medPlan НЕ пересчитывается - это медиана долей от УТВЕРЖДЁННЫХ планов прошлых месяцев
+          //   (см. подпись под графиком). К текущему плану применяется ТА ЖЕ доля, меняется только
+          //   знаменатель: «сколько было бы типично собрано, будь план текущим».
+          if(cp&&cp.diff){const typC=medPlan/100*cp.cur,dC=(fRub/cp.cur*100)-medPlan,dRubC=Math.abs(dC)/100*cp.cur;
+            const colC=dC<-0.05?'var(--outcome)':dC>0.05?'var(--income)':'var(--text2)';
+            const tailC=dC<-0.05?('Отставание '+pct1(Math.abs(dC))+' п.п. = '+rub0(dRubC)):dC>0.05?('Опережение '+pct1(dC)+' п.п. = '+rub0(dRubC)):'На уровне типичного';
+            h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+colC+'">К текущему плану: типично '+rub0(typC)+'. '+tailC+'.</div>';}}
         if(medTot&&medTot>0){const fc=fRub/medTot,fcPct=fc/plan*100,gap=fc-plan;
           const col3=fcPct<95?'var(--outcome)':fcPct<=105?'var(--orange)':'var(--income)';
           const tail3=gap<-0.5?('Недобор '+rub0(Math.abs(gap))):gap>0.5?('Перевыполнение '+rub0(gap)):'точно в план';
-          h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+col3+'">Прогноз при сохранении темпа: '+rub0(fc)+' ('+Math.round(fcPct)+'% плана). '+tail3+'.</div>';}
+          h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+col3+'">Прогноз при сохранении темпа: '+rub0(fc)+' ('+Math.round(fcPct)+'% плана). '+tail3+'.</div>';
+          // ⚠ Сам прогноз (fc) от плана НЕ зависит - он считается от медианы доли МЕСЯЧНОГО ИТОГА
+          //   прошлых месяцев. Значит второе прочтение это то же число под другим знаменателем,
+          //   а не второй прогноз: пересчитывать fc нечего и нельзя.
+          if(cp&&cp.diff){const fcPctC=fc/cp.cur*100,gapC=fc-cp.cur;
+            const colC3=fcPctC<95?'var(--outcome)':fcPctC<=105?'var(--orange)':'var(--income)';
+            const tailC3=gapC<-0.5?('Недобор '+rub0(Math.abs(gapC))):gapC>0.5?('Перевыполнение '+rub0(gapC)):'точно в план';
+            h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+colC3+'">К текущему плану: '+Math.round(fcPctC)+'% плана. '+tailC3+'.</div>';}}
         else h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">Недостаточно истории для прогноза.</div>';
       }else h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">Недостаточно истории (нужно ≥ 2 прошлых месяцев с планом и фактом).</div>';
       h+='<div style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px">Прогноз тем точнее, чем ближе к концу месяца. До 20-го числа - ориентировочный.</div>';
