@@ -10823,7 +10823,7 @@ function renderPlanFact(f){
       <div id="pfCollectLegend" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px"></div>
       <div style="height:300px;cursor:zoom-in" title="Клик - увеличить" onclick="pfEnlarge('collect')"><canvas id="pfCollectChart"></canvas></div>
       <div id="pfCollectConcl" style="font-size:13px;font-weight:700;margin-top:10px;line-height:1.4"></div>
-      <div id="pfCollectNote" style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px">Факт - по дате ДДС, план - месячный из БДР. Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев.</div></div>`:`<div style="${_cardCss}"><div style="font-size:12px;font-weight:600;color:var(--text2)">📈 Динамика сбора</div><div style="height:300px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:12px">Нет доходных подстатей</div></div>`;
+      <div id="pfCollectNote" style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px">Факт - по дате ДДС. План месячный из БДР: у замороженного месяца - утверждённый (снимок на дату утверждения, не меняется), у остальных - текущий. Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев.</div></div>`:`<div style="${_cardCss}"><div style="font-size:12px;font-weight:600;color:var(--text2)">📈 Динамика сбора</div><div style="height:300px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:12px">Нет доходных подстатей</div></div>`;
   // Графики - сворачиваемый блок: в фиксированном layout вкладки (десктоп) места под таблицей нет,
   // свёрнутый details даёт таблице всю высоту; состояние переживает ре-рендер через _tabFilters.planfact
   const chartsOpen=!!f.chartsOpen;
@@ -10959,6 +10959,9 @@ function renderPlanFact(f){
 
   // ── График «Динамика сбора внутри месяца»: кумулятивный %-план сбора по дням, факт по ДДС, план месячный из БДР ──
   // Замыкает dirsToAgg/year/frozenSet/PB/planMonth/f текущего рендера. Пересобирает ТОЛЬКО себя (смена подстатьи не ре-рендерит вкладку).
+  // ⚠ Текст правила выбора плана - ОДНОЙ строкой на обе подписи режимов: разъедься они,
+  //   две подписи отвечали бы на один вопрос по-разному (та же логика, что у pruneStateLine_).
+  const RULE='План месячный из БДР: у замороженного месяца - утверждённый (снимок на дату утверждения, не меняется), у остальных - текущий.';
   function renderCollectChart(){
     const cv=document.getElementById('pfCollectChart'),legEl=document.getElementById('pfCollectLegend'),cEl=document.getElementById('pfCollectConcl');
     if(window._pfCollectChart){try{window._pfCollectChart.destroy();}catch(e){}window._pfCollectChart=null;}
@@ -10971,7 +10974,7 @@ function renderPlanFact(f){
     // режим: 'days' (кумулятив по дням) | 'months' (исполнение месячного плана столбиками)
     const mode=(f.collectMode==='months')?'months':'days';
     {const _tEl=document.getElementById('pfCollectTitle');if(_tEl)_tEl.textContent=(mode==='months')?'📈 Исполнение плана по месяцам (факт по ДДС)':'📈 Динамика сбора внутри месяца (по дате поступления денег, ДДС)';
-     const _nEl=document.getElementById('pfCollectNote');if(_nEl)_nEl.textContent=(mode==='months')?'Столбик - % исполнения месячного плана по подстатье. Зелёный ≥100%, жёлтый 90-100%, красный <90%. Текущий месяц штриховкой - неполный.':'Факт - по дате ДДС, план - месячный из БДР. Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев.';
+     const _nEl=document.getElementById('pfCollectNote');if(_nEl)_nEl.textContent=(mode==='months')?('Столбик - % исполнения месячного плана по подстатье. '+RULE+' * - текущий план разошёлся с утверждённым, оба числа в подсказке. Зелёный ≥95%, жёлтый 90-95%, красный <90%. Текущий месяц штриховкой - неполный.'):('Факт - по дате ДДС. '+RULE+' Кумулятивно с 1-го; текущий месяц обрывается на сегодня. Коридор - min-max прошлых месяцев.');
      const _mWrap=document.getElementById('pfCollMode');if(_mWrap)_mWrap.querySelectorAll('button').forEach(b=>{const on=b.dataset.m===mode;b.style.background=on?'var(--accent)':'transparent';b.style.color=on?'#fff':'var(--text2)';});}
     if(!code){if(legEl)legEl.innerHTML='<span style="font-size:11px;color:var(--text2)">Нет доходных подстатей</span>';return;}
     // факт по ДДС (фактический приход денег), кумулятив по дням, только выбранная подстатья. Критерий поступления - как везде в БДР
@@ -10988,7 +10991,29 @@ function renderPlanFact(f){
       (byMonthDay[m]=byMonthDay[m]||new Array(32).fill(0))[day]+=inc;
     });
     // план месяца: baseline для замороженных, прогноз для незамороженных; null/≤0 → месяц не строится
-    const planForMonth=m=>{const v=frozenSet.has(m)?(PB?PB.planMonth('income',code,m):null):planMonth('income',code,m);return (v!=null&&v>0)?v:null;};
+    // ── ПЛАН МЕСЯЦА В ДВУХ ВЕЛИЧИНАХ (27.08.2026) ───────────────────────────────
+    // ⚠ БАЗА ПРОЦЕНТНОЙ ШКАЛЫ НЕ МЕНЯЕТСЯ: `base` - ровно то, что считалось и раньше
+    //   (месяц заморожен → утверждённый снимок, иначе текущий план). Поехала бы база -
+    //   поехали бы все кривые, коридор, медиана и прогноз разом. Новое здесь только ЗНАНИЕ
+    //   о втором числе.
+    // ⚠ Зачем второе число: baseline НЕ редактируется никогда (правило проекта), поэтому
+    //   после утверждения месяца config/plans может уйти вперёд - и до этой правки график
+    //   молча показывал утверждённый план, а сводная БДР рядом - текущий. Живой случай
+    //   27.08.2026: август 2026, 120_Поступление от ОС, БФЛ - 14 418 357 против 16 311 027;
+    //   человек читал это как ошибку расчёта, потому что НИ ОДНА подпись не говорила, чей план.
+    const PLAN_DIFF_EPS=0.005; // 0,5%: ниже - округление, а не пересмотр плана
+    const PLAN_CUR_COL='#2563eb'; // тот же синий, которым в сводной помечен пересмотр плана
+    const apprInfo=m=>{const mo=_blMap&&_blMap[m];return (mo&&mo.approvedAt)?{date:new Date(mo.approvedAt).toLocaleDateString('ru-RU'),retro:!!mo.retro}:null;};
+    const planPair=m=>{
+      const fr=frozenSet.has(m);
+      const ap=(fr&&PB)?PB.planMonth('income',code,m):null;   // утверждённый снимок месяца
+      const cu=planMonth('income',code,m);                     // текущий план (config/plans)
+      const base=fr?ap:cu;
+      if(!(base!=null&&base>0))return null;
+      const curV=(cu!=null&&cu>0)?cu:null;
+      return {base,frozen:fr,cur:curV,diff:!!(fr&&curV!=null&&Math.abs(curV-base)/base>PLAN_DIFF_EPS),appr:fr?apprInfo(m):null};
+    };
+    const planForMonth=m=>{const p=planPair(m);return p?p.base:null;};
     const nowD=new Date(),curYear=nowD.getFullYear(),curMonth=nowD.getMonth()+1,curDay=nowD.getDate();
     const accent=(getComputedStyle(document.documentElement).getPropertyValue('--accent')||'').trim()||'#3b4a6b';
     const PAL=['#94a3b8','#a3b18a','#c8a2c8','#e6b89c','#9bb7d4','#b0a8b9','#c9ada7','#8d99ae','#a5a58d','#d4a373','#b5838d'];
@@ -11003,8 +11028,9 @@ function renderPlanFact(f){
       const isCurM=m=>(year===curYear&&m===curMonth);
       const isFuture=m=>(year>curYear)||(year===curYear&&m>curMonth); // будущие месяцы не показываем вообще
       const isClosed=m=>(year<curYear)||(year===curYear&&m<curMonth); // истёкшие полностью - только они идут в статистику
-      const mFact=new Array(13).fill(0),mPlan=new Array(13).fill(null),mPct=new Array(13).fill(null);
-      for(let m=1;m<=12;m++){if(isFuture(m))continue;const dayArr=byMonthDay[m];let s=0;if(dayArr)for(let d=1;d<=31;d++)s+=dayArr[d]||0;mFact[m]=s;const pl=planForMonth(m);if(pl!=null&&pl>0){mPlan[m]=pl;mPct[m]=s/pl*100;}}
+      const mFact=new Array(13).fill(0),mPlan=new Array(13).fill(null),mPct=new Array(13).fill(null),mPair=new Array(13).fill(null);
+      // mPair - та же пара «утверждённый/текущий», что и в режиме дней: столбик считается по base, а расхождение показывается звёздочкой и подсказкой
+      for(let m=1;m<=12;m++){if(isFuture(m))continue;const dayArr=byMonthDay[m];let s=0;if(dayArr)for(let d=1;d<=31;d++)s+=dayArr[d]||0;mFact[m]=s;const pp=planPair(m);mPair[m]=pp;const pl=pp?pp.base:null;if(pl!=null&&pl>0){mPlan[m]=pl;mPct[m]=s/pl*100;}}
       if(!mPct.some(v=>v!=null)){if(legEl)legEl.innerHTML='<span style="font-size:11px;color:var(--text2)">Нет месяцев с планом по этой подстатье</span>';if(cEl)cEl.innerHTML='';return;}
       const barCol=p=>p>=95?'#1e8a54':p>=90?'#e8862b':'#c0392b'; // норма для нас 95-96%, а не 100%
       const hatch=col=>{const c=document.createElement('canvas');c.width=c.height=8;const x=c.getContext('2d');x.strokeStyle=col;x.lineWidth=2.5;x.beginPath();x.moveTo(-2,10);x.lineTo(10,-2);x.moveTo(2,10);x.lineTo(10,2);x.stroke();return x.createPattern(c,'repeat');}; // штриховка текущего (неполного) месяца
@@ -11013,7 +11039,7 @@ function renderPlanFact(f){
       const MLBL=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
       const buildMonths=(canvas,big)=>{
         const monLabels={id:'monLabels',afterDatasetsDraw(ch){const cx=ch.ctx,meta=ch.getDatasetMeta(0);cx.save();cx.textAlign='center';
-          if(meta)meta.data.forEach((el,i)=>{const p=mPct[i+1];if(p==null)return;cx.fillStyle=barCol(p);cx.font='bold '+(big?13:10)+'px var(--sans,sans-serif)';cx.textBaseline='bottom';cx.fillText(Math.round(p)+'%',el.x,el.y-(big?15:11));
+          if(meta)meta.data.forEach((el,i)=>{const p=mPct[i+1];if(p==null)return;cx.fillStyle=barCol(p);cx.font='bold '+(big?13:10)+'px var(--sans,sans-serif)';cx.textBaseline='bottom';cx.fillText(Math.round(p)+'%'+((mPair[i+1]&&mPair[i+1].diff)?'*':''),el.x,el.y-(big?15:11));
             cx.fillStyle='#8b919d';cx.font=(big?11:8)+'px var(--mono,monospace)';cx.fillText(km(mFact[i+1]),el.x,el.y-3);});
           const yS=ch.scales.y;if(yS){cx.textAlign='right';cx.textBaseline='bottom';cx.font=(big?10:8)+'px var(--sans,sans-serif)';cx.fillStyle='#9aa1b0';cx.fillText('норма 95%',ch.chartArea.right-3,yS.getPixelForValue(95)-2);} // подпись линии нормы
           cx.restore();}};
@@ -11025,7 +11051,12 @@ function renderPlanFact(f){
           options:{responsive:true,maintainAspectRatio:false,layout:{padding:{top:big?26:20}},
             plugins:{legend:{display:false},tooltip:{filter:it=>!(it.dataset&&it.dataset._skipTip),callbacks:{
               title:items=>items.length?MONF[items[0].dataIndex]:'',
-              label:c=>{const m=c.dataIndex+1;if(mPct[m]==null)return 'Нет плана';return Math.round(mPct[m])+'% плана · факт '+rub0(mFact[m])+' · план '+rub0(mPlan[m])+(isCurM(m)?' · месяц не закрыт':'');}}}},
+              label:c=>{const m=c.dataIndex+1;if(mPct[m]==null)return 'Нет плана';const pp=mPair[m];
+                const who=pp&&pp.frozen?('утверждённый'+(pp.appr?', утв. '+pp.appr.date:'')):'текущий';
+                const out=[Math.round(mPct[m])+'% плана · факт '+rub0(mFact[m]),'план '+rub0(mPlan[m])+' ('+who+')'];
+                if(pp&&pp.diff)out.push('текущий план '+rub0(pp.cur)+' · '+Math.round(mFact[m]/pp.cur*100)+'%');
+                if(isCurM(m))out.push('месяц не закрыт');
+                return out;}}}},
             scales:{x:{grid:{display:false},ticks:{font:{size:big?12:10}}},
               y:{beginAtZero:true,grid:{color:'#ebebeb'},ticks:{font:{size:big?11:9},callback:v=>v+'%'}}}}});
       };
@@ -11087,13 +11118,33 @@ function renderPlanFact(f){
     }
     datasets.push(line100);
     legChips.push(dashChip('#9aa1b0','100% плана'));
+    // ── ВТОРАЯ ЛИНИЯ: уровень ТЕКУЩЕГО плана на шкале утверждённого ────────────
+    // ⚠ Рисуется только для ТЕКУЩЕГО месяца и только когда он заморожен, а текущий план
+    //   разошёлся с утверждённым: у каждого месяца своя база нормировки (cum/plan*100),
+    //   поэтому одна горизонтальная линия осмысленна ровно для одного месяца - того, про
+    //   который блок и рассказывает («динамика ВНУТРИ месяца», вывод под графиком - про него).
+    // ⚠ Цвет и штрих отличаются от линии 100% намеренно (синий против серого, [2,3] против
+    //   [5,4]): две одинаковые пунктирные линии читались бы как одна шкала.
+    const curPair=cur?planPair(cur.m):null;
+    const curLvl=(curPair&&curPair.diff)?(curPair.cur/curPair.base*100):null;
+    if(curLvl!=null){
+      datasets.push({label:'Текущий план',data:new Array(31).fill(+curLvl.toFixed(2)),borderColor:PLAN_CUR_COL,borderWidth:1.5,borderDash:[2,3],pointRadius:0,pointHoverRadius:0,tension:0,order:8,_skipTip:true});
+      legChips.push(dashChip(PLAN_CUR_COL,'Текущий план ('+pct1(curLvl)+'%)'));
+    }
     if(legEl)legEl.innerHTML=legChips.join('');
     // ── строка-вывод: 3 строки (рубли + прогноз). Прогноз = факт / медиана(доля от МЕСЯЧНОГО ИТОГА прошлых месяцев), не от плана ──
     if(cEl&&cur){
       const idx=Math.min(curDay,31)-1;
       const rub0=v=>Math.round(v).toLocaleString('ru-RU')+' ₽';
       const fRub=cur.rub[idx]||0,plan=cur.plan,pctPlan=cur.pct[idx]||0,rem=plan-fRub;
-      let h='<div style="font-size:15px;font-weight:700;line-height:1.45">На '+curDay+' '+MONG[curMonth-1]+' собрано '+rub0(fRub)+' - '+pct1(pctPlan)+'% плана ('+rub0(plan)+'). Осталось собрать '+rub0(Math.max(0,rem))+'.</div>';
+      // ⚠ План НАЗВАН по имени: «утверждённого плана» против «плана» - иначе две цифры (эта и в сводной) выглядят как расхождение расчёта
+      const cp=curPair;
+      const planWord=(cp&&cp.frozen)?'утверждённого плана':'плана';
+      const planTail=(cp&&cp.appr)?(', утверждён '+cp.appr.date+(cp.appr.retro?', ретроспектива':'')):'';
+      let h='<div style="font-size:15px;font-weight:700;line-height:1.45">На '+curDay+' '+MONG[curMonth-1]+' собрано '+rub0(fRub)+' - '+pct1(pctPlan)+'% '+planWord+' ('+rub0(plan)+planTail+'). Осталось собрать '+rub0(Math.max(0,rem))+'.</div>';
+      // те же три величины ко ВТОРОМУ плану - считаются здесь же, второй копии правила нет
+      if(cp&&cp.diff){const pcC=fRub/cp.cur*100,remC=cp.cur-fRub;
+        h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+PLAN_CUR_COL+'">К текущему плану ('+rub0(cp.cur)+'): собрано '+pct1(pcC)+'%, осталось '+rub0(Math.max(0,remC))+'.</div>';}
       if(past.length>=2){
         const medOf=a=>{const s=a.filter(v=>v!=null).sort((x,y)=>x-y);if(!s.length)return null;const n=s.length,hh=n>>1;return n%2?s[hh]:(s[hh-1]+s[hh])/2;};
         const medPlan=medOf(past.map(s=>s.pct[idx])); // медиана доли ОТ ПЛАНА - для «типично»
