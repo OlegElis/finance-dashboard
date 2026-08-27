@@ -11143,7 +11143,10 @@ function renderPlanFact(f){
     if(cEl&&cur){
       const idx=Math.min(curDay,31)-1;
       const rub0=v=>Math.round(v).toLocaleString('ru-RU')+' ₽';
-      const fRub=cur.rub[idx]||0,plan=cur.plan,pctPlan=cur.pct[idx]||0,rem=plan-fRub;
+      // ⚠ pctPlan берётся ИЗ РУБЛЕЙ, а не из cur.pct[idx]: тот округлён до сотых для графика,
+      //   и через него округление попадало в п.п. отклонения. Массив cur.pct не трогаем - на нём
+      //   рисуются кривые и коридор.
+      const fRub=cur.rub[idx]||0,plan=cur.plan,pctPlan=(plan>0?fRub/plan*100:0),rem=plan-fRub;
       // ⚠ План НАЗВАН по имени: «утверждённого плана» против «плана» - иначе две цифры (эта и в сводной) выглядят как расхождение расчёта
       const cp=curPair;
       const planWord=(cp&&cp.frozen)?'утверждённого плана':'плана';
@@ -11154,7 +11157,13 @@ function renderPlanFact(f){
         h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+PLAN_CUR_COL+'">К текущему плану ('+rub0(cp.cur)+'): собрано '+pct1(pcC)+'%, осталось '+rub0(Math.max(0,remC))+'.</div>';}
       if(past.length>=2){
         const medOf=a=>{const s=a.filter(v=>v!=null).sort((x,y)=>x-y);if(!s.length)return null;const n=s.length,hh=n>>1;return n%2?s[hh]:(s[hh-1]+s[hh])/2;};
-        const medPlan=medOf(past.map(s=>s.pct[idx])); // медиана доли ОТ ПЛАНА - для «типично»
+        // ⚠ МЕДИАНА СЧИТАЕТСЯ ОТ НЕОКРУГЛЁННОЙ ДОЛИ (27.08.2026), а не от s.pct[idx]: тот
+        //   округлён до сотых при сборке серии (округление нужно ГРАФИКУ, там оно и остаётся).
+        //   Через medPlan округление уходило в «типично» в рублях, а оттуда - в обе рублёвые
+        //   дельты: до 0,005 п.п. = ±721 руб. на плане 14,4 млн. Точные данные лежат рядом в
+        //   самой серии, поэтому доля берётся из них. Условие `s.rub[idx]!=null` повторяет
+        //   прежнее поведение: у месяца короче текущего дня доли за этот день нет.
+        const medPlan=medOf(past.map(s=>(s.plan>0&&s.rub[idx]!=null)?(s.rub[idx]/s.plan*100):null)); // медиана доли ОТ ПЛАНА - для «типично»
         const medTot=medOf(past.map(s=>(s.total>0&&s.rub[idx]!=null)?(s.rub[idx]/s.total):null)); // медиана доли ОТ МЕСЯЧНОГО ИТОГА - для прогноза
         if(medPlan!=null){const diff=pctPlan-medPlan,col2=diff<-0.05?'var(--outcome)':diff>0.05?'var(--income)':'var(--text2)';
           // ⚠ РУБЛЁВАЯ ДЕЛЬТА СЧИТАЕТСЯ ИЗ РУБЛЕЙ, А НЕ ИЗ ПРОЦЕНТА (27.08.2026).
