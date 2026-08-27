@@ -13415,8 +13415,13 @@ window.planFillRow=function(btn){
 // «План = факт»: вставить в ячейку фактическую сумму (data-fact). Только в режиме ₽ (факт - в рублях)
 // Заполнить все 12 месяцев строки фактом (по data-fact). Месяцы без факта остаются пустыми
 // видимая подпись факта под ячейкой (когда план > факта и мы НЕ перезаписываем автоматически)
-function _planFactHintSet(inp,f){const td=inp&&inp.parentNode;if(!td)return;let h=td.querySelector('.plan-fact-hint');if(!h){h=document.createElement('div');h.className='plan-fact-hint';h.style.cssText='font-size:9px;line-height:1.15;color:#c47a12;text-align:right;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;pointer-events:none;font-family:var(--mono)';td.appendChild(h);}h.textContent=Math.round(f).toLocaleString('ru-RU');}
-function _planFactHintClear(inp){const td=inp&&inp.parentNode;if(!td)return;const h=td.querySelector('.plan-fact-hint');if(h)h.remove();}
+function _planFactHintSet(inp,f){const td=inp&&inp.parentNode;if(!td)return;let h=td.querySelector('.plan-fact-hint');if(!h){h=document.createElement('div');h.className='plan-fact-hint';h.style.cssText='font-size:9px;line-height:1.15;color:#c47a12;text-align:right;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;pointer-events:none;font-family:var(--mono)';td.appendChild(h);}h.textContent=Math.round(f).toLocaleString('ru-RU');h.style.color='#c47a12';} // янтарный = «план отличается от факта»; базовый показ факта - приглушённый
+// ⚠ НЕ УДАЛЯЕТ подпись, если у неё есть базовый текст: с 27.08.2026 факт под ячейкой стоит
+//   ВСЕГДА, а этот вызов лишь снимает янтарную пометку расхождения. Удаление стирало бы факт,
+//   и он пропадал бы после «⤓ заполнить фактом» - ровно там, где на него и смотрят.
+function _planFactHintClear(inp){const td=inp&&inp.parentNode;if(!td)return;const h=td.querySelector('.plan-fact-hint');if(!h)return;
+  const b=h.getAttribute('data-base');
+  if(b!=null){h.textContent=b;h.style.color='var(--text3)';}else h.remove();}
 // Ядро заполнения фактом ОДНОЙ строки: пустые месяцы → факт; введённые не меняются (отличаются от факта → подсветка + подсказка).
 // Снимок ячеек пишется в snapAcc (для общего «Отменить»). Возвращает {applied, kept}. НЕ спрашивает/не пересчитывает итоги/не тостит.
 function _planFillTrFactCore(tr,snapAcc){
@@ -13623,6 +13628,28 @@ function _planRenderMatrix(){
   const dirMonthPlan=(rl,code,d,m)=>{const recs=eRecs(d,rl,code).filter(p=>p.month===m);if(!recs.length)return null;const F=FAD[d];let s=0;recs.forEach(r=>{s+=r.mode==='pct'?r.value*revM(d,m):r.mode==='pct_profit'?r.value*Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):r.value;});return s;};
   const subMonthPlan=(rl,code,m)=>{let s=null;dirsShown.forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: итоги при фильтре направления
   const _n0=v=>{const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}; // число из значения ячейки/факта (пусто → 0)
+  // ── ФАКТ ПОД ЯЧЕЙКОЙ ПЛАНА (27.08.2026) ─────────────────────────────────────
+  // ⚠ Ничего не считает: факт по паре «направление + подстатья» за месяц уже лежит в data-fact
+  //   (FAD построен одним проходом по RAW при открытии, factOf - выборка). Правка чисто
+  //   отрисовочная, открытие редактора не дорожает.
+  // ⚠ НОЛЬ НЕ РИСУЕМ НИГДЕ, а не только в будущих месяцах: пустое место лучше нуля, и это же
+  //   правило само убирает шум из будущих месяцев, где факта обычно нет. Но если факт в будущем
+  //   месяце ЕСТЬ (расход, признанный вперёд - дата ОПиУ законно уходит вперёд, см. CLAUDE.md),
+  //   он показывается: прятать реальные деньги на экране, где этот месяц планируют, нельзя.
+  // ⚠ Узел тот же .plan-fact-hint, которым помечает расхождение «⤓ заполнить фактом» - второго
+  //   не заводим: две подписи под одной ячейкой печатали бы одно и то же число дважды.
+  //   Базовый текст лежит в data-base, чтобы _planFactHintClear вернул его, а не стёр подпись.
+  const _tdy=new Date(),_curY=_tdy.getFullYear(),_curM=_tdy.getMonth()+1;
+  const _curDate=('0'+_tdy.getDate()).slice(-2)+'.'+('0'+_curM).slice(-2)+'.'+_curY;
+  const _R0=v=>Math.round(v).toLocaleString('ru-RU');
+  const factHint=(fv,m)=>{const v=_n0(fv);if(Math.abs(v)<=0.005)return '';
+    const isYr=(m===0);
+    const cur=isYr?(year===_curY):(year===_curY&&m===_curM);
+    const fut=isYr?(year>_curY):((year>_curY)||(year===_curY&&m>_curM));
+    const txt=_R0(v)+(cur?'*':'');
+    const ttl=cur?(isYr?('факт неполный - год не закончен, на '+_curDate):('факт неполный - месяц не закрыт, на '+_curDate))
+              :fut?'дата ОПиУ в будущем - признано вперёд':(isYr?'факт за год':'факт месяца');
+    return '<div class="plan-fact-hint" data-base="'+txt+'" title="'+ttl+'" style="font-size:9px;line-height:1.15;color:var(--text3);text-align:right;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;pointer-events:none;font-family:var(--mono)">'+txt+'</div>';};
   const rowHtml=(rdir,rl,code,label,rev,sub,key)=>{
     const moneyOnly=rev||rl==='income'; // доход - только ₽ (без % выручки/прибыли)
     const _recs=eRecs(rdir,rl,code);
@@ -13632,13 +13659,13 @@ function _planRenderMatrix(){
     const modeBtn=moneyOnly?'<span style="font-size:11px;color:var(--text3)">₽</span>':`<button type="button" class="plan-mode" data-mode="${mode}" data-allow-profit="${allowP?1:0}" onclick="planSetMode(this)" title="${allowP?'₽ → % выручки → % чистой прибыли':'₽ → % выручки'}" style="font-size:10px;min-width:40px;height:24px;padding:0 4px;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:${md[1]};color:${md[2]}">${md[0]}</button>`;
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,rl,code,i+1));
     const moFacts=[...Array(12)].map((_,i)=>factOf(rdir,rl,code,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" data-rb="${revM(rdir,i+1)}" data-nb="${netM(rdir,i+1)}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" data-rb="${revM(rdir,i+1)}" data-nb="${netM(rdir,i+1)}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)">${factHint(fv,i+1)}</td>`;}).join('');
     const yrExpl=cellVal(rdir,rl,code,0); // явный годовой план (если задан)
     const autoY=(mode==='money')?moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0):0;
     const yrIsAuto=(yrExpl===''&&mode==='money'); // показываем авто-сумму месяцев серым
     const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):'');
     const yrFact=factYr(rdir,rl,code);
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" data-rb="${revYrD(rdir)}" data-nb="${netYrD(rdir)}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт за год',fmt(yrFact)]],null,yrIsAuto?'Авто: сумма месяцев':'Годовой план')} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" data-rb="${revYrD(rdir)}" data-nb="${netYrD(rdir)}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт за год',fmt(yrFact)]],null,yrIsAuto?'Авто: сумма месяцев':'Годовой план')} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)">${factHint(yrFact,0)}</td>`;
     const isExp=rl!=='revenue'; // ответственный/примечание - за расходами И доходами; не для строки «Выручка всего»
     const owner=isExp?(_planOwners[_ownerKey(rdir,code)]||''):'';
     const note=isExp?(_planNotes[_ownerKey(rdir,code)]||''):'';
@@ -13658,8 +13685,31 @@ function _planRenderMatrix(){
   };
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   // фильтр «Направление» редактора: развороты и итоги показывают только выбранное; планы скрытых направлений НЕ трогаются при сохранении (presentKeys в _planStage)
+  // ── НАПРАВЛЕНИЯ БЕЗ ЕДИНОЙ ЗАПИСИ ЗА ГОД (27.08.2026) ────────────────────────
+  // Признак «направление не используется» составной, готового в коде не было: НЕТ ни одной
+  // записи плана за выбранный год И НЕТ ненулевого факта за него же. Оба слагаемых уже
+  // построены выше - _planRecords и FAD, - своего прохода по RAW здесь нет.
+  // ⚠ Скрытие НЕ МЕНЯЕТ НИ ОДНОГО ЧИСЛА: dirsShown питает и строки, и итоги свёрнутых
+  //   подстатей (subYearPlan/subMonthPlan), а у скрытого направления план null и факт 0 -
+  //   вклад в сумму нулевой по определению признака. Это и есть причина, по которой прятать
+  //   безопасно: прячется ровно то, что ничего не весит.
+  const _nzf=v=>Math.abs(v)>0.005;
+  const dirsWithPlan=new Set();(_planRecords||[]).forEach(p=>{if(p&&p.year===year&&p.dir)dirsWithPlan.add(p.dir);});
+  const dirsWithFact=new Set();Object.keys(FAD).forEach(d=>{const F=FAD[d];
+    if(F.rev.some(_nzf)||F.npExp.some(_nzf)||Object.keys(F.inc).some(k=>F.inc[k].some(_nzf))||Object.keys(F.exp).some(k=>F.exp[k].some(_nzf)))dirsWithFact.add(d);});
+  const dirUsed=d=>dirsWithPlan.has(d)||dirsWithFact.has(d);
+  const dirsHidden=allDirs.filter(d=>!dirUsed(d));
+  const showAllDirs=!!window._planShowAllDirs;
   const dirFlt=String(window._planDirFlt||'');
-  const dirsShown=(dirFlt&&allDirs.includes(dirFlt))?[dirFlt]:allDirs;
+  // ⚠ Если по признаку не осталось НИ ОДНОГО направления (пустой год - его как раз и приходят
+  //   заводить), показываем все: редактор, в котором нечего заполнить, бесполезен.
+  const _dirsAuto=showAllDirs?allDirs:allDirs.filter(dirUsed);
+  const dirsShown=(dirFlt&&allDirs.includes(dirFlt))?[dirFlt]:(_dirsAuto.length?_dirsAuto:allDirs);
+  // счётчик скрытого - в шапку панели (она рисуется отдельно и живёт между перерисовками матрицы)
+  setTimeout(()=>{const hs=document.getElementById('plan-dirs-hidden');
+    if(hs)hs.textContent=(!showAllDirs&&_dirsAuto.length&&dirsHidden.length)?('скрыто: '+dirsHidden.length):'';
+    if(hs)hs.title=dirsHidden.length?('Без записей плана и без факта за '+year+': '+dirsHidden.join(', ')):'';
+    const cb=document.getElementById('plan-dirs-all');if(cb)cb.checked=showAllDirs;},0);
   const unionCodes=fn=>{const s={};allDirs.forEach(d=>fn(d,level).forEach(c=>s[c]=1));return Object.keys(s).sort((a,b)=>String(a).localeCompare(String(b),'ru'));};
   // поиск по строкам матрицы (фильтр кодов по подстроке, live)
   const rowQ=String(window._planRowQ||'').trim().toLowerCase();
@@ -13693,11 +13743,11 @@ function _planRenderMatrix(){
   const empRowHtml=(rdir,code,side,label,key)=>{
     const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,level,code,i+1,side));
     const moFacts=[...Array(12)].map((_,i)=>factSideOf(rdir,code,side,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)"></td>`;}).join('');
+    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)">${factHint(fv,i+1)}</td>`;}).join('');
     const yrExpl=cellVal(rdir,level,code,0,side);
     const autoY=moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0);
     const yrIsAuto=(yrExpl===''); const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):''); const yrFact=factSideYr(rdir,code,side);
-    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт за год',fmt(yrFact)]],null,yrIsAuto?'Авто: сумма месяцев':'Годовой план')} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)"></td>`;
+    const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт за год',fmt(yrFact)]],null,yrIsAuto?'Авто: сумма месяцев':'Годовой план')} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)">${factHint(yrFact,0)}</td>`;
     const rowEmpty=moVals.every(v=>!_n0(v))&&!_n0(yrExpl)&&moFacts.every(fv=>Math.abs(_n0(fv))<=0.005)&&Math.abs(_n0(yrFact))<=0.005;
     return `<tr${rowEmpty?' class="plan-row-empty"':''} data-code="${esc(code)}" data-level="${level}" data-dir="${esc(rdir)}" data-side="${esc(side)}" data-key="${esc(level+'|'+code)}">
       <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">${isRentCode(code)?'🏢':'👤'}</span>${esc(label)}</td>
@@ -13859,6 +13909,9 @@ window._planExpanded=window._planExpanded||new Set();
 window.planToggleExpand=function(key){try{_planStage();}catch(e){}const S=window._planExpanded||(window._planExpanded=new Set());if(S.has(key))S.delete(key);else S.add(key);_planRenderMatrix();};
 // Фильтр «Направление» редактора: показывать развороты/итоги только по выбранному (пусто = все)
 window.planDirFlt=function(v){try{_planStage();}catch(e){}window._planDirFlt=v||'';_planRenderMatrix();};
+// показать/скрыть направления без записей за год. Порядок как у planDirFlt: сначала _planStage -
+// иначе введённое, но не сохранённое, потерялось бы при перерисовке матрицы.
+window.planShowAllDirs=function(v){try{_planStage();}catch(e){}window._planShowAllDirs=!!v;_planRenderMatrix();};
 // «Развернуть все / Свернуть все» (1-й уровень - коды; сотрудники/объекты разворачиваются вручную)
 window.planExpandCmd=function(cmd){try{_planStage();}catch(e){}window._planExpandCmd=cmd;_planRenderMatrix();};
 // Живой поиск по строкам матрицы (debounce 250мс; состояние разворотов сохраняется)
@@ -14808,7 +14861,7 @@ window.showPlansPanel=async function(){
   // список ответственных (ФИО) для фильтра: ЦФО + уже назначенные в планах
   const ownerNames=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{})].map(x=>String(x||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   window._planSubartSel=new Set(); window._planOwnerSel=new Set(); // сброс мультивыбора подстатей и ответственных при открытии (стартуем со «всех»)
-  window._planDirFlt=''; window._planRowQ=''; window._planExpandCmd=null; // сброс фильтра направления, поиска и команды разворота
+  window._planDirFlt=''; window._planRowQ=''; window._planExpandCmd=null; window._planShowAllDirs=false; // сброс фильтра направления, поиска, команды разворота и показа пустых направлений
   const isAdmin=(()=>{try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}})();
   window._planReadOnly=!isAdmin; // не админ - только просмотр (изменять/сохранять нельзя)
   window._planDirty=false; // несохранённые правки (защита от потери при закрытии)
@@ -14822,6 +14875,8 @@ window.showPlansPanel=async function(){
         <select id="plan-dir-flt" onchange="planDirFlt(this.value)" title="Показывать развороты и итоги только по выбранному направлению (планы остальных не трогаются)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:260px">
           <option value="">Все направления</option>${dirs.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')}
         </select>
+        <label title="Направления без единой записи плана и без факта за выбранный год скрыты. Здесь их видно - чтобы завести план по направлению, которое только начинается." style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);white-space:nowrap;cursor:pointer"><input type="checkbox" id="plan-dirs-all" onchange="planShowAllDirs(this.checked)" style="margin:0;cursor:pointer">показывать все направления</label>
+        <span id="plan-dirs-hidden" style="font-size:10px;color:var(--text3);white-space:nowrap"></span>
         <select id="plan-year" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${years.map(y=>`<option value="${y}"${y===cy?' selected':''}>${y}</option>`).join('')}</select>
         <input id="plan-row-q" type="text" autocomplete="off" placeholder="Поиск по строкам..." oninput="planRowSearch(this.value)" style="font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:170px">
         <span style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
