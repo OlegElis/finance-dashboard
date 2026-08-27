@@ -11157,27 +11157,33 @@ function renderPlanFact(f){
         const medPlan=medOf(past.map(s=>s.pct[idx])); // медиана доли ОТ ПЛАНА - для «типично»
         const medTot=medOf(past.map(s=>(s.total>0&&s.rub[idx]!=null)?(s.rub[idx]/s.total):null)); // медиана доли ОТ МЕСЯЧНОГО ИТОГА - для прогноза
         if(medPlan!=null){const diff=pctPlan-medPlan,col2=diff<-0.05?'var(--outcome)':diff>0.05?'var(--income)':'var(--text2)';
-          const typRub=medPlan/100*plan,diffRub=Math.abs(diff)/100*plan;
+          // ⚠ РУБЛЁВАЯ ДЕЛЬТА СЧИТАЕТСЯ ИЗ РУБЛЕЙ, А НЕ ИЗ ПРОЦЕНТА (27.08.2026).
+          //   Было `Math.abs(diff)/100*plan`, где diff берёт процент из cur.pct - а он округлён
+          //   до сотых при сборке серии (`+(cum/plan*100).toFixed(2)`, округление нужно графику).
+          //   Обратный пересчёт возвращал не ту сумму: на августе 2026 печаталось 226 368 при том,
+          //   что собрано минус типично = 226 836. Человек, вычитающий два показанных рубля,
+          //   получал третье число - расхождение 468 руб. из ниоткуда. Процент для показа прежний.
+          const typRub=medPlan/100*plan,diffRub=Math.abs(fRub-typRub);
           const tail2=diff<-0.05?('Отставание '+pct1(Math.abs(diff))+' п.п. = '+rub0(diffRub)):diff>0.05?('Опережение '+pct1(diff)+' п.п. = '+rub0(diffRub)):'На уровне типичного';
           h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+col2+'">Типично на эту дату: '+pct1(medPlan)+'% ('+rub0(typRub)+'). '+tail2+'.</div>';
           // ⚠ medPlan НЕ пересчитывается - это медиана долей от УТВЕРЖДЁННЫХ планов прошлых месяцев
           //   (см. подпись под графиком). К текущему плану применяется ТА ЖЕ доля, меняется только
           //   знаменатель: «сколько было бы типично собрано, будь план текущим».
-          if(cp&&cp.diff){const typC=medPlan/100*cp.cur,dC=(fRub/cp.cur*100)-medPlan,dRubC=Math.abs(dC)/100*cp.cur;
+          if(cp&&cp.diff){const typC=medPlan/100*cp.cur,dC=(fRub/cp.cur*100)-medPlan,dRubC=Math.abs(fRub-typC); // дельта из рублей - тем же способом, что и строкой выше
             const colC=dC<-0.05?'var(--outcome)':dC>0.05?'var(--income)':'var(--text2)';
             const tailC=dC<-0.05?('Отставание '+pct1(Math.abs(dC))+' п.п. = '+rub0(dRubC)):dC>0.05?('Опережение '+pct1(dC)+' п.п. = '+rub0(dRubC)):'На уровне типичного';
             h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+colC+'">К текущему плану: типично '+rub0(typC)+'. '+tailC+'.</div>';}}
         if(medTot&&medTot>0){const fc=fRub/medTot,fcPct=fc/plan*100,gap=fc-plan;
           const col3=fcPct<95?'var(--outcome)':fcPct<=105?'var(--orange)':'var(--income)';
           const tail3=gap<-0.5?('Недобор '+rub0(Math.abs(gap))):gap>0.5?('Перевыполнение '+rub0(gap)):'точно в план';
-          h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+col3+'">Прогноз при сохранении темпа: '+rub0(fc)+' ('+Math.round(fcPct)+'% плана). '+tail3+'.</div>';
+          h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+col3+'">Прогноз при сохранении темпа: '+rub0(fc)+' ('+pct1(fcPct)+'% плана). '+tail3+'.</div>';
           // ⚠ Сам прогноз (fc) от плана НЕ зависит - он считается от медианы доли МЕСЯЧНОГО ИТОГА
           //   прошлых месяцев. Значит второе прочтение это то же число под другим знаменателем,
           //   а не второй прогноз: пересчитывать fc нечего и нельзя.
           if(cp&&cp.diff){const fcPctC=fc/cp.cur*100,gapC=fc-cp.cur;
             const colC3=fcPctC<95?'var(--outcome)':fcPctC<=105?'var(--orange)':'var(--income)';
             const tailC3=gapC<-0.5?('Недобор '+rub0(Math.abs(gapC))):gapC>0.5?('Перевыполнение '+rub0(gapC)):'точно в план';
-            h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+colC3+'">К текущему плану: '+Math.round(fcPctC)+'% плана. '+tailC3+'.</div>';}}
+            h+='<div style="font-size:13px;font-weight:600;line-height:1.4;margin-top:4px;color:'+colC3+'">К текущему плану: '+pct1(fcPctC)+'% плана. '+tailC3+'.</div>';}}
         else h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">Недостаточно истории для прогноза.</div>';
       }else h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">Недостаточно истории (нужно ≥ 2 прошлых месяцев с планом и фактом).</div>';
       h+='<div style="font-size:10px;color:var(--text2);opacity:.85;margin-top:6px">Прогноз тем точнее, чем ближе к концу месяца. До 20-го числа - ориентировочный.</div>';
