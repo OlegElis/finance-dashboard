@@ -15372,7 +15372,9 @@ function bflEnsureModel(m){
   //   молча, и разбирать это пришлось бы по расхождению итогов, а не по коду.
   // ⚠ Отбор ОТ ОБРАТНОГО: берём всё, кроме перечисленных префиксов. Новая подстатья попадает в
   //   накладные САМА - накладные именно так и растут, а белый список её потерял бы.
-  if(!m.overhead)m.overhead={dir:'БФЛ',windowMonths:12,minMonths:6,exclude:['111_','112_','120_','127_','300_','900_']};
+  if(!m.overhead)m.overhead={dir:'БФЛ',windowMonths:12,minMonths:6,closeDays:10,endMonth:'',exclude:['111_','112_','120_','127_','300_','900_']};
+  if(m.overhead.closeDays==null)m.overhead.closeDays=10;   // месяц закрывается не в последний день, а через N дней после
+  if(m.overhead.endMonth==null)m.overhead.endMonth='';     // пусто = конец окна определяется автоматически
   const opauDep=(m.departments||[]).find(x=>x&&x.id==='opau');if(opauDep&&!Array.isArray(opauDep.perCase)){ // ОПАУ: контур + per-case (депозит/публикации за дело)
     opauDep.contour='opau';opauDep.tskpFromOp=true;opauDep.casesFromOp=true;opauDep.tskpLabel='дела от ОИ';
     opauDep.perCase=[{name:'Возвратный депозит (за процедуру)',rate:25000,passThrough:true},{name:'Публикации (за процедуру)',rate:20000}];
@@ -15713,10 +15715,28 @@ function bflOverhead(){
   const _mn=+P.minMonths;
   const MIN=(_mn>=1&&_mn<=N)?Math.round(_mn):Math.ceil(N/2);
   const dir=P.dir||'БФЛ',ex=Array.isArray(P.exclude)?P.exclude:[];
-  const key=[N,MIN,dir,ex.join('|'),(typeof RAW!=='undefined'&&RAW?RAW.length:0)].join('~');
-  if(_bflOvhKey===key&&_bflOvh)return _bflOvh;
+  const CLOSE=Math.max(0,P.closeDays==null?10:+P.closeDays||0);
   const now=new Date(),mk=d=>d.getFullYear()*12+d.getMonth();
-  const e0=mk(now)-1,s0=e0-N+1;               // последний ПОЛНЫЙ месяц и начало окна, включительно
+  // ⚠ КОНЕЦ ОКНА - НЕ «ПРОШЛЫЙ КАЛЕНДАРНЫЙ МЕСЯЦ». Месяц у нас закрывается только через CLOSE
+  //   дней после его окончания, и до этого срока данные в нём неполны. Считай мы по календарю,
+  //   с 1 по 10 сентября август шёл бы в расчёт как закрытый и ЗАНИЖАЛ БЫ среднее - молча,
+  //   потому что число выглядело бы правдоподобно. Теперь 5 сентября конец окна - июль,
+  //   а 15 сентября он сам становится августом, без чьего-либо вмешательства.
+  // ⚠ Ручной «по месяц» (endMonth) НЕ ДВИГАЕТСЯ САМ: он для разбора конкретного отрезка.
+  const _pe=String(P.endMonth||'').trim();
+  let manual=null;
+  {const a=/^(\d{1,2})[.\/-](\d{4})$/.exec(_pe),b=/^(\d{4})[.\/-](\d{1,2})$/.exec(_pe);
+   if(a)manual=(+a[2])*12+(+a[1]-1); else if(b)manual=(+b[1])*12+(+b[2]-1);
+   if(manual!=null&&!(manual>=0&&manual<=mk(now)+600))manual=null;}
+  let e0,skipped=null;
+  if(manual!=null)e0=manual;
+  else{let k=mk(now)-1;
+    while(k>0){const y=Math.floor(k/12),mo=k%12;const closeAt=new Date(y,mo+1,1);closeAt.setDate(closeAt.getDate()+CLOSE);
+      if(now>=closeAt)break; k--;}
+    e0=k; if(e0<mk(now)-1)skipped=e0+1;}   // первый НЕ закрытый месяц - его и называем в подписи
+  const s0=e0-N+1;
+  const key=[N,MIN,dir,ex.join('|'),CLOSE,_pe,e0,(typeof RAW!=='undefined'&&RAW?RAW.length:0)].join('~');
+  if(_bflOvhKey===key&&_bflOvh)return _bflOvh;
   const acc={};
   (typeof RAW!=='undefined'&&RAW?RAW:[]).forEach(r=>{
     // ⚠ НАПРАВЛЕНИЕ СРАВНИВАЕТСЯ ПО ПРЕФИКСУ, а не на равенство: в RAW направление БФЛ записано
@@ -15744,7 +15764,10 @@ function bflOverhead(){
     return {code:c,total:a.total,avg:a.total/N,months:mo};})
     .filter(r=>Math.abs(r.avg)>0.005).sort((x,y)=>y.avg-x.avg);
   const fm=k=>('0'+(k%12+1)).slice(-2)+'.'+Math.floor(k/12);
-  const out={dir:dir,windowMonths:N,minMonths:MIN,exclude:ex,rows:rows,
+  const MONNOM=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+  const out={dir:dir,windowMonths:N,minMonths:MIN,exclude:ex,rows:rows,closeDays:CLOSE,
+    endManual:manual!=null,endMonth:_pe,
+    reason:(manual!=null)?'конец задан вручную':(skipped!=null?(MONNOM[skipped%12]+' ещё не закрыт'):''),
     regular:rows.filter(r=>r.months>=MIN),irregular:rows.filter(r=>r.months<MIN),
     from:fm(s0),to:fm(e0)};
   out.total=out.regular.reduce((a,r)=>a+r.avg,0);
@@ -16110,7 +16133,7 @@ window.bflPrintBlocks=function(){
       //   подстатей его бы гарантированно порвали. Выключен - итоговая строка; включён - обе
       //   таблицы полностью, потому что на бумаге строку уже не раскрыть.
       const ovh=`<div class="sect"><div class="sh">Содержание компании · накладные</div>
-        <div class="note">Среднее за ${O.windowMonths} мес: ${esc(O.from)} - ${esc(O.to)} · направление ${esc(O.dir)} · постоянных ${O.regular.length}, нерегулярных ${O.irregular.length} · считается из БДР при каждом открытии, в модели не хранится. Исключены префиксы: ${esc((O.exclude||[]).join(', '))}.</div>
+        <div class="note">Среднее за ${O.windowMonths} мес: ${esc(O.from)} - ${esc(O.to)}${O.reason?' · '+esc(O.reason):''} · направление ${esc(O.dir)} · постоянных ${O.regular.length}, нерегулярных ${O.irregular.length} · считается из БДР при каждом открытии, в модели не хранится. Исключены префиксы: ${esc((O.exclude||[]).join(', '))}.</div>
         <table><tbody><tr class="tot"><td class="l">Постоянные накладные, в месяц</td><td>${bflM(O.total)}</td></tr>
         <tr><td class="l" style="color:#5b6376">Нерегулярные (в сумму не входят)</td><td style="color:#5b6376">${bflM(O.irregularTotal)}</td></tr></tbody></table></div>`
         +(detail?(ovhTbl(O.regular,'Постоянные накладные','Движение не реже чем в '+O.minMonths+' месяцах окна.')
@@ -16691,6 +16714,9 @@ function bflRenderDepts(host){
     //   Свой id '__ovh' - отделa с таким идентификатором нет и быть не может.
     const open=!!window._bflOpen['__ovh'];
     const gi=(path,val,w)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-path="${path}" onchange="bflGlobalEdit(this)" onclick="event.stopPropagation()" style="width:${w||44}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`;
+    // ⚠ Текстовое поле - через data-text: без него bflGlobalEdit прогнал бы «07.2026» через
+    //   parseNum и записал бы 7, молча превратив ручной конец окна в мусор.
+    const gt=(path,val,w,ph)=>`<input type="text" value="${esc(val==null?'':val)}" placeholder="${esc(ph||'')}" data-text="1" data-path="${path}" onchange="bflGlobalEdit(this)" onclick="event.stopPropagation()" style="width:${w||64}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`;
     const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
     const tbl=(rows,title,note)=>rows.length?`<div style="margin-top:10px">
       <div style="font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${title} · ${rows.length}</div>
@@ -16704,19 +16730,21 @@ function bflRenderDepts(host){
     //   нерегулярных) и период. Разворачивают ради строк и параметров, а не ради одной цифры.
     const head=`<div onclick="bflToggleDept('__ovh')" style="display:flex;align-items:center;gap:12px;padding:11px 13px;cursor:pointer">
       <div style="flex:1"><div style="font-size:13px;font-weight:600">Содержание компании</div>
-        <div style="font-size:10.5px;color:var(--text3);margin-top:1px">${open?'▾':'▸'} постоянных ${O.regular.length} · нерегулярных ${O.irregular.length} · ${esc(O.from)} - ${esc(O.to)}</div></div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:1px">${open?'▾':'▸'} постоянных ${O.regular.length} · нерегулярных ${O.irregular.length} · ${esc(O.from)} - ${esc(O.to)}${O.reason?' · '+esc(O.reason):''}</div></div>
       <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">В месяц</div>
         <div style="font-size:16px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(O.total)}</div></div>
     </div>`;
     // ⚠ Янтарная плашка - только в развёрнутом: она объясняет РАЗОВУЮ вещь (откуда взялся рост
     //   расходов), и на свёрнутой карточке мозолила бы глаза каждый день после первого прочтения.
     const body=open?`<div style="padding:0 13px 12px;border-top:1px dashed var(--border)">
-      <div style="font-size:11px;color:var(--text2);margin-top:9px">среднее за ${O.windowMonths} мес: <b>${esc(O.from)} - ${esc(O.to)}</b> · направление ${esc(O.dir)} · считается из БДР при каждом открытии, в модели не хранится</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:9px">среднее за ${O.windowMonths} мес: <b>${esc(O.from)} - ${esc(O.to)}</b>${O.reason?' · '+esc(O.reason):''} · направление ${esc(O.dir)} · считается из БДР при каждом открытии, в модели не хранится</div>
       <div style="font-size:11px;color:var(--text2);margin-top:6px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
         <span>Окно, мес ${gi('overhead.windowMonths',O.windowMonths)}</span>
         <span>Порог регулярности, мес ${gi('overhead.minMonths',O.minMonths)}</span>
-        <span style="color:var(--text3)">исключены префиксы: ${esc((O.exclude||[]).join(', '))}</span>
+        <span title="Месяц идёт в расчёт только когда с его окончания прошло столько дней. До этого срока данные в нём неполны, и он занизил бы среднее.">Месяц закрывается через, дн. ${gi('overhead.closeDays',O.closeDays)}</span>
+        <span title="Конец периода. Пусто - определяется автоматически по правилу закрытия и обновляется сам. Заданный вручную (ММ.ГГГГ) не двигается.">По месяц ${gt('overhead.endMonth',O.endMonth,64,'авто')}</span>
       </div>
+      <div style="font-size:10.5px;color:var(--text3);margin-top:4px">исключены префиксы: ${esc((O.exclude||[]).join(', '))}</div>
       <div style="margin-top:8px;font-size:11px;color:var(--orange);background:rgba(232,134,43,.08);border:1px solid var(--orange);border-radius:6px;padding:6px 9px">⚠ Накладных в модели раньше не было вовсе. С их включением расходы выросли на ${bflM(O.total)} в месяц, и ровно на столько же уменьшилась прибыль в ОПИУ. Это ожидаемо, а не ошибка расчёта.</div>
       ${tbl(O.regular,'Постоянные накладные','Движение было не реже чем в '+O.minMonths+' месяцах окна. Только они входят в сумму выше.')}
       ${tbl(O.irregular,'Нерегулярные','Движение реже порога. В сумму НЕ входят: разовый расход, делённый на окно, осел бы в постоянных навсегда. Итого по ним '+bflM(O.irregularTotal)+' в месяц.')}
