@@ -15684,6 +15684,22 @@ function bflCostAmount(c,g){
   if(c.profitTaxAuto){const rev=bflRevenue();return (g.profitTaxRate||0)*rev+(g.profitTaxExtra||0)*Math.max(0,rev-(g.profitTaxThreshold||0));}
   return c.amount||0;
 }
+// ── СДЕЛЬНАЯ ВЫПЛАТА ЗА НАПРАВЛЕНИЕ ──────────────────────────────────────────
+// ⚠ Считается ТОЛЬКО из модели и bflQtyFlow (поток количеств без затрат). Через bflDeptCalc
+//   её брать НЕЛЬЗЯ - см. предупреждение в bflCommercial: для отдела с collectsRassrochka
+//   расчёт замыкается обратно, и это уже стоило падения «Maximum call stack size exceeded»
+//   28.08.2026. Отдельная функция и заведена затем, чтобы такой вызов было незачем писать.
+function bflOksBonusFor(d){
+  if(!d||!d.oksBonus)return null;
+  const ob=d.oksBonus,bdir=ob.dir||'R-bfl';
+  const mkt=(_bflModel.departments||[]).find(x=>Array.isArray(x.leadgen));
+  const opD=(_bflModel.departments||[]).find(x=>x.dealStage);
+  const qf=bflQtyFlow();
+  const qual=(mkt&&qf[mkt.id])?(qf[mkt.id][bdir]||0):0;
+  const deals=(opD&&qf[opD.id])?(qf[opD.id][bdir]||0):0;
+  return {dir:bdir,qual:qual,deals:deals,perQual:ob.perQual||0,perDeal:ob.perDeal||0,total:(ob.perQual||0)*qual+(ob.perDeal||0)*deals};
+}
+function bflOksBonusTotal(){return bflOksBonusFor((_bflModel.departments||[]).find(x=>x&&x.oksBonus));}
 function bflDeptCalc(d,g){
   const roles=d.roles||[],costs=d.costs||[];
   let fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);      // общий ФОТ отдела
@@ -15756,17 +15772,7 @@ function bflDeptCalc(d,g){
   // ⚠ Количества берутся из bflQtyFlow() - потока КОЛИЧЕСТВ без затрат. Через bflDeptCalc их
   //   брать нельзя: ОП считается с агентскими комиссиями, которые сами читают сделки, и вышло
   //   бы зацикливание. bflQtyFlow заведён ровно под этот случай.
-  let oksBonus=0,oksBonusRow=null;
-  if(d.oksBonus){
-    const ob=d.oksBonus,bdir=ob.dir||'R-bfl';
-    const mkt=(_bflModel.departments||[]).find(x=>Array.isArray(x.leadgen));
-    const opD=(_bflModel.departments||[]).find(x=>x.dealStage);
-    const qf=bflQtyFlow();
-    const qual=(mkt&&qf[mkt.id])?(qf[mkt.id][bdir]||0):0;
-    const dealsB=(opD&&qf[opD.id])?(qf[opD.id][bdir]||0):0;
-    oksBonus=(ob.perQual||0)*qual+(ob.perDeal||0)*dealsB;
-    oksBonusRow={dir:bdir,qual:qual,deals:dealsB,perQual:ob.perQual||0,perDeal:ob.perDeal||0,total:oksBonus};
-  }
+  const oksBonusRow=bflOksBonusFor(d),oksBonus=oksBonusRow?oksBonusRow.total:0;
   const passAll=pass+perCasePass;
   const gross=fot+nach+other+leadSpend+perCaseTotal+oksBonus, net=gross-passAll;
   const base = d.supportDept ? null : (d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:(d.tskpFromProd?bflCasesProd():d.tskpFromOp?bflOpDeals():d.tskpBase))); // маркетинг: квал-лиды; воронка: выход; tskpFromOp: сделки от ОП; tskpFromProd: дела после отвала; supportDept: ЦКП не применим
@@ -15782,6 +15788,10 @@ function bflDeptCalc(d,g){
   // инкассация: ОП (money) = первый платёж (Σ сделки × первый платёж); ОС (collectsRassrochka) = рассрочка коммерческого блока; иначе - заданная
   let incassation=d.incassation||0;
   if(d.funnel&&d.funnel.money)incassation=firstPayTotal*(1-bflPreCourtOtval()); // первый платёж минус возврат отвалившимся (полный возврат)
+  // ⚠ ОБРАТНАЯ ПОЛОВИНА ИНВАРИАНТА (см. bflCommercial): вот эта строка и делает связь
+  //   двусторонней - расчёт отдела уходит в bflCommercial за рассрочкой. Поэтому bflCommercial
+  //   не имеет права звать bflDeptCalc для такого отдела: получится бесконечная рекурсия.
+  //   Ветка видна только здесь, внутри условия, - снаружи связь незаметна, на ней и горели.
   if(d.collectsRassrochka)incassation=bflCommercial().rass;
   return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,oksBonus:oksBonus,oksBonusRow:oksBonusRow,
     perCaseRows:perCaseRows,caseCount:caseCount,revPerCaseRows:revPerCaseRows,selfRev:selfRev,selfNet:selfRev-gross,
@@ -15894,8 +15904,7 @@ function bflDealCostByDir(){
   //   сумма участвует в стоимости сделки #3 и в расходах производственного блока - и ни разу
   //   в расходах коммерческого. Проверять это при правках: bflCommercial НЕ должна начать
   //   складывать production.
-  const oksDep=(_bflModel.departments||[]).find(x=>x&&x.oksBonus);
-  const oksRow=oksDep?bflDeptCalc(oksDep,g).oksBonusRow:null;
+  const oksRow=bflOksBonusTotal(); // ⚠ не через bflDeptCalc - см. предупреждение в bflCommercial
   return order.map(dir=>{
     const mktC=mktByDir[dir]||0,koC=koOutTot?koGross*(koOut[dir]||0)/koOutTot:0,opC=opOutTot?opGross*(opOut[dir]||0)/opOutTot:0;
     const oksC=(oksRow&&oksRow.dir===dir)?oksRow.total:0;
@@ -15920,8 +15929,11 @@ function bflCommercial(){
   //   него сдельная выплата ОКС не входит и входить не должна - иначе она посчиталась бы и в
   //   производственном блоке, и в коммерческом. А `tskpDeal` - СТОИМОСТЬ СДЕЛКИ, и она обязана
   //   включать всё, что за сделку заплачено, в том числе выплату ОКС.
-  const oksDepC=(_bflModel.departments||[]).find(x=>x&&x.oksBonus);
-  const oksTot=oksDepC?(bflDeptCalc(oksDepC,g).oksBonus||0):0;
+  // ⚠ НЕ ВЫЗЫВАТЬ ЗДЕСЬ bflDeptCalc: у отделов с collectsRassrochka (ОКС) его расчёт сам зовёт
+  //   bflCommercial за рассрочкой, и вызов замкнётся обратно сюда - «Maximum call stack size
+  //   exceeded» на всей вкладке. Ровно это и случилось 28.08.2026. Всё, что нужно «по отделу»,
+  //   считать функциями, которые читают МОДЕЛЬ, а не результат bflDeptCalc, - как bflOksBonusTotal.
+  const _obT=bflOksBonusTotal(),oksTot=_obT?_obT.total:0;
   return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,firstPayGross:firstPayGross,refund:refund,rass:rass,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,oksBonus:oksTot,tskpDeal:bflSafeDiv(gross+oksTot,deals)};
 }
 function _bflSetPath(obj,path,val){const p=path.split('.');let o=obj;for(let i=0;i<p.length-1;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i];o=o[k];}const last=/^\d+$/.test(p[p.length-1])?+p[p.length-1]:p[p.length-1];o[last]=val;}
