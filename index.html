@@ -16025,10 +16025,15 @@ window.bflPrintBlocks=function(){
       const com=bflCommercial(),dc=bflDealCostByDir();
       const extra=dc.some(r=>r.deals>0)?('<span class="dl">Стоимость сделки:</span>'+dc.filter(r=>r.deals>0).map(r=>`<span class="dc">${esc(r.name)} <b>${bflM(r.costPerDeal)}</b></span>`).join('<span class="ds">·</span>')):'';
       const hasOks=dc.some(r=>(r.oksC||0)>0.005),oksSum=dc.reduce((a,r)=>a+(r.oksC||0),0);
+      // ⚠ Тот же сторож, что на экране: разница между итогом и суммой строк печатается строкой,
+      //   а не прячется. Появляется только когда она есть.
+      const rowsSum=dc.reduce((a,r)=>a+r.total,0),dcTot=com.gross+oksSum,outside=dcTot-rowsSum;
+      const hasOutside=Math.abs(outside)>1;
       const tbl=`<div class="sect"><div class="sh">Стоимость сделки по направлениям</div>
         <table><thead><tr><th class="l">Направление</th><th>Сделки</th><th>Маркетинг</th><th>КО</th><th>ОП</th>${hasOks?'<th>ОКС (сдельно)</th>':''}<th>Σ расходы</th><th>Стоимость сделки</th></tr></thead><tbody>`
         +dc.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${bflI(r.deals)}</td><td>${bflM(r.mktC)}</td><td>${bflM(r.koC)}</td><td>${bflM(r.opC)}</td>${hasOks?`<td>${bflM(r.oksC||0)}</td>`:''}<td>${bflM(r.total)}</td><td><b>${bflM(r.costPerDeal)}</b></td></tr>`).join('')
-        +`<tr class="tot"><td class="l">ИТОГО (блок)</td><td>${bflI(com.deals)}</td><td>${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td>${hasOks?`<td>${bflM(oksSum)}</td>`:''}<td>${bflM(dc.reduce((a,r)=>a+r.total,0))}</td><td>${bflM(com.tskpDeal)}</td></tr>`
+        +(hasOutside?`<tr><td class="l" style="color:#5b6376">Вне направлений</td><td>-</td><td>-</td><td>-</td><td>-</td>${hasOks?'<td>-</td>':''}<td style="color:#5b6376">${bflM(outside)}</td><td>-</td></tr>`:'')
+        +`<tr class="tot"><td class="l">ИТОГО (блок)</td><td>${bflI(com.deals)}</td><td>${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td>${hasOks?`<td>${bflM(oksSum)}</td>`:''}<td>${bflM(dcTot)}</td><td>${bflM(com.tskpDeal)}</td></tr>`
         +`</tbody></table><div class="note">Стоимость сделки = (расходы маркетинга направления + доля ФОТ КО/ОП по выходу направления + сдельная выплата ОКС за это направление) ÷ сделки направления. ФОТ КО/ОП разносится пропорционально числу встреч и сделок направления; выплата ОКС относится ЦЕЛИКОМ к своему направлению. В «Расходы блока» коммерческого она НЕ входит - её несёт производственный блок, где работает ОКС.</div></div>`;
       const t=[tile('Расходы блока',bflM(com.gross),RED,'Маркетинг + КО + ОП'),
                tile('Сделок',bflI(com.deals),null,'выход ОП'),
@@ -16036,7 +16041,7 @@ window.bflPrintBlocks=function(){
                tile('Первый платёж · ОП',bflM(com.firstPay),GRN,'чистый, после возврата')];
       if(com.refund>0)t.push(tile('Возврат клиентам (отвал)','−'+bflM(com.refund),RED,Math.round(bflPreCourtOtval()*100)+'% × первый платёж'));
       t.push(tile('Рассрочка · ОКС (в мес)',bflM(com.rass),GRN,'устан. режим, '+com.rassMonths+' когорт'));
-      return {rightLbl:'Стоимость сделки · ЦКП блока',rightVal:bflM(com.tskpDeal),extra:extra,tiles:t.join(''),tables:tbl};
+      return {rightLbl:'Стоимость сделки · ЦКП блока',rightVal:bflM(com.tskpDeal),rightSub:((com.oksBonus||0)>0.005?'включая сдельную выплату ОКС':''),extra:extra,tiles:t.join(''),tables:tbl};
     }
     let pG=0,pI=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'&&!x.selfFunded){const c=bflDeptCalc(x,g);pG+=c.gross;pI+=c.incassation;}});
     const cp=_bflModel.clientPath||{},complex=Math.max(0,1-(cp.simpleShare||0)-(cp.heavyShare||0));
@@ -16144,7 +16149,7 @@ window.bflPrintBlocks=function(){
       <div class="plate">
         <div class="prow"><div><div class="pt">${esc(BFL_SUPTITLE[sk]||sk)}</div><div class="ps">${esc(BFL_SUPSUB[sk]||'')}</div></div>
           <div class="pown"><span class="pol">Руководитель</span> <b>${esc(owner||'-')}</b></div>
-          <div class="pr"><div class="prl">${esc(B.rightLbl)}</div><div class="prv">${B.rightVal}</div></div></div>
+          <div class="pr"><div class="prl">${esc(B.rightLbl)}</div><div class="prv">${B.rightVal}</div>${B.rightSub?`<div class="prs">${esc(B.rightSub)}</div>`:''}</div></div>
         ${B.extra?`<div class="dirline">${B.extra}</div>`:''}
       </div>
       <div class="tiles">${B.tiles}</div>
@@ -16164,6 +16169,7 @@ window.bflPrintBlocks=function(){
     +'.prow{display:flex;align-items:flex-start;gap:1em}'
     +'.pt{font-size:1.25em;font-weight:700}.ps{font-size:.82em;opacity:.85;margin-top:.1em}'
     +'.pown{font-size:.8em;opacity:.95;white-space:nowrap}.pol{opacity:.75;text-transform:uppercase;letter-spacing:.05em;font-size:.9em}'
+    +'.prs{font-size:.7em;opacity:.8;margin-top:.05em}'
     +'.pr{margin-left:auto;text-align:right}.prl{font-size:.75em;opacity:.85;text-transform:uppercase;letter-spacing:.06em}.prv{font-size:1.7em;font-weight:700;line-height:1.1}'
     +'.dirline{margin-top:.4em;font-size:.8em;opacity:.95;text-align:right}'
     +'.dl{text-transform:uppercase;letter-spacing:.05em;opacity:.75;font-weight:700;font-size:.9em;margin-right:.3em}'
@@ -16517,18 +16523,27 @@ function bflRenderDepts(host){
       // ⚠ Колонка ОКС появляется, ТОЛЬКО когда ставки ненулевые: скрытых слагаемых в «Σ расходы»
       //   быть не должно, но и пустая колонка при выключенной мотивации не нужна.
       const hasOks=dc.some(r=>(r.oksC||0)>0.005),oksSum=dc.reduce((a,r)=>a+(r.oksC||0),0);
+      // ── СТОРОЖ: расходы, не разнесённые ни на одно направление ─────────────────
+      // ⚠ Сегодня разницы нет: сумма колонки «Маркетинг» совпадает с расходами ОМ, потому что все
+      //   его затраты заведены строками по каналам. Но заведи кто-нибудь роль в штатке ОМ или
+      //   затрату вне канала - она попадёт в расходы блока и НЕ попадёт ни в одну строку, и
+      //   колонка «Σ расходы» молча перестанет складываться в итог. Строка появляется ровно
+      //   тогда, когда разница есть, и ИТОГ НЕ МЕНЯЕТ - она его объясняет.
+      const dcRowsSum=dc.reduce((a,r)=>a+r.total,0),dcTotal=com.gross+oksSum,dcOutside=dcTotal-dcRowsSum;
+      const hasOutside=Math.abs(dcOutside)>1;
       const tdN='padding:3px 8px;font-size:11.5px',tdR='padding:3px 8px;font-size:11.5px;text-align:right;font-family:var(--mono)',tdL='padding:3px 8px;font-size:10px;color:var(--label);font-weight:600';
       const dcTbl=`<div style="padding:10px 16px;border-top:1px solid var(--border);overflow-x:auto">
         <div style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Стоимость сделки по направлениям</div>
         <table class="bfl-dctbl" style="width:100%;border-collapse:collapse;min-width:560px">
           <thead><tr style="border-bottom:1px solid var(--border)"><th style="${tdL};text-align:left">Направление</th><th style="${tdL};text-align:right">Сделки</th><th style="${tdL};text-align:right">Маркетинг</th><th style="${tdL};text-align:right">КО</th><th style="${tdL};text-align:right">ОП</th>${hasOks?`<th style="${tdL};text-align:right">ОКС (сдельно)</th>`:''}<th style="${tdL};text-align:right">Σ расходы</th><th style="${tdL};text-align:right">Стоимость сделки</th></tr></thead>
           <tbody>${dc.map(r=>`<tr style="border-bottom:1px solid var(--divider)"><td style="${tdN}">${esc(r.name)}</td><td style="${tdR};color:var(--text2)">${bflI(r.deals)}</td><td style="${tdR};color:var(--text2)">${bflM(r.mktC)}</td><td style="${tdR};color:var(--text2)">${bflM(r.koC)}</td><td style="${tdR};color:var(--text2)">${bflM(r.opC)}</td>${hasOks?`<td style="${tdR};color:var(--text2)">${bflM(r.oksC||0)}</td>`:''}<td style="${tdR};color:var(--outcome)">${bflM(r.total)}</td><td style="${tdR};font-weight:700;color:var(--accent)">${r.deals>0?bflM(r.costPerDeal):'-'}</td></tr>`).join('')}
-          <tr style="border-top:1px solid var(--border);font-weight:700"><td style="${tdN}">ИТОГО (блок)</td><td style="${tdR}">${bflI(com.deals)}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td>${hasOks?`<td style="${tdR};color:var(--text2)">${bflM(oksSum)}</td>`:''}<td style="${tdR};color:var(--outcome)">${bflM(com.gross+oksSum)}</td><td style="${tdR};color:var(--accent)">${bflM(com.tskpDeal)}</td></tr>
+          ${hasOutside?`<tr style="border-bottom:1px solid var(--divider)" title="Расходы блока, не отнесённые ни к одному направлению (штат или затраты маркетинга вне каналов). Строка не меняет итог - она объясняет, почему сумма колонки меньше него."><td style="${tdN};color:var(--text3)">Вне направлений</td><td style="${tdR};color:var(--text3)">-</td><td style="${tdR};color:var(--text3)">-</td><td style="${tdR};color:var(--text3)">-</td><td style="${tdR};color:var(--text3)">-</td>${hasOks?`<td style="${tdR};color:var(--text3)">-</td>`:''}<td style="${tdR};color:var(--text3)">${bflM(dcOutside)}</td><td style="${tdR};color:var(--text3)">-</td></tr>`:''}
+        <tr style="border-top:1px solid var(--border);font-weight:700"><td style="${tdN}">ИТОГО (блок)</td><td style="${tdR}">${bflI(com.deals)}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td>${hasOks?`<td style="${tdR};color:var(--text2)">${bflM(oksSum)}</td>`:''}<td style="${tdR};color:var(--outcome)">${bflM(com.gross+oksSum)}</td><td style="${tdR};color:var(--accent)">${bflM(com.tskpDeal)}</td></tr>
           </tbody></table>
         <div style="font-size:9.5px;color:var(--text3);margin-top:5px">Стоимость сделки = (расходы маркетинга направления + доля ФОТ КО/ОП по выходу направления + сдельная выплата ОКС за это направление) ÷ сделки направления. ФОТ КО/ОП разносится пропорционально числу встреч/сделок направления; выплата ОКС относится ЦЕЛИКОМ к своему направлению. В «Расходы блока» коммерческого она НЕ входит - её несёт производственный блок, где работает ОКС.</div>
       </div>`;
       return `<div style="margin:20px 0 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 2px 12px rgba(43,49,69,.06);overflow:hidden">
-        ${_titleBar('commercial',`<div style="margin-left:auto;text-align:right"><div style="font-size:9.5px;opacity:.85;text-transform:uppercase;letter-spacing:.07em">Стоимость сделки · ЦКП блока</div><div style="font-size:23px;font-weight:700;font-family:var(--mono);line-height:1.1">${bflM(com.tskpDeal)}</div></div>`,dc.some(r=>r.deals>0)?`<span class="bfl-dirlbl" style="text-transform:uppercase;letter-spacing:.05em;opacity:.7;font-weight:700;font-size:9px">Стоимость сделки:</span>${dc.filter(r=>r.deals>0).map(r=>`<span class="bfl-dircost" style="white-space:nowrap">${esc(r.name)} <b style="font-family:var(--mono)">${bflM(r.costPerDeal)}</b></span>`).join('<span class="bfl-dirsep" style="opacity:.5">·</span>')}`:'')}
+        ${_titleBar('commercial',`<div style="margin-left:auto;text-align:right"><div style="font-size:9.5px;opacity:.85;text-transform:uppercase;letter-spacing:.07em">Стоимость сделки · ЦКП блока</div><div style="font-size:23px;font-weight:700;font-family:var(--mono);line-height:1.1">${bflM(com.tskpDeal)}</div>${(com.oksBonus||0)>0.005?`<div style="font-size:9px;opacity:.75;margin-top:1px">включая сдельную выплату ОКС</div>`:''}</div>`,dc.some(r=>r.deals>0)?`<span class="bfl-dirlbl" style="text-transform:uppercase;letter-spacing:.05em;opacity:.7;font-weight:700;font-size:9px">Стоимость сделки:</span>${dc.filter(r=>r.deals>0).map(r=>`<span class="bfl-dircost" style="white-space:nowrap">${esc(r.name)} <b style="font-family:var(--mono)">${bflM(r.costPerDeal)}</b></span>`).join('<span class="bfl-dirsep" style="opacity:.5">·</span>')}`:'')}
         ${bo?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--border)">
           ${_chip('Расходы блока',bflM(com.gross),'var(--outcome)','Маркетинг + КО + ОП')}
           ${_chip('Сделок',bflI(com.deals),'var(--text)','выход ОП')}
