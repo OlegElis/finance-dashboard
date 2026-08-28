@@ -15284,6 +15284,7 @@ function bflModelDefault(){
         perCase:[{name:'Депозит суда (за дело, возвратный)',rate:25000,passThrough:true}],
         costs:[],incassation:0,tskpLabel:'вспомогательный отдел · ФОТ + депозит суда'},
       {id:'os',group:'production',name:'Отдел клиентского сопровождения (ОКС)',collectsRassrochka:true,tskpFromOp:true,preCourtOtval:0.09,
+        oksBonus:{dir:'R-bfl',perQual:1000,perDeal:1000}, // сдельная мотивация за направление «#3 Рекомендации ОКС»: ключ направления в модели, а не литералом в расчёте
         roles:[{name:'Руководитель',fte:1,rate:130000},{name:'Зам',fte:0.10,rate:100000},{name:'Менеджер',fte:11.74,rate:90000},{name:'Стажёр',fte:2.94,rate:70000}],
         costs:[],incassation:0,tskpBase:150,tskpLabel:'сделки от ОП',
         capacity:{base:1526,norm:130,roleIdx:2,driver:'дел в работе на 1 менеджера'}},
@@ -15398,6 +15399,9 @@ function bflEnsureModel(m){
   (m.departments||[]).forEach(dep=>{const ren=arr=>{if(Array.isArray(arr))arr.forEach(x=>{if(x&&x.name==='#1 Маркетинг')x.name='#1 Лидогенерация';if(x&&x.name==='#3 Рекомендации')x.name='#3 Рекомендации ОКС';if(x&&(x.name==='#4 Рекомендации+ (АИ / сотрудники / прочее)'||x.name==='#4 Рекомендации+'))x.name='#4 Рекомендации ОП и прочее';});};ren(dep.leadgen);if(dep.funnel)ren(dep.funnel.byDir);});
   // ОПАУ - самоокупаемый контур со своим ОПИУ: доходы per-case (возврат депозита 25тр + компенсация почтовых 20тр + возмещение из КМ); расход - фактические почтовые ~15тр
   {const op2=(m.departments||[]).find(x=>x&&x.id==='opau');
+   // сдельная мотивация ОКС (28.08.2026): у моделей, сохранённых раньше, поля нет - добавляем со ставками по умолчанию
+   {const osDep=(m.departments||[]).find(x=>x&&x.id==='os');
+    if(osDep&&!osDep.oksBonus)osDep.oksBonus={dir:'R-bfl',perQual:1000,perDeal:1000};}
    if(op2){op2.selfFunded=true;
      if(Array.isArray(op2.roles)&&!op2.roles.some(r=>r&&r.name==='Заместитель')){const ri=op2.roles.findIndex(r=>r&&r.name==='Руководитель');op2.roles.splice(ri>=0?ri+1:0,0,{name:'Заместитель',fte:1,rate:100000});}
      if(!Array.isArray(op2.revPerCase))op2.revPerCase=[{name:'Возврат депозита суда',rate:25000},{name:'Компенсация почтовых расходов',rate:20000},{name:'Возмещение из конкурсной массы',rate:0}];
@@ -15748,8 +15752,23 @@ function bflDeptCalc(d,g){
   if(Array.isArray(d.revPerCase)){
     revPerCaseRows=d.revPerCase.map(rc=>{const amt=(rc.rate||0)*caseCount;selfRev+=amt;return {name:rc.name,rate:rc.rate||0,amount:amt};});
   }
+  // ── СДЕЛЬНАЯ МОТИВАЦИЯ ЗА НАПРАВЛЕНИЕ (ОКС, 28.08.2026) ──────────────────────
+  // ⚠ Количества берутся из bflQtyFlow() - потока КОЛИЧЕСТВ без затрат. Через bflDeptCalc их
+  //   брать нельзя: ОП считается с агентскими комиссиями, которые сами читают сделки, и вышло
+  //   бы зацикливание. bflQtyFlow заведён ровно под этот случай.
+  let oksBonus=0,oksBonusRow=null;
+  if(d.oksBonus){
+    const ob=d.oksBonus,bdir=ob.dir||'R-bfl';
+    const mkt=(_bflModel.departments||[]).find(x=>Array.isArray(x.leadgen));
+    const opD=(_bflModel.departments||[]).find(x=>x.dealStage);
+    const qf=bflQtyFlow();
+    const qual=(mkt&&qf[mkt.id])?(qf[mkt.id][bdir]||0):0;
+    const dealsB=(opD&&qf[opD.id])?(qf[opD.id][bdir]||0):0;
+    oksBonus=(ob.perQual||0)*qual+(ob.perDeal||0)*dealsB;
+    oksBonusRow={dir:bdir,qual:qual,deals:dealsB,perQual:ob.perQual||0,perDeal:ob.perDeal||0,total:oksBonus};
+  }
   const passAll=pass+perCasePass;
-  const gross=fot+nach+other+leadSpend+perCaseTotal, net=gross-passAll;
+  const gross=fot+nach+other+leadSpend+perCaseTotal+oksBonus, net=gross-passAll;
   const base = d.supportDept ? null : (d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:(d.tskpFromProd?bflCasesProd():d.tskpFromOp?bflOpDeals():d.tskpBase))); // маркетинг: квал-лиды; воронка: выход; tskpFromOp: сделки от ОП; tskpFromProd: дела после отвала; supportDept: ЦКП не применим
   const tskp=d.supportDept?null:bflSafeDiv(gross,base);  // ЦКП = расходы_gross / база (у вспом. отдела - нет)
   const fteActual=fteRoles+dirFteTotal;
@@ -15764,7 +15783,7 @@ function bflDeptCalc(d,g){
   let incassation=d.incassation||0;
   if(d.funnel&&d.funnel.money)incassation=firstPayTotal*(1-bflPreCourtOtval()); // первый платёж минус возврат отвалившимся (полный возврат)
   if(d.collectsRassrochka)incassation=bflCommercial().rass;
-  return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,
+  return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,oksBonus:oksBonus,oksBonusRow:oksBonusRow,
     perCaseRows:perCaseRows,caseCount:caseCount,revPerCaseRows:revPerCaseRows,selfRev:selfRev,selfNet:selfRev-gross,
     fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:incassation,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
@@ -15866,10 +15885,22 @@ function bflDealCostByDir(){
   const koOut={};let koOutTot=0;if(kc&&kc.funnelRows)kc.funnelRows.forEach(r=>{koOut[r.dir]=r.output;koOutTot+=r.output;if(!nameByDir[r.dir]){nameByDir[r.dir]=r.name;order.push(r.dir);}});
   const opOut={};let opOutTot=0;if(oc&&oc.funnelRows)oc.funnelRows.forEach(r=>{opOut[r.dir]=r.output;opOutTot+=r.output;if(!nameByDir[r.dir]){nameByDir[r.dir]=r.name;order.push(r.dir);}});
   const koGross=kc?kc.gross:0,opGross=oc?oc.gross:0;
+  // ── СДЕЛЬНАЯ ВЫПЛАТА ОКС - СЛАГАЕМОЕ ОДНОГО НАПРАВЛЕНИЯ (28.08.2026) ────────
+  // ⚠ Не размазывается по направлениям, как ФОТ КО и ОП: она начислена ЗА КОНКРЕТНОЕ
+  //   направление и целиком относится к нему.
+  // ⚠ ДВОЙНОГО СЧЁТА ПО КОМПАНИИ НЕТ, и вот почему: колонка «КО» - это Клиентский отдел
+  //   (group='sales'), а выплату несёт ОКС (group='production'). ОКС в «Расходы блока»
+  //   коммерческого не входит вовсе (bflCommercial суммирует только attract+sales), поэтому
+  //   сумма участвует в стоимости сделки #3 и в расходах производственного блока - и ни разу
+  //   в расходах коммерческого. Проверять это при правках: bflCommercial НЕ должна начать
+  //   складывать production.
+  const oksDep=(_bflModel.departments||[]).find(x=>x&&x.oksBonus);
+  const oksRow=oksDep?bflDeptCalc(oksDep,g).oksBonusRow:null;
   return order.map(dir=>{
     const mktC=mktByDir[dir]||0,koC=koOutTot?koGross*(koOut[dir]||0)/koOutTot:0,opC=opOutTot?opGross*(opOut[dir]||0)/opOutTot:0;
-    const total=mktC+koC+opC,deals=opOut[dir]||0;
-    return {dir:dir,name:nameByDir[dir],deals:deals,mktC:mktC,koC:koC,opC:opC,total:total,costPerDeal:bflSafeDiv(total,deals)};});
+    const oksC=(oksRow&&oksRow.dir===dir)?oksRow.total:0;
+    const total=mktC+koC+opC+oksC,deals=opOut[dir]||0;
+    return {dir:dir,name:nameByDir[dir],deals:deals,mktC:mktC,koC:koC,opC:opC,oksC:oksC,total:total,costPerDeal:bflSafeDiv(total,deals)};});
 }
 function bflCommercial(){
   const g=_bflModel.global,prof=g.collectionProfile||{},collRate=prof.collectionRate!=null?prof.collectionRate:1;
@@ -15885,7 +15916,13 @@ function bflCommercial(){
   const dealsNet=deals*(1-otval);                            // клиентов на рассрочке (после отвала)
   const rassPerClient=bflSafeDiv(rassBase*(1-otval),dealsNet); // рассрочка с 1 клиента (за весь срок)
   const rassPerClientMonth=bflSafeDiv(rassPerClient,rassMonths); // платёж клиента в месяц
-  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,firstPayGross:firstPayGross,refund:refund,rass:rass,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,tskpDeal:bflSafeDiv(gross,deals)};
+  // ⚠ ДВА РАЗНЫХ ЧИСЛА, И ПУТАТЬ ИХ НЕЛЬЗЯ: `gross` - РАСХОДЫ БЛОКА (маркетинг + КО + ОП), в
+  //   него сдельная выплата ОКС не входит и входить не должна - иначе она посчиталась бы и в
+  //   производственном блоке, и в коммерческом. А `tskpDeal` - СТОИМОСТЬ СДЕЛКИ, и она обязана
+  //   включать всё, что за сделку заплачено, в том числе выплату ОКС.
+  const oksDepC=(_bflModel.departments||[]).find(x=>x&&x.oksBonus);
+  const oksTot=oksDepC?(bflDeptCalc(oksDepC,g).oksBonus||0):0;
+  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,firstPayGross:firstPayGross,refund:refund,rass:rass,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,oksBonus:oksTot,tskpDeal:bflSafeDiv(gross+oksTot,deals)};
 }
 function _bflSetPath(obj,path,val){const p=path.split('.');let o=obj;for(let i=0;i<p.length-1;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i];o=o[k];}const last=/^\d+$/.test(p[p.length-1])?+p[p.length-1]:p[p.length-1];o[last]=val;}
 
@@ -15987,11 +16024,12 @@ window.bflPrintBlocks=function(){
     if(sk==='commercial'){
       const com=bflCommercial(),dc=bflDealCostByDir();
       const extra=dc.some(r=>r.deals>0)?('<span class="dl">Стоимость сделки:</span>'+dc.filter(r=>r.deals>0).map(r=>`<span class="dc">${esc(r.name)} <b>${bflM(r.costPerDeal)}</b></span>`).join('<span class="ds">·</span>')):'';
+      const hasOks=dc.some(r=>(r.oksC||0)>0.005),oksSum=dc.reduce((a,r)=>a+(r.oksC||0),0);
       const tbl=`<div class="sect"><div class="sh">Стоимость сделки по направлениям</div>
-        <table><thead><tr><th class="l">Направление</th><th>Сделки</th><th>Маркетинг</th><th>КО</th><th>ОП</th><th>Σ расходы</th><th>Стоимость сделки</th></tr></thead><tbody>`
-        +dc.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${bflI(r.deals)}</td><td>${bflM(r.mktC)}</td><td>${bflM(r.koC)}</td><td>${bflM(r.opC)}</td><td>${bflM(r.total)}</td><td><b>${bflM(r.costPerDeal)}</b></td></tr>`).join('')
-        +`<tr class="tot"><td class="l">ИТОГО (блок)</td><td>${bflI(com.deals)}</td><td>${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.total,0))}</td><td>${bflM(com.tskpDeal)}</td></tr>`
-        +`</tbody></table><div class="note">Стоимость сделки = (расходы маркетинга направления + доля ФОТ КО/ОП по выходу направления) ÷ сделки направления. ФОТ КО/ОП разносится пропорционально числу встреч и сделок направления.</div></div>`;
+        <table><thead><tr><th class="l">Направление</th><th>Сделки</th><th>Маркетинг</th><th>КО</th><th>ОП</th>${hasOks?'<th>ОКС (сдельно)</th>':''}<th>Σ расходы</th><th>Стоимость сделки</th></tr></thead><tbody>`
+        +dc.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${bflI(r.deals)}</td><td>${bflM(r.mktC)}</td><td>${bflM(r.koC)}</td><td>${bflM(r.opC)}</td>${hasOks?`<td>${bflM(r.oksC||0)}</td>`:''}<td>${bflM(r.total)}</td><td><b>${bflM(r.costPerDeal)}</b></td></tr>`).join('')
+        +`<tr class="tot"><td class="l">ИТОГО (блок)</td><td>${bflI(com.deals)}</td><td>${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td>${hasOks?`<td>${bflM(oksSum)}</td>`:''}<td>${bflM(dc.reduce((a,r)=>a+r.total,0))}</td><td>${bflM(com.tskpDeal)}</td></tr>`
+        +`</tbody></table><div class="note">Стоимость сделки = (расходы маркетинга направления + доля ФОТ КО/ОП по выходу направления + сдельная выплата ОКС за это направление) ÷ сделки направления. ФОТ КО/ОП разносится пропорционально числу встреч и сделок направления; выплата ОКС относится ЦЕЛИКОМ к своему направлению. В «Расходы блока» коммерческого она НЕ входит - её несёт производственный блок, где работает ОКС.</div></div>`;
       const t=[tile('Расходы блока',bflM(com.gross),RED,'Маркетинг + КО + ОП'),
                tile('Сделок',bflI(com.deals),null,'выход ОП'),
                tile('Сумма сделок',bflM(com.suma),MUT,'сделки × чек'),
@@ -16360,6 +16398,21 @@ function bflRenderDepts(host){
       const inp=(path,val,w)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-dept="${d.id}" data-path="${path}" onchange="bflDeptEdit(this)" style="width:${w||80}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
       const rolesTbl=staffTbl(d.id,d.roles,'roles','Штатное расписание');
       const costTbl=costsTbl(d.id,d.costs);
+      // ── сдельная мотивация за направление (ОКС) ───────────────────────────────
+      // ⚠ Ставки - ПОЛЯ МОДЕЛИ, не зашитые числа: сохраняются вместе с моделью в config/bflModel.
+      const bonusBlock=d.oksBonus?(()=>{const br=c.oksBonusRow||{qual:0,deals:0};
+        const mk=(_bflModel.departments||[]).find(x=>Array.isArray(x.leadgen));
+        const L=mk&&(mk.leadgen||[]).find(x=>x.dir===(d.oksBonus.dir||''));
+        return `<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)">
+        <div style="font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Сдельная мотивация · направление «${esc(L?L.name:(d.oksBonus.dir||'-'))}»</div>
+        <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:12.5px;align-items:center">
+          <span>₽ за квал-лид ${inp('oksBonus.perQual',d.oksBonus.perQual,84)}</span>
+          <span>₽ за сделку ${inp('oksBonus.perDeal',d.oksBonus.perDeal,84)}</span>
+          <span style="color:var(--text2)">${bflI(br.qual)} квал-лидов · ${bflI(br.deals)} сделок</span>
+          <span style="margin-left:auto">Выплата <b style="color:var(--outcome);font-family:var(--mono)">${bflM(c.oksBonus||0)}</b></span>
+        </div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:6px">Входит в расходы ОКС и в стоимость сделки этого направления. В расходы коммерческого блока НЕ входит - иначе сумма посчиталась бы дважды.</div>
+      </div>`;})():'';
       // per-case затраты (ОПАУ): Затрата | ₽/дело (ред.) | Дел | Сумма
       const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
       const perCaseTbl=(c.perCaseRows&&c.perCaseRows.length)?`<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:560px"><thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Затраты за процедуру</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">₽ за дело</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Дел</th><th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Сумма</th></tr></thead><tbody>${c.perCaseRows.map((pc,i)=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(pc.name)}${pc.passThrough?' <span style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 3px">возвратный</span>':''}</td><td style="padding:3px 8px;text-align:right">${inp('perCase.'+i+'.rate',pc.rate,84)}</td><td style="${cellR};color:var(--text2)">${bflI(c.caseCount)}</td><td style="${cellR};color:${pc.passThrough?'var(--text2)':'var(--outcome)'}">${bflM(pc.amount)}</td></tr>`).join('')}</tbody></table>`:'';
@@ -16397,7 +16450,7 @@ function bflRenderDepts(host){
         ${(d.capacity&&d.capacity.wipAuto)?`<label style="color:var(--text2)">Портфель в работе (Литтл): <b>${bflI(bflCasesProd()*bflAvgTerm())}</b> <span style="color:var(--text3)">= ${bflI(bflCasesProd())}/мес × ${bflAvgTerm().toFixed(1).replace('.',',')} мес</span></label>`:(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
       </div>`;
-      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${revTbl}${costTbl}${perCaseTbl}${selfBlock}${rampTbl}${flow}
+      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${bonusBlock}${revTbl}${costTbl}${perCaseTbl}${selfBlock}${rampTbl}${flow}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы (gross): <b style="color:var(--outcome)">${bflM(c.gross)}</b>${c.pass>0?` · из них pass-through: ${bflM(c.pass)} · net (P&L, ФОТ): <b>${bflM(c.net)}</b>`:''}${d.supportDept?'':` · ЦКП = ${bflM(c.gross)} / ${bflI(c.base)}${d.tskpFromOp?' сделок от ОП':''} = <b style="color:var(--accent)">${bflM(c.tskp)}</b>`}</div>
       </div>`;
     }
@@ -16461,15 +16514,18 @@ function bflRenderDepts(host){
     }
     if(sk==='commercial'){
       const com=bflCommercial(),prof=g.collectionProfile||{},dc=bflDealCostByDir();
+      // ⚠ Колонка ОКС появляется, ТОЛЬКО когда ставки ненулевые: скрытых слагаемых в «Σ расходы»
+      //   быть не должно, но и пустая колонка при выключенной мотивации не нужна.
+      const hasOks=dc.some(r=>(r.oksC||0)>0.005),oksSum=dc.reduce((a,r)=>a+(r.oksC||0),0);
       const tdN='padding:3px 8px;font-size:11.5px',tdR='padding:3px 8px;font-size:11.5px;text-align:right;font-family:var(--mono)',tdL='padding:3px 8px;font-size:10px;color:var(--label);font-weight:600';
       const dcTbl=`<div style="padding:10px 16px;border-top:1px solid var(--border);overflow-x:auto">
         <div style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Стоимость сделки по направлениям</div>
         <table class="bfl-dctbl" style="width:100%;border-collapse:collapse;min-width:560px">
-          <thead><tr style="border-bottom:1px solid var(--border)"><th style="${tdL};text-align:left">Направление</th><th style="${tdL};text-align:right">Сделки</th><th style="${tdL};text-align:right">Маркетинг</th><th style="${tdL};text-align:right">КО</th><th style="${tdL};text-align:right">ОП</th><th style="${tdL};text-align:right">Σ расходы</th><th style="${tdL};text-align:right">Стоимость сделки</th></tr></thead>
-          <tbody>${dc.map(r=>`<tr style="border-bottom:1px solid var(--divider)"><td style="${tdN}">${esc(r.name)}</td><td style="${tdR};color:var(--text2)">${bflI(r.deals)}</td><td style="${tdR};color:var(--text2)">${bflM(r.mktC)}</td><td style="${tdR};color:var(--text2)">${bflM(r.koC)}</td><td style="${tdR};color:var(--text2)">${bflM(r.opC)}</td><td style="${tdR};color:var(--outcome)">${bflM(r.total)}</td><td style="${tdR};font-weight:700;color:var(--accent)">${r.deals>0?bflM(r.costPerDeal):'-'}</td></tr>`).join('')}
-          <tr style="border-top:1px solid var(--border);font-weight:700"><td style="${tdN}">ИТОГО (блок)</td><td style="${tdR}">${bflI(com.deals)}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td><td style="${tdR};color:var(--outcome)">${bflM(com.gross)}</td><td style="${tdR};color:var(--accent)">${bflM(com.tskpDeal)}</td></tr>
+          <thead><tr style="border-bottom:1px solid var(--border)"><th style="${tdL};text-align:left">Направление</th><th style="${tdL};text-align:right">Сделки</th><th style="${tdL};text-align:right">Маркетинг</th><th style="${tdL};text-align:right">КО</th><th style="${tdL};text-align:right">ОП</th>${hasOks?`<th style="${tdL};text-align:right">ОКС (сдельно)</th>`:''}<th style="${tdL};text-align:right">Σ расходы</th><th style="${tdL};text-align:right">Стоимость сделки</th></tr></thead>
+          <tbody>${dc.map(r=>`<tr style="border-bottom:1px solid var(--divider)"><td style="${tdN}">${esc(r.name)}</td><td style="${tdR};color:var(--text2)">${bflI(r.deals)}</td><td style="${tdR};color:var(--text2)">${bflM(r.mktC)}</td><td style="${tdR};color:var(--text2)">${bflM(r.koC)}</td><td style="${tdR};color:var(--text2)">${bflM(r.opC)}</td>${hasOks?`<td style="${tdR};color:var(--text2)">${bflM(r.oksC||0)}</td>`:''}<td style="${tdR};color:var(--outcome)">${bflM(r.total)}</td><td style="${tdR};font-weight:700;color:var(--accent)">${r.deals>0?bflM(r.costPerDeal):'-'}</td></tr>`).join('')}
+          <tr style="border-top:1px solid var(--border);font-weight:700"><td style="${tdN}">ИТОГО (блок)</td><td style="${tdR}">${bflI(com.deals)}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td style="${tdR};color:var(--text2)">${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td>${hasOks?`<td style="${tdR};color:var(--text2)">${bflM(oksSum)}</td>`:''}<td style="${tdR};color:var(--outcome)">${bflM(com.gross+oksSum)}</td><td style="${tdR};color:var(--accent)">${bflM(com.tskpDeal)}</td></tr>
           </tbody></table>
-        <div style="font-size:9.5px;color:var(--text3);margin-top:5px">Стоимость сделки = (расходы маркетинга направления + доля ФОТ КО/ОП по выходу направления) ÷ сделки направления. ФОТ КО/ОП разносится пропорционально числу встреч/сделок направления.</div>
+        <div style="font-size:9.5px;color:var(--text3);margin-top:5px">Стоимость сделки = (расходы маркетинга направления + доля ФОТ КО/ОП по выходу направления + сдельная выплата ОКС за это направление) ÷ сделки направления. ФОТ КО/ОП разносится пропорционально числу встреч/сделок направления; выплата ОКС относится ЦЕЛИКОМ к своему направлению. В «Расходы блока» коммерческого она НЕ входит - её несёт производственный блок, где работает ОКС.</div>
       </div>`;
       return `<div style="margin:20px 0 12px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:0 2px 12px rgba(43,49,69,.06);overflow:hidden">
         ${_titleBar('commercial',`<div style="margin-left:auto;text-align:right"><div style="font-size:9.5px;opacity:.85;text-transform:uppercase;letter-spacing:.07em">Стоимость сделки · ЦКП блока</div><div style="font-size:23px;font-weight:700;font-family:var(--mono);line-height:1.1">${bflM(com.tskpDeal)}</div></div>`,dc.some(r=>r.deals>0)?`<span class="bfl-dirlbl" style="text-transform:uppercase;letter-spacing:.05em;opacity:.7;font-weight:700;font-size:9px">Стоимость сделки:</span>${dc.filter(r=>r.deals>0).map(r=>`<span class="bfl-dircost" style="white-space:nowrap">${esc(r.name)} <b style="font-family:var(--mono)">${bflM(r.costPerDeal)}</b></span>`).join('<span class="bfl-dirsep" style="opacity:.5">·</span>')}`:'')}
