@@ -15707,7 +15707,11 @@ let _bflOvh=null,_bflOvhKey='';
 function bflOverhead(){
   const P=(_bflModel&&_bflModel.overhead)||{};
   const N=Math.max(1,+P.windowMonths||12);
-  const MIN=Math.max(1,+P.minMonths||Math.ceil(N/2));
+  // ⚠ Порог по умолчанию - ПОЛОВИНА ОКНА, а не фиксированное число: при смене окна порог обязан
+  //   ехать за ним. Сохранённое значение больше окна означало бы «регулярных не бывает» - такое
+  //   тоже сводим к половине: молча пустой список хуже поправленного параметра.
+  const _mn=+P.minMonths;
+  const MIN=(_mn>=1&&_mn<=N)?Math.round(_mn):Math.ceil(N/2);
   const dir=P.dir||'БФЛ',ex=Array.isArray(P.exclude)?P.exclude:[];
   const key=[N,MIN,dir,ex.join('|'),(typeof RAW!=='undefined'&&RAW?RAW.length:0)].join('~');
   if(_bflOvhKey===key&&_bflOvh)return _bflOvh;
@@ -15715,13 +15719,22 @@ function bflOverhead(){
   const e0=mk(now)-1,s0=e0-N+1;               // последний ПОЛНЫЙ месяц и начало окна, включительно
   const acc={};
   (typeof RAW!=='undefined'&&RAW?RAW:[]).forEach(r=>{
-    if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
+    // ⚠ НАПРАВЛЕНИЕ СРАВНИВАЕТСЯ ПО ПРЕФИКСУ, а не на равенство: в RAW направление БФЛ записано
+    //   не одним значением, а несколькими («БФЛ - …»), и точное сравнение с 'БФЛ' давало РОВНО
+    //   НОЛЬ строк - накладные выходили пустыми, а причину легко было списать на знак сумм.
+    //   Тот же приём уже стоит в Юнит-экономике: `selDir.startsWith('БФЛ')`.
+    if(String(r[COL.ACTIVITY_DIR]||'').trim().indexOf(dir)!==0)return;
     if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;
     const d=parseDate(r[COL.DATE_OPIU])||parseDate(r[COL.DATE_DDS]); if(!d)return;   // дата ОПиУ, при отсутствии - ДДС
     const k=mk(d); if(k<s0||k>e0)return;
     const an=String(r[COL.ARTICLE_NAME]||'').trim(),ac=String(r[COL.ARTICLE_CODE]||'').trim();
     const code=an||ac; if(!code)return;                                              // ключ как factSubN: подстатья, при пустой - статья
     if(ex.some(pfx=>code.indexOf(pfx)===0))return;
+    // ⚠ ЗНАК: expOf = -(OUTCOME), а расход в RAW лежит ОТРИЦАТЕЛЬНЫМ, поэтому трата здесь
+    //   положительна, а сторно и возврат отрицательны и УМЕНЬШАЮТ расход своей подстатьи.
+    //   Модуль от СТРОКИ брать нельзя: сторнирующие строки превратились бы в траты и завысили
+    //   бы подстатью вдвое. Суммируем со знаком - это и есть «сумма как есть, знак у итога»:
+    //   -(Σx) и Σ(-x) тождественны.
     const v=expOf(r); if(!v)return;
     const a=acc[code]||(acc[code]={total:0,months:{}});
     a.total+=v; a.months[k]=(a.months[k]||0)+v;
