@@ -15935,7 +15935,7 @@ window.bflModelControls=function(){
 //   (Safari по-своему масштабирует px), color-adjust, задержка перед print(). Печать самой
 //   страницы через @media print тут не годится по той же причине - она печатает то, что на экране.
 window.bflPrintBar=function(){
-  return `<div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-bottom:10px;font-size:11.5px">
+  return `<div style="display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-bottom:10px;font-size:11.5px">
     <label style="font-size:11px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Печать блока</label>
     <select id="bfl-print-sel" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11.5px;font-family:var(--sans)">
       <option value="all">Все три блока (каждый с новой страницы)</option>
@@ -15943,7 +15943,8 @@ window.bflPrintBar=function(){
       <option value="commercial">Коммерческий блок</option>
       <option value="production">Производственный блок</option>
     </select>
-    <button onclick="bflPrintBlocks()" title="Лист собирается из модели, а не с экрана: состав полный независимо от того, какие карточки развёрнуты" style="padding:4px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-size:11.5px;font-family:var(--sans)">🖨 Печать</button>
+    <label title="Выключен - свёрнутый вид блока, лист подгоняется под одну страницу. Включён - под каждой карточкой её развёртка (штат, затраты, лидогенерация, воронка, дела); тогда страниц столько, сколько нужно, и кегль не давится." style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="bfl-print-detail" style="margin:0;cursor:pointer">с расшифровкой отделов</label>
+    <button onclick="bflPrintBlocks()" title="Лист собирается из модели, а не с экрана: состав полный независимо от того, что развёрнуто" style="padding:4px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-size:11.5px;font-family:var(--sans)">🖨 Печать</button>
   </div>`;
 };
 const BFL_SUPER={overhead:'aup',attract:'commercial',sales:'commercial',production:'production'};
@@ -15951,42 +15952,121 @@ const BFL_SUPTITLE={aup:'Административно-управленческ
 const BFL_SUPSUB={aup:'Накладные · управление, налоги, аутсорсинг',commercial:'Привлечение → Продажи · сквозная экономика',production:'ОКС → ОИ → ОПАУ · сопровождение, исполнение, процедуры'};
 const BFL_GORDER=['overhead','attract','sales','production']; // тот же порядок, в котором отделы идут на экране
 window.bflPrintBlocks=function(){
-  const selEl=document.getElementById('bfl-print-sel');
-  const which=selEl?selEl.value:'all';
+  const which=((document.getElementById('bfl-print-sel')||{}).value)||'all';
+  const detail=!!((document.getElementById('bfl-print-detail')||{}).checked);
   const keys=(which==='all')?['aup','commercial','production']:[which];
   const g=_bflModel.global,F=_tabFilters.bflmodel,per=bflPeriod(F.month)||{};
   const ex=!!F.depositExcluded;
   const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const deptsOf=sk=>{const out=[];BFL_GORDER.forEach(gr=>{if(BFL_SUPER[gr]!==sk)return;(_bflModel.departments||[]).forEach(d=>{if(d.group===gr)out.push(d);});});return out;};
+  const RED='#c0392b',GRN='#1e8a54',ACC='#3b4a6b',MUT='#5b6376',ORG='#e8862b';
+  const n2=v=>(v==null||isNaN(v))?'-':v.toLocaleString('ru-RU',{maximumFractionDigits:2});
+  const loadCol=l=>l==null?MUT:l>1?RED:l>0.8?ORG:GRN;
+  const deptsOf=sk=>{const out=[];BFL_GORDER.forEach(gr=>{if(BFL_SUPER[gr]!==sk)return;(_bflModel.departments||[]).forEach(d=>{if(d.group===gr)out.push({d:d,gr:gr});});});return out;};
+  const GRLBL={overhead:'Менеджмент',attract:'Привлечение',sales:'Продажи',production:'Производство'};
   const nameOf=id=>{const u=(_bflModel.departments||[]).find(x=>x.id===id);return u?u.name:String(id||'');};
 
+  // ── плитки показателей блока и правое значение тёмной плашки ───────────────
+  // ⚠ На экране плитки и таблица направлений показываются только у РАЗВЁРНУТОГО блока
+  //   (window._bflBlockOpen). Печать это состояние НЕ читает: лист обязан быть полным
+  //   независимо от того, что человек свернул у себя.
+  const tile=(lbl,val,col,sub)=>`<div class="tile"><div class="tl">${esc(lbl)}</div><div class="tv" style="color:${col||'#1a2033'}">${val}</div>${sub?`<div class="ts">${esc(sub)}</div>`:''}</div>`;
+  const blockData=sk=>{
+    if(sk==='aup'){
+      const mgmt=(_bflModel.departments||[]).find(x=>x.group==='overhead');
+      const mc=mgmt?bflDeptCalc(mgmt,g):{gross:0,fot:0,nach:0,tskp:null,fteActual:0};
+      let nalogi=0,auts=0,proch=0;
+      ((mgmt&&mgmt.costs)||[]).forEach(co=>{const amt=bflCostAmount(co,g);
+        if(co.vatOfRevenue||co.profitTaxAuto)nalogi+=amt;else if(/аутсорс/i.test(co.name||''))auts+=amt;else proch+=amt;});
+      return {rightLbl:'Расходы блока',rightVal:bflM(mc.gross),extra:'',tables:'',
+        tiles:[tile('ФОТ (голый)',bflM(mc.fot),RED,'штат АУП'),
+               tile('Начисления на ФОТ',bflM(mc.nach),RED,'≈'+Math.round(mc.fot?mc.nach/mc.fot*100:0)+'%'),
+               tile('Налоги',bflM(nalogi),RED,'НДС + налог на прибыль'),
+               tile('Аутсорсинг',bflM(auts),RED),tile('Прочее',bflM(proch),RED),
+               tile('ШЕ',bflI(mc.fteActual)),tile('ЦКП',bflM(mc.tskp),ACC,'на завершённое дело')].join('')};
+    }
+    if(sk==='commercial'){
+      const com=bflCommercial(),dc=bflDealCostByDir();
+      const extra=dc.some(r=>r.deals>0)?('<span class="dl">Стоимость сделки:</span>'+dc.filter(r=>r.deals>0).map(r=>`<span class="dc">${esc(r.name)} <b>${bflM(r.costPerDeal)}</b></span>`).join('<span class="ds">·</span>')):'';
+      const tbl=`<div class="sect"><div class="sh">Стоимость сделки по направлениям</div>
+        <table><thead><tr><th class="l">Направление</th><th>Сделки</th><th>Маркетинг</th><th>КО</th><th>ОП</th><th>Σ расходы</th><th>Стоимость сделки</th></tr></thead><tbody>`
+        +dc.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${bflI(r.deals)}</td><td>${bflM(r.mktC)}</td><td>${bflM(r.koC)}</td><td>${bflM(r.opC)}</td><td>${bflM(r.total)}</td><td><b>${bflM(r.costPerDeal)}</b></td></tr>`).join('')
+        +`<tr class="tot"><td class="l">ИТОГО (блок)</td><td>${bflI(com.deals)}</td><td>${bflM(dc.reduce((a,r)=>a+r.mktC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.koC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.opC,0))}</td><td>${bflM(dc.reduce((a,r)=>a+r.total,0))}</td><td>${bflM(com.tskpDeal)}</td></tr>`
+        +`</tbody></table><div class="note">Стоимость сделки = (расходы маркетинга направления + доля ФОТ КО/ОП по выходу направления) ÷ сделки направления. ФОТ КО/ОП разносится пропорционально числу встреч и сделок направления.</div></div>`;
+      const t=[tile('Расходы блока',bflM(com.gross),RED,'Маркетинг + КО + ОП'),
+               tile('Сделок',bflI(com.deals),null,'выход ОП'),
+               tile('Сумма сделок',bflM(com.suma),MUT,'сделки × чек'),
+               tile('Первый платёж · ОП',bflM(com.firstPay),GRN,'чистый, после возврата')];
+      if(com.refund>0)t.push(tile('Возврат клиентам (отвал)','−'+bflM(com.refund),RED,Math.round(bflPreCourtOtval()*100)+'% × первый платёж'));
+      t.push(tile('Рассрочка · ОКС (в мес)',bflM(com.rass),GRN,'устан. режим, '+com.rassMonths+' когорт'));
+      return {rightLbl:'Стоимость сделки · ЦКП блока',rightVal:bflM(com.tskpDeal),extra:extra,tiles:t.join(''),tables:tbl};
+    }
+    let pG=0,pI=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'&&!x.selfFunded){const c=bflDeptCalc(x,g);pG+=c.gross;pI+=c.incassation;}});
+    const cp=_bflModel.clientPath||{},complex=Math.max(0,1-(cp.simpleShare||0)-(cp.heavyShare||0));
+    const at=bflAvgTerm();
+    return {rightLbl:'Инкассация блока',rightVal:bflM(pI),extra:'',tables:'',
+      tiles:[tile('Расходы блока',bflM(pG),RED,'ОКС + ОИ · ОПАУ - свой ОПИУ'),
+             tile('Инкассация',bflM(pI),GRN,'рассрочка ОКС'),
+             tile('Дел от ОП',bflI(bflOpDeals()),null,'входящий поток'),
+             tile('Средний срок процедуры',String(at.toFixed(1)).replace('.',',')+' мес',MUT,'прост/слож/затяж '+Math.round((cp.simpleShare||0)*100)+'/'+Math.round(complex*100)+'/'+Math.round((cp.heavyShare||0)*100)+'%')].join('')};
+  };
+
+  // ── карточка отдела: свёрнутый вид (как на экране) ─────────────────────────
+  const metric=(lbl,val,col)=>`<div class="m"><div class="ml">${esc(lbl)}</div><div class="mv" style="color:${col||'#1a2033'}">${val}</div></div>`;
+  // ⚠ Норма на экране - ПОЛЕ ВВОДА. На листе печатается ЧИСЛО: рамка ввода на бумаге бессмысленна.
+  // ⚠ Полоса загрузки - заливка, поэтому у листа стоит print-color-adjust:exact; без него
+  //   браузер выбрасывает фоны при печати, и от полосы остаётся пустое место.
+  const loadRow=(d,c)=>{if(c.required==null)return '';
+    const fl=d.funnel||{},cap=d.capacity||{};
+    const lbl=d.funnel?('Норма: '+esc(fl.normLabel||'')+' '+n2(fl.norm)):('Мощность: '+esc(cap.driver||''));
+    const pct=c.load!=null?Math.round(c.load*100):null;
+    return `<div class="load"><div class="lr"><span>${lbl}</span><span>Нужно ШЕ <b>${n2(c.required)}</b> / факт <b>${n2(c.loadFte||0)}</b> · загрузка <b style="color:${loadCol(c.load)}">${pct==null?'-':pct+'%'}</b></span></div>
+      <div class="bar"><div class="fill" style="width:${Math.min(100,pct||0)}%;background:${loadCol(c.load)}"></div></div></div>`;};
+
+  const cardHead=(d,c)=>{
+    const self=!!d.selfFunded;let sub='',ms=[];
+    if(Array.isArray(d.leadgen)){
+      const totLeads=(c.leadRows||[]).reduce((a,L)=>a+(L.leads||0),0);
+      sub='лиды: '+bflI(totLeads)+' · квал-лиды: '+bflI(c.qualTotal);
+      ms=[metric('Стоимость лида',bflM(bflSafeDiv(c.leadTotalCost,totLeads)),MUT),
+          metric('ЦКП · стоимость квал-лида',bflM(c.tskp),ACC),
+          metric('Расходы',bflM(c.gross),RED)];
+    }else if(d.funnel){
+      sub='вход '+bflI(c.inflow)+' → выход '+bflI(c.output)+' · ЦКП = расходы / выход';
+      ms=[metric('ЦКП',bflM(c.tskp),ACC),metric('ШЕ',n2(c.fteActual)),metric('Расходы',bflM(c.gross),RED)];
+      if(d.funnel.money)ms.push(metric('Сумма сделок (договор.)',bflM(c.sumaTotal),MUT));
+      if(c.incassation>0)ms.push(metric('Инкассация',bflM(c.incassation),GRN));
+    }else{
+      sub=d.supportDept?esc(d.tskpLabel||''):('база ЦКП: '+esc(d.tskpLabel||''));
+      ms=[metric('ЦКП',c.tskp==null?'-':bflM(c.tskp),ACC),metric('ШЕ',n2(c.fteActual)),metric('Расходы',bflM(c.gross),RED)];
+      if(c.incassation>0)ms.push(metric('Инкассация',bflM(c.incassation),GRN));
+    }
+    return `<div class="chead"><div class="cn"><div class="cnm">${esc(d.name)}${self?' <span class="tag">свой ОПИУ · в итог блока НЕ входит</span>':''}</div><div class="csub">${sub}</div></div>${ms.join('')}</div>`;
+  };
+
+  // ── развёртка отдела (только при включённом переключателе) ─────────────────
   const staffTbl=(roles,title)=>{roles=roles||[];if(!roles.length)return '';
     const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=bflRolesNach(roles);
     return `<table><thead><tr><th class="l">${esc(title)}</th><th>Ед.</th><th>Ставка ₽/мес</th><th>ФОТ</th></tr></thead><tbody>`
-      +roles.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${bflI(r.fte)}</td><td>${bflM(r.rate)}</td><td>${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('')
+      +roles.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${n2(r.fte)}</td><td>${bflM(r.rate)}</td><td>${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('')
       +`<tr class="tot"><td class="l">ФОТ (голый)</td><td></td><td></td><td>${bflM(fot)}</td></tr>`
       +`<tr class="tot"><td class="l">ФОТ + начисления</td><td></td><td></td><td>${bflM(fot+nach)}</td></tr></tbody></table>`;};
-
   const costsTbl=costs=>{costs=costs||[];if(!costs.length)return '';
     let sum=0;const rows=costs.map(co=>{const amt=bflCostAmount(co,g);sum+=amt;
-      return `<tr><td class="l">${esc(co.name)}${co.passThrough?' <span class="mut">(возвратная, pass-through)</span>':''}</td><td>${bflM(amt)}</td></tr>`;}).join('');
+      return `<tr><td class="l">${esc(co.name)}${co.passThrough?' <span class="mut">(возвратная)</span>':''}</td><td>${bflM(amt)}</td></tr>`;}).join('');
     return `<table><thead><tr><th class="l">Прямые затраты</th><th>₽/мес</th></tr></thead><tbody>${rows}<tr class="tot"><td class="l">Итого прямых затрат</td><td>${bflM(sum)}</td></tr></tbody></table>`;};
-
   const leadTbl=c=>{const rs=c.leadRows||[];if(!rs.length)return '';
-    return `<table><thead><tr><th class="l">Лидогенерация · направление</th><th>Лиды</th><th>Брак</th><th>Квал-лиды</th><th>Стоим. лида</th><th>Стоим. квал-лида</th><th>Затраты</th></tr></thead><tbody>`
+    return `<table><thead><tr><th class="l">Лидогенерация · направление</th><th>Лиды</th><th>% отбраковки</th><th>Квал-лиды</th><th>Стоим. грязного лида</th><th>Стоим. квал-лида</th><th>Затраты</th></tr></thead><tbody>`
       +rs.map(L=>`<tr><td class="l">${esc(L.name)}</td><td>${bflI(L.leads)}</td><td>${bflP(L.brak)}</td><td>${bflI(L.qual)}</td><td>${bflM(L.rawCost)}</td><td>${bflM(L.costQual)}</td><td>${bflM(L.dirCost)}</td></tr>`).join('')
       +`<tr class="tot"><td class="l">Итого</td><td>${bflI(rs.reduce((a,L)=>a+(L.leads||0),0))}</td><td></td><td>${bflI(c.qualTotal)}</td><td></td><td></td><td>${bflM(c.leadTotalCost)}</td></tr></tbody></table>`;};
-
   const funnelTbl=(d,c)=>{if(!d.funnel)return '';
-    // ⚠ Наследование входа названо ЯВНО: без него столбец «Вход» на бумаге выглядит взятым с потолка
-    const from=d.funnel.inflowFrom?('вход наследуется от: '+esc(nameOf(d.funnel.inflowFrom))):'вход задан вручную';
-    const head=`<thead><tr><th class="l">Воронка · ${from}</th><th>Вход</th><th>Конверсия</th><th>Отвал</th><th>Выход</th></tr></thead>`;
+    const fl=d.funnel;
+    const from=fl.inflowFrom?('наследуется от: '+esc(nameOf(fl.inflowFrom))):'задан вручную';
+    const head=`<thead><tr><th class="l">Воронка · вход ${from}</th><th>${esc(fl.inLabel||'Вход')}</th><th>${esc(fl.convLabel||'Конверсия')}</th><th>% отвала</th><th>Выход</th></tr></thead>`;
     if(c.funnelRows&&c.funnelRows.length)
       return `<table>${head}<tbody>`+c.funnelRows.map(R=>`<tr><td class="l">${esc(R.name||R.dir)}</td><td>${bflI(R.inflow)}</td><td>${bflP(R.conv)}</td><td>${bflP(R.otval)}</td><td>${bflI(R.output)}</td></tr>`).join('')
         +`<tr class="tot"><td class="l">Итого</td><td>${bflI(c.inflow)}</td><td></td><td></td><td>${bflI(c.output)}</td></tr></tbody></table>`;
     if(c.inflow==null)return '';
-    return `<table>${head}<tbody><tr><td class="l">${esc(d.name)}</td><td>${bflI(c.inflow)}</td><td>${bflP(d.funnel.conv)}</td><td>${bflP(d.funnel.otval)}</td><td>${bflI(c.output)}</td></tr></tbody></table>`;};
-
+    return `<table>${head}<tbody><tr><td class="l">${esc(d.name)}</td><td>${bflI(c.inflow)}</td><td>${bflP(fl.conv)}</td><td>${bflP(fl.otval)}</td><td>${bflI(c.output)}</td></tr></tbody></table>`;};
   const caseTbl=c=>{let h='';
     if(c.revPerCaseRows&&c.revPerCaseRows.length)
       h+=`<table><thead><tr><th class="l">Доходы на дело · дел за месяц: ${bflI(c.caseCount)}</th><th>₽/дело</th><th>Сумма</th></tr></thead><tbody>`
@@ -15994,13 +16074,9 @@ window.bflPrintBlocks=function(){
         +`<tr class="tot"><td class="l">Итого доходов</td><td></td><td>${bflM(c.selfRev)}</td></tr></tbody></table>`;
     if(c.perCaseRows&&c.perCaseRows.length)
       h+=`<table><thead><tr><th class="l">Затраты на дело</th><th>₽/дело</th><th>Сумма</th></tr></thead><tbody>`
-        +c.perCaseRows.map(r=>`<tr><td class="l">${esc(r.name)}${r.passThrough?' <span class="mut">(возвратная)</span>':''}</td><td>${bflM(r.rate)}</td><td>${bflM(r.amount)}</td></tr>`).join('')
-        +`</tbody></table>`;
+        +c.perCaseRows.map(r=>`<tr><td class="l">${esc(r.name)}${r.passThrough?' <span class="mut">(возвратная)</span>':''}</td><td>${bflM(r.rate)}</td><td>${bflM(r.amount)}</td></tr>`).join('')+`</tbody></table>`;
     return h;};
-
-  const deptHtml=d=>{const c=bflDeptCalc(d,g),self=!!d.selfFunded;
-    const tskp=(c.tskp!=null)?('ЦКП '+bflM(c.tskp)+(c.base?(' · база '+bflI(c.base)):'')):'ЦКП не считается - вспомогательный отдел';
-    let h=`<div class="dept${self?' self':''}"><div class="dname">${esc(d.name)}${self?' <span class="tag">свой ОПИУ · в итог блока НЕ входит</span>':''}</div><div class="mut">${tskp}</div>`;
+  const cardBody=(d,c)=>{let h='';
     if(Array.isArray(d.leadgen))h+=leadTbl(c);
     if(d.funnel)h+=funnelTbl(d,c);
     h+=staffTbl(d.roles,'Штатное расписание');
@@ -16008,27 +16084,36 @@ window.bflPrintBlocks=function(){
     h+=caseTbl(c);
     h+=`<table><tbody><tr class="tot"><td class="l">Итого по отделу · расходы</td><td>${bflM(c.gross)}</td></tr>`;
     if(c.pass>0.005)h+=`<tr><td class="l">в т.ч. возвратные (pass-through)</td><td>${bflM(c.pass)}</td></tr><tr><td class="l">расходы без возвратных</td><td>${bflM(c.net)}</td></tr>`;
-    if(c.incassation>0.005)h+=`<tr><td class="l">Инкассация</td><td>${bflM(c.incassation)}</td></tr>`;
-    if(self)h+=`<tr class="tot"><td class="l">Свой ОПИУ · сальдо (доходы − расходы)</td><td>${bflM(c.selfNet)}</td></tr>`;
-    return h+`</tbody></table></div>`;};
+    if(d.selfFunded)h+=`<tr class="tot"><td class="l">Свой ОПИУ · сальдо (доходы − расходы)</td><td>${bflM(c.selfNet)}</td></tr>`;
+    return h+`</tbody></table>`;};
 
   const now=new Date(),p2=n=>String(n).padStart(2,'0');
   const stamp=now.toLocaleDateString('ru-RU')+' '+p2(now.getHours())+':'+p2(now.getMinutes());
   const toggles=[];if(ex)toggles.push('депозит исключён');if(F.exclPayrollTax)toggles.push('без начислений на ФОТ');
 
-  const blockHtml=sk=>{const ds=deptsOf(sk);if(!ds.length)return '';
-    // ⚠ ИТОГ БЛОКА БЕЗ САМООКУПАЕМЫХ КОНТУРОВ (ОПАУ): ровно так считает bflOPIU на экране. Включи
-    //   мы его в сумму - распечатанный итог разошёлся бы с ОПИУ, и разбираться пришлось бы человеку.
+  const blockHtml=sk=>{const list=deptsOf(sk);if(!list.length)return '';
+    const B=blockData(sk);
+    // ⚠ ИТОГ БЛОКА БЕЗ САМООКУПАЕМЫХ КОНТУРОВ (ОПАУ) - ровно как в bflOPIU на экране.
     let sExp=0,sInc=0,hasSelf=false;
-    ds.forEach(d=>{if(d.selfFunded){hasSelf=true;return;}const c=bflDeptCalc(d,g);sExp+=(ex?c.net:c.gross);sInc+=c.incassation;});
+    list.forEach(o=>{if(o.d.selfFunded){hasSelf=true;return;}const c=bflDeptCalc(o.d,g);sExp+=(ex?c.net:c.gross);sInc+=c.incassation;});
     const owner=(_bflModel.blocks&&_bflModel.blocks[sk]&&_bflModel.blocks[sk].owner)||'';
+    let cards='',lastGr=null;
+    list.forEach(o=>{const c=bflDeptCalc(o.d,g);
+      if(o.gr!==lastGr){if(o.gr!=='overhead')cards+=`<div class="grp">${esc(GRLBL[o.gr]||'')}</div>`;lastGr=o.gr;}
+      cards+=`<div class="dept${o.d.selfFunded?' self':''}">${cardHead(o.d,c)}${loadRow(o.d,c)}${detail?`<div class="exp">${cardBody(o.d,c)}</div>`:''}</div>`;});
     return `<section class="blk">
-      <div class="fitnote">⚠ Содержимое не поместилось на один лист даже при минимальном кегле 7&nbsp;pt. Блок напечатан на двух страницах, разрыв поставлен между отделами.</div>
-      <h1>${esc(BFL_SUPTITLE[sk]||sk)}</h1>
-      <div class="sub">${esc(BFL_SUPSUB[sk]||'')}${owner?' · руководитель блока: '+esc(owner):''}</div>
-      <div class="meta">Месяц модели: <b>${esc(per.label||F.month||'-')}</b> · сценарий: <b>${F.scenario==='fact'?'факт':'план'}</b>${toggles.length?' · '+esc(toggles.join(' · ')):''}<br>
+      <div class="fitnote">⚠ Содержимое не поместилось на один лист даже при минимальном кегле 7&nbsp;pt. Блок напечатан на нескольких страницах, разрывы поставлены между отделами.</div>
+      <div class="plate">
+        <div class="prow"><div><div class="pt">${esc(BFL_SUPTITLE[sk]||sk)}</div><div class="ps">${esc(BFL_SUPSUB[sk]||'')}</div></div>
+          <div class="pown"><span class="pol">Руководитель</span> <b>${esc(owner||'-')}</b></div>
+          <div class="pr"><div class="prl">${esc(B.rightLbl)}</div><div class="prv">${B.rightVal}</div></div></div>
+        ${B.extra?`<div class="dirline">${B.extra}</div>`:''}
+      </div>
+      <div class="tiles">${B.tiles}</div>
+      ${B.tables}
+      <div class="meta">Месяц модели: <b>${esc(per.label||F.month||'-')}</b> · сценарий: <b>${F.scenario==='fact'?'факт':'план'}</b>${toggles.length?' · '+esc(toggles.join(' · ')):''}${detail?' · с расшифровкой отделов':''}<br>
         Напечатано ${esc(stamp)} · источник: модель БФЛ (config/bflModel), факт из RawData_BFL</div>
-      ${ds.map(deptHtml).join('')}
+      ${cards}
       <div class="btot"><span>ИТОГО ПО БЛОКУ${hasSelf?' (без самоокупаемых контуров)':''}</span><span>расходы ${bflM(sExp)}${sInc>0.005?(' · инкассация '+bflM(sInc)):''}</span></div>
     </section>`;};
 
@@ -16037,21 +16122,43 @@ window.bflPrintBlocks=function(){
     +'body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#1a2033;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
     +'.blk{width:194mm;font-size:9.5pt;page-break-after:always;break-after:page}'
     +'.blk:last-child{page-break-after:auto;break-after:auto}'
-    +'h1{font-size:1.3em;margin:0 0 .15em}'
-    +'.sub{font-size:.85em;color:#5b6376;margin-bottom:.35em}'
-    +'.meta{font-size:.8em;color:#5b6376;border-bottom:1pt solid #23272f;padding-bottom:.35em;margin-bottom:.55em;line-height:1.45}'
-    +'.dept{break-inside:avoid;page-break-inside:avoid;margin-bottom:.65em}'
-    +'.dname{font-size:1.02em;font-weight:700;background:#eef1f6;padding:.22em .5em}'
-    +'.dept.self .dname{background:#f4f2ea;border-left:2pt solid #c47a12}'
-    +'.tag{font-weight:600;font-size:.8em;color:#8a5a00}'
-    +'.mut{font-size:.8em;color:#5b6376;padding:.15em .5em}'
-    +'table{width:100%;border-collapse:collapse;font-size:.85em;margin-top:.2em}'
-    +'th{text-align:right;font-weight:600;color:#5b6376;padding:.15em .4em;border-bottom:.5pt solid #9aa1b0}'
+    +'.plate{background:#3b4a6b;color:#fff;padding:.5em .7em;border-radius:.35em .35em 0 0}'
+    +'.prow{display:flex;align-items:flex-start;gap:1em}'
+    +'.pt{font-size:1.25em;font-weight:700}.ps{font-size:.82em;opacity:.85;margin-top:.1em}'
+    +'.pown{font-size:.8em;opacity:.95;white-space:nowrap}.pol{opacity:.75;text-transform:uppercase;letter-spacing:.05em;font-size:.9em}'
+    +'.pr{margin-left:auto;text-align:right}.prl{font-size:.75em;opacity:.85;text-transform:uppercase;letter-spacing:.06em}.prv{font-size:1.7em;font-weight:700;line-height:1.1}'
+    +'.dirline{margin-top:.4em;font-size:.8em;opacity:.95;text-align:right}'
+    +'.dl{text-transform:uppercase;letter-spacing:.05em;opacity:.75;font-weight:700;font-size:.9em;margin-right:.3em}'
+    +'.dc{white-space:nowrap}.ds{opacity:.5;margin:0 .35em}'
+    +'.tiles{display:flex;flex-wrap:wrap;border:.5pt solid #c9cedb;border-top:none}'
+    +'.tile{flex:1 1 22%;padding:.35em .5em;border-right:.5pt solid #dfe3ea}'
+    +'.tile:last-child{border-right:none}'
+    +'.tl{font-size:.72em;color:#5b6376;text-transform:uppercase;letter-spacing:.05em}'
+    +'.tv{font-size:1.05em;font-weight:700}.ts{font-size:.7em;color:#5b6376}'
+    +'.sect{border:.5pt solid #c9cedb;border-top:none;padding:.4em .5em}'
+    +'.sh{font-size:.75em;font-weight:700;color:#5b6376;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.2em}'
+    +'.note{font-size:.72em;color:#5b6376;margin-top:.25em}'
+    +'.meta{font-size:.78em;color:#5b6376;border-bottom:1pt solid #23272f;padding:.35em 0;margin-bottom:.5em;line-height:1.45}'
+    +'.grp{font-size:.8em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5b6376;margin:.5em 0 .25em}'
+    +'.dept{break-inside:avoid;page-break-inside:avoid;border:.5pt solid #dfe3ea;border-radius:.3em;margin-bottom:.35em;padding:.3em .45em}'
+    +'.dept.self{background:#f6f5f0;border-color:#c47a12}'
+    +'.chead{display:flex;align-items:flex-start;gap:.8em}'
+    +'.cn{flex:1}.cnm{font-size:1.02em;font-weight:700}.csub{font-size:.78em;color:#5b6376}'
+    +'.tag{font-size:.75em;font-weight:600;color:#8a5a00}'
+    +'.m{text-align:right;white-space:nowrap}.ml{font-size:.7em;color:#5b6376;text-transform:uppercase;letter-spacing:.05em}.mv{font-size:1em;font-weight:700}'
+    +'.load{margin-top:.25em}'
+    +'.lr{display:flex;justify-content:space-between;gap:1em;font-size:.78em;color:#5b6376}'
+    +'.bar{background:#e6e9ef;border-radius:.2em;overflow:hidden;height:.45em;margin-top:.15em}'
+    +'.fill{height:.45em}'
+    +'.exp{margin-top:.3em;border-top:.5pt dashed #c9cedb;padding-top:.2em}'
+    +'table{width:100%;border-collapse:collapse;font-size:.82em;margin-top:.2em}'
+    +'th{text-align:right;font-weight:600;color:#5b6376;padding:.12em .35em;border-bottom:.5pt solid #9aa1b0}'
     +'th.l,td.l{text-align:left}'
-    +'td{padding:.14em .4em;border-bottom:.4pt solid #dfe3ea;text-align:right;font-variant-numeric:tabular-nums}'
+    +'td{padding:.11em .35em;border-bottom:.4pt solid #dfe3ea;text-align:right;font-variant-numeric:tabular-nums}'
     +'tr.tot td{font-weight:700;border-top:.6pt solid #23272f;border-bottom:none}'
-    +'.btot{display:flex;justify-content:space-between;gap:10px;border-top:1.2pt solid #23272f;margin-top:.5em;padding-top:.3em;font-size:1em;font-weight:700}'
-    +'.fitnote{display:none;font-size:.8em;color:#8a5a00;background:#fff6e0;border:.5pt solid #e0b25a;padding:.25em .5em;margin-bottom:.4em}'
+    +'.mut{color:#5b6376;font-size:.9em}'
+    +'.btot{display:flex;justify-content:space-between;gap:1em;border-top:1.2pt solid #23272f;margin-top:.4em;padding-top:.25em;font-weight:700}'
+    +'.fitnote{display:none;font-size:.8em;color:#8a5a00;background:#fff6e0;border:.5pt solid #e0b25a;padding:.25em .5em;margin-bottom:.35em}'
     +'.blk.over .fitnote{display:block}';
   const body=keys.map(blockHtml).join('');
   if(!body){alert('В выбранном блоке нет отделов');return;}
@@ -16059,22 +16166,22 @@ window.bflPrintBlocks=function(){
 
   const w=window.open('','_blank'); if(!w){alert('Разрешите всплывающие окна для печати');return;}
   w.document.open(); w.document.write(html); w.document.close();
-  // ⚠ ПОДГОНКА ПОД СТРАНИЦУ: собрали в базовом кегле → ЗАМЕРИЛИ фактическую высоту в открытом
-  //   окне → посчитали коэффициент → применили → и только потом печать. Считать по числу строк
-  //   нельзя: высота зависит от переносов в названиях отделов и ролей.
-  // ⚠ НИЖНИЙ ПРЕДЕЛ 7pt ЖЁСТКИЙ. Не влезло при нём - печатаем на двух страницах и ГОВОРИМ об этом
-  //   в шапке листа: молча выданное нечитаемое хуже честных двух страниц.
+  // ⚠ ПОДГОНКА ПОД СТРАНИЦУ ДЕЙСТВУЕТ ТОЛЬКО В СВЁРНУТОМ РЕЖИМЕ. С расшифровкой отделов лист
+  //   заведомо длиннее страницы, и давить кегль там нечем оправдать: важна читаемость, а не
+  //   число листов. Поэтому при detail кегль остаётся базовым, страниц столько, сколько нужно,
+  //   а разрывы держит .dept{break-inside:avoid} - они падают между отделами.
   setTimeout(()=>{
     try{
-      const MM=96/25.4, USABLE=(297-16)*MM, BASE=9.5, MIN=7; // A4 portrait минус поля 8мм сверху и снизу
-      const secs=w.document.querySelectorAll('section.blk');
-      for(let i=0;i<secs.length;i++){const sec=secs[i];
-        sec.style.fontSize=BASE+'pt';
-        const h0=sec.scrollHeight;
-        if(h0>USABLE){
-          const size=Math.max(MIN,+(BASE*(USABLE/h0)).toFixed(2));
-          sec.style.fontSize=size+'pt';
-          if(sec.scrollHeight>USABLE+2)sec.classList.add('over'); // не влезло и при минимуме - честные две страницы
+      if(!detail){
+        const MM=96/25.4,USABLE=(297-16)*MM,BASE=9.5,MIN=7;
+        const secs=w.document.querySelectorAll('section.blk');
+        for(let i=0;i<secs.length;i++){const sec=secs[i];
+          sec.style.fontSize=BASE+'pt';
+          const h0=sec.scrollHeight;
+          if(h0>USABLE){
+            sec.style.fontSize=Math.max(MIN,+(BASE*(USABLE/h0)).toFixed(2))+'pt';
+            if(sec.scrollHeight>USABLE+2)sec.classList.add('over'); // не влезло и при минимуме - честные две страницы
+          }
         }
       }
     }catch(e){}
