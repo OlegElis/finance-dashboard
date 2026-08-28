@@ -16045,6 +16045,19 @@ function bflViewBar(){
 window.bflSetView=function(v){_tabFilters.bflmodel.view=v;renderBflModel();};
 window.bflToggleDeposit=function(cb){_tabFilters.bflmodel.depositExcluded=cb.checked;renderBflModel();};
 window.bflToggleExclTax=function(cb){_tabFilters.bflmodel.exclPayrollTax=cb.checked;renderBflModel();};
+// Удаление строки штатного расписания. ⚠ Спрашивает подтверждение: модель сохраняется
+// автоматически, отката нет, и случайное нажатие ✕ потеряло бы строку молча.
+// ⚠ Путь приходит тем же prefix, которым строится таблица ('roles' или 'leadgen.N.staff'),
+// поэтому удаление работает В ЛЮБОМ штатном расписании, а не только в карточке ОМ.
+window.bflRoleDel=function(deptId,prefix,idx){
+  const d=(_bflModel.departments||[]).find(x=>x&&x.id===deptId); if(!d)return;
+  const p=String(prefix||'').split('.'); let o=d;
+  for(let i=0;i<p.length;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i]; o=o&&o[k];}
+  if(!Array.isArray(o)||!(idx>=0&&idx<o.length))return;
+  const nm=String((o[idx]||{}).name||'').trim()||'строку';
+  if(!confirm('Удалить «'+nm+'» из штатного расписания?\n\nМодель сохраняется автоматически - отменить будет нечем.'))return;
+  o.splice(idx,1); _bflModelSave(); renderBflModel();
+};
 window.bflToggleDept=function(id){window._bflOpen=window._bflOpen||{};window._bflOpen[id]=!window._bflOpen[id];renderBflModel();};
 window.bflToggleBlock=function(sk){window._bflBlockOpen=window._bflBlockOpen||{};window._bflBlockOpen[sk]=!window._bflBlockOpen[sk];renderBflModel();};
 window.bflDeptEdit=function(el){
@@ -16245,8 +16258,25 @@ window.bflPrintBlocks=function(){
       h+=`<table><thead><tr><th class="l">Затраты на дело</th><th>₽/дело</th><th>Сумма</th></tr></thead><tbody>`
         +c.perCaseRows.map(r=>`<tr><td class="l">${esc(r.name)}${r.passThrough?' <span class="mut">(возвратная)</span>':''}</td><td>${bflM(r.rate)}</td><td>${bflM(r.amount)}</td></tr>`).join('')+`</tbody></table>`;
     return h;};
+  // ⚠ ВЛОЖЕННЫЕ БЛОКИ КАРТОЧКИ ОМ. У обычного отдела штат ОДИН и лежит уровнем выше (d.roles),
+  //   а у маркетинга он ЕЩЁ И внутри каждого направления (leadgen[i].staff) - плюс строка
+  //   агентского вознаграждения. Генератор их не обходил, и на листе выходило, что у маркетинга
+  //   людей нет вовсе, хотя у КО и ОП штат печатался: лист противоречил экрану ровно в одном
+  //   месте, и это читалось как отсутствие людей, а не как дефект печати.
+  const leadDetail=c=>{const rs=c.leadRows||[];let h='';
+    rs.forEach(L=>{
+      const hasFee=!!(L.feePerQual||L.feePerDeal),hasStaff=!!(L.staff&&L.staff.length);
+      if(!hasFee&&!hasStaff)return;
+      h+=`<div class="sub"><div class="sh">${esc(L.name)} · ${hasFee?'агентское вознаграждение и штат':'штатное расписание'}</div>`;
+      if(hasFee)h+=`<table><tbody>`
+        +`<tr><td class="l">₽ за К-лид агенту × квал-лиды</td><td>${bflM(L.feePerQual)} × ${bflI(L.qual)}</td><td>${bflM(L.agentQual)}</td></tr>`
+        +`<tr><td class="l">сделки × ₽ за сделку${L.dealsInherited?' (сделки из ОП)':''}</td><td>${bflI(L.deals)} × ${bflM(L.feePerDeal)}</td><td>${bflM(L.agentDeal)}</td></tr>`
+        +`<tr class="tot"><td class="l">Итого агентам</td><td></td><td>${bflM(L.agentFee)}</td></tr></tbody></table>`;
+      if(hasStaff)h+=staffTbl(L.staff,'Штат направления: '+L.name);
+      h+=`</div>`;});
+    return h;};
   const cardBody=(d,c)=>{let h='';
-    if(Array.isArray(d.leadgen))h+=leadTbl(c);
+    if(Array.isArray(d.leadgen))h+=leadTbl(c)+leadDetail(c);
     if(d.funnel)h+=funnelTbl(d,c);
     h+=staffTbl(d.roles,'Штатное расписание');
     h+=costsTbl(d.costs);
@@ -16321,6 +16351,7 @@ window.bflPrintBlocks=function(){
     +'.bar{background:#e6e9ef;border-radius:.2em;overflow:hidden;height:.45em;margin-top:.15em}'
     +'.fill{height:.45em}'
     +'.exp{margin-top:.3em;border-top:.5pt dashed #c9cedb;padding-top:.2em}'
+    +'.sub{margin-top:.35em;padding-left:.5em;border-left:1.5pt solid #dfe3ea;break-inside:avoid;page-break-inside:avoid}'
     +'table{width:100%;border-collapse:collapse;font-size:.82em;margin-top:.2em}'
     +'th{text-align:right;font-weight:600;color:#5b6376;padding:.12em .35em;border-bottom:.5pt solid #9aa1b0}'
     +'th.l,td.l{text-align:left}'
@@ -16374,10 +16405,19 @@ function bflRenderDepts(host){
     const effPct=fot?Math.round(nach/fot*100):0;
     const th=t=>`<th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${t}</th>`;
     const empSel=(p,emp)=>{const e=emp||'official';const o=(v,lbl)=>`<option value="${v}"${e===v?' selected':''}>${lbl}</option>`;return `<select data-dept="${deptId}" data-path="${p}" data-text="1" onchange="bflDeptEdit(this)" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:#fffdf0;max-width:150px">${o('official','Официальное (43%)')}${o('ip','ИП/Самозанятый (7%)')}${o('none','Без трудоустройства (0%)')}</select>`;};
-    const rows=roles.map((r,i)=>`<tr><td style="padding:3px 8px;font-size:12px">${esc(r.name)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.rate',r.rate,92)}</td><td style="padding:3px 8px">${empSel(prefix+'.'+i+'.emp',r.emp)}</td><td style="${cellR};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('');
+    // ⚠ ДУБЛИ РОЛЕЙ - ПОДСКАЗКА, А НЕ ЗАПРЕТ: ФОТ по двум строкам «Сотрудник ОМ» по 1 ед.
+    //   считается ВЕРНО, ломается только чтение состава - выглядит как две разные роли.
+    //   Поэтому подсвечиваем и объясняем, но не объединяем сами и ничего не блокируем:
+    //   бывает, что две одинаковые по названию строки заведены сознательно (разные ставки).
+    const _nc={};roles.forEach(r=>{const k=String(r.name||'').trim().toLowerCase();if(k)_nc[k]=(_nc[k]||0)+1;});
+    const _dup=r=>{const k=String(r.name||'').trim().toLowerCase();return !!k&&_nc[k]>1;};
+    const hasDup=roles.some(_dup);
+    const delBtn=i=>`<button type="button" onclick="bflRoleDel('${jesc(deptId)}','${jesc(prefix)}',${i})" title="Удалить строку" style="font-size:11px;line-height:1;width:20px;height:20px;padding:0;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text3);cursor:pointer">✕</button>`;
+    const dupTag='<span title="Такая роль в этом расписании уже есть. Строки стоит объединить в одну и поставить количество единиц: ФОТ считается верно и так, но состав читается как разные роли." style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 4px;margin-left:5px;white-space:nowrap">дубль</span>';
+    const rows=roles.map((r,i)=>`<tr${_dup(r)?' style="background:rgba(232,134,43,.10)"':''}><td style="padding:3px 8px;font-size:12px">${esc(r.name)}${_dup(r)?dupTag:''}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.rate',r.rate,92)}</td><td style="padding:3px 8px">${empSel(prefix+'.'+i+'.emp',r.emp)}</td><td style="${cellR};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td><td style="padding:3px 6px;text-align:center">${delBtn(i)}</td></tr>`).join('');
     return `<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:620px">
-      <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${esc(title||'Штатное расписание')}</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}<th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Вид сотрудничества</th>${th('ФОТ')}</tr></thead>
-      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (≈${effPct}%)</td><td></td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td></tr></tbody></table>`;
+      <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${esc(title||'Штатное расписание')}</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}<th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Вид сотрудничества</th>${th('ФОТ')}<th></th></tr></thead>
+      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td><td></td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (≈${effPct}%)</td><td></td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td><td></td></tr></tbody></table>${hasDup?`<div style="font-size:10.5px;color:var(--orange);margin-top:3px">⚠ Одинаковые роли отмечены «дубль»: их стоит объединить в одну строку и поставить количество единиц. На сумму ФОТ это не влияет - влияет на то, как читается состав.</div>`:''}`;
   };
   // Единая таблица прямых затрат: Затрата | ₽/мес (редактируемое)
   const costsTbl=(deptId,costs)=>{
