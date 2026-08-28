@@ -16105,12 +16105,16 @@ window.bflPrintBlocks=function(){
         <table><thead><tr><th class="l">Подстатья</th><th>Среднее в месяц</th><th>Месяцев с движением</th></tr></thead><tbody>`
         +rows.map(r=>`<tr><td class="l">${esc(r.code)}</td><td>${bflM(r.avg)}</td><td>${r.months} из ${O.windowMonths}</td></tr>`).join('')
         +`</tbody></table></div>`:'';
+      // ⚠ Состав накладных идёт на лист по ТОМУ ЖЕ переключателю «с расшифровкой отделов», что и
+      //   развёртки карточек: свёрнутый лист остаётся одностраничным, и двадцать пять строк
+      //   подстатей его бы гарантированно порвали. Выключен - итоговая строка; включён - обе
+      //   таблицы полностью, потому что на бумаге строку уже не раскрыть.
       const ovh=`<div class="sect"><div class="sh">Содержание компании · накладные</div>
-        <div class="note">Среднее за ${O.windowMonths} мес: ${esc(O.from)} - ${esc(O.to)} · направление ${esc(O.dir)} · считается из БДР при каждом открытии, в модели не хранится. Исключены префиксы: ${esc((O.exclude||[]).join(', '))}.</div>
+        <div class="note">Среднее за ${O.windowMonths} мес: ${esc(O.from)} - ${esc(O.to)} · направление ${esc(O.dir)} · постоянных ${O.regular.length}, нерегулярных ${O.irregular.length} · считается из БДР при каждом открытии, в модели не хранится. Исключены префиксы: ${esc((O.exclude||[]).join(', '))}.</div>
         <table><tbody><tr class="tot"><td class="l">Постоянные накладные, в месяц</td><td>${bflM(O.total)}</td></tr>
         <tr><td class="l" style="color:#5b6376">Нерегулярные (в сумму не входят)</td><td style="color:#5b6376">${bflM(O.irregularTotal)}</td></tr></tbody></table></div>`
-        +ovhTbl(O.regular,'Постоянные накладные','Движение не реже чем в '+O.minMonths+' месяцах окна.')
-        +ovhTbl(O.irregular,'Нерегулярные','Движение реже порога - в сумму не входят.');
+        +(detail?(ovhTbl(O.regular,'Постоянные накладные','Движение не реже чем в '+O.minMonths+' месяцах окна.')
+                 +ovhTbl(O.irregular,'Нерегулярные','Движение реже порога - в сумму не входят.')):'');
       return {rightLbl:'Расходы блока',rightVal:bflM(mc.gross),extra:'',tables:ovh,
         tiles:[tile('ФОТ (голый)',bflM(mc.fot),RED,'штат АУП'),
                tile('Начисления на ФОТ',bflM(mc.nach),RED,'≈'+Math.round(mc.fot?mc.nach/mc.fot*100:0)+'%'),
@@ -16683,7 +16687,10 @@ function bflRenderDepts(host){
   //   Хранится только правило - окно, порог регулярности и список префиксов-исключений.
   const ovhCard=()=>{
     const O=bflOverhead();
-    const gi=(path,val,w)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-path="${path}" onchange="bflGlobalEdit(this)" style="width:${w||44}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`;
+    // ⚠ Свёрнута по умолчанию, как карточки отделов, и тем же механизмом (window._bflOpen).
+    //   Свой id '__ovh' - отделa с таким идентификатором нет и быть не может.
+    const open=!!window._bflOpen['__ovh'];
+    const gi=(path,val,w)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-path="${path}" onchange="bflGlobalEdit(this)" onclick="event.stopPropagation()" style="width:${w||44}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`;
     const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
     const tbl=(rows,title,note)=>rows.length?`<div style="margin-top:10px">
       <div style="font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${title} · ${rows.length}</div>
@@ -16693,24 +16700,28 @@ function bflRenderDepts(host){
         <th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Среднее в месяц</th>
         <th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Месяцев с движением</th></tr></thead>
       <tbody>${rows.map(r=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(r.code)}</td><td style="${cellR}">${bflM(r.avg)}</td><td style="${cellR};color:var(--text2)">${r.months} из ${O.windowMonths}</td></tr>`).join('')}</tbody></table></div>`:'';
-    return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:12px;padding:11px 13px">
-        <div style="flex:1"><div style="font-size:13px;font-weight:600">Содержание компании</div>
-          <div style="font-size:10.5px;color:var(--text3);margin-top:1px">аренда, связь, ПО, АХО и прочие накладные · считаются из БДР, в модели не хранятся</div></div>
-        <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">В месяц</div>
-          <div style="font-size:16px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(O.total)}</div></div>
+    // ⚠ В СВЁРНУТОМ ВИДЕ ЕСТЬ ВСЁ, ЗА ЧЕМ СЮДА ХОДЯТ: сумма, состав (сколько постоянных и сколько
+    //   нерегулярных) и период. Разворачивают ради строк и параметров, а не ради одной цифры.
+    const head=`<div onclick="bflToggleDept('__ovh')" style="display:flex;align-items:center;gap:12px;padding:11px 13px;cursor:pointer">
+      <div style="flex:1"><div style="font-size:13px;font-weight:600">Содержание компании</div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:1px">${open?'▾':'▸'} постоянных ${O.regular.length} · нерегулярных ${O.irregular.length} · ${esc(O.from)} - ${esc(O.to)}</div></div>
+      <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">В месяц</div>
+        <div style="font-size:16px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(O.total)}</div></div>
+    </div>`;
+    // ⚠ Янтарная плашка - только в развёрнутом: она объясняет РАЗОВУЮ вещь (откуда взялся рост
+    //   расходов), и на свёрнутой карточке мозолила бы глаза каждый день после первого прочтения.
+    const body=open?`<div style="padding:0 13px 12px;border-top:1px dashed var(--border)">
+      <div style="font-size:11px;color:var(--text2);margin-top:9px">среднее за ${O.windowMonths} мес: <b>${esc(O.from)} - ${esc(O.to)}</b> · направление ${esc(O.dir)} · считается из БДР при каждом открытии, в модели не хранится</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:6px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+        <span>Окно, мес ${gi('overhead.windowMonths',O.windowMonths)}</span>
+        <span>Порог регулярности, мес ${gi('overhead.minMonths',O.minMonths)}</span>
+        <span style="color:var(--text3)">исключены префиксы: ${esc((O.exclude||[]).join(', '))}</span>
       </div>
-      <div style="padding:0 13px 12px">
-        <div style="font-size:11px;color:var(--text2)">среднее за ${O.windowMonths} мес: <b>${esc(O.from)} - ${esc(O.to)}</b> · направление ${esc(O.dir)} · постоянных подстатей ${O.regular.length}</div>
-        <div style="font-size:11px;color:var(--text2);margin-top:6px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
-          <span>Окно, мес ${gi('overhead.windowMonths',O.windowMonths)}</span>
-          <span>Порог регулярности, мес ${gi('overhead.minMonths',O.minMonths)}</span>
-          <span style="color:var(--text3)">исключены префиксы: ${esc((O.exclude||[]).join(', '))}</span>
-        </div>
-        <div style="margin-top:8px;font-size:11px;color:var(--orange);background:rgba(232,134,43,.08);border:1px solid var(--orange);border-radius:6px;padding:6px 9px">⚠ Накладных в модели раньше не было вовсе. С их включением расходы выросли на ${bflM(O.total)} в месяц, и ровно на столько же уменьшилась прибыль в ОПИУ. Это ожидаемо, а не ошибка расчёта.</div>
-        ${tbl(O.regular,'Постоянные накладные','Движение было не реже чем в '+O.minMonths+' месяцах окна. Только они входят в сумму выше.')}
-        ${tbl(O.irregular,'Нерегулярные','Движение реже порога. В сумму НЕ входят: разовый расход, делённый на окно, осел бы в постоянных навсегда. Итого по ним '+bflM(O.irregularTotal)+' в месяц.')}
-      </div></div>`;};
+      <div style="margin-top:8px;font-size:11px;color:var(--orange);background:rgba(232,134,43,.08);border:1px solid var(--orange);border-radius:6px;padding:6px 9px">⚠ Накладных в модели раньше не было вовсе. С их включением расходы выросли на ${bflM(O.total)} в месяц, и ровно на столько же уменьшилась прибыль в ОПИУ. Это ожидаемо, а не ошибка расчёта.</div>
+      ${tbl(O.regular,'Постоянные накладные','Движение было не реже чем в '+O.minMonths+' месяцах окна. Только они входят в сумму выше.')}
+      ${tbl(O.irregular,'Нерегулярные','Движение реже порога. В сумму НЕ входят: разовый расход, делённый на окно, осел бы в постоянных навсегда. Итого по ним '+bflM(O.irregularTotal)+' в месяц.')}
+    </div>`:'';
+    return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}${body}</div>`;};
   let lastSuper=null,superOpen=false;
   GROUPS.forEach(gr=>{
     const list=(_bflModel.departments||[]).filter(d=>d.group===gr[0]);if(!list.length)return;
