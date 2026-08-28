@@ -15294,9 +15294,9 @@ function bflModelDefault(){
         perCase:[{name:'Почтовые расходы (факт)',rate:15000}],
         costs:[],incassation:0,tskpLabel:'завершённые дела',
         capacity:{base:null,norm:140,wipAuto:true,driverRole:'контроль и завершение',driver:'дел в работе на 1 Помощника АУ (контроль и завершение); остальные роли - в помощь'}},
-      {id:'management',group:'overhead',name:'Административно-управленческий персонал (АУП)',
+      {id:'management',group:'overhead',name:'Административно-управленческий персонал (АУП)',overheadFromRaw:true,
         roles:[{name:'Генеральный директор',fte:1,rate:700000},{name:'Коммерческий директор',fte:1,rate:500000},{name:'Финансовый директор',fte:1,rate:350000},{name:'Технический директор',fte:1,rate:300000},{name:'Директор по маркетингу',fte:1,rate:250000},{name:'Руководитель отдела банкротства',fte:1,rate:250000},{name:'HR бизнес-партнёр',fte:1,rate:200000},{name:'Главный бухгалтер',fte:1,rate:150000},{name:'Бизнес-ассистент',fte:1,rate:100000}],
-        costs:[{name:'Аутсорсинг (финансы/HR/бухг/КК/консалтинг)',amount:900000},{name:'Прочие расходы',amount:500000},{name:'Налог на прибыль (1% УСН + 1% свыше 300к)',profitTaxAuto:true},{name:'НДС 5% от выручки',vatOfRevenue:true}],incassation:0,tskpBase:150,tskpLabel:'завершённые в успех',
+        costs:[{name:'Аутсорсинг (финансы/HR/бухг/КК/консалтинг)',amount:0},{name:'Прочие расходы',amount:0},{name:'Налог на прибыль (1% УСН + 1% свыше 300к)',profitTaxAuto:true},{name:'НДС 5% от выручки',vatOfRevenue:true}],incassation:0,tskpBase:150,tskpLabel:'завершённые в успех',
         capacity:{base:null,norm:null,driver:'накладные'}}
     ],
     periods:[
@@ -15366,6 +15366,13 @@ function bflEnsureModel(m){
   if(!m.global.collectionProfile||m.global.collectionProfile.firstPay===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // профиль сбора: фикс первый платёж ₽
   const osDep=(m.departments||[]).find(x=>x&&x.id==='os');if(osDep&&osDep.collectsRassrochka===undefined){osDep.collectsRassrochka=true;osDep.incassation=0;} // ОС собирает рассрочку
   if(osDep&&osDep.tskpFromOp===undefined)osDep.tskpFromOp=true; // ОС: база ЦКП = сделки от ОП
+  // ── ПРАВИЛО ОТБОРА НАКЛАДНЫХ (28.08.2026) ───────────────────────────────────
+  // ⚠ В модели хранится ТОЛЬКО ПРАВИЛО, суммы не хранятся никогда: они считаются из RAW при
+  //   каждом открытии вкладки. Заведи мы числа руками - через квартал модель разошлась бы с БДР
+  //   молча, и разбирать это пришлось бы по расхождению итогов, а не по коду.
+  // ⚠ Отбор ОТ ОБРАТНОГО: берём всё, кроме перечисленных префиксов. Новая подстатья попадает в
+  //   накладные САМА - накладные именно так и растут, а белый список её потерял бы.
+  if(!m.overhead)m.overhead={dir:'БФЛ',windowMonths:12,minMonths:6,exclude:['111_','112_','120_','127_','300_','900_']};
   const opauDep=(m.departments||[]).find(x=>x&&x.id==='opau');if(opauDep&&!Array.isArray(opauDep.perCase)){ // ОПАУ: контур + per-case (депозит/публикации за дело)
     opauDep.contour='opau';opauDep.tskpFromOp=true;opauDep.casesFromOp=true;opauDep.tskpLabel='дела от ОИ';
     opauDep.perCase=[{name:'Возвратный депозит (за процедуру)',rate:25000,passThrough:true},{name:'Публикации (за процедуру)',rate:20000}];
@@ -15689,6 +15696,48 @@ function bflCostAmount(c,g){
 //   её брать НЕЛЬЗЯ - см. предупреждение в bflCommercial: для отдела с collectsRassrochka
 //   расчёт замыкается обратно, и это уже стоило падения «Maximum call stack size exceeded»
 //   28.08.2026. Отдельная функция и заведена затем, чтобы такой вызов было незачем писать.
+// ── НАКЛАДНЫЕ «СОДЕРЖАНИЕ КОМПАНИИ»: считаются из RAW, в модели не хранятся ───
+// ⚠ ПАМЯТКА ПО ЗНАКУ: суммы берутся через expOf (конвенция проекта: >0 трата, <0 возврат),
+//   поэтому возврат УМЕНЬШАЕТ накладные своего месяца, как и везде в отчётах.
+// ⚠ Окно - N последних ПОЛНЫХ месяцев; текущий незакрытый НЕ берётся: он занизил бы среднее
+//   тем сильнее, чем раньше в месяце открыли вкладку.
+// ⚠ Результат КЭШИРУЕТСЯ: bflDeptCalc зовут десятки раз за отрисовку, а тут проход по всему RAW.
+//   Ключ кэша - параметры правила плюс длина RAW; правку ставок и перезагрузку данных он ловит.
+let _bflOvh=null,_bflOvhKey='';
+function bflOverhead(){
+  const P=(_bflModel&&_bflModel.overhead)||{};
+  const N=Math.max(1,+P.windowMonths||12);
+  const MIN=Math.max(1,+P.minMonths||Math.ceil(N/2));
+  const dir=P.dir||'БФЛ',ex=Array.isArray(P.exclude)?P.exclude:[];
+  const key=[N,MIN,dir,ex.join('|'),(typeof RAW!=='undefined'&&RAW?RAW.length:0)].join('~');
+  if(_bflOvhKey===key&&_bflOvh)return _bflOvh;
+  const now=new Date(),mk=d=>d.getFullYear()*12+d.getMonth();
+  const e0=mk(now)-1,s0=e0-N+1;               // последний ПОЛНЫЙ месяц и начало окна, включительно
+  const acc={};
+  (typeof RAW!=='undefined'&&RAW?RAW:[]).forEach(r=>{
+    if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return;
+    if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;
+    const d=parseDate(r[COL.DATE_OPIU])||parseDate(r[COL.DATE_DDS]); if(!d)return;   // дата ОПиУ, при отсутствии - ДДС
+    const k=mk(d); if(k<s0||k>e0)return;
+    const an=String(r[COL.ARTICLE_NAME]||'').trim(),ac=String(r[COL.ARTICLE_CODE]||'').trim();
+    const code=an||ac; if(!code)return;                                              // ключ как factSubN: подстатья, при пустой - статья
+    if(ex.some(pfx=>code.indexOf(pfx)===0))return;
+    const v=expOf(r); if(!v)return;
+    const a=acc[code]||(acc[code]={total:0,months:{}});
+    a.total+=v; a.months[k]=(a.months[k]||0)+v;
+  });
+  const rows=Object.keys(acc).map(c=>{const a=acc[c];
+    const mo=Object.keys(a.months).filter(k=>Math.abs(a.months[k])>0.005).length;    // месяцев С ДВИЖЕНИЕМ, а не строк
+    return {code:c,total:a.total,avg:a.total/N,months:mo};})
+    .filter(r=>Math.abs(r.avg)>0.005).sort((x,y)=>y.avg-x.avg);
+  const fm=k=>('0'+(k%12+1)).slice(-2)+'.'+Math.floor(k/12);
+  const out={dir:dir,windowMonths:N,minMonths:MIN,exclude:ex,rows:rows,
+    regular:rows.filter(r=>r.months>=MIN),irregular:rows.filter(r=>r.months<MIN),
+    from:fm(s0),to:fm(e0)};
+  out.total=out.regular.reduce((a,r)=>a+r.avg,0);
+  out.irregularTotal=out.irregular.reduce((a,r)=>a+r.avg,0);
+  _bflOvh=out;_bflOvhKey=key;return out;
+}
 function bflOksBonusFor(d){
   if(!d||!d.oksBonus)return null;
   const ob=d.oksBonus,bdir=ob.dir||'R-bfl';
@@ -15773,8 +15822,12 @@ function bflDeptCalc(d,g){
   //   брать нельзя: ОП считается с агентскими комиссиями, которые сами читают сделки, и вышло
   //   бы зацикливание. bflQtyFlow заведён ровно под этот случай.
   const oksBonusRow=bflOksBonusFor(d),oksBonus=oksBonusRow?oksBonusRow.total:0;
+  // ⚠ Накладные входят в расходы ТОГО отдела, у которого стоит признак (АУП), и дальше идут
+  //   общим путём: в «Расходы блока», в ОПИУ и в полную себестоимость сделки. Отдельного
+  //   сложения нигде нет - иначе оно разъехалось бы с этим.
+  const ovhTotal=d.overheadFromRaw?(bflOverhead().total||0):0;
   const passAll=pass+perCasePass;
-  const gross=fot+nach+other+leadSpend+perCaseTotal+oksBonus, net=gross-passAll;
+  const gross=fot+nach+other+leadSpend+perCaseTotal+oksBonus+ovhTotal, net=gross-passAll;
   const base = d.supportDept ? null : (d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:(d.tskpFromProd?bflCasesProd():d.tskpFromOp?bflOpDeals():d.tskpBase))); // маркетинг: квал-лиды; воронка: выход; tskpFromOp: сделки от ОП; tskpFromProd: дела после отвала; supportDept: ЦКП не применим
   const tskp=d.supportDept?null:bflSafeDiv(gross,base);  // ЦКП = расходы_gross / база (у вспом. отдела - нет)
   const fteActual=fteRoles+dirFteTotal;
@@ -15793,7 +15846,7 @@ function bflDeptCalc(d,g){
   //   не имеет права звать bflDeptCalc для такого отдела: получится бесконечная рекурсия.
   //   Ветка видна только здесь, внутри условия, - снаружи связь незаметна, на ней и горели.
   if(d.collectsRassrochka)incassation=bflCommercial().rass;
-  return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,oksBonus:oksBonus,oksBonusRow:oksBonusRow,
+  return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,oksBonus:oksBonus,oksBonusRow:oksBonusRow,ovhTotal:ovhTotal,
     perCaseRows:perCaseRows,caseCount:caseCount,revPerCaseRows:revPerCaseRows,selfRev:selfRev,selfNet:selfRev-gross,
     fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:incassation,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
@@ -16026,7 +16079,20 @@ window.bflPrintBlocks=function(){
       let nalogi=0,auts=0,proch=0;
       ((mgmt&&mgmt.costs)||[]).forEach(co=>{const amt=bflCostAmount(co,g);
         if(co.vatOfRevenue||co.profitTaxAuto)nalogi+=amt;else if(/аутсорс/i.test(co.name||''))auts+=amt;else proch+=amt;});
-      return {rightLbl:'Расходы блока',rightVal:bflM(mc.gross),extra:'',tables:'',
+      // ⚠ Накладные печатаются полным составом: на бумаге раскрыть строку уже нельзя, а
+      //   «2 989 069» без перечня подстатей проверить невозможно.
+      const O=bflOverhead();
+      const ovhTbl=(rows,title,note)=>rows.length?`<div class="sect"><div class="sh">${esc(title)} · ${rows.length}</div>${note?`<div class="note">${esc(note)}</div>`:''}
+        <table><thead><tr><th class="l">Подстатья</th><th>Среднее в месяц</th><th>Месяцев с движением</th></tr></thead><tbody>`
+        +rows.map(r=>`<tr><td class="l">${esc(r.code)}</td><td>${bflM(r.avg)}</td><td>${r.months} из ${O.windowMonths}</td></tr>`).join('')
+        +`</tbody></table></div>`:'';
+      const ovh=`<div class="sect"><div class="sh">Содержание компании · накладные</div>
+        <div class="note">Среднее за ${O.windowMonths} мес: ${esc(O.from)} - ${esc(O.to)} · направление ${esc(O.dir)} · считается из БДР при каждом открытии, в модели не хранится. Исключены префиксы: ${esc((O.exclude||[]).join(', '))}.</div>
+        <table><tbody><tr class="tot"><td class="l">Постоянные накладные, в месяц</td><td>${bflM(O.total)}</td></tr>
+        <tr><td class="l" style="color:#5b6376">Нерегулярные (в сумму не входят)</td><td style="color:#5b6376">${bflM(O.irregularTotal)}</td></tr></tbody></table></div>`
+        +ovhTbl(O.regular,'Постоянные накладные','Движение не реже чем в '+O.minMonths+' месяцах окна.')
+        +ovhTbl(O.irregular,'Нерегулярные','Движение реже порога - в сумму не входят.');
+      return {rightLbl:'Расходы блока',rightVal:bflM(mc.gross),extra:'',tables:ovh,
         tiles:[tile('ФОТ (голый)',bflM(mc.fot),RED,'штат АУП'),
                tile('Начисления на ФОТ',bflM(mc.nach),RED,'≈'+Math.round(mc.fot?mc.nach/mc.fot*100:0)+'%'),
                tile('Налоги',bflM(nalogi),RED,'НДС + налог на прибыль'),
@@ -16053,6 +16119,8 @@ window.bflPrintBlocks=function(){
                tile('Первый платёж · ОП',bflM(com.firstPay),GRN,'чистый, после возврата')];
       if(com.refund>0)t.push(tile('Возврат клиентам (отвал)','−'+bflM(com.refund),RED,Math.round(bflPreCourtOtval()*100)+'% × первый платёж'));
       t.push(tile('Рассрочка · ОКС (в мес)',bflM(com.rass),GRN,'устан. режим, '+com.rassMonths+' когорт'));
+      {const O=bflOverhead(),fc=com.deals?(com.tskpDeal+O.total/com.deals):null;
+       t.push(tile('Полная себестоимость сделки',bflM(fc),RED,'стоимость сделки + накладные ('+bflM(O.total)+') ÷ сделки'));}
       return {rightLbl:'Стоимость сделки · ЦКП блока',rightVal:bflM(com.tskpDeal),rightSub:((com.oksBonus||0)>0.005?'включая сдельную выплату ОКС':''),extra:extra,tiles:t.join(''),tables:tbl};
     }
     let pG=0,pI=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'&&!x.selfFunded){const c=bflDeptCalc(x,g);pG+=c.gross;pI+=c.incassation;}});
@@ -16563,6 +16631,8 @@ function bflRenderDepts(host){
           ${_chip('Первый платёж · ОП',bflM(com.firstPay),'var(--income)','чистый, после возврата')}
           ${com.refund>0?_chip('Возврат клиентам (отвал)','−'+bflM(com.refund),'var(--outcome)',Math.round(bflPreCourtOtval()*100)+'% × первый платёж'):''}
           ${_chip('Рассрочка · ОКС (в мес)',bflM(com.rass),'var(--income)','устан. режим, '+com.rassMonths+' когорт')}
+          ${(()=>{const O=bflOverhead(),fc=com.deals?(com.tskpDeal+O.total/com.deals):null;
+            return _chip('Полная себестоимость сделки',bflM(fc),'var(--outcome)','стоимость сделки + накладные ('+bflM(O.total)+') ÷ сделки');})()}
         </div>
         ${dcTbl}`:''}</div>`;
     }
@@ -16589,6 +16659,39 @@ function bflRenderDepts(host){
         <div style="margin-top:7px;line-height:2.1">Срок процедуры (после первого судебного заседания): <b>простые</b> ${_gi('clientPath.simpleShare',+(((cp.simpleShare||0)*100).toFixed(0)),36,true)} % - ${_gi('clientPath.simpleDuration',cp.simpleDuration,30)} мес · <b>сложные</b> (с имуществом) <span style="color:var(--text3)">${Math.round(complexShare*100)} % (остаток)</span> - ${_gi('clientPath.complexDuration',cp.complexDuration,30)} мес · <b>затяжные</b> (сверх плана) ${_gi('clientPath.heavyShare',+(((cp.heavyShare||0)*100).toFixed(0)),36,true)} % - ${_gi('clientPath.heavyDuration',cp.heavyDuration,30)} мес · средний срок ≈ <b>${avgTerm.toFixed(1).replace('.',',')} мес</b></div>
       </div>`:''}</div>`;
   };
+  // ── КАРТОЧКА «СОДЕРЖАНИЕ КОМПАНИИ» (накладные из RAW) ──────────────────────
+  // ⚠ Числа НЕ хранятся в модели: bflOverhead() считает их из RAW при каждой отрисовке.
+  //   Хранится только правило - окно, порог регулярности и список префиксов-исключений.
+  const ovhCard=()=>{
+    const O=bflOverhead();
+    const gi=(path,val,w)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-path="${path}" onchange="bflGlobalEdit(this)" style="width:${w||44}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`;
+    const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
+    const tbl=(rows,title,note)=>rows.length?`<div style="margin-top:10px">
+      <div style="font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${title} · ${rows.length}</div>
+      ${note?`<div style="font-size:10.5px;color:var(--text3);margin-bottom:4px">${note}</div>`:''}
+      <table style="width:100%;border-collapse:collapse;max-width:640px"><thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Подстатья</th>
+        <th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Среднее в месяц</th>
+        <th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Месяцев с движением</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr style="border-bottom:1px solid var(--divider)"><td style="padding:3px 8px;font-size:12px">${esc(r.code)}</td><td style="${cellR}">${bflM(r.avg)}</td><td style="${cellR};color:var(--text2)">${r.months} из ${O.windowMonths}</td></tr>`).join('')}</tbody></table></div>`:'';
+    return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:12px;padding:11px 13px">
+        <div style="flex:1"><div style="font-size:13px;font-weight:600">Содержание компании</div>
+          <div style="font-size:10.5px;color:var(--text3);margin-top:1px">аренда, связь, ПО, АХО и прочие накладные · считаются из БДР, в модели не хранятся</div></div>
+        <div style="text-align:right"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">В месяц</div>
+          <div style="font-size:16px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(O.total)}</div></div>
+      </div>
+      <div style="padding:0 13px 12px">
+        <div style="font-size:11px;color:var(--text2)">среднее за ${O.windowMonths} мес: <b>${esc(O.from)} - ${esc(O.to)}</b> · направление ${esc(O.dir)} · постоянных подстатей ${O.regular.length}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:6px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+          <span>Окно, мес ${gi('overhead.windowMonths',O.windowMonths)}</span>
+          <span>Порог регулярности, мес ${gi('overhead.minMonths',O.minMonths)}</span>
+          <span style="color:var(--text3)">исключены префиксы: ${esc((O.exclude||[]).join(', '))}</span>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--orange);background:rgba(232,134,43,.08);border:1px solid var(--orange);border-radius:6px;padding:6px 9px">⚠ Накладных в модели раньше не было вовсе. С их включением расходы выросли на ${bflM(O.total)} в месяц, и ровно на столько же уменьшилась прибыль в ОПИУ. Это ожидаемо, а не ошибка расчёта.</div>
+        ${tbl(O.regular,'Постоянные накладные','Движение было не реже чем в '+O.minMonths+' месяцах окна. Только они входят в сумму выше.')}
+        ${tbl(O.irregular,'Нерегулярные','Движение реже порога. В сумму НЕ входят: разовый расход, делённый на окно, осел бы в постоянных навсегда. Итого по ним '+bflM(O.irregularTotal)+' в месяц.')}
+      </div></div>`;};
   let lastSuper=null,superOpen=false;
   GROUPS.forEach(gr=>{
     const list=(_bflModel.departments||[]).filter(d=>d.group===gr[0]);if(!list.length)return;
@@ -16600,6 +16703,7 @@ function bflRenderDepts(host){
     }
     if(gr[0]!=='overhead')html+=`<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin:14px 0 7px">${gr[1]}</div>`; // у АУП блок=отдел, под-заголовок не нужен
     html+=list.map(card).join('');
+    if(gr[0]==='overhead')html+=ovhCard(); // накладные - в блоке АУП, следом за самим АУП
   });
   if(superOpen)html+=`</div>`;
   html+=`</div>`;
