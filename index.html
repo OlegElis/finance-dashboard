@@ -15671,15 +15671,21 @@ function renderBflModel(){
 }
 
 // ── Слой B+C: расчёт отдела и сборка ОПИУ (§4-§6 ТЗ) ──────────────────────────
+// Сумма одной строки прямых затрат. ⚠ Вынесена из bflDeptCalc, потому что её печатает ЛИСТ
+// БЛОКА: считай печать сама - «НДС» и «налог на прибыль» вышли бы на бумаге нулями (у них нет
+// поля amount, они считаются от выручки), и расхождение с экраном заметили бы не сразу.
+function bflCostAmount(c,g){
+  if(!c)return 0;
+  if(c.vatOfRevenue)return (g.vat||0)*bflRevenue();
+  if(c.profitTaxAuto){const rev=bflRevenue();return (g.profitTaxRate||0)*rev+(g.profitTaxExtra||0)*Math.max(0,rev-(g.profitTaxThreshold||0));}
+  return c.amount||0;
+}
 function bflDeptCalc(d,g){
   const roles=d.roles||[],costs=d.costs||[];
   let fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);      // общий ФОТ отдела
   let nachAcc=bflRolesNach(roles);                    // начисления по основным ролям (per-role: вид сотрудничества)
   const fteRoles=roles.reduce((a,r)=>a+(r.fte||0),0);
-  const ca=c=>{ // расчётные затраты: НДС и налог на прибыль от выручки
-    if(c.vatOfRevenue)return (g.vat||0)*bflRevenue();
-    if(c.profitTaxAuto){const rev=bflRevenue();return (g.profitTaxRate||0)*rev+(g.profitTaxExtra||0)*Math.max(0,rev-(g.profitTaxThreshold||0));}
-    return c.amount||0;};
+  const ca=c=>bflCostAmount(c,g); // вынесено в общий хелпер: ту же сумму печатает лист блока
   const other=costs.reduce((a,c)=>a+ca(c),0);
   const pass=costs.filter(c=>c.passThrough).reduce((a,c)=>a+ca(c),0); // депозит (pass-through)
   // лидогенерация (отдел маркетинга): по направлениям лиды → % отбраковки → квал-лиды; закупка + агентские комиссии + штат направления
@@ -15905,7 +15911,9 @@ window.bflDeptEdit=function(el){
   try{_bflSetPath(d,path,val);}catch(e){return;}
   _bflModelSave();renderBflModel();
 };
-window.bflPrintControls=function(){
+// ⚠ Раньше называлась bflPrintControls, печати не содержала ни строки и обманывала того, кто
+//   искал точку входа в печать. Печать блока живёт в bflPrintBar/bflPrintBlocks.
+window.bflModelControls=function(){
   let st='Изменения сохраняются автоматически',stc='var(--text3)';
   if(_bflModel.savedAt){const d=new Date(_bflModel.savedAt);const p=n=>String(n).padStart(2,'0');st='✓ Сохранено '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());stc='var(--income)';}
   return `<div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-bottom:8px;font-size:11.5px">
@@ -15915,6 +15923,163 @@ window.bflPrintControls=function(){
     <button onclick="bflExport()" title="Экспорт JSON" style="padding:4px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">⬇</button>
     <button onclick="bflImport()" title="Импорт JSON" style="padding:4px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer">⬆</button>
   </div>`;
+};
+
+
+// ══ ПЕЧАТЬ БЛОКА «МОДЕЛИ БФЛ» (28.08.2026) ═══════════════════════════════════
+// ⚠ Лист собирается ГЕНЕРАТОРОМ из _bflModel и bflDeptCalc, а НЕ копированием DOM. Причина не в
+//   удобстве: карточки отделов на экране свёрнуты по умолчанию (window._bflOpen), и печать из DOM
+//   дала бы лист из одних заголовков. Разворачивать их принудительно нельзя - это чужое состояние
+//   экрана, человек его сам настроил.
+// ⚠ Механизм - ОТДЕЛЬНОЕ ОКНО (как planPrintOwners): свой @page на верхнем уровне, кегли в pt
+//   (Safari по-своему масштабирует px), color-adjust, задержка перед print(). Печать самой
+//   страницы через @media print тут не годится по той же причине - она печатает то, что на экране.
+window.bflPrintBar=function(){
+  return `<div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin-bottom:10px;font-size:11.5px">
+    <label style="font-size:11px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Печать блока</label>
+    <select id="bfl-print-sel" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11.5px;font-family:var(--sans)">
+      <option value="all">Все три блока (каждый с новой страницы)</option>
+      <option value="aup">Административно-управленческий персонал (АУП)</option>
+      <option value="commercial">Коммерческий блок</option>
+      <option value="production">Производственный блок</option>
+    </select>
+    <button onclick="bflPrintBlocks()" title="Лист собирается из модели, а не с экрана: состав полный независимо от того, какие карточки развёрнуты" style="padding:4px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-size:11.5px;font-family:var(--sans)">🖨 Печать</button>
+  </div>`;
+};
+const BFL_SUPER={overhead:'aup',attract:'commercial',sales:'commercial',production:'production'};
+const BFL_SUPTITLE={aup:'Административно-управленческий персонал (АУП)',commercial:'Коммерческий блок',production:'Производственный блок'};
+const BFL_SUPSUB={aup:'Накладные · управление, налоги, аутсорсинг',commercial:'Привлечение → Продажи · сквозная экономика',production:'ОКС → ОИ → ОПАУ · сопровождение, исполнение, процедуры'};
+const BFL_GORDER=['overhead','attract','sales','production']; // тот же порядок, в котором отделы идут на экране
+window.bflPrintBlocks=function(){
+  const selEl=document.getElementById('bfl-print-sel');
+  const which=selEl?selEl.value:'all';
+  const keys=(which==='all')?['aup','commercial','production']:[which];
+  const g=_bflModel.global,F=_tabFilters.bflmodel,per=bflPeriod(F.month)||{};
+  const ex=!!F.depositExcluded;
+  const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const deptsOf=sk=>{const out=[];BFL_GORDER.forEach(gr=>{if(BFL_SUPER[gr]!==sk)return;(_bflModel.departments||[]).forEach(d=>{if(d.group===gr)out.push(d);});});return out;};
+  const nameOf=id=>{const u=(_bflModel.departments||[]).find(x=>x.id===id);return u?u.name:String(id||'');};
+
+  const staffTbl=(roles,title)=>{roles=roles||[];if(!roles.length)return '';
+    const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=bflRolesNach(roles);
+    return `<table><thead><tr><th class="l">${esc(title)}</th><th>Ед.</th><th>Ставка ₽/мес</th><th>ФОТ</th></tr></thead><tbody>`
+      +roles.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${bflI(r.fte)}</td><td>${bflM(r.rate)}</td><td>${bflM((r.fte||0)*(r.rate||0))}</td></tr>`).join('')
+      +`<tr class="tot"><td class="l">ФОТ (голый)</td><td></td><td></td><td>${bflM(fot)}</td></tr>`
+      +`<tr class="tot"><td class="l">ФОТ + начисления</td><td></td><td></td><td>${bflM(fot+nach)}</td></tr></tbody></table>`;};
+
+  const costsTbl=costs=>{costs=costs||[];if(!costs.length)return '';
+    let sum=0;const rows=costs.map(co=>{const amt=bflCostAmount(co,g);sum+=amt;
+      return `<tr><td class="l">${esc(co.name)}${co.passThrough?' <span class="mut">(возвратная, pass-through)</span>':''}</td><td>${bflM(amt)}</td></tr>`;}).join('');
+    return `<table><thead><tr><th class="l">Прямые затраты</th><th>₽/мес</th></tr></thead><tbody>${rows}<tr class="tot"><td class="l">Итого прямых затрат</td><td>${bflM(sum)}</td></tr></tbody></table>`;};
+
+  const leadTbl=c=>{const rs=c.leadRows||[];if(!rs.length)return '';
+    return `<table><thead><tr><th class="l">Лидогенерация · направление</th><th>Лиды</th><th>Брак</th><th>Квал-лиды</th><th>Стоим. лида</th><th>Стоим. квал-лида</th><th>Затраты</th></tr></thead><tbody>`
+      +rs.map(L=>`<tr><td class="l">${esc(L.name)}</td><td>${bflI(L.leads)}</td><td>${bflP(L.brak)}</td><td>${bflI(L.qual)}</td><td>${bflM(L.rawCost)}</td><td>${bflM(L.costQual)}</td><td>${bflM(L.dirCost)}</td></tr>`).join('')
+      +`<tr class="tot"><td class="l">Итого</td><td>${bflI(rs.reduce((a,L)=>a+(L.leads||0),0))}</td><td></td><td>${bflI(c.qualTotal)}</td><td></td><td></td><td>${bflM(c.leadTotalCost)}</td></tr></tbody></table>`;};
+
+  const funnelTbl=(d,c)=>{if(!d.funnel)return '';
+    // ⚠ Наследование входа названо ЯВНО: без него столбец «Вход» на бумаге выглядит взятым с потолка
+    const from=d.funnel.inflowFrom?('вход наследуется от: '+esc(nameOf(d.funnel.inflowFrom))):'вход задан вручную';
+    const head=`<thead><tr><th class="l">Воронка · ${from}</th><th>Вход</th><th>Конверсия</th><th>Отвал</th><th>Выход</th></tr></thead>`;
+    if(c.funnelRows&&c.funnelRows.length)
+      return `<table>${head}<tbody>`+c.funnelRows.map(R=>`<tr><td class="l">${esc(R.name||R.dir)}</td><td>${bflI(R.inflow)}</td><td>${bflP(R.conv)}</td><td>${bflP(R.otval)}</td><td>${bflI(R.output)}</td></tr>`).join('')
+        +`<tr class="tot"><td class="l">Итого</td><td>${bflI(c.inflow)}</td><td></td><td></td><td>${bflI(c.output)}</td></tr></tbody></table>`;
+    if(c.inflow==null)return '';
+    return `<table>${head}<tbody><tr><td class="l">${esc(d.name)}</td><td>${bflI(c.inflow)}</td><td>${bflP(d.funnel.conv)}</td><td>${bflP(d.funnel.otval)}</td><td>${bflI(c.output)}</td></tr></tbody></table>`;};
+
+  const caseTbl=c=>{let h='';
+    if(c.revPerCaseRows&&c.revPerCaseRows.length)
+      h+=`<table><thead><tr><th class="l">Доходы на дело · дел за месяц: ${bflI(c.caseCount)}</th><th>₽/дело</th><th>Сумма</th></tr></thead><tbody>`
+        +c.revPerCaseRows.map(r=>`<tr><td class="l">${esc(r.name)}</td><td>${bflM(r.rate)}</td><td>${bflM(r.amount)}</td></tr>`).join('')
+        +`<tr class="tot"><td class="l">Итого доходов</td><td></td><td>${bflM(c.selfRev)}</td></tr></tbody></table>`;
+    if(c.perCaseRows&&c.perCaseRows.length)
+      h+=`<table><thead><tr><th class="l">Затраты на дело</th><th>₽/дело</th><th>Сумма</th></tr></thead><tbody>`
+        +c.perCaseRows.map(r=>`<tr><td class="l">${esc(r.name)}${r.passThrough?' <span class="mut">(возвратная)</span>':''}</td><td>${bflM(r.rate)}</td><td>${bflM(r.amount)}</td></tr>`).join('')
+        +`</tbody></table>`;
+    return h;};
+
+  const deptHtml=d=>{const c=bflDeptCalc(d,g),self=!!d.selfFunded;
+    const tskp=(c.tskp!=null)?('ЦКП '+bflM(c.tskp)+(c.base?(' · база '+bflI(c.base)):'')):'ЦКП не считается - вспомогательный отдел';
+    let h=`<div class="dept${self?' self':''}"><div class="dname">${esc(d.name)}${self?' <span class="tag">свой ОПИУ · в итог блока НЕ входит</span>':''}</div><div class="mut">${tskp}</div>`;
+    if(Array.isArray(d.leadgen))h+=leadTbl(c);
+    if(d.funnel)h+=funnelTbl(d,c);
+    h+=staffTbl(d.roles,'Штатное расписание');
+    h+=costsTbl(d.costs);
+    h+=caseTbl(c);
+    h+=`<table><tbody><tr class="tot"><td class="l">Итого по отделу · расходы</td><td>${bflM(c.gross)}</td></tr>`;
+    if(c.pass>0.005)h+=`<tr><td class="l">в т.ч. возвратные (pass-through)</td><td>${bflM(c.pass)}</td></tr><tr><td class="l">расходы без возвратных</td><td>${bflM(c.net)}</td></tr>`;
+    if(c.incassation>0.005)h+=`<tr><td class="l">Инкассация</td><td>${bflM(c.incassation)}</td></tr>`;
+    if(self)h+=`<tr class="tot"><td class="l">Свой ОПИУ · сальдо (доходы − расходы)</td><td>${bflM(c.selfNet)}</td></tr>`;
+    return h+`</tbody></table></div>`;};
+
+  const now=new Date(),p2=n=>String(n).padStart(2,'0');
+  const stamp=now.toLocaleDateString('ru-RU')+' '+p2(now.getHours())+':'+p2(now.getMinutes());
+  const toggles=[];if(ex)toggles.push('депозит исключён');if(F.exclPayrollTax)toggles.push('без начислений на ФОТ');
+
+  const blockHtml=sk=>{const ds=deptsOf(sk);if(!ds.length)return '';
+    // ⚠ ИТОГ БЛОКА БЕЗ САМООКУПАЕМЫХ КОНТУРОВ (ОПАУ): ровно так считает bflOPIU на экране. Включи
+    //   мы его в сумму - распечатанный итог разошёлся бы с ОПИУ, и разбираться пришлось бы человеку.
+    let sExp=0,sInc=0,hasSelf=false;
+    ds.forEach(d=>{if(d.selfFunded){hasSelf=true;return;}const c=bflDeptCalc(d,g);sExp+=(ex?c.net:c.gross);sInc+=c.incassation;});
+    const owner=(_bflModel.blocks&&_bflModel.blocks[sk]&&_bflModel.blocks[sk].owner)||'';
+    return `<section class="blk">
+      <div class="fitnote">⚠ Содержимое не поместилось на один лист даже при минимальном кегле 7&nbsp;pt. Блок напечатан на двух страницах, разрыв поставлен между отделами.</div>
+      <h1>${esc(BFL_SUPTITLE[sk]||sk)}</h1>
+      <div class="sub">${esc(BFL_SUPSUB[sk]||'')}${owner?' · руководитель блока: '+esc(owner):''}</div>
+      <div class="meta">Месяц модели: <b>${esc(per.label||F.month||'-')}</b> · сценарий: <b>${F.scenario==='fact'?'факт':'план'}</b>${toggles.length?' · '+esc(toggles.join(' · ')):''}<br>
+        Напечатано ${esc(stamp)} · источник: модель БФЛ (config/bflModel), факт из RawData_BFL</div>
+      ${ds.map(deptHtml).join('')}
+      <div class="btot"><span>ИТОГО ПО БЛОКУ${hasSelf?' (без самоокупаемых контуров)':''}</span><span>расходы ${bflM(sExp)}${sInc>0.005?(' · инкассация '+bflM(sInc)):''}</span></div>
+    </section>`;};
+
+  const CSS='@page{size:A4 portrait;margin:8mm}'
+    +'*{box-sizing:border-box}'
+    +'body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#1a2033;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+    +'.blk{width:194mm;font-size:9.5pt;page-break-after:always;break-after:page}'
+    +'.blk:last-child{page-break-after:auto;break-after:auto}'
+    +'h1{font-size:1.3em;margin:0 0 .15em}'
+    +'.sub{font-size:.85em;color:#5b6376;margin-bottom:.35em}'
+    +'.meta{font-size:.8em;color:#5b6376;border-bottom:1pt solid #23272f;padding-bottom:.35em;margin-bottom:.55em;line-height:1.45}'
+    +'.dept{break-inside:avoid;page-break-inside:avoid;margin-bottom:.65em}'
+    +'.dname{font-size:1.02em;font-weight:700;background:#eef1f6;padding:.22em .5em}'
+    +'.dept.self .dname{background:#f4f2ea;border-left:2pt solid #c47a12}'
+    +'.tag{font-weight:600;font-size:.8em;color:#8a5a00}'
+    +'.mut{font-size:.8em;color:#5b6376;padding:.15em .5em}'
+    +'table{width:100%;border-collapse:collapse;font-size:.85em;margin-top:.2em}'
+    +'th{text-align:right;font-weight:600;color:#5b6376;padding:.15em .4em;border-bottom:.5pt solid #9aa1b0}'
+    +'th.l,td.l{text-align:left}'
+    +'td{padding:.14em .4em;border-bottom:.4pt solid #dfe3ea;text-align:right;font-variant-numeric:tabular-nums}'
+    +'tr.tot td{font-weight:700;border-top:.6pt solid #23272f;border-bottom:none}'
+    +'.btot{display:flex;justify-content:space-between;gap:10px;border-top:1.2pt solid #23272f;margin-top:.5em;padding-top:.3em;font-size:1em;font-weight:700}'
+    +'.fitnote{display:none;font-size:.8em;color:#8a5a00;background:#fff6e0;border:.5pt solid #e0b25a;padding:.25em .5em;margin-bottom:.4em}'
+    +'.blk.over .fitnote{display:block}';
+  const body=keys.map(blockHtml).join('');
+  if(!body){alert('В выбранном блоке нет отделов');return;}
+  const html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Модель БФЛ - печать блока</title><style>'+CSS+'</style></head><body>'+body+'</body></html>';
+
+  const w=window.open('','_blank'); if(!w){alert('Разрешите всплывающие окна для печати');return;}
+  w.document.open(); w.document.write(html); w.document.close();
+  // ⚠ ПОДГОНКА ПОД СТРАНИЦУ: собрали в базовом кегле → ЗАМЕРИЛИ фактическую высоту в открытом
+  //   окне → посчитали коэффициент → применили → и только потом печать. Считать по числу строк
+  //   нельзя: высота зависит от переносов в названиях отделов и ролей.
+  // ⚠ НИЖНИЙ ПРЕДЕЛ 7pt ЖЁСТКИЙ. Не влезло при нём - печатаем на двух страницах и ГОВОРИМ об этом
+  //   в шапке листа: молча выданное нечитаемое хуже честных двух страниц.
+  setTimeout(()=>{
+    try{
+      const MM=96/25.4, USABLE=(297-16)*MM, BASE=9.5, MIN=7; // A4 portrait минус поля 8мм сверху и снизу
+      const secs=w.document.querySelectorAll('section.blk');
+      for(let i=0;i<secs.length;i++){const sec=secs[i];
+        sec.style.fontSize=BASE+'pt';
+        const h0=sec.scrollHeight;
+        if(h0>USABLE){
+          const size=Math.max(MIN,+(BASE*(USABLE/h0)).toFixed(2));
+          sec.style.fontSize=size+'pt';
+          if(sec.scrollHeight>USABLE+2)sec.classList.add('over'); // не влезло и при минимуме - честные две страницы
+        }
+      }
+    }catch(e){}
+    setTimeout(()=>{try{w.focus();w.print();}catch(e){}},300);
+  },450);
 };
 
 // ── Вид «Отделы и ЦКП» ────────────────────────────────────────────────────────
@@ -16157,7 +16322,7 @@ function bflRenderDepts(host){
     return `<div style="margin-bottom:8px">${cardInner}</div>`;
   };
 
-  let html=`<div style="padding:4px 2px">${bflViewBar()}${bflPrintControls()}
+  let html=`<div style="padding:4px 2px">${bflViewBar()}${bflModelControls()}${bflPrintBar()}
 `;
   const SUPER={overhead:'aup',attract:'commercial',sales:'commercial',production:'production'};
   const SUPTITLE={aup:'Административно-управленческий персонал (АУП)',commercial:'Коммерческий блок',production:'Производственный блок'};
@@ -16303,7 +16468,7 @@ function bflRenderOpiu(host){
     <div style="font-size:10.5px;color:var(--text3);margin-top:7px">Допуск ±0,5% (округления + начисления). Депозит суда (${bflM(o.deposit)}, платит ОИ) - оборотные средства; в эталоне §6 включён в расходы (компенсируется возвратом в ОПАУ, который не учтён в общей выручке).</div>
   </div>`;
 
-  host.innerHTML=`<div style="padding:4px 2px">${bflViewBar()}${bflPrintControls()}
+  host.innerHTML=`<div style="padding:4px 2px">${bflViewBar()}${bflModelControls()}
     <div style="font-size:11.5px;color:var(--text3);margin-bottom:12px">Слой C · Сборка ОПИУ из отделов по супер-блокам (как «Отделы · ЦКП»). Выручка = инкассации (ОП первый платёж + ОКС рассрочка); расходы = Σ отделов (ОПАУ - самоокупаемый контур, в своём ОПИУ).</div>
     <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:12px"><input type="checkbox" ${ex?'checked':''} onchange="bflToggleDeposit(this)"> Исключить депозит из расходов (pass-through, «теоретически верно»)</label>
     <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:6px">
