@@ -13685,30 +13685,38 @@ function _planRenderMatrix(){
   };
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   // фильтр «Направление» редактора: развороты и итоги показывают только выбранное; планы скрытых направлений НЕ трогаются при сохранении (presentKeys в _planStage)
-  // ── НАПРАВЛЕНИЯ БЕЗ ЕДИНОЙ ЗАПИСИ ЗА ГОД (27.08.2026) ────────────────────────
-  // Признак «направление не используется» составной, готового в коде не было: НЕТ ни одной
-  // записи плана за выбранный год И НЕТ ненулевого факта за него же. Оба слагаемых уже
-  // построены выше - _planRecords и FAD, - своего прохода по RAW здесь нет.
-  // ⚠ Скрытие НЕ МЕНЯЕТ НИ ОДНОГО ЧИСЛА: dirsShown питает и строки, и итоги свёрнутых
-  //   подстатей (subYearPlan/subMonthPlan), а у скрытого направления план null и факт 0 -
-  //   вклад в сумму нулевой по определению признака. Это и есть причина, по которой прятать
-  //   безопасно: прячется ровно то, что ничего не весит.
-  const _nzf=v=>Math.abs(v)>0.005;
-  const dirsWithPlan=new Set();(_planRecords||[]).forEach(p=>{if(p&&p.year===year&&p.dir)dirsWithPlan.add(p.dir);});
-  const dirsWithFact=new Set();Object.keys(FAD).forEach(d=>{const F=FAD[d];
-    if(F.rev.some(_nzf)||F.npExp.some(_nzf)||Object.keys(F.inc).some(k=>F.inc[k].some(_nzf))||Object.keys(F.exp).some(k=>F.exp[k].some(_nzf)))dirsWithFact.add(d);});
-  const dirUsed=d=>dirsWithPlan.has(d)||dirsWithFact.has(d);
-  const dirsHidden=allDirs.filter(d=>!dirUsed(d));
+  // ── ПУСТЫЕ СТРОКИ НАПРАВЛЕНИЙ ВНУТРИ ПОДСТАТЬИ (28.08.2026) ──────────────────
+  // ⚠ Критерий стоит на ПАРЕ «направление + подстатья», а не на направлении. Правило на
+  //   направлении (27.08) скрывало НОЛЬ строк: почти каждое направление где-нибудь да
+  //   используется, и признак срабатывал вхолостую.
+  // ⚠ Первая половина критерия ТОЖДЕСТВЕННА галочке «планировать» слева от строки
+  //   (hasPlan = !!eRecs(dir,level,code).length). Поэтому строка с отмеченной галочкой не
+  //   скрывается НИКОГДА - не по совпадению, а по построению: человек включил её сам,
+  //   и пустые значения при этом законны («планируем, но пока не заполнили»).
+  // ⚠ Факт проверяется ПОМЕСЯЧНО, а не годовой суммой: возврат (expOf<0) способен обнулить
+  //   сумму за год при ненулевых месяцах, и строка с реальным движением денег исчезла бы.
   const showAllDirs=!!window._planShowAllDirs;
   const dirFlt=String(window._planDirFlt||'');
-  // ⚠ Если по признаку не осталось НИ ОДНОГО направления (пустой год - его как раз и приходят
-  //   заводить), показываем все: редактор, в котором нечего заполнить, бесполезен.
-  const _dirsAuto=showAllDirs?allDirs:allDirs.filter(dirUsed);
-  const dirsShown=(dirFlt&&allDirs.includes(dirFlt))?[dirFlt]:(_dirsAuto.length?_dirsAuto:allDirs);
-  // счётчик скрытого - в шапку панели (она рисуется отдельно и живёт между перерисовками матрицы)
+  const dirsShown=(dirFlt&&allDirs.includes(dirFlt))?[dirFlt]:allDirs;
+  // ⚠ dirsShown НЕ РЕЖЕТСЯ: на нём стоят итоги свёрнутых подстатей (subYearPlan/subMonthPlan)
+  //   и фильтр ответственных. Скрытие живёт ТОЛЬКО на отрисовке строк, поэтому ни один итог
+  //   не может измениться, что бы ни скрылось - это свойство конструкции, а не проверки.
+  let _hiddenRows=0;
+  const pairHasFact=(d,rl,code)=>{for(let m=1;m<=12;m++)if(Math.abs(factOf(d,rl,code,m))>0.005)return true;return false;};
+  const pairUsed=(d,rl,code)=>!!eRecs(d,rl,code).length||pairHasFact(d,rl,code);
+  const dirsForCode=(rl,code)=>{
+    if(showAllDirs||dirsShown.length<2)return dirsShown;
+    const keep=dirsShown.filter(d=>pairUsed(d,rl,code));
+    if(!keep.length)return dirsShown; // по подстатье пусто во всех направлениях - показываем все: иначе её нечем завести
+    _hiddenRows+=dirsShown.length-keep.length;
+    return keep;};
+  // счётчик - в шапку панели (она рисуется отдельно и живёт между перерисовками матрицы).
+  // ⚠ Считаются РЕАЛЬНО СКРЫТЫЕ строки, то есть только внутри РАЗВЁРНУТЫХ подстатей: свёрнутая
+  //   подстатья строк направлений не рисует вовсе, и записывать их в «скрытые» значило бы
+  //   считать то, чего человек всё равно не увидел бы. Ноль - счётчик не печатается.
   setTimeout(()=>{const hs=document.getElementById('plan-dirs-hidden');
-    if(hs)hs.textContent=(!showAllDirs&&_dirsAuto.length&&dirsHidden.length)?('скрыто: '+dirsHidden.length):'';
-    if(hs)hs.title=dirsHidden.length?('Без записей плана и без факта за '+year+': '+dirsHidden.join(', ')):'';
+    if(hs){hs.textContent=_hiddenRows?('скрыто пустых строк: '+_hiddenRows):'';
+      hs.title=_hiddenRows?('В развёрнутых подстатьях скрыты строки направлений, у которых за '+year+' нет ни записи плана, ни факта. Строка с отмеченной галочкой «планировать» не скрывается никогда.'):'';}
     const cb=document.getElementById('plan-dirs-all');if(cb)cb.checked=showAllDirs;},0);
   const unionCodes=fn=>{const s={};allDirs.forEach(d=>fn(d,level).forEach(c=>s[c]=1));return Object.keys(s).sort((a,b)=>String(a).localeCompare(String(b),'ru'));};
   // поиск по строкам матрицы (фильтр кодов по подстроке, live)
@@ -13768,11 +13776,11 @@ function _planRenderMatrix(){
   const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label);
     let html=openHeader(rl,code,label,key);
     if(isSubLevel(code)&&rl!=='revenue'){ // 111-ФОТ (сотрудники) / 223-аренда (объекты): направление → 3-й уровень
-      dirsShown.forEach(d=>{html+=dirHeaderFot(rl,code,d,key);
+      dirsForCode(rl,code).forEach(d=>{html+=dirHeaderFot(rl,code,d,key);
         if(EXP.has(key+'|'+d)){const sd=fotSides(d,code);sd.named.forEach(s=>{html+=empRowHtml(d,code,s,s,key);});if(sd.unalloc)html+=empRowHtml(d,code,'','(не распределено)',key);html+=empAddRow(d,code,key);}});
       return html;
     }
-    return html+dirsShown.map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
+    return html+dirsForCode(rl,code).map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
   const subSel=window._planSubartSel, ownerSel=window._planOwnerSel; // мультивыбор подстатей и ответственных (Set); пусто = все
   const ownerOk=code=>{if(!ownerSel||!ownerSel.size)return true;return dirsShown.some(d=>{const o=String(_planOwners[_ownerKey(d,code)]||'').trim();return o?ownerSel.has(o):ownerSel.has('__none__');});};
   let body;
@@ -14875,7 +14883,7 @@ window.showPlansPanel=async function(){
         <select id="plan-dir-flt" onchange="planDirFlt(this.value)" title="Показывать развороты и итоги только по выбранному направлению (планы остальных не трогаются)" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:260px">
           <option value="">Все направления</option>${dirs.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')}
         </select>
-        <label title="Направления без единой записи плана и без факта за выбранный год скрыты. Здесь их видно - чтобы завести план по направлению, которое только начинается." style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);white-space:nowrap;cursor:pointer"><input type="checkbox" id="plan-dirs-all" onchange="planShowAllDirs(this.checked)" style="margin:0;cursor:pointer">показывать все направления</label>
+        <label title="Внутри подстатьи скрыты строки направлений, по которым за выбранный год нет ни записи плана, ни факта. Включите, чтобы завести план по направлению, которое только начинается. Строки с отмеченной галочкой «планировать» не скрываются никогда." style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);white-space:nowrap;cursor:pointer"><input type="checkbox" id="plan-dirs-all" onchange="planShowAllDirs(this.checked)" style="margin:0;cursor:pointer">показывать все строки направлений</label>
         <span id="plan-dirs-hidden" style="font-size:10px;color:var(--text3);white-space:nowrap"></span>
         <select id="plan-year" onchange="planOnControlChange()" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${years.map(y=>`<option value="${y}"${y===cy?' selected':''}>${y}</option>`).join('')}</select>
         <input id="plan-row-q" type="text" autocomplete="off" placeholder="Поиск по строкам..." oninput="planRowSearch(this.value)" style="font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:170px">
