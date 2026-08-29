@@ -15253,7 +15253,7 @@ function bflModelDefault(){
         leadgen:[
           {dir:'ofbfl', name:'#1 Лидогенерация',  owner:'Тертюк Александр',leads:1380,brak:0.5,costRaw:1350,payFor:'lead',
             staff:[{name:'Руководитель ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0}]},
-          {dir:'Agbfl', name:'#2 Агентская сеть',owner:'Романенко Лонека',leads:0,brak:0,costRaw:0,payFor:'fot',deals:0,feePerQual:500,feePerDeal:10000,
+          {dir:'Agbfl', name:'#2 Агентская сеть',owner:'Романенко Лонека',leads:0,brak:0,costRaw:0,payFor:'fot',deals:0,feePerMeeting:500,feePerDeal:10000,
             staff:[{name:'Руководитель АС',fte:1,rate:0},{name:'Сотрудник АС',fte:1,rate:0}]},
           {dir:'R-bfl', name:'#3 Рекомендации ОКС',owner:'Шарагин Дмитрий', leads:0,   brak:0,  costRaw:0,payFor:'qual',deals:0,feePerQual:1000,feePerDeal:1000,feeTo:'os'},
           {dir:'OP-bfl',name:'#4 Рекомендации ОП и прочее',owner:'Кривчикова Мария',leads:0,brak:0,costRaw:0,payFor:'lead'}
@@ -15348,7 +15348,7 @@ function bflEnsureModel(m){
       // ОМ-штат теперь относится к направлению #1: переносим бывший общий roles[] в #1.staff
       if(Array.isArray(dep.roles)&&dep.roles.length){const d1=dep.leadgen[0];if(d1&&(!Array.isArray(d1.staff)||!d1.staff.length))d1.staff=dep.roles;dep.roles=[];}
       dep.leadgen.forEach(L=>{const def=defMkt.leadgen.find(x=>x.dir===L.dir);if(!def)return;
-      ['deals','feePerQual','feePerDeal','payFor','feeTo'].forEach(k=>{if(L[k]===undefined&&def[k]!==undefined)L[k]=def[k];});
+      ['deals','feePerQual','feePerMeeting','feePerDeal','payFor','feeTo'].forEach(k=>{if(L[k]===undefined&&def[k]!==undefined)L[k]=def[k];});
       if((typeof L.owner!=='string'||L.owner==='')&&def.owner)L.owner=def.owner; // чинит owner=0 (баг data-text) и пустые
       if(L.staff===undefined&&def.staff!==undefined)L.staff=JSON.parse(JSON.stringify(def.staff));});}});
     // ОП: убрать легаси-роли «(АС)» (были при объединении ОП-KO/ОП-AC)
@@ -15395,6 +15395,17 @@ function bflEnsureModel(m){
      if(koDep.funnel.singleStage===undefined)koDep.funnel.singleStage=true;
      if(koDep.funnel.singleStage&&Array.isArray(koDep.funnel.byDir))
        koDep.funnel.byDir.forEach(B=>{if(B&&+B.otval){B.conv=(+B.conv||0)*(1-(+B.otval||0));B.otval=0;}});}}
+  // ⚠ АГЕНТСКОЙ СЕТИ ПЛАТЯТ ЗА СОСТОЯВШУЮСЯ ВСТРЕЧУ (29.08.2026, подтверждено Олегом). Ставка
+  //   лежала как `feePerQual` и умножалась на КВАЛ-ЛИДЫ - это ПОТЕРЯ ПРИ ПЕРЕНОСЕ, а не решение:
+  //   в старом `BFL_DIRS_DEFAULT` у d2 стоит `feePerMeeting:500`, за встречу.
+  // ⚠ Переносим значение ЧЕЛОВЕКА, перебивая дефолт: он мог править ставку руками, а домерж полей
+  //   выше уже подставил 500. Идемпотентно: после переноса `feePerQual` у направления нет.
+  // ⚠ Направление названо ключом `Agbfl` явно. Признак «есть комиссия и нет `feeTo`» тут не
+  //   годится: он про то, ВНЕШНИЙ ли получатель, а не про то, ЗА ЧТО платят, - а это, как раз
+  //   разные вопросы (см. правило в CLAUDE.md).
+  {(m.departments||[]).forEach(dep=>{if(!dep||!Array.isArray(dep.leadgen))return;
+     dep.leadgen.forEach(L=>{if(L&&L.dir==='Agbfl'&&L.feePerQual!==undefined){
+       L.feePerMeeting=L.feePerQual;delete L.feePerQual;}});});}
   const osDep=(m.departments||[]).find(x=>x&&x.id==='os');if(osDep&&osDep.collectsRassrochka===undefined){osDep.collectsRassrochka=true;osDep.incassation=0;} // ОС собирает рассрочку
   if(osDep&&osDep.tskpFromOp===undefined)osDep.tskpFromOp=true; // ОС: база ЦКП = сделки от ОП
   // ── ПРАВИЛО ОТБОРА НАКЛАДНЫХ (28.08.2026) ───────────────────────────────────
@@ -15919,6 +15930,13 @@ function bflDeptCalc(d,g){
   if(Array.isArray(d.leadgen)){
     const dealStage=_bflModel.departments.find(x=>x.dealStage); // отдел продаж (ОП) - источник кол-ва сделок
     let _qf=null;const qDeals=dir=>{if(!_qf)_qf=bflQtyFlow();const mp=dealStage?_qf[dealStage.id]:null;return mp?(mp[dir]||0):0;};
+    // ⚠ ВСТРЕЧИ БЕРУТСЯ ИЗ bflQtyFlow, А НЕ ИЗ bflDeptCalc НИЖЕСТОЯЩЕГО ОТДЕЛА. Иначе расход
+    //   маркетинга зависел бы от расчёта отдела НИЖЕ по конвейеру, и вызов замкнулся бы - ровно
+    //   та петля, что уронила вкладку 28.08. `bflQtyFlow` читает только модель и заведён под это.
+    // ⚠ Отдел встреч ищется по связи (`funnel.inflowFrom === маркетинг`), а не по id 'client_ko':
+    //   переименуют отдел - расход не должен молча обнулиться.
+    const meetDept=(_bflModel.departments||[]).find(x=>x&&x.funnel&&x.funnel.inflowFrom===d.id);
+    const qMeet=dir=>{if(!_qf)_qf=bflQtyFlow();const mp=meetDept?_qf[meetDept.id]:null;return mp?(mp[dir]||0):0;};
     leadRows=d.leadgen.map(L=>{
       const leads=L.leads||0,brak=L.brak||0,costRaw=L.costRaw||0;
       const qual=leads*(1-brak);
@@ -15934,9 +15952,15 @@ function bflDeptCalc(d,g){
       //   дважды: 60 × 500 утром и 60 × 100 вечером).
       const payFor=L.payFor||'lead';
       const media=(payFor==='qual')?0:leads*costRaw;    // закупка трафика (грязные лиды)
-      const agentQual=qual*(L.feePerQual||0);           // ₽ за К-лид (квал-лид) агенту
+      const agentQual=qual*(L.feePerQual||0);           // ₽ за квал-лид (у #3 - отделу сопровождения)
+      // ⚠ ЗА ЧТО ПЛАТИМ И ЧЕЙ ЭТО РАСХОД - РАЗНЫЕ ВОПРОСЫ. Ставка агентской сети платится за
+      //   СОСТОЯВШУЮСЯ ВСТРЕЧУ: агент производит лид, а встреча - УСЛОВИЕ ВЫПЛАТЫ, подтверждение
+      //   что лид настоящий. Расход при этом остаётся МАРКЕТИНГА, а не клиентского отдела: стадия
+      //   задаёт только КОЛИЧЕСТВО, на которое умножают.
+      const meetings=(L.feePerMeeting?qMeet(L.dir):0);
+      const agentMeet=meetings*(L.feePerMeeting||0);   // ₽ за состоявшуюся встречу агенту
       const agentDeal=deals*(L.feePerDeal||0);          // доплата агенту за сделку (кол-во сделок - из ОП)
-      const agentFee=agentQual+agentDeal;
+      const agentFee=agentQual+agentMeet+agentDeal;
       const staff=L.staff||[];
       const dFot=staff.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);
       const dFte=staff.reduce((a,r)=>a+(r.fte||0),0);
@@ -15949,7 +15973,7 @@ function bflDeptCalc(d,g){
       // ⚠ В расход НАПРАВЛЕНИЯ (колонка ОМ) идёт только плата за КВАЛ-ЛИД: плата за сделку -
       //   результат ОП и ложится на него (`bflDealFeeByDir`). Сумма по направлению от этого не
       //   меняется, она переезжает между колонками ОМ и ОП внутри одного блока.
-      const variable=media+agentQual;                   // переменные затраты направления
+      const variable=media+agentQual+agentMeet;         // переменные затраты направления (за сделку платит ОП)
       const dirCost=variable+dFot+dNach;                // полная стоимость направления
       // ⚠ `costQual` ВСЕГДА ОЗНАЧАЕТ ОДНО: полную стоимость квал-лида, то есть все расходы
       //   направления, делённые на квал-лиды. Ставка, которую ПЛАТЯТ за квал-лид, - отдельное
@@ -15960,8 +15984,8 @@ function bflDeptCalc(d,g){
       leadSpend+=variable;qualTotal+=qual;dirFotTotal+=dFot;dirFteTotal+=dFte;leadTotalCost+=dirCost;nachAcc+=dNach;
       return {name:L.name,owner:L.owner,dir:L.dir,leads:leads,brak:brak,costRaw:costRaw,rawCost:rawCost,
         payFor:payFor,feeQual:(L.feePerQual||0),feeTo:L.feeTo||'',deals:deals,dealsInherited:dealsInherited,
-        feePerQual:L.feePerQual||0,feePerDeal:L.feePerDeal||0,qual:qual,media:media,
-        agentQual:agentQual,agentDeal:agentDeal,agentFee:agentFee,dFot:dFot,dFte:dFte,dNach:dNach,
+        feePerQual:L.feePerQual||0,feePerMeeting:L.feePerMeeting||0,feePerDeal:L.feePerDeal||0,qual:qual,media:media,
+        meetings:meetings,agentQual:agentQual,agentMeet:agentMeet,agentDeal:agentDeal,agentFee:agentFee,dFot:dFot,dFte:dFte,dNach:dNach,
         variable:variable,dirCost:dirCost,costQual:costQual,staff:staff};});
     fot+=dirFotTotal;
   }
@@ -15974,16 +15998,18 @@ function bflDeptCalc(d,g){
       // ⚠ ОДНОСТАДИЙНАЯ ВОРОНКА: средней стадии НЕТ, и отвал в расчёт НЕ входит вовсе - иначе
       //   забытое ненулевое значение молча срезало бы выход, а на экране его никто бы не увидел
       //   (колонки отвала у такой воронки нет). За перенос отвала в конверсию отвечает миграция.
-      const single=!!d.funnel.singleStage;
       const upByDir = d.funnel.inflowFrom ? bflUpstreamOutputByDir(d.funnel.inflowFrom) : {};
+      const stages=bflFunnelStages(d,upByDir);
+      const single=!!d.funnel.singleStage;
       const upUnit  = d.funnel.inflowFrom ? bflUpstreamUnitCostByDir(d.funnel.inflowFrom) : {};
       inheritsUnit=Object.keys(upUnit).length>0;
       const prof=g.collectionProfile||{},fpAmt=prof.firstPay!=null?prof.firstPay:0;
       const months=+prof.rassrochkaMonths||0;
       inflow=0;assigned=0;output=0;
       funnelRows=d.funnel.byDir.map(B=>{
-        const inflowDir=upByDir[B.dir]||0,assignedDir=inflowDir*(B.conv||0);
-        const outputDir=single?assignedDir:assignedDir*(1-(B.otval||0));
+        // ⚠ Стадии считает ОБЩАЯ функция - см. предупреждение над `bflFunnelStages`.
+        const S=stages[B.dir]||{inflow:0,assigned:0,output:0};
+        const inflowDir=S.inflow,assignedDir=S.assigned,outputDir=S.output;
         const check=B.check||0,suma=outputDir*check;
         // ⚠ ПЕРВЫЙ ПЛАТЁЖ СЧИТАЕТСЯ ОТ ДОГОВОРА, А `firstPay` В ПРОФИЛЕ - ЭТО МИНИМУМ (29.08.2026).
         //   Платёж = сумма договора / срок рассрочки, но не меньше минимума и не больше самого
@@ -16121,11 +16147,28 @@ function bflUpstreamUnitCostByDir(id){
 // Поток КОЛИЧЕСТВ по направлениям через стадии (БЕЗ затрат) - чтобы агентское вознаграждение
 // читало сделки из ОП без зацикливания (агентские комиссии не считаются в этом проходе).
 // {deptId:{dir:count}} - лидогенерация→квал-лиды, воронки→выход (встречи у КО, сделки у ОП)
+// ⚠ ОДНО МЕСТО, ГДЕ ЖИВЁТ ПРАВИЛО ВОРОНКИ (29.08.2026). Стадии по направлениям считает ТОЛЬКО
+//   эта функция, и её зовут ОБА расчёта - `bflQtyFlow` (поток количеств) и `bflDeptCalc` (полный
+//   расчёт отдела). До выноса правило жило в двух местах и уже разошлось: `bflQtyFlow` умножал на
+//   (1 − отвал) безусловно, а `bflDeptCalc` у воронки с `singleStage` отвал игнорировал. Согласны
+//   они были только потому, что миграция обнулила отвал у КО, - то есть по случайности данных.
+// ⚠ ЧИНИТЬ ТАКОЕ ВТОРЫМ ЭКЗЕМПЛЯРОМ ПРАВИЛА НЕЛЬЗЯ: два места, знающие одно правило, и есть
+//   причина расхождения; третья стадия воспроизвела бы его в третьем месте.
+// ⚠ ЧИТАЕТ ТОЛЬКО МОДЕЛЬ и переданную карту входа. Просочится сюда `bflDeptCalc` - вернётся
+//   падение стека 28.08 (`fa1d3a6`), причём по более широкому пути: через неё идут ОБА расчёта.
+function bflFunnelStages(d,upByDir){
+  const fl=(d&&d.funnel)||{},single=!!fl.singleStage,out={};
+  (fl.byDir||[]).forEach(B=>{
+    const inflow=(upByDir&&upByDir[B.dir])||0,assigned=inflow*(B.conv||0);
+    out[B.dir]={inflow:inflow,assigned:assigned,output:single?assigned:assigned*(1-(B.otval||0))};});
+  return out;
+}
 function bflQtyFlow(){
   const out={},depts=_bflModel.departments||[];
   depts.forEach(d=>{if(Array.isArray(d.leadgen)){const q={};d.leadgen.forEach(L=>{q[L.dir]=(L.leads||0)*(1-(L.brak||0));});out[d.id]=q;}});
-  depts.forEach(d=>{if(d.funnel&&Array.isArray(d.funnel.byDir)){const up=out[d.funnel.inflowFrom]||{};const o={};
-    d.funnel.byDir.forEach(B=>{o[B.dir]=(up[B.dir]||0)*(B.conv||0)*(1-(B.otval||0));});out[d.id]=o;}});
+  depts.forEach(d=>{if(d.funnel&&Array.isArray(d.funnel.byDir)){
+    const st=bflFunnelStages(d,out[d.funnel.inflowFrom]||{}),o={};
+    Object.keys(st).forEach(k=>{o[k]=st[k].output;});out[d.id]=o;}});
   return out;
 }
 function bflOPIU(){
@@ -16203,7 +16246,7 @@ function bflDealCostByDir(){
   //   ровно это и случилось: расход #3 встал в колонку агентской сети вместо ОМ. Агентская сеть -
   //   это канал ВНЕШНИХ агентов, у неё получателя-отдела нет.
   const agentByDir={};
-  if(mc&&mc.leadRows)mc.leadRows.forEach(r=>{mktByDir[r.dir]=r.dirCost;agentByDir[r.dir]=!!((r.feePerQual||r.feePerDeal)&&!r.feeTo);nameByDir[r.dir]=r.name;order.push(r.dir);});
+  if(mc&&mc.leadRows)mc.leadRows.forEach(r=>{mktByDir[r.dir]=r.dirCost;agentByDir[r.dir]=!!((r.feePerQual||r.feePerMeeting||r.feePerDeal)&&!r.feeTo);nameByDir[r.dir]=r.name;order.push(r.dir);});
   const koOut={};let koOutTot=0;if(kc&&kc.funnelRows)kc.funnelRows.forEach(r=>{koOut[r.dir]=r.output;koOutTot+=r.output;if(!nameByDir[r.dir]){nameByDir[r.dir]=r.name;order.push(r.dir);}});
   const opOut={};let opOutTot=0;if(oc&&oc.funnelRows)oc.funnelRows.forEach(r=>{opOut[r.dir]=r.output;opOutTot+=r.output;if(!nameByDir[r.dir]){nameByDir[r.dir]=r.name;order.push(r.dir);}});
   const koGross=kc?kc.gross:0,opGross=oc?oc.gross:0;
@@ -16543,12 +16586,13 @@ window.bflPrintBlocks=function(){
   //   месте, и это читалось как отсутствие людей, а не как дефект печати.
   const leadDetail=c=>{const rs=c.leadRows||[];let h='';
     rs.forEach(L=>{
-      const hasFee=!!(L.feePerQual||L.feePerDeal),hasStaff=!!(L.staff&&L.staff.length);
+      const hasFee=!!(L.feePerQual||L.feePerMeeting||L.feePerDeal),hasStaff=!!(L.staff&&L.staff.length);
       if(!hasFee&&!hasStaff)return;
       h+=`<div class="sub"><div class="sh">${esc(L.name)} · ${hasFee?'вознаграждение за канал и штат':'штатное расписание'}</div>`;
       if(hasFee)h+=`<table><tbody>`
         +(L.feeTo?`<tr><td class="l" colspan="3">получатель: ${esc(nameOf(L.feeTo))} - в его расходы это НЕ входит; за квал-лиды платит ОМ, за сделки ОП</td></tr>`:'')
-        +`<tr><td class="l">₽ за К-лид агенту × квал-лиды</td><td>${bflM(L.feePerQual)} × ${bflI(L.qual)}</td><td>${bflM(L.agentQual)}</td></tr>`
+        +(L.feePerQual?`<tr><td class="l">₽ за квал-лид × квал-лиды</td><td>${bflM(L.feePerQual)} × ${bflI(L.qual)}</td><td>${bflM(L.agentQual)}</td></tr>`:'')
+        +(L.feePerMeeting?`<tr><td class="l">₽ за состоявшуюся встречу × встречи <span class="mut">(выход КО по каналу)</span></td><td>${bflM(L.feePerMeeting)} × ${bflI(L.meetings)}</td><td>${bflM(L.agentMeet)}</td></tr>`:'')
         +`<tr><td class="l">сделки × ₽ за сделку${L.dealsInherited?' (сделки из ОП)':''} - в расходы ОП</td><td>${bflI(L.deals)} × ${bflM(L.feePerDeal)}</td><td>${bflM(L.agentDeal)}</td></tr>`
         +`<tr class="tot"><td class="l">Итого агентам</td><td></td><td>${bflM(L.agentFee)}</td></tr></tbody></table>`;
       if(hasStaff)h+=staffTbl(L.staff,'Штат направления: '+L.name);
@@ -16749,15 +16793,16 @@ function bflRenderDepts(host){
       // ⚠ РАННЕГО ВЫХОДА БОЛЬШЕ НЕТ, И ЭТО НЕ КОСМЕТИКА: пока он стоял, направление без штата,
       //   без агентской комиссии и без мотивации (#4) не давало блока ВООБЩЕ - а значит, и кнопки
       //   «+ добавить роль». Дыра ровно та же, что чинится этой правкой, только этажом выше.
-      const agentBlock=(L.feePerQual||L.feePerDeal)?`<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:12px;margin:2px 0 6px">
-        <span style="color:var(--text2)">₽ за К-лид агенту ${inp('leadgen.'+i+'.feePerQual',L.feePerQual,66)} × ${bflI(L.qual)} квал-лидов = <b>${bflM(L.agentQual)}</b></span>
+      const agentBlock=(L.feePerQual||L.feePerMeeting||L.feePerDeal)?`<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:12px;margin:2px 0 6px">
+        ${L.feePerQual?`<span style="color:var(--text2)">₽ за квал-лид ${inp('leadgen.'+i+'.feePerQual',L.feePerQual,66)} × ${bflI(L.qual)} квал-лидов = <b>${bflM(L.agentQual)}</b></span>`:''}
+        ${L.feePerMeeting?`<span style="color:var(--text2)">₽ за состоявшуюся встречу ${inp('leadgen.'+i+'.feePerMeeting',L.feePerMeeting,66)} × ${bflI(L.meetings)} встреч = <b>${bflM(L.agentMeet)}</b> <span style="font-size:10px;color:var(--text3)">встречи - выход клиентского отдела по этому каналу</span></span>`:''}
         <span style="color:var(--text2)">Сделки ${L.dealsInherited?`<b style="color:var(--accent)">${bflI(L.deals)}</b> <span style="font-size:10px;color:var(--text3)">(из ОП)</span>`:inp('leadgen.'+i+'.deals',L.deals,56)} × ₽ за сделку (до) ${inp('leadgen.'+i+'.feePerDeal',L.feePerDeal,80)} = <b>${bflM(L.agentDeal)}</b> <span style="font-size:10px;color:var(--text3)">→ в расходы ОП</span></span>
         <span style="color:var(--text2)">Итого по каналу: <b style="color:var(--outcome)">${bflM(L.agentFee)}</b> <span style="font-size:10px;color:var(--text3)">из них в ОМ ${bflM(L.agentQual)}, в ОП ${bflM(L.agentDeal)}</span></span>
         ${L.feeTo?`<span style="font-size:10.5px;color:var(--text3)">получатель: ${esc(nameOfDept(L.feeTo))} - это расход маркетинга, в расходы получателя он НЕ входит</span>`:''}</div>`:'';
       // ⚠ Сторож пустоты снят: пока он стоял, направление БЕЗ штата не давало ни таблицы, ни
       //   кнопки, и первую роль в нём завести было негде. Пустое расписание рисуется одной кнопкой.
       const staffBlock=staffTbl(d.id,L.staff,'leadgen.'+i+'.staff','Штат направления: '+L.name);
-      const dtitle=(L.feePerQual||L.feePerDeal)?'вознаграждение за канал и штат':'штатное расписание';
+      const dtitle=(L.feePerQual||L.feePerMeeting||L.feePerDeal)?'вознаграждение за канал и штат':'штатное расписание';
       return `<div style="border:1px solid var(--divider);border-radius:8px;padding:9px 11px;margin-top:8px;background:var(--surface2)">
         <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">${esc(L.name)} - ${dtitle}</div>
         ${agentBlock}${staffBlock}</div>`;
@@ -17284,13 +17329,23 @@ function bflRunTests(){
     // #2 Агентская сеть: 500₽ за К-лид + до 10000₽ за сделку + свой штат
     const mkDept=_bflModel.departments.find(x=>x.id==='marketing');
     const d2=mkDept.leadgen.find(x=>x.dir==='Agbfl');
-    ok('#2 ставка за К-лид = 500',d2.feePerQual===500,d2.feePerQual);
+    // ⚠ Переписано 29.08.2026: ставка агентской сети платится за СОСТОЯВШУЮСЯ ВСТРЕЧУ, а не за
+    //   квал-лид. Прежняя проверка `d2.feePerQual===500` стерегла ПОТЕРЮ ПРИ ПЕРЕНОСЕ.
+    ok('#2 ставка 500 - за состоявшуюся встречу',d2.feePerMeeting===500,d2.feePerMeeting);
+    ok('#2 ставки за квал-лид больше нет',d2.feePerQual===undefined,String(d2.feePerQual));
     ok('#2 ставка за сделку = 10000',d2.feePerDeal===10000,d2.feePerDeal);
     // кол-во сделок #2 берётся из ОП (не вручную)
     const sv={leads:d2.leads,brak:d2.brak};d2.leads=100;d2.brak=0; // 100 квал-лидов #2
     const r2=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='Agbfl');
     ok('#2 кол-во сделок наследуется из ОП',r2.dealsInherited===true,r2.dealsInherited);
-    ok('#2 агентам за К-лид = 100×500 = 50000',r2.agentQual===50000,r2.agentQual);
+    // ⚠ 100 квал-лидов дают НЕ 100 встреч: встречи это выход КО по каналу (100 × конверсия).
+    //   Умножь мы на квал-лиды - вернулась бы та самая подмена стадии.
+    ok('#2 агентам платят за ВСТРЕЧИ, а не за квал-лиды',
+       ap(r2.agentMeet,r2.meetings*500)&&r2.meetings>0&&!ap(r2.meetings,r2.qual),
+       Math.round(r2.meetings)+' встреч из '+Math.round(r2.qual)+' квал-лидов');
+    ok('#2 количество встреч = выходу КО по каналу',
+       ap(r2.meetings,(bflQtyFlow()[_bflModel.departments.find(x=>x&&x.id==='client_ko').id]||{})['Agbfl']||0),
+       Math.round(r2.meetings));
     ok('#2 сделки из ОП ≈ 33.8 (100→КО 58.1→ОП 33.8)',Math.abs(r2.deals-33.8)<=1.5,+r2.deals.toFixed(1));
     ok('#2 агентам за сделку = сделки×10000',Math.abs(r2.agentDeal-r2.deals*10000)<1,Math.round(r2.agentDeal));
     d2.leads=sv.leads;d2.brak=sv.brak;
@@ -17341,9 +17396,39 @@ function bflRunTests(){
          ap(com.tskpDeal,bflSafeDiv(com.gross,com.deals)),Math.round(com.tskpDeal));
       // механизм #2 не задет
       const d2c=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='Agbfl');
-      ok('#2 комиссия считается по-прежнему',ap(d2c.agentFee,d2c.qual*d2c.feePerQual+d2c.deals*d2c.feePerDeal),Math.round(d2c.agentFee));
+      ok('#2 комиссия = встречи×ставка + сделки×ставка',
+         ap(d2c.agentFee,d2c.meetings*d2c.feePerMeeting+d2c.deals*d2c.feePerDeal),Math.round(d2c.agentFee));
       ok('#2 расход = ФОТ + начисления + комиссия',ap(d2c.dirCost,d2c.dFot+d2c.dNach+d2c.agentFee),Math.round(d2c.dirCost));
-      // ── ПЕРВЫЙ ПЛАТЁЖ СЧИТАЕТСЯ ОТ ДОГОВОРА, `firstPay` - МИНИМУМ (29.08.2026) ──
+      // ── ОДНА ФУНКЦИЯ СТАДИЙ ВОРОНКИ НА ОБА РАСЧЁТА (29.08.2026) ──
+    {
+      const ko7=_bflModel.departments.find(x=>x&&x.id==='client_ko');
+      // ⚠ ГЛАВНЫЙ ТЕСТ - СТРУКТУРНЫЙ: «оба пути идут через ОДНУ функцию», а не «значения совпали».
+      //   Совпадение значений доказывает лишь, что сегодня две копии правила согласованы, - ровно
+      //   то состояние, из которого расхождение и выросло. Подменяем общую функцию и смотрим,
+      //   изменились ли ОБА результата; не изменился один - он считает мимо неё.
+      const orig=window.bflFunnelStages;
+      let calledBy=0;
+      window.bflFunnelStages=function(dd,up){calledBy++;const r=orig(dd,up);
+        Object.keys(r).forEach(k=>{r[k]={inflow:r[k].inflow,assigned:r[k].assigned,output:r[k].output*2};});return r;};
+      const qf2=bflQtyFlow(),ko2=bflDeptCalc(ko7,g);
+      window.bflFunnelStages=orig;
+      const qfBase=bflQtyFlow(),koBase=bflDeptCalc(ko7,g);
+      ok('общая функция стадий вызывается обоими путями',calledBy>=2,calledBy);
+      ok('подмена общей функции меняет bflQtyFlow',
+         ap((qf2['client_ko']||{})['ofbfl'],((qfBase['client_ko']||{})['ofbfl']||0)*2,0.01),
+         Math.round((qf2['client_ko']||{})['ofbfl']||0));
+      ok('подмена общей функции меняет bflDeptCalc',
+         ap(ko2.output,koBase.output*2,0.01),Math.round(ko2.output));
+      // ⚠ Второй тест - на совпадение значений: ловит регресс при рефакторинге.
+      ok('выход КО совпадает в обоих расчётах поканально',
+         (koBase.funnelRows||[]).every(r=>ap((qfBase['client_ko']||{})[r.dir]||0,r.output,0.01)),
+         (koBase.funnelRows||[]).map(r=>Math.round(r.output)).join(' / '));
+      // ⚠ ПЕТЛИ НЕТ: расход маркетинга читает встречи через bflQtyFlow, а не через bflDeptCalc.
+      let looped=false;
+      try{bflDeptCalc(mkDept,g);bflOPIU();}catch(e){looped=/call stack|Maximum/i.test(String(e&&e.message));}
+      ok('цикла нет: расчёт маркетинга и ОПИУ проходят',!looped,'-');
+    }
+    // ── ПЕРВЫЙ ПЛАТЁЖ СЧИТАЕТСЯ ОТ ДОГОВОРА, `firstPay` - МИНИМУМ (29.08.2026) ──
     {
       const cp=_bflModel.global.collectionProfile;
       ok('умолчание: срок рассрочки 12 мес',cp.rassrochkaMonths===12,cp.rassrochkaMonths);
