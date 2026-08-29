@@ -15241,7 +15241,7 @@ function bflModelDefault(){
   return {
     meta:{version:'1.1',currency:'RUB',locale:'ru-RU'},
     global:{ndfl:0.13,fss:0.302,vat:0.05,profitTaxRate:0.01,profitTaxExtra:0.01,profitTaxThreshold:300000,
-      collectionProfile:{firstPay:25000,rassrochkaMonths:10,collectionRate:0.95}},
+      collectionProfile:{firstPay:10000,rassrochkaMonths:12,collectionRate:0.95}},  // firstPay - МИНИМУМ платежа, не фикс: см. bflDeptCalc
     directions:JSON.parse(JSON.stringify(BFL_DIRS_DEFAULT)),
     checkDefault:245991,
     blocks:{aup:{owner:'Болотов Артём'},commercial:{owner:'Черновский Антон'},production:{owner:'Васянина Елена'},opau:{owner:'Кольцова Марина'}}, // руководители блоков/контуров
@@ -15270,7 +15270,7 @@ function bflModelDefault(){
         roles:[{name:'Руководитель КО',fte:1,rate:120000},{name:'Менеджер КО',fte:6,rate:90000},{name:'Стажёр КО',fte:1.5,rate:50000}],
         costs:[],incassation:0,tskpLabel:'состоявшиеся встречи'},
       {id:'sales',group:'sales',name:'Отдел продаж (ОП)',dealStage:true,
-        funnel:{inflowFrom:'client_ko',inLabel:'Встречи (от КО)',convLabel:'Встреча → Сделка',midLabel:'Договоры',outLabel:'Сделки (переданные дела)',norm:60,normLabel:'встреч на 1 МОП',roleIdx:1,money:true,firstPayment:10000,
+        funnel:{inflowFrom:'client_ko',inLabel:'Встречи (от КО)',convLabel:'Встреча → Сделка',midLabel:'Договоры',outLabel:'Сделки (переданные дела)',norm:60,normLabel:'встреч на 1 МОП',roleIdx:1,money:true,
           byDir:[
             {dir:'ofbfl', name:'#1 Лидогенерация',     conv:0.40,otval:0.03,check:224000},
             {dir:'Agbfl', name:'#2 Агентская сеть',conv:0.60,otval:0.03,check:214800},
@@ -15355,14 +15355,32 @@ function bflEnsureModel(m){
     // ОП: добавить средний чек по направлениям (money) в сохранённую модель
     const defOp=d.departments.find(x=>x.dealStage);
     out.forEach(dep=>{if(dep&&dep.dealStage&&dep.funnel&&Array.isArray(dep.funnel.byDir)&&defOp){if(dep.funnel.money===undefined)dep.funnel.money=true;
-      if(dep.funnel.firstPayment===undefined){dep.funnel.firstPayment=(defOp.funnel&&defOp.funnel.firstPayment)||10000;dep.incassation=0;} // ОП: первый платёж, инкассация считается
+      // ⚠ Поле `funnel.firstPayment` УДАЛЕНО (29.08.2026): его не читал никто, а рядом с живым
+      //   `collectionProfile.firstPay` оно выглядело настройкой и путало. Инициализация
+      //   инкассации переехала на СВОЙ признак - прежде она висела на «нет firstPayment»,
+      //   то есть на признаке старой модели, а не на своём.
+      if(dep.funnel.firstPayment!==undefined)delete dep.funnel.firstPayment;
+      if(dep.incassation===undefined)dep.incassation=0;   // ОП: инкассация считается, а не задаётся
       dep.funnel.byDir.forEach(B=>{if(B.check===undefined){const db=defOp.funnel.byDir.find(x=>x.dir===B.dir);B.check=db?db.check:0;}});}});
     m.departments=out;
   }
   if(!Array.isArray(m.periods)||!m.periods.length)m.periods=d.periods;
   if(!Array.isArray(m.directions)||!m.directions.length)m.directions=d.directions;
   if(!m.global)m.global=d.global;
-  if(!m.global.collectionProfile||m.global.collectionProfile.firstPay===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // профиль сбора: фикс первый платёж ₽
+  if(!m.global.collectionProfile||m.global.collectionProfile.firstPay===undefined)m.global.collectionProfile=JSON.parse(JSON.stringify(d.global.collectionProfile)); // профиль сбора
+  // ⚠ ПЕРВЫЙ ПЛАТЁЖ СТАЛ СЧИТАТЬСЯ ОТ ДОГОВОРА (29.08.2026), а поле `firstPay` сменило смысл:
+  //   было «фикс ₽ с клиента», стало «не менее ₽». Без миграции правка НЕ СРАБОТАЛА БЫ вовсе:
+  //   в сохранённой модели лежит минимум 25 000, он перекрыл бы расчёт (договор/12 меньше), и
+  //   все каналы упёрлись бы в него - числа не сдвинулись бы ни на рубль, и это выглядело бы
+  //   как «правка не работает», а не как «старое значение мешает».
+  // ⚠ Трогаем ТОЛЬКО пару старых умолчаний целиком (25 000 и 10). Поправил человек хоть одно
+  //   руками - не трогаем ничего: чужое решение молча переписать хуже, чем оставить старое.
+  // ⚠ Идемпотентна: после миграции пара равна новым умолчаниям и под условие больше не подходит.
+  {const cp=m.global.collectionProfile||{};
+   if(+cp.firstPay===25000&&+cp.rassrochkaMonths===10){cp.firstPay=10000;cp.rassrochkaMonths=12;}
+   else if(!(+cp.firstPay===10000&&+cp.rassrochkaMonths===12)&&!window._bflFpWarned){
+     window._bflFpWarned=true;
+     console.warn('[БФЛ] профиль сбора не мигрирован: значения правили руками (первый платёж '+cp.firstPay+', рассрочка '+cp.rassrochkaMonths+' мес). Поле теперь означает МИНИМУМ платежа, а не фикс - проверьте его смысл.');}}
   const osDep=(m.departments||[]).find(x=>x&&x.id==='os');if(osDep&&osDep.collectsRassrochka===undefined){osDep.collectsRassrochka=true;osDep.incassation=0;} // ОС собирает рассрочку
   if(osDep&&osDep.tskpFromOp===undefined)osDep.tskpFromOp=true; // ОС: база ЦКП = сделки от ОП
   // ── ПРАВИЛО ОТБОРА НАКЛАДНЫХ (28.08.2026) ───────────────────────────────────
@@ -15943,11 +15961,18 @@ function bflDeptCalc(d,g){
       const upUnit  = d.funnel.inflowFrom ? bflUpstreamUnitCostByDir(d.funnel.inflowFrom) : {};
       inheritsUnit=Object.keys(upUnit).length>0;
       const prof=g.collectionProfile||{},fpAmt=prof.firstPay!=null?prof.firstPay:0;
+      const months=+prof.rassrochkaMonths||0;
       inflow=0;assigned=0;output=0;
       funnelRows=d.funnel.byDir.map(B=>{
         const inflowDir=upByDir[B.dir]||0,assignedDir=inflowDir*(B.conv||0),outputDir=assignedDir*(1-(B.otval||0));
         const check=B.check||0,suma=outputDir*check;
-        const firstPay=d.funnel.money?Math.min(fpAmt,check):0; // первый платёж с клиента (фикс ₽, не больше чека)
+        // ⚠ ПЕРВЫЙ ПЛАТЁЖ СЧИТАЕТСЯ ОТ ДОГОВОРА, А `firstPay` В ПРОФИЛЕ - ЭТО МИНИМУМ (29.08.2026).
+        //   Платёж = сумма договора / срок рассрочки, но не меньше минимума и не больше самого
+        //   договора. Верхняя граница чеком обязательна: платёж не может превысить договор,
+        //   иначе остаток к рассрочке ушёл бы в минус.
+        //   ⚠ Срок 0 или пустой - берём минимум как есть, делить не на что.
+        //   ⚠ ПЛАТЁЖ ТЕПЕРЬ РАЗНЫЙ ПО КАНАЛАМ: у каждого свой средний чек. Раньше был один на всех.
+        const firstPay=d.funnel.money?Math.min(check,months>0?Math.max(fpAmt,check/months):fpAmt):0;
         inflow+=inflowDir;assigned+=assignedDir;output+=outputDir;sumaTotal+=suma;firstPayTotal+=outputDir*firstPay;
         inheritedIn+=inflowDir*(upUnit[B.dir]||0);   // во что обошёлся вход, по цене вышестоящего
         return {dir:B.dir,name:B.name,conv:B.conv||0,otval:B.otval||0,check:check,firstPay:firstPay,inflow:inflowDir,assigned:assignedDir,output:outputDir,suma:suma,
@@ -16189,6 +16214,7 @@ function bflCommercial(){
   const firstPay=firstPayGross-refund;       // чистый собранный первый платёж ОП
   const rassBase=Math.max(0,suma-firstPayGross); // остаток к рассрочке (договорная − первый платёж)
   const rass=rassBase*(1-otval)*collRate;    // рассрочка в МЕСЯЦ - только с оставшихся (отвалившиеся её не платят)
+  const rassLoss=rassBase*(1-otval)*(1-collRate); // потеря от несобираемости
   const rassMonths=prof.rassrochkaMonths||10;
   const dealsNet=deals*(1-otval);                            // клиентов на рассрочке (после отвала)
   const rassPerClient=bflSafeDiv(rassBase*(1-otval),dealsNet); // рассрочка с 1 клиента (за весь срок)
@@ -16203,7 +16229,7 @@ function bflCommercial(){
   //   bflCommercial за рассрочкой, и вызов замкнётся обратно сюда - «Maximum call stack size
   //   exceeded» на всей вкладке. Ровно это и случилось 28.08.2026. Всё, что нужно «по отделу»,
   //   считать функциями, которые читают МОДЕЛЬ, а не результат bflDeptCalc, - как bflOksBonusSum.
-  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,firstPayGross:firstPayGross,refund:refund,rass:rass,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,tskpDeal:bflSafeDiv(gross,deals)};
+  return {gross:gross,deals:deals,suma:suma,firstPay:firstPay,firstPayGross:firstPayGross,refund:refund,rass:rass,rassBase:rassBase,rassLoss:rassLoss,collRate:collRate,otval:otval,rassMonths:rassMonths,rassPerClient:rassPerClient,rassPerClientMonth:rassPerClientMonth,tskpDeal:bflSafeDiv(gross,deals)};
 }
 function _bflSetPath(obj,path,val){const p=path.split('.');let o=obj;for(let i=0;i<p.length-1;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i];o=o[k];}const last=/^\d+$/.test(p[p.length-1])?+p[p.length-1]:p[p.length-1];o[last]=val;}
 
@@ -16469,14 +16495,14 @@ window.bflPrintBlocks=function(){
     // ⚠ СТРУКТУРА ЛИСТА ПОВТОРЯЕТ СТРУКТУРУ ЭКРАНА: те же колонки в той же таблице, а не
     //   отдельная сводка рядом. Прежняя табличка 2×2 удалена - две раскладки одних и тех же
     //   величин расходятся при первой же правке одной из них.
-    const cst=c.inheritsUnit;
-    const head=`<thead><tr><th class="l">Воронка · вход ${from}</th><th>${esc(fl.inLabel||'Вход')}</th><th>${esc(fl.convLabel||'Конверсия')}</th><th>% отвала</th>${cst?`<th>${esc(fl.midLabel||'Назначенные')}</th>`:''}<th>${esc(fl.outLabel||'Выход')}</th>${cst?`<th>${esc(fl.midLabel||'Назнач.')} · полная</th><th>${esc(fl.outLabel||'Состояв.')} · полная</th>`:''}</tr></thead>`;
+    const cst=c.inheritsUnit,mny=!!fl.money;   // денежные колонки - только у воронки со сделками
+    const head=`<thead><tr><th class="l">Воронка · вход ${from}</th><th>${esc(fl.inLabel||'Вход')}</th><th>${esc(fl.convLabel||'Конверсия')}</th><th>% отвала</th>${cst?`<th>${esc(fl.midLabel||'Назначенные')}</th>`:''}<th>${esc(fl.outLabel||'Выход')}</th>${mny?`<th>Средний чек</th><th>Сумма сделок</th><th>Первый платёж</th>`:''}${cst?`<th>${esc(fl.midLabel||'Назнач.')} · полная</th><th>${esc(fl.outLabel||'Состояв.')} · полная</th>`:''}</tr></thead>`;
     if(c.funnelRows&&c.funnelRows.length)
-      return `<table>${head}<tbody>`+c.funnelRows.map(R=>`<tr><td class="l">${esc(R.name||R.dir)}</td><td>${bflI(R.inflow)}</td><td>${bflP(R.conv)}</td><td>${bflP(R.otval)}</td>${cst?`<td>${bflI(R.assigned)}</td>`:''}<td>${bflI(R.output)}</td>${cst?`<td>${R.costMidFull==null?'-':bflM(R.costMidFull)}</td><td>${R.costOutFull==null?'-':bflM(R.costOutFull)}</td>`:''}</tr>`).join('')
-        +`<tr class="tot"><td class="l">Итого</td><td>${bflI(c.inflow)}</td><td></td><td></td>${cst?`<td>${bflI(c.assigned)}</td>`:''}<td>${bflI(c.output)}</td>${cst?`<td>${c.costMidFull==null?'-':bflM(c.costMidFull)}<div class="mut">собств. ${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</div></td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}<div class="mut">собств. ${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</div></td>`:''}</tr></tbody></table>`
+      return `<table>${head}<tbody>`+c.funnelRows.map(R=>`<tr><td class="l">${esc(R.name||R.dir)}</td><td>${bflI(R.inflow)}</td><td>${bflP(R.conv)}</td><td>${bflP(R.otval)}</td>${cst?`<td>${bflI(R.assigned)}</td>`:''}<td>${bflI(R.output)}</td>${mny?`<td>${bflM(R.check)}</td><td>${bflM(R.suma)}</td><td>${bflM(R.firstPay)}</td>`:''}${cst?`<td>${R.costMidFull==null?'-':bflM(R.costMidFull)}</td><td>${R.costOutFull==null?'-':bflM(R.costOutFull)}</td>`:''}</tr>`).join('')
+        +`<tr class="tot"><td class="l">Итого</td><td>${bflI(c.inflow)}</td><td></td><td></td>${cst?`<td>${bflI(c.assigned)}</td>`:''}<td>${bflI(c.output)}</td>${mny?`<td></td><td>${bflM(c.sumaTotal)}</td><td>${bflM(c.firstPayTotal)}</td>`:''}${cst?`<td>${c.costMidFull==null?'-':bflM(c.costMidFull)}<div class="mut">собств. ${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</div></td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}<div class="mut">собств. ${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</div></td>`:''}</tr></tbody></table>`
         +(cst?`<div class="note">Полная - с ценой входа, по ней сравнивают каналы; собственная - только расходы отдела, по ней оценивают отдел. Расходы отдела разнесены по каналам по входу. Собственная стоимость по каналу не показана намеренно: она равна итоговой, делённой на конверсию канала (у состоявшихся - с учётом отвала).</div>`:'');
     if(c.inflow==null)return '';
-    return `<table>${head}<tbody><tr><td class="l">${esc(d.name)}</td><td>${bflI(c.inflow)}</td><td>${bflP(fl.conv)}</td><td>${bflP(fl.otval)}</td>${cst?`<td>${bflI(c.assigned)}</td>`:''}<td>${bflI(c.output)}</td>${cst?`<td>${c.costMidFull==null?'-':bflM(c.costMidFull)}</td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}</td>`:''}</tr></tbody></table>`;};
+    return `<table>${head}<tbody><tr><td class="l">${esc(d.name)}</td><td>${bflI(c.inflow)}</td><td>${bflP(fl.conv)}</td><td>${bflP(fl.otval)}</td>${cst?`<td>${bflI(c.assigned)}</td>`:''}<td>${bflI(c.output)}</td>${mny?`<td></td><td>${bflM(c.sumaTotal)}</td><td>${bflM(c.firstPayTotal)}</td>`:''}${cst?`<td>${c.costMidFull==null?'-':bflM(c.costMidFull)}</td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}</td>`:''}</tr></tbody></table>`;};
   const caseTbl=c=>{let h='';
     if(c.revPerCaseRows&&c.revPerCaseRows.length)
       h+=`<table><thead><tr><th class="l">Доходы на дело · дел за месяц: ${bflI(c.caseCount)}</th><th>₽/дело</th><th>Сумма</th></tr></thead><tbody>`
@@ -16750,13 +16776,13 @@ function bflRenderDepts(host){
         <td style="${cell2}">${inp('funnel.byDir.'+i+'.otval',+((R.otval||0)*100).toFixed(2),52,true)} %</td>
         <td style="${cell2};color:var(--text2)">${bflI(R.assigned)}</td>
         <td style="${cell2};color:var(--accent)">${bflI(R.output)}</td>
-        ${fl.money?`<td style="${cell2}">${inp('funnel.byDir.'+i+'.check',R.check,92)}</td><td style="${cell2};color:var(--income)">${bflM(R.suma)}</td>`:''}
+        ${fl.money?`<td style="${cell2}">${inp('funnel.byDir.'+i+'.check',R.check,92)}</td><td style="${cell2};color:var(--income)">${bflM(R.suma)}</td><td style="${cell2};color:var(--text2)">${bflM(R.firstPay)}</td>`:''}
         ${c.inheritsUnit?`<td style="${cell2};color:var(--outcome)">${R.costMidFull==null?'-':bflM(R.costMidFull)}</td>
         <td style="${cell2};color:var(--outcome)">${R.costOutFull==null?'-':bflM(R.costOutFull)}</td>`:''}</tr>`).join('');
       funnelBox=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:${c.inheritsUnit?760:560}px">
-        <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 7px;font-size:10px;color:var(--label)">Направление</th>${th2(esc(fl.inLabel||'Вход'))}${th2(esc(fl.convLabel||'Конверсия'))}${th2('% отвала')}${th2(esc(fl.midLabel||'Назначенные'))}${th2(esc(fl.outLabel||'Выход'))}${fl.money?th2('Средний чек')+th2('Сумма сделок'):''}${c.inheritsUnit?th2t('Назнач. · полная','Назначенная встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа. По ней сравнивают каналы. В строке ИТОГО второй строкой - собственная стоимость по отделу.')+th2t('Состояв. · полная','Состоявшаяся встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа.'):''}</tr></thead>
+        <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 7px;font-size:10px;color:var(--label)">Направление</th>${th2(esc(fl.inLabel||'Вход'))}${th2(esc(fl.convLabel||'Конверсия'))}${th2('% отвала')}${th2(esc(fl.midLabel||'Назначенные'))}${th2(esc(fl.outLabel||'Выход'))}${fl.money?th2('Средний чек')+th2('Сумма сделок')+th2t('Первый платёж','Первый платёж с клиента = сумма договора / срок рассрочки, но не менее минимума из профиля сбора и не больше самого договора. Разный по каналам - у каждого свой средний чек.'):''}${c.inheritsUnit?th2t('Назнач. · полная','Назначенная встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа. По ней сравнивают каналы. В строке ИТОГО второй строкой - собственная стоимость по отделу.')+th2t('Состояв. · полная','Состоявшаяся встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа.'):''}</tr></thead>
         <tbody>${frows}
-        <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:5px 7px;font-size:12px">ИТОГО</td><td style="${cell2}">${bflI(c.inflow)}</td><td></td><td></td><td style="${cell2}">${bflI(c.assigned)}</td><td style="${cell2};color:var(--accent)">${bflI(c.output)}</td>${fl.money?`<td></td><td style="${cell2};color:var(--income)">${bflM(c.sumaTotal)}</td>`:''}${c.inheritsUnit?`<td style="${cell2};color:var(--outcome)">${c.costMidFull==null?'-':bflM(c.costMidFull)}<div style="font-size:10px;font-weight:400;color:var(--accent)">собств. ${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</div></td><td style="${cell2};color:var(--outcome)">${c.costOutFull==null?'-':bflM(c.costOutFull)}<div style="font-size:10px;font-weight:400;color:var(--accent)">собств. ${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</div></td>`:''}</tr>
+        <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:5px 7px;font-size:12px">ИТОГО</td><td style="${cell2}">${bflI(c.inflow)}</td><td></td><td></td><td style="${cell2}">${bflI(c.assigned)}</td><td style="${cell2};color:var(--accent)">${bflI(c.output)}</td>${fl.money?`<td></td><td style="${cell2};color:var(--income)">${bflM(c.sumaTotal)}</td><td style="${cell2};color:var(--text2)">${bflM(c.firstPayTotal)}</td>`:''}${c.inheritsUnit?`<td style="${cell2};color:var(--outcome)">${c.costMidFull==null?'-':bflM(c.costMidFull)}<div style="font-size:10px;font-weight:400;color:var(--accent)">собств. ${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</div></td><td style="${cell2};color:var(--outcome)">${c.costOutFull==null?'-':bflM(c.costOutFull)}<div style="font-size:10px;font-weight:400;color:var(--accent)">собств. ${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</div></td>`:''}</tr>
         </tbody></table>${c.inheritsUnit?`<div style="font-size:10.5px;color:var(--text3);margin-top:4px">Полная - с ценой входа, по ней сравнивают каналы; собственная - только расходы отдела, по ней оценивают отдел. Расходы отдела разнесены по каналам ПО ВХОДУ: труд тратится на обработку входящих. Собственная стоимость по каналу не показана намеренно: она равна итоговой, делённой на конверсию канала (у состоявшихся - на конверсию с учётом отвала), и ничего сверх этих колонок не сообщает.</div>`:''}</div>`;
     }else{
       funnelBox=`<div style="max-width:540px">
@@ -16795,10 +16821,28 @@ function bflRenderDepts(host){
         ${fl.money?(()=>{const cm=bflCommercial();return `<div style="margin-top:6px;font-size:11.5px;color:var(--text2)">Сумма сделок (договорная) = Σ сделки × средний чек = <b>${bflM(c.sumaTotal)}</b> (НЕ деньги в кассе). ОП собирает первый чек = <b style="color:var(--income)">${bflM(c.incassation)}</b>; остаток клиент платит в рассрочку ${cm.rassMonths} мес через ОКС (≈ <b>${bflM(cm.rassPerClientMonth)}</b>/мес с клиента). В установившемся режиме (платят ${cm.rassMonths} когорт) ОКС собирает в месяц = <b style="color:var(--income)">${bflM(cm.rass)}</b>.</div>`;})():''}
         ${fl.money?`<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:11.5px;color:var(--text2);padding:9px 11px;background:var(--surface2);border-radius:7px">
           <span style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Профиль сбора</span>
-          <span>Первый платёж <input type="text" inputmode="decimal" value="${(g.collectionProfile&&g.collectionProfile.firstPay)||0}" data-path="global.collectionProfile.firstPay" onchange="bflGlobalEdit(this)" style="width:84px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> ₽ с клиента</span>
+          <span title="Нижняя граница. Сам платёж считается как сумма договора / срок рассрочки; если получилось меньше этого числа - берётся оно.">Первый платёж, не менее ₽ <input type="text" inputmode="decimal" value="${(g.collectionProfile&&g.collectionProfile.firstPay)||0}" data-path="global.collectionProfile.firstPay" onchange="bflGlobalEdit(this)" style="width:84px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> ₽ с клиента</span>
           <span>рассрочка <input type="text" inputmode="decimal" value="${(g.collectionProfile&&g.collectionProfile.rassrochkaMonths)||0}" data-path="global.collectionProfile.rassrochkaMonths" onchange="bflGlobalEdit(this)" style="width:52px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:#fffdf0"> мес</span>
           <span style="color:var(--text3)">после первого платежа клиент → ОИ/ОКС (собираемость рассрочки - в карточке ОКС)</span>
-        </div>`:''}
+        </div>
+        ${(()=>{const cm=bflCommercial();
+          // ⚠ ПЕРВЫЙ ПЛАТЁЖ + ОСТАТОК = ВАЛ РОВНО, по построению `rassBase = вал − первый платёж`.
+          //   Доли считаем от вала; проценты - только для показа, рубли берутся из рублей.
+          const val=cm.suma,pc=v=>val>0?(v/val*100).toFixed(1).replace('.',',')+' %':'-';
+          const row=(lbl,val2,sub,col)=>`<div style="display:flex;gap:10px;align-items:baseline;padding:2px 0">
+            <span style="min-width:210px;color:var(--text2)">${lbl}</span>
+            <b style="font-family:var(--mono);color:${col||'var(--text)'};min-width:118px;text-align:right">${bflM(val2)}</b>
+            <span style="color:var(--text3);min-width:52px;text-align:right">${sub}</span></div>`;
+          return `<div style="margin-top:8px;padding:9px 11px;background:var(--surface2);border-radius:7px;font-size:11.5px">
+          <div style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">Сбор за месяц</div>
+          ${row('Сумма договоров (вал)',val,'100 %','var(--text)')}
+          ${row('Первый платёж, всего',cm.firstPayGross,pc(cm.firstPayGross),'var(--income)')}
+          ${row('Остаток к рассрочке',cm.rassBase,pc(cm.rassBase),'var(--text2)')}
+          ${row('К сбору ОКС (с собираемостью)',cm.rass,pc(cm.rass),'var(--income)')}
+          ${row('Потеря от несобираемости',cm.rassLoss,pc(cm.rassLoss),'var(--outcome)')}
+          <div style="font-size:10.5px;color:var(--text3);margin-top:5px">⚠ «К сбору ОКС» - для УСТАНОВИВШЕГОСЯ РЕЖИМА: это полный остаток по договорам одного месяца, и он верен, только когда ${bflI(cm.rassMonths)} когорт платят одновременно, то есть после ${bflI(cm.rassMonths)} месяцев продаж в этом темпе. На разгоне собирается меньше; разгон здесь НЕ посчитан (для ОПАУ он считается отдельно).</div>
+          <div style="font-size:10.5px;color:var(--text3);margin-top:3px">Первый платёж + остаток = вал; доли - от вала. Из остатка платят только не отвалившиеся (отвал ${bflP(cm.otval)}), собираемость ${bflP(cm.collRate)}.</div>
+        </div>`;})()}`:''}
       </div>`:''}</div>`;
   };
 
@@ -17275,7 +17319,73 @@ function bflRunTests(){
       const d2c=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='Agbfl');
       ok('#2 комиссия считается по-прежнему',ap(d2c.agentFee,d2c.qual*d2c.feePerQual+d2c.deals*d2c.feePerDeal),Math.round(d2c.agentFee));
       ok('#2 расход = ФОТ + начисления + комиссия',ap(d2c.dirCost,d2c.dFot+d2c.dNach+d2c.agentFee),Math.round(d2c.dirCost));
-      // ── ДВА РЕЗУЛЬТАТА ТРУДА КО: назначенные и состоявшиеся, каждый в двух разрезах ──
+      // ── ПЕРВЫЙ ПЛАТЁЖ СЧИТАЕТСЯ ОТ ДОГОВОРА, `firstPay` - МИНИМУМ (29.08.2026) ──
+    {
+      const cp=_bflModel.global.collectionProfile;
+      ok('умолчание: срок рассрочки 12 мес',cp.rassrochkaMonths===12,cp.rassrochkaMonths);
+      ok('умолчание: минимум платежа 10 000',cp.firstPay===10000,cp.firstPay);
+      ok('мёртвого поля funnel.firstPayment не осталось',
+         !(_bflModel.departments||[]).some(x=>x&&x.funnel&&x.funnel.firstPayment!==undefined),'-');
+      const opD5=_bflModel.departments.find(x=>x.dealStage),oc5=bflDeptCalc(opD5,g);
+      const rows5=oc5.funnelRows||[];
+      // формула по каждому каналу
+      ok('первый платёж = договор / срок, но не менее минимума и не больше договора',
+         rows5.every(R=>ap(R.firstPay,Math.min(R.check,Math.max(cp.firstPay,R.check/cp.rassrochkaMonths)))),
+         rows5.map(R=>Math.round(R.firstPay)).join(' / '));
+      ok('платёж РАЗНЫЙ по каналам (у каждого свой чек)',
+         new Set(rows5.filter(R=>R.check>0).map(R=>Math.round(R.firstPay))).size>1,
+         rows5.map(R=>Math.round(R.firstPay)).join(' / '));
+      // ⚠ СЛУЧАЙ, КОГДА СРАБАТЫВАЕТ МИНИМУМ: на боевых чеках он не срабатывает ни разу, поэтому
+      //   без подставного маленького чека эта ветка не проверялась бы вовсе.
+      {const B=opD5.funnel.byDir[0],sv=B.check; B.check=60000;   // 60 000 / 12 = 5 000 < минимума
+       const r=bflDeptCalc(opD5,g).funnelRows[0];
+       ok('минимум срабатывает на маленьком чеке',ap(r.firstPay,cp.firstPay),Math.round(r.firstPay));
+       B.check=6000;                                            // договор МЕНЬШЕ минимума
+       const r2=bflDeptCalc(opD5,g).funnelRows[0];
+       ok('платёж не больше самого договора',ap(r2.firstPay,6000),Math.round(r2.firstPay));
+       B.check=sv;}
+      // главный инвариант сбора
+      const cm5=bflCommercial();
+      ok('первый платёж + остаток = сумма договоров',ap(cm5.firstPayGross+cm5.rassBase,cm5.suma,0.01),Math.round(cm5.suma));
+      ok('потеря от несобираемости = остатку × (1 - собираемость) после отвала',
+         ap(cm5.rassLoss,cm5.rassBase*(1-cm5.otval)*(1-cm5.collRate),0.01),Math.round(cm5.rassLoss));
+      ok('к сбору + потеря = остаток после отвала',
+         ap(cm5.rass+cm5.rassLoss,cm5.rassBase*(1-cm5.otval),0.01),Math.round(cm5.rass+cm5.rassLoss));
+      // ⚠ СДВИГ ВЫРУЧКИ ОТ ПЕРЕНОСА ДЕНЕГ ИЗ ПЕРВОГО ПЛАТЕЖА В РАССРОЧКУ - ТОЧНОЕ ТОЖДЕСТВО,
+      //   и оно НЕ «5% от перенесённого». Отвал 9% срезает ОБЕ стороны: отвалившимся первый
+      //   платёж возвращают, рассрочку они не платят. Поэтому теряется 5% от того, что отвал
+      //   ПЕРЕЖИЛО: Δвыручки = перенесено × (1 − отвал) × (1 − собираемость).
+      //   Замер 29.08.2026: перенесено 964 012,75 → −43 862,58, а «простые 5%» дали бы 48 200,64.
+      {const sv={f:cp.firstPay,m:cp.rassrochkaMonths};
+       const rev=()=>bflOPIU().revenue,fpg=()=>bflCommercial().firstPayGross;
+       const revNew=rev(),fpNew=fpg();
+       cp.firstPay=25000;cp.rassrochkaMonths=10;              // прежний режим: фикс 25 000
+       const revOld=rev(),fpOld=fpg();
+       cp.firstPay=sv.f;cp.rassrochkaMonths=sv.m;
+       const moved=fpOld-fpNew,cm6=bflCommercial();
+       ok('перенос денег в рассрочку состоялся',moved>0,Math.round(moved));
+       ok('сдвиг выручки = перенесено × (1 - отвал) × (1 - собираемость)',
+          ap(revNew-revOld,-moved*(1-cm6.otval)*(1-cm6.collRate),1),Math.round(revNew-revOld));
+       ok('сдвиг НЕ равен простым 5% от перенесённого',
+          Math.abs((revNew-revOld)+moved*0.05)>1,Math.round(-moved*0.05));}
+      // идемпотентность миграции
+      {const m1=bflEnsureModel(JSON.parse(JSON.stringify(_bflModel)));
+       const m2=bflEnsureModel(JSON.parse(JSON.stringify(m1)));
+       ok('миграция профиля идемпотентна',
+          m1.global.collectionProfile.firstPay===m2.global.collectionProfile.firstPay&&
+          m1.global.collectionProfile.rassrochkaMonths===m2.global.collectionProfile.rassrochkaMonths,
+          m2.global.collectionProfile.firstPay+' / '+m2.global.collectionProfile.rassrochkaMonths);}
+      // мигрируем только пару старых умолчаний целиком
+      {const mo=JSON.parse(JSON.stringify(_bflModel));mo.global.collectionProfile={firstPay:25000,rassrochkaMonths:10,collectionRate:0.95};
+       const mm=bflEnsureModel(mo);
+       ok('старая пара 25 000/10 мигрирует',mm.global.collectionProfile.firstPay===10000&&mm.global.collectionProfile.rassrochkaMonths===12,
+          mm.global.collectionProfile.firstPay+' / '+mm.global.collectionProfile.rassrochkaMonths);}
+      {const mh=JSON.parse(JSON.stringify(_bflModel));mh.global.collectionProfile={firstPay:25000,rassrochkaMonths:7,collectionRate:0.95};
+       const mm2=bflEnsureModel(mh);
+       ok('правленое руками НЕ трогаем',mm2.global.collectionProfile.firstPay===25000&&mm2.global.collectionProfile.rassrochkaMonths===7,
+          mm2.global.collectionProfile.firstPay+' / '+mm2.global.collectionProfile.rassrochkaMonths);}
+    }
+    // ── ДВА РЕЗУЛЬТАТА ТРУДА КО: назначенные и состоявшиеся, каждый в двух разрезах ──
       {
         const ko3=_bflModel.departments.find(x=>x&&x.id==='client_ko');
         const kc3=bflDeptCalc(ko3,g),mk3=bflDeptCalc(mkDept,g);
