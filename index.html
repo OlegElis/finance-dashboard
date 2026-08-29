@@ -15993,6 +15993,17 @@ function bflDeptCalc(d,g){
   //   бы одинаковой во всех строках, и колонка стала бы пустой по смыслу.
   // ⚠ Итоги от разнесения НЕ ЗАВИСЯТ: Σ grossDir = gross и Σ outputDir = output при любом
   //   разнесении, поэтому строка ИТОГО обязана совпасть с прежними числами по отделу.
+  // ⚠ СОБСТВЕННАЯ СТОИМОСТЬ ПО КАНАЛУ В ТАБЛИЦЕ НЕ ПОКАЗАНА - НАМЕРЕННО, НЕ ЗАБЫТА. Из разнесения
+  //   по входу следует, что она НИЧЕГО НЕ ДОБАВЛЯЕТ к тому, что уже стоит слева в той же строке:
+  //     назначенная собственная  = (расходы/вход) / конверсия
+  //     состоявшаяся собственная = (расходы/вход) / (конверсия × (1 − отвал))
+  //   Первый множитель ОДИН И ТОТ ЖЕ у всех каналов (на стенде 1 345,93), поэтому колонка была бы
+  //   пересказом колонок «Конверсия» и «% отвала» в рублях. Проверено на стенде: 1 796,97 × 0,749
+  //   = 1 621,61 × 0,830 = 1 583,45 × 0,850 = 1 345,93, и то же с (1 − отвал) у состоявшихся.
+  //   В строке ИТОГО она ОСТАЁТСЯ: там это уже не пересказ, а цена работы отдела целиком.
+  //   ⚠ Тест `собственная восстанавливается из конверсии` стережёт именно это утверждение -
+  //   если разнесение когда-нибудь перестанет быть пропорциональным входу, он упадёт, и колонку
+  //   надо будет вернуть: она снова начнёт нести своё.
   if(funnelRows&&inheritsUnit&&inflow>0)funnelRows.forEach(R=>{
     R.grossDir=gross*R.inflow/inflow;
     R.costMidOwn =bflSafeDiv(R.grossDir,R.assigned);
@@ -16452,23 +16463,20 @@ window.bflPrintBlocks=function(){
         +`<td>${L.payFor==='qual'?bflM(L.feeQual)+' <span class="mut">ставка · полная '+bflM(L.costQual)+'</span>':bflM(L.costQual)}</td>`
         +`<td>${bflM(L.dirCost)}</td></tr>`).join('')
       +`<tr class="tot"><td class="l">Итого</td><td>${bflI(rs.reduce((a,L)=>a+(L.leads||0),0))}</td><td></td><td></td><td>${bflI(c.qualTotal)}</td><td></td><td>${bflM(c.leadTotalCost)}</td></tr></tbody></table>`;};
-  // ⚠ Лист повторяет экран: четыре стоимости печатаются там же, где показаны.
-  const twoResults=(d,c)=>{if(!c.inheritsUnit)return '';
-    const fl=d.funnel||{};
-    return `<table><thead><tr><th class="l">Два результата труда · четыре стоимости</th><th>Полная</th><th>Собственная</th></tr></thead><tbody>`
-      +`<tr><td class="l">${esc(fl.midLabel||'Назначенные')} · ${bflI(c.assigned)}</td><td>${c.costMidFull==null?'-':bflM(c.costMidFull)}</td><td>${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</td></tr>`
-      +`<tr><td class="l">${esc(fl.outLabel||'Состоявшиеся')} · ${bflI(c.output)}</td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}</td><td>${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</td></tr>`
-      +`<tr class="tot"><td class="l">Унаследованная стоимость входа / расходы отдела</td><td>${bflM(c.inheritedIn)}</td><td>${bflM(c.gross)}</td></tr></tbody></table>`
-      +`<div class="note">Полная - во что результат обходится компании (расходы отдела + цена входа по своему каналу), по ней сравнивают каналы. Собственная - только расходы этого отдела, по ней оценивают его работу.</div>`;};
   const funnelTbl=(d,c)=>{if(!d.funnel)return '';
     const fl=d.funnel;
     const from=fl.inflowFrom?('наследуется от: '+esc(nameOf(fl.inflowFrom))):'задан вручную';
-    const head=`<thead><tr><th class="l">Воронка · вход ${from}</th><th>${esc(fl.inLabel||'Вход')}</th><th>${esc(fl.convLabel||'Конверсия')}</th><th>% отвала</th><th>Выход</th></tr></thead>`;
+    // ⚠ СТРУКТУРА ЛИСТА ПОВТОРЯЕТ СТРУКТУРУ ЭКРАНА: те же колонки в той же таблице, а не
+    //   отдельная сводка рядом. Прежняя табличка 2×2 удалена - две раскладки одних и тех же
+    //   величин расходятся при первой же правке одной из них.
+    const cst=c.inheritsUnit;
+    const head=`<thead><tr><th class="l">Воронка · вход ${from}</th><th>${esc(fl.inLabel||'Вход')}</th><th>${esc(fl.convLabel||'Конверсия')}</th><th>% отвала</th>${cst?`<th>${esc(fl.midLabel||'Назначенные')}</th>`:''}<th>Выход</th>${cst?`<th>${esc(fl.midLabel||'Назнач.')} · полная</th><th>${esc(fl.outLabel||'Состояв.')} · полная</th>`:''}</tr></thead>`;
     if(c.funnelRows&&c.funnelRows.length)
-      return `<table>${head}<tbody>`+c.funnelRows.map(R=>`<tr><td class="l">${esc(R.name||R.dir)}</td><td>${bflI(R.inflow)}</td><td>${bflP(R.conv)}</td><td>${bflP(R.otval)}</td><td>${bflI(R.output)}</td></tr>`).join('')
-        +`<tr class="tot"><td class="l">Итого</td><td>${bflI(c.inflow)}</td><td></td><td></td><td>${bflI(c.output)}</td></tr></tbody></table>`;
+      return `<table>${head}<tbody>`+c.funnelRows.map(R=>`<tr><td class="l">${esc(R.name||R.dir)}</td><td>${bflI(R.inflow)}</td><td>${bflP(R.conv)}</td><td>${bflP(R.otval)}</td>${cst?`<td>${bflI(R.assigned)}</td>`:''}<td>${bflI(R.output)}</td>${cst?`<td>${R.costMidFull==null?'-':bflM(R.costMidFull)}</td><td>${R.costOutFull==null?'-':bflM(R.costOutFull)}</td>`:''}</tr>`).join('')
+        +`<tr class="tot"><td class="l">Итого</td><td>${bflI(c.inflow)}</td><td></td><td></td>${cst?`<td>${bflI(c.assigned)}</td>`:''}<td>${bflI(c.output)}</td>${cst?`<td>${c.costMidFull==null?'-':bflM(c.costMidFull)}<div class="mut">собств. ${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</div></td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}<div class="mut">собств. ${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</div></td>`:''}</tr></tbody></table>`
+        +(cst?`<div class="note">Полная - с ценой входа, по ней сравнивают каналы; собственная - только расходы отдела, по ней оценивают отдел. Расходы отдела разнесены по каналам по входу. Собственная стоимость по каналу не показана намеренно: она равна итоговой, делённой на конверсию канала (у состоявшихся - с учётом отвала).</div>`:'');
     if(c.inflow==null)return '';
-    return `<table>${head}<tbody><tr><td class="l">${esc(d.name)}</td><td>${bflI(c.inflow)}</td><td>${bflP(fl.conv)}</td><td>${bflP(fl.otval)}</td><td>${bflI(c.output)}</td></tr></tbody></table>`;};
+    return `<table>${head}<tbody><tr><td class="l">${esc(d.name)}</td><td>${bflI(c.inflow)}</td><td>${bflP(fl.conv)}</td><td>${bflP(fl.otval)}</td>${cst?`<td>${bflI(c.assigned)}</td>`:''}<td>${bflI(c.output)}</td>${cst?`<td>${c.costMidFull==null?'-':bflM(c.costMidFull)}</td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}</td>`:''}</tr></tbody></table>`;};
   const caseTbl=c=>{let h='';
     if(c.revPerCaseRows&&c.revPerCaseRows.length)
       h+=`<table><thead><tr><th class="l">Доходы на дело · дел за месяц: ${bflI(c.caseCount)}</th><th>₽/дело</th><th>Сумма</th></tr></thead><tbody>`
@@ -16498,7 +16506,7 @@ window.bflPrintBlocks=function(){
     return h;};
   const cardBody=(d,c)=>{let h='';
     if(Array.isArray(d.leadgen))h+=leadTbl(c)+leadDetail(c);
-    if(d.funnel)h+=funnelTbl(d,c)+twoResults(d,c);
+    if(d.funnel)h+=funnelTbl(d,c);
     h+=staffTbl(d.roles,'Штатное расписание');
     h+=costsTbl(d.costs);
     h+=caseTbl(c);
@@ -16744,14 +16752,12 @@ function bflRenderDepts(host){
         <td style="${cell2};color:var(--accent)">${bflI(R.output)}</td>
         ${fl.money?`<td style="${cell2}">${inp('funnel.byDir.'+i+'.check',R.check,92)}</td><td style="${cell2};color:var(--income)">${bflM(R.suma)}</td>`:''}
         ${c.inheritsUnit?`<td style="${cell2};color:var(--outcome)">${R.costMidFull==null?'-':bflM(R.costMidFull)}</td>
-        <td style="${cell2};color:var(--accent)">${R.costMidOwn==null?'-':bflM(R.costMidOwn)}</td>
-        <td style="${cell2};color:var(--outcome)">${R.costOutFull==null?'-':bflM(R.costOutFull)}</td>
-        <td style="${cell2};color:var(--accent)">${R.costOutOwn==null?'-':bflM(R.costOutOwn)}</td>`:''}</tr>`).join('');
+        <td style="${cell2};color:var(--outcome)">${R.costOutFull==null?'-':bflM(R.costOutFull)}</td>`:''}</tr>`).join('');
       funnelBox=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:${c.inheritsUnit?760:560}px">
-        <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 7px;font-size:10px;color:var(--label)">Направление</th>${th2(esc(fl.inLabel||'Вход'))}${th2(esc(fl.convLabel||'Конверсия'))}${th2('% отвала')}${th2(esc(fl.midLabel||'Назначенные'))}${th2(esc(fl.outLabel||'Выход'))}${fl.money?th2('Средний чек')+th2('Сумма сделок'):''}${c.inheritsUnit?th2t('Назнач. · полная','Назначенная встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа. По ней сравнивают каналы.')+th2t('Назнач. · собств.','Назначенная встреча, СОБСТВЕННАЯ стоимость: только расходы отдела, разнесённые по каналу. По ней оценивают работу отдела.')+th2t('Состояв. · полная','Состоявшаяся встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа.')+th2t('Состояв. · собств.','Состоявшаяся встреча, СОБСТВЕННАЯ стоимость: только расходы отдела. Итог по отделу - это ЦКП.'):''}</tr></thead>
+        <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 7px;font-size:10px;color:var(--label)">Направление</th>${th2(esc(fl.inLabel||'Вход'))}${th2(esc(fl.convLabel||'Конверсия'))}${th2('% отвала')}${th2(esc(fl.midLabel||'Назначенные'))}${th2(esc(fl.outLabel||'Выход'))}${fl.money?th2('Средний чек')+th2('Сумма сделок'):''}${c.inheritsUnit?th2t('Назнач. · полная','Назначенная встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа. По ней сравнивают каналы. В строке ИТОГО второй строкой - собственная стоимость по отделу.')+th2t('Состояв. · полная','Состоявшаяся встреча, ПОЛНАЯ стоимость: расходы отдела по этому каналу плюс унаследованная цена входа.'):''}</tr></thead>
         <tbody>${frows}
-        <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:5px 7px;font-size:12px">ИТОГО</td><td style="${cell2}">${bflI(c.inflow)}</td><td></td><td></td><td style="${cell2}">${bflI(c.assigned)}</td><td style="${cell2};color:var(--accent)">${bflI(c.output)}</td>${fl.money?`<td></td><td style="${cell2};color:var(--income)">${bflM(c.sumaTotal)}</td>`:''}${c.inheritsUnit?`<td style="${cell2};color:var(--outcome)">${c.costMidFull==null?'-':bflM(c.costMidFull)}</td><td style="${cell2};color:var(--accent)">${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</td><td style="${cell2};color:var(--outcome)">${c.costOutFull==null?'-':bflM(c.costOutFull)}</td><td style="${cell2};color:var(--accent)">${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</td>`:''}</tr>
-        </tbody></table>${c.inheritsUnit?`<div style="font-size:10.5px;color:var(--text3);margin-top:4px">Полная - с ценой входа, по ней сравнивают каналы; собственная - только расходы отдела, по ней оценивают отдел. Расходы отдела разнесены по каналам ПО ВХОДУ: труд тратится на обработку входящих.</div>`:''}</div>`;
+        <tr style="border-top:2px solid var(--border);font-weight:700"><td style="padding:5px 7px;font-size:12px">ИТОГО</td><td style="${cell2}">${bflI(c.inflow)}</td><td></td><td></td><td style="${cell2}">${bflI(c.assigned)}</td><td style="${cell2};color:var(--accent)">${bflI(c.output)}</td>${fl.money?`<td></td><td style="${cell2};color:var(--income)">${bflM(c.sumaTotal)}</td>`:''}${c.inheritsUnit?`<td style="${cell2};color:var(--outcome)">${c.costMidFull==null?'-':bflM(c.costMidFull)}<div style="font-size:10px;font-weight:400;color:var(--accent)">собств. ${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</div></td><td style="${cell2};color:var(--outcome)">${c.costOutFull==null?'-':bflM(c.costOutFull)}<div style="font-size:10px;font-weight:400;color:var(--accent)">собств. ${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</div></td>`:''}</tr>
+        </tbody></table>${c.inheritsUnit?`<div style="font-size:10.5px;color:var(--text3);margin-top:4px">Полная - с ценой входа, по ней сравнивают каналы; собственная - только расходы отдела, по ней оценивают отдел. Расходы отдела разнесены по каналам ПО ВХОДУ: труд тратится на обработку входящих. Собственная стоимость по каналу не показана намеренно: она равна итоговой, делённой на конверсию канала (у состоявшихся - на конверсию с учётом отвала), и ничего сверх этих колонок не сообщает.</div>`:''}</div>`;
     }else{
       funnelBox=`<div style="max-width:540px">
         ${rowL('Вход: '+esc(fl.inLabel||'')+(up?` <span style="color:var(--text3);font-size:10.5px">(наследуется от ${esc(upName)})</span>`:''),`<b>${bflI(c.inflow)}</b>`)}
@@ -17291,6 +17297,19 @@ function bflRunTests(){
         ok('полная дороже собственной',kc3.costMidFull>kc3.costMidOwn&&kc3.costOutFull>kc3.costOutOwn,'-');
         // ⚠ Унаследованное НЕ попало в расходы КО: расход остаётся там, где возник.
         ok('унаследованное в расходы КО не вошло',ap(kc3.gross,kc3.fot+kc3.nach+kc3.other,1),Math.round(kc3.gross));
+        // ⚠ ПОЧЕМУ СОБСТВЕННОЙ СТОИМОСТИ НЕТ В СТРОКАХ КАНАЛОВ. Из разнесения по входу следует,
+        //   что она восстанавливается из соседних колонок и своего не несёт. Тест стережёт именно
+        //   это утверждение: перестанет разнесение быть пропорциональным входу - тест упадёт, и
+        //   колонку надо будет вернуть.
+        {
+          const kc=bflDeptCalc(_bflModel.departments.find(x=>x&&x.id==='client_ko'),g);
+          const rr=(kc.funnelRows||[]).filter(r=>r.inflow>0&&r.conv>0);
+          const base=bflSafeDiv(kc.gross,kc.inflow);
+          ok('собственная назначенной восстанавливается из конверсии',
+             rr.length>1&&rr.every(r=>ap(r.costMidOwn*r.conv,base,0.01)),Math.round(base));
+          ok('собственная состоявшейся - из конверсии и отвала',
+             rr.every(r=>ap(r.costOutOwn*r.conv*(1-r.otval),base,0.01)),Math.round(base));
+        }
         // ── ПОКАНАЛЬНЫЕ СТОИМОСТИ (29.08.2026): те же четыре величины, но по строкам таблицы ──
         const fr=kc3.funnelRows||[];
         ok('у каждого канала есть свои четыре стоимости',
