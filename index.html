@@ -15936,10 +15936,12 @@ function bflDeptCalc(d,g){
   const nach=nachAcc;                                  // начисления на весь ФОТ (per-role по виду сотрудничества: осн. роли + штат направлений)
   // воронка-стадия (КО и т.п.): вход наследуется от выхода предыдущего отдела → конверсия → отвал → выход
   // byDir: конверсия и отвал РАЗНЫЕ по направлениям (квал-лиды направления наследуются раздельно)
-  let inflow=null,assigned=null,output=null,funnelRows=null,sumaTotal=0,firstPayTotal=0;
+  let inflow=null,assigned=null,output=null,funnelRows=null,sumaTotal=0,firstPayTotal=0,inheritedIn=0,inheritsUnit=false;
   if(d.funnel){
     if(Array.isArray(d.funnel.byDir)){
       const upByDir = d.funnel.inflowFrom ? bflUpstreamOutputByDir(d.funnel.inflowFrom) : {};
+      const upUnit  = d.funnel.inflowFrom ? bflUpstreamUnitCostByDir(d.funnel.inflowFrom) : {};
+      inheritsUnit=Object.keys(upUnit).length>0;
       const prof=g.collectionProfile||{},fpAmt=prof.firstPay!=null?prof.firstPay:0;
       inflow=0;assigned=0;output=0;
       funnelRows=d.funnel.byDir.map(B=>{
@@ -15947,6 +15949,7 @@ function bflDeptCalc(d,g){
         const check=B.check||0,suma=outputDir*check;
         const firstPay=d.funnel.money?Math.min(fpAmt,check):0; // первый платёж с клиента (фикс ₽, не больше чека)
         inflow+=inflowDir;assigned+=assignedDir;output+=outputDir;sumaTotal+=suma;firstPayTotal+=outputDir*firstPay;
+        inheritedIn+=inflowDir*(upUnit[B.dir]||0);   // во что обошёлся вход, по цене вышестоящего
         return {dir:B.dir,name:B.name,conv:B.conv||0,otval:B.otval||0,check:check,firstPay:firstPay,inflow:inflowDir,assigned:assignedDir,output:outputDir,suma:suma};});
     }else{
       inflow = d.funnel.inflowFrom ? bflUpstreamOutput(d.funnel.inflowFrom) : (d.funnel.inflow||0);
@@ -15978,6 +15981,16 @@ function bflDeptCalc(d,g){
   const ovhTotal=d.overheadFromRaw?(bflOverhead().total||0):0;
   const passAll=pass+perCasePass;
   const gross=fot+nach+other+leadSpend+perCaseTotal+ovhTotal+dealFees, net=gross-passAll;
+  // ⚠ ДВА РЕЗУЛЬТАТА ТРУДА - ДВЕ СТОИМОСТИ, И КАЖДАЯ В ДВУХ РАЗРЕЗАХ (29.08.2026).
+  //   Назначенная встреча и состоявшаяся - разные результаты одного отдела, и путать их нельзя.
+  //   СОБСТВЕННАЯ стоимость - только расходы этого отдела, делённые на встречи: чего стоит РАБОТА
+  //   отдела, по ней его и оценивают. ПОЛНАЯ - плюс унаследованная цена входа: во что встреча
+  //   обходится КОМПАНИИ, по ней сравнивают КАНАЛЫ. Смешать их - значит мерить отдел чужими
+  //   затратами: канал с дорогими лидами сделал бы «плохим» отдел, который отработал как обычно.
+  const costMidOwn =(assigned!=null)?bflSafeDiv(gross,assigned):null;
+  const costMidFull=(assigned!=null&&inheritsUnit)?bflSafeDiv(gross+inheritedIn,assigned):null;
+  const costOutOwn =(output!=null)?bflSafeDiv(gross,output):null;
+  const costOutFull=(output!=null&&inheritsUnit)?bflSafeDiv(gross+inheritedIn,output):null;
   const base = d.supportDept ? null : (d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:(d.tskpFromProd?bflCasesProd():d.tskpFromOp?bflOpDeals():d.tskpBase))); // маркетинг: квал-лиды; воронка: выход; tskpFromOp: сделки от ОП; tskpFromProd: дела после отвала; supportDept: ЦКП не применим
   const tskp=d.supportDept?null:bflSafeDiv(gross,base);  // ЦКП = расходы_gross / база (у вспом. отдела - нет)
   const fteActual=fteRoles+dirFteTotal;
@@ -16000,6 +16013,8 @@ function bflDeptCalc(d,g){
     perCaseRows:perCaseRows,caseCount:caseCount,revPerCaseRows:revPerCaseRows,selfRev:selfRev,selfNet:selfRev-gross,
     fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:incassation,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
+    inheritedIn:inheritedIn,inheritsUnit:inheritsUnit,
+    costMidOwn:costMidOwn,costMidFull:costMidFull,costOutOwn:costOutOwn,costOutFull:costOutFull,
     inflow:inflow,assigned:assigned,output:output,funnelRows:funnelRows,sumaTotal:sumaTotal,firstPayTotal:firstPayTotal};
 }
 // Выход отдела (для наследования потока): маркетинг → квал-лиды; воронка → состоявшиеся встречи; иначе → база ЦКП
@@ -16016,6 +16031,19 @@ function bflUpstreamOutputByDir(id){
   const c=bflDeptCalc(u,_bflModel.global);const map={};
   if(Array.isArray(u.leadgen)&&c.leadRows)c.leadRows.forEach(L=>{map[L.dir]=(map[L.dir]||0)+L.qual;});
   else if(u.funnel&&c.funnelRows)c.funnelRows.forEach(R=>{map[R.dir]=(map[R.dir]||0)+R.output;});
+  return map;
+}
+// Во что обошлась ЕДИНИЦА результата вышестоящего отдела, по направлениям.
+// ⚠ Нужен для НАСЛЕДОВАНИЯ стоимости вниз по конвейеру: стоимость квал-лида родилась в
+//   маркетинге и наследуется клиентским отделом, а не переносится в него расходом. Расход
+//   остаётся там, где он возник; вниз идёт только УДЕЛЬНАЯ ЦЕНА штуки.
+// ⚠ Отдаёт карту только для отдела с лидогенерацией: у него единица результата - квал-лид, и
+//   её полная стоимость уже посчитана (`costQual`). Для воронок карта пустая - там своя единица,
+//   и городить рекурсию по конвейеру ради этого не надо.
+function bflUpstreamUnitCostByDir(id){
+  const u=(_bflModel.departments||[]).find(x=>x&&x.id===id);if(!u||!Array.isArray(u.leadgen))return {};
+  const c=bflDeptCalc(u,_bflModel.global),map={};
+  (c.leadRows||[]).forEach(L=>{if(L.costQual!=null)map[L.dir]=L.costQual;});
   return map;
 }
 // Поток КОЛИЧЕСТВ по направлениям через стадии (БЕЗ затрат) - чтобы агентское вознаграждение
@@ -16412,6 +16440,14 @@ window.bflPrintBlocks=function(){
         +`<td>${L.payFor==='qual'?bflM(L.feeQual)+' <span class="mut">ставка · полная '+bflM(L.costQual)+'</span>':bflM(L.costQual)}</td>`
         +`<td>${bflM(L.dirCost)}</td></tr>`).join('')
       +`<tr class="tot"><td class="l">Итого</td><td>${bflI(rs.reduce((a,L)=>a+(L.leads||0),0))}</td><td></td><td></td><td>${bflI(c.qualTotal)}</td><td></td><td>${bflM(c.leadTotalCost)}</td></tr></tbody></table>`;};
+  // ⚠ Лист повторяет экран: четыре стоимости печатаются там же, где показаны.
+  const twoResults=(d,c)=>{if(!c.inheritsUnit)return '';
+    const fl=d.funnel||{};
+    return `<table><thead><tr><th class="l">Два результата труда · четыре стоимости</th><th>Полная</th><th>Собственная</th></tr></thead><tbody>`
+      +`<tr><td class="l">${esc(fl.midLabel||'Назначенные')} · ${bflI(c.assigned)}</td><td>${c.costMidFull==null?'-':bflM(c.costMidFull)}</td><td>${c.costMidOwn==null?'-':bflM(c.costMidOwn)}</td></tr>`
+      +`<tr><td class="l">${esc(fl.outLabel||'Состоявшиеся')} · ${bflI(c.output)}</td><td>${c.costOutFull==null?'-':bflM(c.costOutFull)}</td><td>${c.costOutOwn==null?'-':bflM(c.costOutOwn)}</td></tr>`
+      +`<tr class="tot"><td class="l">Унаследованная стоимость входа / расходы отдела</td><td>${bflM(c.inheritedIn)}</td><td>${bflM(c.gross)}</td></tr></tbody></table>`
+      +`<div class="note">Полная - во что результат обходится компании (расходы отдела + цена входа по своему каналу), по ней сравнивают каналы. Собственная - только расходы этого отдела, по ней оценивают его работу.</div>`;};
   const funnelTbl=(d,c)=>{if(!d.funnel)return '';
     const fl=d.funnel;
     const from=fl.inflowFrom?('наследуется от: '+esc(nameOf(fl.inflowFrom))):'задан вручную';
@@ -16450,7 +16486,7 @@ window.bflPrintBlocks=function(){
     return h;};
   const cardBody=(d,c)=>{let h='';
     if(Array.isArray(d.leadgen))h+=leadTbl(c)+leadDetail(c);
-    if(d.funnel)h+=funnelTbl(d,c);
+    if(d.funnel)h+=funnelTbl(d,c)+twoResults(d,c);
     h+=staffTbl(d.roles,'Штатное расписание');
     h+=costsTbl(d.costs);
     h+=caseTbl(c);
@@ -16732,7 +16768,26 @@ function bflRenderDepts(host){
           </div>
           <div style="font-size:10.5px;color:var(--text3);margin-top:5px">Сделка - результат этого отдела, поэтому плата за неё его расход. Ставки задаются в направлениях карточки маркетинга: там известна привязка к каналу. Входит в расходы отдела и в ЦКП ниже.</div>
         </div>`:''}
-        <div style="margin-top:8px;font-size:12px;color:var(--text2)">ЦКП = ${bflM(c.gross)} / ${bflI(c.output)} ${esc(fl.outLabel||'')} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
+        ${c.inheritsUnit?(()=>{
+          // ⚠ ЧЕТЫРЕ ЧИСЛА, ПОДПИСАННЫЕ ПОИМЁННО. Блок появляется только у отдела, который
+          //   наследует цену единицы от лидогенерации (сегодня это КО): ниже по конвейеру
+          //   «полная» стоимость встретилась бы со стоимостью сделки из таблицы направлений, и
+          //   на одном экране оказались бы два разных «во что обошлось» под похожими словами.
+          const cell=(lbl,val,sub,col)=>`<div style="padding:8px 11px;background:var(--surface)">
+            <div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.05em">${lbl}</div>
+            <div style="font-size:15px;font-weight:600;font-family:var(--mono);color:${col}">${val==null?'-':bflM(val)}</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:1px">${sub}</div></div>`;
+          return `<div style="margin-top:10px;border:1px solid var(--border);border-radius:9px;overflow:hidden">
+          <div style="padding:7px 11px;background:var(--surface2);font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em">Два результата труда · четыре стоимости</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:1px;background:var(--border)">
+            ${cell(esc(fl.midLabel||'Назначенные')+' · полная',c.costMidFull,'с ценой входа, на '+bflI(c.assigned),'var(--outcome)')}
+            ${cell(esc(fl.midLabel||'Назначенные')+' · собственная',c.costMidOwn,'только расходы отдела','var(--accent)')}
+            ${cell(esc(fl.outLabel||'Состоявшиеся')+' · полная',c.costOutFull,'с ценой входа, на '+bflI(c.output),'var(--outcome)')}
+            ${cell(esc(fl.outLabel||'Состоявшиеся')+' · собственная',c.costOutOwn,'только расходы отдела · это ЦКП','var(--accent)')}
+          </div>
+          <div style="padding:7px 11px;font-size:10.5px;color:var(--text3);background:var(--surface)">ПОЛНАЯ - во что результат обходится компании: расходы отдела ${bflM(c.gross)} плюс унаследованная стоимость входа ${bflM(c.inheritedIn)} (${bflI(c.inflow)} ${esc(fl.inLabel||'')} по цене своего канала). По ней сравнивают каналы. СОБСТВЕННАЯ - только расходы этого отдела; по ней оценивают его работу. Расход ложится на тот отдел, чей результат он оплачивает: стоимость квал-лида родилась в маркетинге и наследуется вниз, а не переносится сюда.</div>
+        </div>`;})():''}
+        <div style="margin-top:8px;font-size:12px;color:var(--text2)">ЦКП = ${bflM(c.gross)} / ${bflI(c.output)} ${esc(fl.outLabel||'')} = <b style="color:var(--accent)">${bflM(c.tskp)}</b> <span style="font-size:10.5px;color:var(--text3)">= собственная стоимость состоявшейся встречи</span></div>
         ${fl.money?(()=>{const cm=bflCommercial();return `<div style="margin-top:6px;font-size:11.5px;color:var(--text2)">Сумма сделок (договорная) = Σ сделки × средний чек = <b>${bflM(c.sumaTotal)}</b> (НЕ деньги в кассе). ОП собирает первый чек = <b style="color:var(--income)">${bflM(c.incassation)}</b>; остаток клиент платит в рассрочку ${cm.rassMonths} мес через ОКС (≈ <b>${bflM(cm.rassPerClientMonth)}</b>/мес с клиента). В установившемся режиме (платят ${cm.rassMonths} когорт) ОКС собирает в месяц = <b style="color:var(--income)">${bflM(cm.rass)}</b>.</div>`;})():''}
         ${fl.money?`<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:11.5px;color:var(--text2);padding:9px 11px;background:var(--surface2);border-radius:7px">
           <span style="font-size:9.5px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Профиль сбора</span>
@@ -17216,6 +17271,32 @@ function bflRunTests(){
       const d2c=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='Agbfl');
       ok('#2 комиссия считается по-прежнему',ap(d2c.agentFee,d2c.qual*d2c.feePerQual+d2c.deals*d2c.feePerDeal),Math.round(d2c.agentFee));
       ok('#2 расход = ФОТ + начисления + комиссия',ap(d2c.dirCost,d2c.dFot+d2c.dNach+d2c.agentFee),Math.round(d2c.dirCost));
+      // ── ДВА РЕЗУЛЬТАТА ТРУДА КО: назначенные и состоявшиеся, каждый в двух разрезах ──
+      {
+        const ko3=_bflModel.departments.find(x=>x&&x.id==='client_ko');
+        const kc3=bflDeptCalc(ko3,g),mk3=bflDeptCalc(mkDept,g);
+        ok('КО наследует цену единицы от лидогенерации',kc3.inheritsUnit===true,kc3.inheritsUnit);
+        ok('КО: назначенные = вход × конверсия',
+           ap(kc3.assigned,(kc3.funnelRows||[]).reduce((a,r)=>a+r.inflow*r.conv,0)),Math.round(kc3.assigned));
+        ok('КО: состоявшиеся = назначенные × (1 - отвал)',
+           ap(kc3.output,(kc3.funnelRows||[]).reduce((a,r)=>a+r.inflow*r.conv*(1-r.otval),0)),Math.round(kc3.output));
+        ok('унаследованная стоимость = Σ вход × стоимость квал-лида канала',
+           ap(kc3.inheritedIn,(kc3.funnelRows||[]).reduce((a,r)=>{const L=(mk3.leadRows||[]).find(x=>x.dir===r.dir);
+             return a+r.inflow*((L&&L.costQual!=null)?L.costQual:0);},0)),Math.round(kc3.inheritedIn));
+        ok('собственная назначенной = расходы отдела / назначенные',ap(kc3.costMidOwn,bflSafeDiv(kc3.gross,kc3.assigned)),Math.round(kc3.costMidOwn));
+        ok('полная назначенной = (расходы + вход) / назначенные',ap(kc3.costMidFull,bflSafeDiv(kc3.gross+kc3.inheritedIn,kc3.assigned)),Math.round(kc3.costMidFull));
+        ok('собственная состоявшейся = ЦКП отдела',ap(kc3.costOutOwn,kc3.tskp),Math.round(kc3.costOutOwn));
+        ok('полная состоявшейся = (расходы + вход) / состоявшиеся',ap(kc3.costOutFull,bflSafeDiv(kc3.gross+kc3.inheritedIn,kc3.output)),Math.round(kc3.costOutFull));
+        // ⚠ ПОРЯДОК ВЕЛИЧИН - СМЫСЛОВАЯ ПРОВЕРКА, А НЕ АРИФМЕТИЧЕСКАЯ: состоявшихся всегда
+        //   меньше назначенных, значит каждая дороже; полная всегда дороже собственной.
+        ok('состоявшаяся дороже назначенной',kc3.costOutOwn>kc3.costMidOwn&&kc3.costOutFull>kc3.costMidFull,'-');
+        ok('полная дороже собственной',kc3.costMidFull>kc3.costMidOwn&&kc3.costOutFull>kc3.costOutOwn,'-');
+        // ⚠ Унаследованное НЕ попало в расходы КО: расход остаётся там, где возник.
+        ok('унаследованное в расходы КО не вошло',ap(kc3.gross,kc3.fot+kc3.nach+kc3.other,1),Math.round(kc3.gross));
+        // у отдела продаж блока нет: он наследует не квал-лид, а встречу
+        const op4=_bflModel.departments.find(x=>x.dealStage);
+        ok('у ОП блока двух результатов нет',bflDeptCalc(op4,g).inheritsUnit===false,bflDeptCalc(op4,g).inheritsUnit);
+      }
       // ── ВЫПЛАТЫ ЗА СДЕЛКУ - РАСХОД ОП, А НЕ ОМ (29.08.2026) ──
       // Принцип: расход, привязанный к результату отдела, ложится на этот отдел. Сторожат
       // главное: сумма ПЕРЕЕХАЛА между колонками, а не появилась и не исчезла.
