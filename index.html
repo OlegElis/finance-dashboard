@@ -15722,20 +15722,49 @@ function bflOverhead(){
   //   с 1 по 10 сентября август шёл бы в расчёт как закрытый и ЗАНИЖАЛ БЫ среднее - молча,
   //   потому что число выглядело бы правдоподобно. Теперь 5 сентября конец окна - июль,
   //   а 15 сентября он сам становится августом, без чьего-либо вмешательства.
-  // ⚠ Ручной «по месяц» (endMonth) НЕ ДВИГАЕТСЯ САМ: он для разбора конкретного отрезка.
+  // ⚠ АВТО-КОНЕЦ СЧИТАЕТСЯ ВСЕГДА, даже когда задан ручной: он нужен трижды - как значение по
+  //   умолчанию, как точка отсчёта для голого номера месяца («7» → ближайший июль НЕ ПОЗЖЕ
+  //   авто-конца) и как то, на что откатываемся, если введённое не распознано.
+  let kAuto=mk(now)-1,skipAuto=null;
+  {let k=mk(now)-1;
+   while(k>0){const y=Math.floor(k/12),mo=k%12;const closeAt=new Date(y,mo+1,1);closeAt.setDate(closeAt.getDate()+CLOSE);
+     if(now>=closeAt)break; k--;}
+   kAuto=k; if(kAuto<mk(now)-1)skipAuto=kAuto+1;}   // первый НЕ закрытый месяц - его и называем в подписи
+  // ⚠ Ручной конец (endMonth) НЕ ДВИГАЕТСЯ САМ: он для разбора конкретного отрезка.
+  // ⚠ МОЛЧАЛИВОГО ОТКАТА БЫТЬ НЕ ДОЛЖНО (29.08.2026). Раньше нераспознанный ввод просто давал
+  //   авто-конец, и человек не мог отличить «не сработало» от «сработало, но ничего не
+  //   изменилось». Соседние поля («Окно, мес», «Порог регулярности, мес») принимают числа, и
+  //   третье поле в том же ряду выглядит таким же - поэтому сюда и вводили 3, 10, 12.
   const _pe=String(P.endMonth||'').trim();
-  let manual=null;
-  {const a=/^(\d{1,2})[.\/-](\d{4})$/.exec(_pe),b=/^(\d{4})[.\/-](\d{1,2})$/.exec(_pe);
-   if(a)manual=(+a[2])*12+(+a[1]-1); else if(b)manual=(+b[1])*12+(+b[2]-1);
-   if(manual!=null&&!(manual>=0&&manual<=mk(now)+600))manual=null;}
-  let e0,skipped=null;
-  if(manual!=null)e0=manual;
-  else{let k=mk(now)-1;
-    while(k>0){const y=Math.floor(k/12),mo=k%12;const closeAt=new Date(y,mo+1,1);closeAt.setDate(closeAt.getDate()+CLOSE);
-      if(now>=closeAt)break; k--;}
-    e0=k; if(e0<mk(now)-1)skipped=e0+1;}   // первый НЕ закрытый месяц - его и называем в подписи
+  let manual=null,endBad='';
+  if(_pe){
+    const a=/^(\d{1,2})[.\/-](\d{4})$/.exec(_pe),b=/^(\d{4})[.\/-](\d{1,2})$/.exec(_pe),c=/^(\d{1,2})$/.exec(_pe);
+    let mo=null,yr=null;
+    if(a){mo=+a[1];yr=+a[2];}
+    else if(b){yr=+b[1];mo=+b[2];}
+    else if(c){
+      // ⚠ ГОЛЫЙ НОМЕР МЕСЯЦА ПРИНИМАЕТСЯ, потому что его реально вводят. Двусмысленность
+      //   («7» - это июль или семь месяцев?) снимается не запретом, а тем, что принятый месяц
+      //   ПОКАЗЫВАЕТСЯ рядом с полем: «принято: 07.2025». Правило однозначное - ближайший такой
+      //   месяц НЕ ПОЗЖЕ авто-конца, то есть последний уже закрытый.
+      const m1=+c[1];
+      if(m1>=1&&m1<=12){let k=Math.floor(kAuto/12)*12+(m1-1);if(k>kAuto)k-=12;mo=m1;yr=Math.floor(k/12);}
+      else endBad='месяц бывает только от 1 до 12';
+    }
+    else endBad='не похоже на месяц';
+    if(!endBad){
+      if(!(mo>=1&&mo<=12))endBad='месяц бывает только от 1 до 12';
+      else if(!(yr>=2000&&yr<=2100))endBad='год вне разумных границ';
+      else manual=yr*12+(mo-1);
+    }
+  }
+  const e0=(manual!=null)?manual:kAuto;
+  const skipped=(manual!=null)?null:skipAuto;
+  // ⚠ Ручной конец ПОЗЖЕ авто-конца не отвергаем, но и не молчим: месяц ещё не закрыт, среднее
+  //   по нему занижено - ровно та ошибка, ради которой заведено правило закрытия.
+  const endUnclosed=(manual!=null&&manual>kAuto);
   const s0=e0-N+1;
-  const key=[N,MIN,dir,ex.join('|'),CLOSE,_pe,e0,(typeof RAW!=='undefined'&&RAW?RAW.length:0)].join('~');
+  const key=[N,MIN,dir,ex.join('|'),CLOSE,_pe,e0,kAuto,endBad,(typeof RAW!=='undefined'&&RAW?RAW.length:0)].join('~');
   if(_bflOvhKey===key&&_bflOvh)return _bflOvh;
   const acc={};
   (typeof RAW!=='undefined'&&RAW?RAW:[]).forEach(r=>{
@@ -15766,12 +15795,24 @@ function bflOverhead(){
   const fm=k=>('0'+(k%12+1)).slice(-2)+'.'+Math.floor(k/12);
   const MONNOM=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
   const out={dir:dir,windowMonths:N,minMonths:MIN,exclude:ex,rows:rows,closeDays:CLOSE,
-    endManual:manual!=null,endMonth:_pe,
-    reason:(manual!=null)?'конец задан вручную':(skipped!=null?(MONNOM[skipped%12]+' ещё не закрыт'):''),
+    endManual:manual!=null,endMonth:_pe,endBad:endBad,endAuto:fm(kAuto),endResolved:fm(e0),endUnclosed:endUnclosed,
+    reason:endBad?('введённый конец не принят, взят автоматический '+fm(kAuto))
+          :(manual!=null)?('конец задан вручную'+(endUnclosed?' · месяц ещё не закрыт':''))
+          :(skipped!=null?(MONNOM[skipped%12]+' ещё не закрыт'):''),
     regular:rows.filter(r=>r.months>=MIN),irregular:rows.filter(r=>r.months<MIN),
     from:fm(s0),to:fm(e0)};
-  out.total=out.regular.reduce((a,r)=>a+r.avg,0);
-  out.irregularTotal=out.irregular.reduce((a,r)=>a+r.avg,0);
+  // ⚠ ИТОГ СЧИТАЕТСЯ ПО ОКРУГЛЁННЫМ СТРОКАМ, И ЭТО СОЗНАТЕЛЬНОЕ ИСКЛЮЧЕНИЕ ИЗ ПРАВИЛА
+  //   «округление - последняя операция» (29.08.2026). Здесь сталкиваются два наших правила:
+  //   точность промежуточных величин против «человек, сложивший колонку, должен получить итог».
+  //   Побеждает второе: итог стоит ПОД колонкой, его складывают глазами, и расхождение в два
+  //   рубля читается как ошибка расчёта. Строки показываются целыми рублями (bflM округляет),
+  //   значит и сумма обязана быть суммой целых.
+  // ⚠ Цена решения названа честно: `total` уходит не только на экран, но и в расходы АУП, то
+  //   есть модель считает по сумме округлённых. Разница - копейки на подстатью, максимум
+  //   полрубля × число строк; ради сходимости колонки это принято.
+  const _r0=v=>Math.round(v);
+  out.total=out.regular.reduce((a,r)=>a+_r0(r.avg),0);
+  out.irregularTotal=out.irregular.reduce((a,r)=>a+_r0(r.avg),0);
   _bflOvh=out;_bflOvhKey=key;return out;
 }
 function bflOksBonusFor(d){
@@ -16812,7 +16853,7 @@ function bflRenderDepts(host){
     const gi=(path,val,w)=>`<input type="text" inputmode="decimal" value="${val==null?'':val}" data-path="${path}" onchange="bflGlobalEdit(this)" onclick="event.stopPropagation()" style="width:${w||44}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`;
     // ⚠ Текстовое поле - через data-text: без него bflGlobalEdit прогнал бы «07.2026» через
     //   parseNum и записал бы 7, молча превратив ручной конец окна в мусор.
-    const gt=(path,val,w,ph)=>`<input type="text" value="${esc(val==null?'':val)}" placeholder="${esc(ph||'')}" data-text="1" data-path="${path}" onchange="bflGlobalEdit(this)" onclick="event.stopPropagation()" style="width:${w||64}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`;
+    const gt=(path,val,w,ph,bad)=>`<input type="text" value="${esc(val==null?'':val)}" placeholder="${esc(ph||'')}" data-text="1" data-path="${path}" onchange="bflGlobalEdit(this)" onclick="event.stopPropagation()" style="width:${w||64}px;text-align:right;font-family:var(--mono);font-size:12px;padding:2px 5px;border:1px solid ${bad?'var(--outcome)':'var(--border)'};border-radius:5px;background:${bad?'rgba(192,57,47,.06)':'var(--surface)'};color:var(--text)">`;
     const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
     const tbl=(rows,title,note)=>rows.length?`<div style="margin-top:10px">
       <div style="font-size:10px;color:var(--label);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${title} · ${rows.length}</div>
@@ -16838,8 +16879,15 @@ function bflRenderDepts(host){
         <span>Окно, мес ${gi('overhead.windowMonths',O.windowMonths)}</span>
         <span>Порог регулярности, мес ${gi('overhead.minMonths',O.minMonths)}</span>
         <span title="Месяц идёт в расчёт только когда с его окончания прошло столько дней. До этого срока данные в нём неполны, и он занизил бы среднее.">Месяц закрывается через, дн. ${gi('overhead.closeDays',O.closeDays)}</span>
-        <span title="Конец периода. Пусто - определяется автоматически по правилу закрытия и обновляется сам. Заданный вручную (ММ.ГГГГ) не двигается.">По месяц ${gt('overhead.endMonth',O.endMonth,64,'авто')}</span>
+        <span title="Конец периода. Пусто - определяется автоматически по правилу закрытия и обновляется сам. Заданный вручную не двигается.">Конец периода (ММ.ГГГГ) ${gt('overhead.endMonth',O.endMonth,78,'ММ.ГГГГ',!!O.endBad)}</span>
       </div>
+      ${(()=>{
+        // ⚠ ПОЛЕ ОБЯЗАНО ОТВЕЧАТЬ НА ВВОД. Молчание неотличимо от «сработало, но ничего не
+        //   изменилось» - именно на этом сюда и вводили 3, 10, 12, ничего не получая в ответ.
+        if(O.endBad)return `<div style="font-size:10.5px;color:var(--outcome);margin-top:4px">⚠ «${esc(O.endMonth)}» - ${esc(O.endBad)}: значение не принято, взят автоматический конец ${esc(O.endAuto)}. Формат ММ.ГГГГ, например 07.2025; можно просто номер месяца - 7.</div>`;
+        if(O.endManual)return `<div style="font-size:10.5px;color:var(--text2);margin-top:4px">принято: <b>${esc(O.endResolved)}</b> · конец задан вручную и сам не двигается${O.endUnclosed?` · <span style="color:var(--orange)">этот месяц ещё не закрыт, среднее по нему занижено</span>`:''} · очистите поле, чтобы вернуть автоматический (${esc(O.endAuto)})</div>`;
+        return `<div style="font-size:10.5px;color:var(--text3);margin-top:4px">конец периода определяется автоматически (${esc(O.endAuto)}) и обновляется сам. Можно задать вручную: ММ.ГГГГ, например 07.2025, или просто номер месяца - 7.</div>`;
+      })()}
       <div style="font-size:10.5px;color:var(--text3);margin-top:4px">исключены префиксы: ${esc((O.exclude||[]).join(', '))}</div>
       <div style="margin-top:8px;font-size:11px;color:var(--orange);background:rgba(232,134,43,.08);border:1px solid var(--orange);border-radius:6px;padding:6px 9px">⚠ Накладных в модели раньше не было вовсе. С их включением расходы выросли на ${bflM(O.total)} в месяц, и ровно на столько же уменьшилась прибыль в ОПИУ. Это ожидаемо, а не ошибка расчёта.</div>
       ${tbl(O.regular,'Постоянные накладные','Движение было не реже чем в '+O.minMonths+' месяцах окна. Только они входят в сумму выше.')}
