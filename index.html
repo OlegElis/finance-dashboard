@@ -15251,12 +15251,12 @@ function bflModelDefault(){
     departments:[
       {id:'marketing',group:'attract',name:'Отдел маркетинга (ОМ)',
         leadgen:[
-          {dir:'ofbfl', name:'#1 Лидогенерация',  owner:'Тертюк Александр',leads:1380,brak:0.5,costRaw:1350,
+          {dir:'ofbfl', name:'#1 Лидогенерация',  owner:'Тертюк Александр',leads:1380,brak:0.5,costRaw:1350,payFor:'lead',
             staff:[{name:'Руководитель ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0},{name:'Сотрудник ОМ',fte:1,rate:0}]},
-          {dir:'Agbfl', name:'#2 Агентская сеть',owner:'Романенко Лонека',leads:0,brak:0,costRaw:0,rawCostMode:'fot',deals:0,feePerQual:500,feePerDeal:10000,
+          {dir:'Agbfl', name:'#2 Агентская сеть',owner:'Романенко Лонека',leads:0,brak:0,costRaw:0,payFor:'fot',deals:0,feePerQual:500,feePerDeal:10000,
             staff:[{name:'Руководитель АС',fte:1,rate:0},{name:'Сотрудник АС',fte:1,rate:0}]},
-          {dir:'R-bfl', name:'#3 Рекомендации ОКС',owner:'Шарагин Дмитрий', leads:0,   brak:0,  costRaw:0,deals:0,feePerQual:1000,feePerDeal:1000,feeTo:'os'},
-          {dir:'OP-bfl',name:'#4 Рекомендации ОП и прочее',owner:'Кривчикова Мария',leads:0,brak:0,costRaw:0}
+          {dir:'R-bfl', name:'#3 Рекомендации ОКС',owner:'Шарагин Дмитрий', leads:0,   brak:0,  costRaw:0,payFor:'qual',deals:0,feePerQual:1000,feePerDeal:1000,feeTo:'os'},
+          {dir:'OP-bfl',name:'#4 Рекомендации ОП и прочее',owner:'Кривчикова Мария',leads:0,brak:0,costRaw:0,payFor:'lead'}
         ],
         roles:[],costs:[],incassation:0,tskpLabel:'стоимость квал-лида',capacity:{base:null,norm:null,driver:'лидогенерация'}},
       {id:'client_ko',group:'sales',name:'Клиентский отдел (КО)',
@@ -15343,7 +15343,7 @@ function bflEnsureModel(m){
       // ОМ-штат теперь относится к направлению #1: переносим бывший общий roles[] в #1.staff
       if(Array.isArray(dep.roles)&&dep.roles.length){const d1=dep.leadgen[0];if(d1&&(!Array.isArray(d1.staff)||!d1.staff.length))d1.staff=dep.roles;dep.roles=[];}
       dep.leadgen.forEach(L=>{const def=defMkt.leadgen.find(x=>x.dir===L.dir);if(!def)return;
-      ['deals','feePerQual','feePerDeal','rawCostMode','feeTo'].forEach(k=>{if(L[k]===undefined&&def[k]!==undefined)L[k]=def[k];});
+      ['deals','feePerQual','feePerDeal','payFor','feeTo'].forEach(k=>{if(L[k]===undefined&&def[k]!==undefined)L[k]=def[k];});
       if((typeof L.owner!=='string'||L.owner==='')&&def.owner)L.owner=def.owner; // чинит owner=0 (баг data-text) и пустые
       if(L.staff===undefined&&def.staff!==undefined)L.staff=JSON.parse(JSON.stringify(def.staff));});}});
     // ОП: убрать легаси-роли «(АС)» (были при объединении ОП-KO/ОП-AC)
@@ -15425,8 +15425,20 @@ function bflEnsureModel(m){
         if(ob.perDeal!=null)L.feePerDeal=ob.perDeal;
         if(!L.feeTo)L.feeTo=dep.id;});
       delete dep.oksBonus;});
+    // ⚠ «ЗА ЧТО ПЛАТИМ» - ОДНО ПОЛЕ `payFor` (29.08.2026), прежний `rawCostMode` в него и уехал.
+    //   Два поля на один вопрос («как считается стоимость лида» и «что вводит человек») разошлись
+    //   бы при первой же правке. Значения: 'lead' - платим за лид (ввод в «Стоимость лида»),
+    //   'qual' - за квал-лид (ввод в «Стоимость квал-лида», цена лида ВЫЧИСЛЯЕТСЯ),
+    //   'fot' - агентское направление, цена лида = ФОТ направления / лиды.
     (m.departments||[]).forEach(dep=>{if(!dep||!Array.isArray(dep.leadgen))return;
-      dep.leadgen.forEach(L=>{if(L&&L.rawCostMode==='oks'){L.costRaw=0;delete L.rawCostMode;}});});}
+      dep.leadgen.forEach(L=>{if(!L)return;
+        if(!L.payFor)L.payFor=(L.rawCostMode==='fot')?'fot':(L.rawCostMode==='oks')?'qual':'lead';
+        delete L.rawCostMode;
+        // ⚠ При оплате за КВАЛ-ЛИД цены грязного лида нет по определению: за грязные лиды по
+        //   рекомендациям не платят. Поле в этом режиме не редактируется, поэтому обнуляем -
+        //   иначе оставшееся число молча вернулось бы в расходы направления слагаемым
+        //   `лиды × цена` (уже дважды на этом горели: 500 ₽ утром, 100 ₽ вечером).
+        if(L.payFor==='qual')L.costRaw=0;});});}
    if(op2){op2.selfFunded=true;
      if(Array.isArray(op2.roles)&&!op2.roles.some(r=>r&&r.name==='Заместитель')){const ri=op2.roles.findIndex(r=>r&&r.name==='Руководитель');op2.roles.splice(ri>=0?ri+1:0,0,{name:'Заместитель',fte:1,rate:100000});}
      if(!Array.isArray(op2.revPerCase))op2.revPerCase=[{name:'Возврат депозита суда',rate:25000},{name:'Компенсация почтовых расходов',rate:20000},{name:'Возмещение из конкурсной массы',rate:0}];
@@ -15869,7 +15881,12 @@ function bflDeptCalc(d,g){
       //   своему отделу за рекомендации (#3). Платит МАРКЕТИНГ, поэтому сумма лежит в расходах
       //   направления и попадает в колонку ОМ. Отдел-получатель назван в `feeTo`; в его
       //   собственные расходы она не входит - см. `bflFeeToDept`.
-      const media=leads*costRaw;                        // закупка трафика (грязные лиды)
+      // ⚠ ЗАКУПКИ НЕТ, КОГДА ПЛАТИМ ЗА КВАЛ-ЛИД: за грязные лиды по рекомендациям не платят,
+      //   и цена лида там не величина ввода, а производная от ставки. Оставь мы `лиды × цена`
+      //   слагаемым - расходы направления выросли бы на пустом месте (ровно это и случилось
+      //   дважды: 60 × 500 утром и 60 × 100 вечером).
+      const payFor=L.payFor||'lead';
+      const media=(payFor==='qual')?0:leads*costRaw;    // закупка трафика (грязные лиды)
       const agentQual=qual*(L.feePerQual||0);           // ₽ за К-лид (квал-лид) агенту
       const agentDeal=deals*(L.feePerDeal||0);          // доплата агенту за сделку (кол-во сделок - из ОП)
       const agentFee=agentQual+agentDeal;
@@ -15877,14 +15894,22 @@ function bflDeptCalc(d,g){
       const dFot=staff.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0);
       const dFte=staff.reduce((a,r)=>a+(r.fte||0),0);
       const dNach=bflRolesNach(staff);
-      // стоимость грязного лида: для агентских направлений (rawCostMode='fot') = ФОТ направления / лиды; иначе закупка (costRaw)
-      const rawCost = (L.rawCostMode==='fot') ? bflSafeDiv(dFot,leads) : costRaw;
+      // Стоимость лида: 'fot' - ФОТ направления / лиды; 'qual' - ставка за квал-лид, приведённая
+      // к грязному через отбраковку; 'lead' - введённая цена закупки.
+      const rawCost = (payFor==='fot')  ? bflSafeDiv(dFot,leads)
+                    : (payFor==='qual') ? (L.feePerQual||0)*(1-brak)
+                    : costRaw;
       const variable=media+agentFee;                    // переменные затраты направления
       const dirCost=variable+dFot+dNach;                // полная стоимость направления
+      // ⚠ `costQual` ВСЕГДА ОЗНАЧАЕТ ОДНО: полную стоимость квал-лида, то есть все расходы
+      //   направления, делённые на квал-лиды. Ставка, которую ПЛАТЯТ за квал-лид, - отдельное
+      //   поле `feeQual`. Смешай мы их в одном значении, колонка означала бы то одно, то другое
+      //   (у #1 при цене лида 1 200 полная стоимость 4 640 - это разные величины), и ни одна
+      //   сверка этого бы не поймала: оба числа правдоподобны.
       const costQual=bflSafeDiv(dirCost,qual);
       leadSpend+=variable;qualTotal+=qual;dirFotTotal+=dFot;dirFteTotal+=dFte;leadTotalCost+=dirCost;nachAcc+=dNach;
-      return {name:L.name,owner:L.owner,dir:L.dir,leads:leads,brak:brak,costRaw:costRaw,rawCost:rawCost,rawCostMode:L.rawCostMode||'media',
-        feeTo:L.feeTo||'',deals:deals,dealsInherited:dealsInherited,
+      return {name:L.name,owner:L.owner,dir:L.dir,leads:leads,brak:brak,costRaw:costRaw,rawCost:rawCost,
+        payFor:payFor,feeQual:(L.feePerQual||0),feeTo:L.feeTo||'',deals:deals,dealsInherited:dealsInherited,
         feePerQual:L.feePerQual||0,feePerDeal:L.feePerDeal||0,qual:qual,media:media,
         agentQual:agentQual,agentDeal:agentDeal,agentFee:agentFee,dFot:dFot,dFte:dFte,dNach:dNach,
         variable:variable,dirCost:dirCost,costQual:costQual,staff:staff};});
@@ -16330,7 +16355,11 @@ window.bflPrintBlocks=function(){
     return `<table><thead><tr><th class="l">Прямые затраты</th><th>₽/мес</th></tr></thead><tbody>${rows}<tr class="tot"><td class="l">Итого прямых затрат</td><td>${bflM(sum)}</td></tr></tbody></table>`;};
   const leadTbl=c=>{const rs=c.leadRows||[];if(!rs.length)return '';
     return `<table><thead><tr><th class="l">Лидогенерация · направление</th><th>Лиды</th><th>Стоимость лида</th><th>% отбраковки</th><th>Квал-лиды</th><th>Стоимость квал-лида</th><th>Затраты</th></tr></thead><tbody>`
-      +rs.map(L=>`<tr><td class="l">${esc(L.name)}</td><td>${bflI(L.leads)}</td><td>${bflM(L.rawCost)}</td><td>${bflP(L.brak)}</td><td>${bflI(L.qual)}</td><td>${bflM(L.costQual)}</td><td>${bflM(L.dirCost)}</td></tr>`).join('')
+      +rs.map(L=>`<tr><td class="l">${esc(L.name)}</td><td>${bflI(L.leads)}</td>`
+        +`<td>${bflM(L.rawCost)}${L.payFor==='qual'?' <span class="mut">расчёт</span>':L.payFor==='fot'?' <span class="mut">ФОТ/лиды</span>':''}</td>`
+        +`<td>${bflP(L.brak)}</td><td>${bflI(L.qual)}</td>`
+        +`<td>${L.payFor==='qual'?bflM(L.feeQual)+' <span class="mut">ставка · полная '+bflM(L.costQual)+'</span>':bflM(L.costQual)}</td>`
+        +`<td>${bflM(L.dirCost)}</td></tr>`).join('')
       +`<tr class="tot"><td class="l">Итого</td><td>${bflI(rs.reduce((a,L)=>a+(L.leads||0),0))}</td><td></td><td></td><td>${bflI(c.qualTotal)}</td><td></td><td>${bflM(c.leadTotalCost)}</td></tr></tbody></table>`;};
   const funnelTbl=(d,c)=>{if(!d.funnel)return '';
     const fl=d.funnel;
@@ -16544,11 +16573,14 @@ function bflRenderDepts(host){
     const rows=(c.leadRows||[]).map((L,i)=>`<tr style="border-bottom:1px solid var(--divider)">
       <td style="padding:4px 7px;font-size:12px">${esc(L.name)}<div><input type="text" value="${esc(typeof L.owner==='string'?L.owner:'')}" data-dept="${d.id}" data-path="leadgen.${i}.owner" data-text="1" onchange="bflDeptEdit(this)" placeholder="ответственный" style="width:140px;margin-top:2px;font-size:10.5px;padding:2px 5px;border:1px solid var(--border);border-radius:4px;background:#fffdf0;color:var(--text2)"></div></td>
       <td style="${cell}">${inp('leadgen.'+i+'.leads',L.leads,66)}</td>
-      <td style="${cell}">${L.rawCostMode==='fot'?`<span style="color:var(--text2)">${bflM(L.rawCost)}</span><div style="font-size:9px;color:var(--text3)">ФОТ/лиды</div>`
+      <td style="${cell}">${L.payFor==='fot'?`<span style="color:var(--text2)">${bflM(L.rawCost)}</span><div style="font-size:9px;color:var(--text3)">ФОТ/лиды</div>`
+        :L.payFor==='qual'?`<span style="color:var(--text2)" title="Производная: ставка за квал-лид, приведённая к грязному через отбраковку. За грязные лиды по рекомендациям не платят, своей цены лида у направления нет.">${bflM(L.rawCost)}</span><div style="font-size:9px;color:var(--text3)">ставка × (1 - брак)</div>`
         :inp('leadgen.'+i+'.costRaw',L.costRaw,80)}</td>
       <td style="${cell}">${inp('leadgen.'+i+'.brak',+(L.brak*100).toFixed(2),52,true)} %</td>
       <td style="${cell};color:var(--text2)">${bflI(L.qual)}</td>
-      <td style="${cell};color:var(--accent)">${bflM(L.costQual)}</td>
+      <td style="${cell};color:var(--accent)">${L.payFor==='qual'
+        ?`${inp('leadgen.'+i+'.feePerQual',L.feeQual,80)}<div style="font-size:9px;color:var(--text3)" title="Ставка - то, что платим за квал-лид. Полная стоимость - все расходы направления, делённые на квал-лиды: в неё входит ещё и оплата за сделки.">полная ${bflM(L.costQual)}</div>`
+        :bflM(L.costQual)}</td>
       <td style="${cell};color:var(--outcome)">${bflM(L.dirCost)}</td></tr>`).join('');
     const totLeads=(c.leadRows||[]).reduce((a,L)=>a+L.leads,0);
     const leadTbl=`<table style="width:100%;border-collapse:collapse;min-width:640px">
@@ -16581,7 +16613,7 @@ function bflRenderDepts(host){
       <div style="text-align:right;min-width:96px"><div style="font-size:9.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Расходы</div><div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--outcome)">${bflM(c.gross)}</div></div></div>`;
     return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}
       ${open?`<div style="padding:0 13px 13px;border-top:1px dashed var(--border)">
-        <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 4px">Лидогенерация по направлениям (квал-лид = лиды × (1 − % отбраковки); стоимость квал-лида = стоимость грязного / (1 − % отбраковки))</div>
+        <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 4px">Лидогенерация по направлениям (квал-лид = лиды × (1 − % отбраковки). Платим за лид - стоимость квал-лида выводится: цена лида / (1 − % отбраковки). Платим за квал-лид - наоборот, цена лида выводится: ставка × (1 − % отбраковки))</div>
         <div style="overflow-x:auto">${leadTbl}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:3px">«Расходы» по направлению = закупка лидов + агентские комиссии + штат направления с начислениями</div>
         ${staffTbl(d.id,d.roles,'roles','Штатное расписание ОМ (общий)')}
@@ -17099,6 +17131,21 @@ function bflRunTests(){
       const d2c=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='Agbfl');
       ok('#2 комиссия считается по-прежнему',ap(d2c.agentFee,d2c.qual*d2c.feePerQual+d2c.deals*d2c.feePerDeal),Math.round(d2c.agentFee));
       ok('#2 расход = ФОТ + начисления + комиссия',ap(d2c.dirCost,d2c.dFot+d2c.dNach+d2c.agentFee),Math.round(d2c.dirCost));
+      // ── ЗА ЧТО ПЛАТИМ: у #3 ставка за КВАЛ-ЛИД, цены грязного лида нет ──
+      ok('#3 платим за квал-лид (payFor)',d3.payFor==='qual',d3.payFor);
+      ok('#1 платим за лид',mkDept.leadgen.find(x=>x.dir==='ofbfl').payFor==='lead',mkDept.leadgen.find(x=>x.dir==='ofbfl').payFor);
+      ok('#2 режим ФОТ/лиды не тронут',mkDept.leadgen.find(x=>x.dir==='Agbfl').payFor==='fot',mkDept.leadgen.find(x=>x.dir==='Agbfl').payFor);
+      ok('поля rawCostMode не осталось',!mkDept.leadgen.some(x=>x&&x.rawCostMode!==undefined),'-');
+      {const sc=d3.costRaw; d3.costRaw=100;   // ровно тот ввод, что дал лишние 6 000
+       const rr=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='R-bfl');
+       ok('#3 цена лида в расходы НЕ входит',rr.media===0&&ap(rr.dirCost,rr.agentFee),Math.round(rr.dirCost));
+       ok('#3 стоим. лида = ставка × (1 - брак)',ap(rr.rawCost,(d3.feePerQual||0)*(1-1/3)),Math.round(rr.rawCost));
+       ok('#3 ставка и полная стоимость - РАЗНЫЕ поля',rr.feeQual===d3.feePerQual&&!ap(rr.feeQual,rr.costQual),rr.feeQual+' / '+Math.round(rr.costQual));
+       ok('#3 полная стоимость = расходы / квал-лиды',ap(rr.costQual,bflSafeDiv(rr.dirCost,rr.qual)),Math.round(rr.costQual));
+       d3.costRaw=sc;}
+      {const r1=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='ofbfl');
+       ok('#1 стоим. лида = введённая цена',ap(r1.rawCost,r1.costRaw),r1.rawCost);
+       ok('#1 полная стоимость квал-лида производная и БОЛЬШЕ цены лида',r1.costQual>r1.rawCost,Math.round(r1.costQual));}
       d3.leads=sv3.leads;d3.brak=sv3.brak;d3.costRaw=sv3.costRaw;
     }
     // ОП (отдел продаж) - стадия сделок (dealStage), воронка по направлениям
