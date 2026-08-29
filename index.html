@@ -1427,7 +1427,7 @@ const _tabFilters={
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'',articles:[],subarticles:[],sides:[],rowDim:'article'}, // period:'' = «ещё не выбрано»; умолчание (текущий месяц) считается ОДИН РАЗ в renderPlanFact
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
-  bflmodel:{view:'depts',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
+  bflmodel:{view:'depts',block:'all',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
   registry:{q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}}
 };
 
@@ -16131,14 +16131,31 @@ function bflCommercial(){
 function _bflSetPath(obj,path,val){const p=path.split('.');let o=obj;for(let i=0;i<p.length-1;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i];o=o[k];}const last=/^\d+$/.test(p[p.length-1])?+p[p.length-1]:p[p.length-1];o[last]=val;}
 
 // ── Контролы вида ─────────────────────────────────────────────────────────────
+// ⚠ ВИДЫ «ОПИУ» И «ПРОДАЖИ» СКРЫТЫ ИЗ ИНТЕРФЕЙСА, НО КОД ЖИВ (29.08.2026, по просьбе Олега).
+//   Скрыты, а не удалены, СОЗНАТЕЛЬНО: вернуть один переключатель дешевле, чем написать заново, а
+//   в виде «ОПИУ» лежит сверка с эталоном ТЗ §10 - она понадобится при следующем разборе модели.
+//   Рендереры `bflRenderOpiu` и ветка «Продажи» в `renderBflModel` не тронуты и работают.
+// КАК ВЕРНУТЬ: поставить `BFL_VIEWS_SHOWN=true` - переключатель появится там же, где был.
+//   Разово, не трогая код: в консоли `bflSetView('opiu')` (или 'sales', или 'depts' обратно).
+const BFL_VIEWS_SHOWN=false;
+// Блоки вкладки. ⚠ ОПАУ - ОТДЕЛЬНЫМ ПУНКТОМ, хотя лежит внутри производственного: это
+// самоокупаемый контур со своим ОПиУ, и смотреть его отдельно нужно ровно потому, что в итог
+// производственного блока он не входит.
+const BFL_BLOCK_OPTS=[['all','Все блоки'],['aup','Административно-управленческий (АУП)'],
+  ['commercial','Коммерческий'],['production','Производственный'],['opau','ОПАУ (самоокупаемый контур)']];
 function bflViewBar(){
-  const v=_tabFilters.bflmodel.view||'depts';
+  const v=_tabFilters.bflmodel.view||'depts',bk=_tabFilters.bflmodel.block||'all';
   const b=(id,lbl)=>`<button onclick="bflSetView('${id}')" style="padding:5px 11px;border:0;border-right:1px solid var(--border);cursor:pointer;background:${v===id?'var(--header-dark)':'var(--surface)'};color:${v===id?'#fff':'var(--text)'};font-size:11.5px;white-space:nowrap">${lbl}</button>`;
+  const views=BFL_VIEWS_SHOWN?`<div style="display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden">${b('depts','Отделы · ЦКП')}${b('opiu','ОПИУ')}${b('sales','Продажи')}</div>`:'';
+  const opts=BFL_BLOCK_OPTS.map(o=>`<option value="${o[0]}"${bk===o[0]?' selected':''}>${o[1]}</option>`).join('');
   return `<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:8px">
-    <div style="display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden">${b('depts','Отделы · ЦКП')}${b('opiu','ОПИУ')}${b('sales','Продажи')}</div>
+    ${views}
+    <label style="font-size:11px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Блок</label>
+    <select onchange="bflSetBlock(this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11.5px;font-family:var(--sans)">${opts}</select>
     <label style="font-size:11.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${_tabFilters.bflmodel.exclPayrollTax?'checked':''} onchange="bflToggleExclTax(this)"> Без налогов на ФОТ</label>
   </div>`;
 }
+window.bflSetBlock=function(v){_tabFilters.bflmodel.block=v;renderBflModel();};
 window.bflSetView=function(v){_tabFilters.bflmodel.view=v;renderBflModel();};
 window.bflToggleDeposit=function(cb){_tabFilters.bflmodel.depositExcluded=cb.checked;renderBflModel();};
 window.bflToggleExclTax=function(cb){_tabFilters.bflmodel.exclPayrollTax=cb.checked;renderBflModel();};
@@ -16210,32 +16227,31 @@ window.bflModelControls=function(){
 //   страницы через @media print тут не годится по той же причине - она печатает то, что на экране.
 window.bflPrintBar=function(){
   return `<div style="display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-bottom:10px;font-size:11.5px">
-    <label style="font-size:11px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Печать блока</label>
-    <select id="bfl-print-sel" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11.5px;font-family:var(--sans)">
-      <option value="all">Все три блока (каждый с новой страницы)</option>
-      <option value="aup">Административно-управленческий персонал (АУП)</option>
-      <option value="commercial">Коммерческий блок</option>
-      <option value="production">Производственный блок</option>
-    </select>
+    <span style="font-size:11px;color:var(--text3)">печатается выбранный блок</span>
     <label title="Выключен - свёрнутый вид блока, лист подгоняется под одну страницу. Включён - под каждой карточкой её развёртка (штат, затраты, лидогенерация, воронка, дела); тогда страниц столько, сколько нужно, и кегль не давится." style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="bfl-print-detail" style="margin:0;cursor:pointer">с расшифровкой отделов</label>
     <button onclick="bflPrintBlocks()" title="Лист собирается из модели, а не с экрана: состав полный независимо от того, что развёрнуто" style="padding:4px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-size:11.5px;font-family:var(--sans)">🖨 Печать</button>
   </div>`;
 };
 const BFL_SUPER={overhead:'aup',attract:'commercial',sales:'commercial',production:'production'};
-const BFL_SUPTITLE={aup:'Административно-управленческий персонал (АУП)',commercial:'Коммерческий блок',production:'Производственный блок'};
-const BFL_SUPSUB={aup:'Накладные · управление, налоги, аутсорсинг',commercial:'Привлечение → Продажи · сквозная экономика',production:'ОКС → ОИ → ОПАУ · сопровождение, исполнение, процедуры'};
+const BFL_SUPTITLE={aup:'Административно-управленческий персонал (АУП)',commercial:'Коммерческий блок',production:'Производственный блок',opau:'ОПАУ - самоокупаемый контур'};
+const BFL_SUPSUB={aup:'Накладные · управление, налоги, аутсорсинг',commercial:'Привлечение → Продажи · сквозная экономика',production:'ОКС → ОИ → ОПАУ · сопровождение, исполнение, процедуры',opau:'Свой ОПиУ · в итог производственного блока не входит'};
 const BFL_GORDER=['overhead','attract','sales','production']; // тот же порядок, в котором отделы идут на экране
 window.bflPrintBlocks=function(){
-  const which=((document.getElementById('bfl-print-sel')||{}).value)||'all';
+  // ⚠ ЧТО НА ЭКРАНЕ, ТО И НА ЛИСТЕ: печать читает ТОТ ЖЕ выбор блока, что и вкладка. Свой
+  //   селектор у печати был вторым источником правды - человек видел один блок, печатал другой.
+  const which=_tabFilters.bflmodel.block||'all';
   const detail=!!((document.getElementById('bfl-print-detail')||{}).checked);
-  const keys=(which==='all')?['aup','commercial','production']:[which];
+  const keys=(which==='all')?['aup','commercial','production']:[which];  // 'opau' печатается один
   const g=_bflModel.global,F=_tabFilters.bflmodel,per=bflPeriod(F.month)||{};
   const ex=!!F.depositExcluded;
   const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const RED='#c0392b',GRN='#1e8a54',ACC='#3b4a6b',MUT='#5b6376',ORG='#e8862b';
   const n2=v=>(v==null||isNaN(v))?'-':v.toLocaleString('ru-RU',{maximumFractionDigits:2});
   const loadCol=l=>l==null?MUT:l>1?RED:l>0.8?ORG:GRN;
-  const deptsOf=sk=>{const out=[];BFL_GORDER.forEach(gr=>{if(BFL_SUPER[gr]!==sk)return;(_bflModel.departments||[]).forEach(d=>{if(d.group===gr)out.push({d:d,gr:gr});});});return out;};
+  // ⚠ 'opau' отбирается по `selfFunded`, а не по группе: он лежит В производственном, но
+  //   показывается и печатается отдельным пунктом - см. комментарий у фильтра на экране.
+  const deptsOf=sk=>{if(sk==='opau')return (_bflModel.departments||[]).filter(d=>d&&d.selfFunded).map(d=>({d:d,gr:d.group}));
+    const out=[];BFL_GORDER.forEach(gr=>{if(BFL_SUPER[gr]!==sk)return;(_bflModel.departments||[]).forEach(d=>{if(d.group===gr)out.push({d:d,gr:gr});});});return out;};
   const GRLBL={overhead:'Менеджмент',attract:'Привлечение',sales:'Продажи',production:'Производство'};
   const nameOf=id=>{const u=(_bflModel.departments||[]).find(x=>x.id===id);return u?u.name:String(id||'');};
 
@@ -16298,6 +16314,15 @@ window.bflPrintBlocks=function(){
       {const O=bflOverhead(),fc=com.deals?(com.tskpDeal+O.total/com.deals):null;
        t.push(tile('Полная себестоимость сделки',bflM(fc),RED,'стоимость сделки + накладные ('+bflM(O.total)+') ÷ сделки'));}
       return {rightLbl:'Стоимость сделки · ЦКП блока',rightVal:bflM(com.tskpDeal),extra:extra,tiles:t.join(''),tables:tbl};
+    }
+    if(sk==='opau'){
+      // ⚠ У самоокупаемого контура свой ОПиУ: показываем ЕГО доходы и расходы, а не долю блока.
+      const sd=(_bflModel.departments||[]).filter(x=>x&&x.selfFunded);
+      let sg=0,sr=0;sd.forEach(x=>{const c=bflDeptCalc(x,g);sg+=(ex?c.net:c.gross);sr+=(c.selfRev||0);});
+      return {rightLbl:'Сальдо контура',rightVal:bflM(sr-sg),extra:'',tables:'',
+        tiles:[tile('Доходы контура',bflM(sr),GRN,'на дело'),
+               tile('Расходы контура',bflM(sg),RED,'свой ОПиУ'),
+               tile('Дел за месяц',bflI(bflOpDeals()),null,'входящий поток')].join('')};
     }
     let pG=0,pI=0;(_bflModel.departments||[]).forEach(x=>{if(x.group==='production'&&!x.selfFunded){const c=bflDeptCalc(x,g);pG+=c.gross;pI+=c.incassation;}});
     const cp=_bflModel.clientPath||{},complex=Math.max(0,1-(cp.simpleShare||0)-(cp.heavyShare||0));
@@ -16944,8 +16969,21 @@ function bflRenderDepts(host){
       ${tbl(O.irregular,'Нерегулярные','Движение реже порога. В сумму НЕ входят: разовый расход, делённый на окно, осел бы в постоянных навсегда. Итого по ним '+bflM(O.irregularTotal)+' в месяц.')}
     </div>`:'';
     return `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:8px">${head}${body}</div>`;};
+  // ⚠ ФИЛЬТР БЛОКА. 'opau' - НЕ супер-блок, а один отдел внутри производственного, поэтому он
+  //   отбирается по признаку `selfFunded`, а не по группе; плашка производственного блока при
+  //   нём НЕ печатается: она показывает итог БЕЗ самоокупаемых контуров, и над одним ОПАУ это
+  //   был бы итог не про то, что показано.
+  const selBlk=_tabFilters.bflmodel.block||'all';
+  const blkOf=grp=>SUPER[grp]||null;
   let lastSuper=null,superOpen=false;
+  if(selBlk==='opau'){
+    const self=(_bflModel.departments||[]).filter(d=>d&&d.selfFunded);
+    html+=`<div style="margin:16px 0 8px;font-size:11px;color:var(--text2)">Самоокупаемый контур: свой ОПиУ, в итог производственного блока не входит. Остальные отделы производственного блока скрыты выбором «ОПАУ».</div>`;
+    html+=self.map(card).join('')||`<div style="font-size:12px;color:var(--text3)">Самоокупаемых контуров в модели нет.</div>`;
+    html+=`</div>`; host.innerHTML=html; return;
+  }
   GROUPS.forEach(gr=>{
+    if(selBlk!=='all'&&blkOf(gr[0])!==selBlk)return;
     const list=(_bflModel.departments||[]).filter(d=>d.group===gr[0]);if(!list.length)return;
     const sup=SUPER[gr[0]]||null;
     if(sup!==lastSuper){
