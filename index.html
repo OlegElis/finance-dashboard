@@ -15848,6 +15848,21 @@ function bflOverhead(){
 //   Второй раз её считать нельзя - именно так и выглядел дефект, развёрнутый 29.08.2026.
 // ⚠ Читает ТОЛЬКО модель и `bflQtyFlow` - НЕ `bflDeptCalc`: у ОКС стоит `collectsRassrochka`,
 //   и вызов замкнулся бы через `bflCommercial` («Maximum call stack size exceeded», 28.08.2026).
+// ⚠ ВЫПЛАТЫ ЗА СДЕЛКУ ЛОЖАТСЯ НА ОТДЕЛ ПРОДАЖ (29.08.2026). Принцип: расход, привязанный к
+//   РЕЗУЛЬТАТУ отдела, ложится на этот отдел. Квал-лид - результат ОМ, значит плата за квал-лид
+//   его расход; сделка - результат ОП, значит плата за сделку (агенту 10 000 за договор,
+//   ОКС 1 000 за сделку) - расход ОП. Ставки при этом ВВОДЯТСЯ в направлении: только там известна
+//   привязка к каналу; переезжает не место ввода, а то, чей это расход.
+// ⚠ Читают ТОЛЬКО модель и `bflQtyFlow` - не `bflDeptCalc`: инвариант из fa1d3a6.
+function bflDealFeeByDir(){
+  const out={},mkt=(_bflModel.departments||[]).find(x=>x&&Array.isArray(x.leadgen));
+  if(!mkt)return out;
+  const opD=(_bflModel.departments||[]).find(x=>x&&x.dealStage);
+  const qd=opD?(bflQtyFlow()[opD.id]||{}):{};
+  (mkt.leadgen||[]).forEach(L=>{if(!L||!L.feePerDeal)return;out[L.dir]=(L.feePerDeal||0)*(qd[L.dir]||0);});
+  return out;
+}
+function bflDealFeeTotal(){const m=bflDealFeeByDir();return Object.keys(m).reduce((a,k)=>a+m[k],0);}
 function bflFeeToDept(deptId){
   if(!deptId)return 0;
   const mkt=(_bflModel.departments||[]).find(x=>x&&Array.isArray(x.leadgen));
@@ -15899,7 +15914,10 @@ function bflDeptCalc(d,g){
       const rawCost = (payFor==='fot')  ? bflSafeDiv(dFot,leads)
                     : (payFor==='qual') ? (L.feePerQual||0)*(1-brak)
                     : costRaw;
-      const variable=media+agentFee;                    // переменные затраты направления
+      // ⚠ В расход НАПРАВЛЕНИЯ (колонка ОМ) идёт только плата за КВАЛ-ЛИД: плата за сделку -
+      //   результат ОП и ложится на него (`bflDealFeeByDir`). Сумма по направлению от этого не
+      //   меняется, она переезжает между колонками ОМ и ОП внутри одного блока.
+      const variable=media+agentQual;                   // переменные затраты направления
       const dirCost=variable+dFot+dNach;                // полная стоимость направления
       // ⚠ `costQual` ВСЕГДА ОЗНАЧАЕТ ОДНО: полную стоимость квал-лида, то есть все расходы
       //   направления, делённые на квал-лиды. Ставка, которую ПЛАТЯТ за квал-лид, - отдельное
@@ -15949,15 +15967,17 @@ function bflDeptCalc(d,g){
   // ⚠ Количества берутся из bflQtyFlow() - потока КОЛИЧЕСТВ без затрат. Через bflDeptCalc их
   //   брать нельзя: ОП считается с агентскими комиссиями, которые сами читают сделки, и вышло
   //   бы зацикливание. bflQtyFlow заведён ровно под этот случай.
-  // ⚠ ПОЛУЧЕНО, А НЕ ПОТРАЧЕНО: комиссия за рекомендации - расход МАРКЕТИНГА, у отдела-получателя
-  //   она только справочная строка и в `gross` не входит.
+  // ⚠ ПОЛУЧЕНО, А НЕ ПОТРАЧЕНО: комиссия за рекомендации у отдела-получателя только справочная
+  //   строка и в `gross` не входит - её платят маркетинг (за квал-лиды) и ОП (за сделки).
   const feeIn=bflFeeToDept(d.id);
+  // ⚠ Выплаты за сделку по всем каналам - расход отдела продаж (см. bflDealFeeByDir).
+  const dealFees=d.dealStage?bflDealFeeTotal():0;
   // ⚠ Накладные входят в расходы ТОГО отдела, у которого стоит признак (АУП), и дальше идут
   //   общим путём: в «Расходы блока», в ОПИУ и в полную себестоимость сделки. Отдельного
   //   сложения нигде нет - иначе оно разъехалось бы с этим.
   const ovhTotal=d.overheadFromRaw?(bflOverhead().total||0):0;
   const passAll=pass+perCasePass;
-  const gross=fot+nach+other+leadSpend+perCaseTotal+ovhTotal, net=gross-passAll;
+  const gross=fot+nach+other+leadSpend+perCaseTotal+ovhTotal+dealFees, net=gross-passAll;
   const base = d.supportDept ? null : (d.funnel ? output : (Array.isArray(d.leadgen)?qualTotal:(d.tskpFromProd?bflCasesProd():d.tskpFromOp?bflOpDeals():d.tskpBase))); // маркетинг: квал-лиды; воронка: выход; tskpFromOp: сделки от ОП; tskpFromProd: дела после отвала; supportDept: ЦКП не применим
   const tskp=d.supportDept?null:bflSafeDiv(gross,base);  // ЦКП = расходы_gross / база (у вспом. отдела - нет)
   const fteActual=fteRoles+dirFteTotal;
@@ -15976,7 +15996,7 @@ function bflDeptCalc(d,g){
   //   не имеет права звать bflDeptCalc для такого отдела: получится бесконечная рекурсия.
   //   Ветка видна только здесь, внутри условия, - снаружи связь незаметна, на ней и горели.
   if(d.collectsRassrochka)incassation=bflCommercial().rass;
-  return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,feeIn:feeIn,ovhTotal:ovhTotal,
+  return {fot:fot,nach:nach,other:other,pass:passAll,gross:gross,net:net,tskp:tskp,base:base,feeIn:feeIn,dealFees:dealFees,ovhTotal:ovhTotal,
     perCaseRows:perCaseRows,caseCount:caseCount,revPerCaseRows:revPerCaseRows,selfRev:selfRev,selfNet:selfRev-gross,
     fteActual:fteActual,required:required,loadFte:loadFte,load:load,incassation:incassation,
     leadSpend:leadSpend,qualTotal:qualTotal,leadRows:leadRows,leadTotalCost:leadTotalCost,dirFotTotal:dirFotTotal,
@@ -16087,6 +16107,11 @@ function bflDealCostByDir(){
   const koOut={};let koOutTot=0;if(kc&&kc.funnelRows)kc.funnelRows.forEach(r=>{koOut[r.dir]=r.output;koOutTot+=r.output;if(!nameByDir[r.dir]){nameByDir[r.dir]=r.name;order.push(r.dir);}});
   const opOut={};let opOutTot=0;if(oc&&oc.funnelRows)oc.funnelRows.forEach(r=>{opOut[r.dir]=r.output;opOutTot+=r.output;if(!nameByDir[r.dir]){nameByDir[r.dir]=r.name;order.push(r.dir);}});
   const koGross=kc?kc.gross:0,opGross=oc?oc.gross:0;
+  // ⚠ ВЫПЛАТА ЗА СДЕЛКУ ОТНОСИТСЯ К СВОЕМУ НАПРАВЛЕНИЮ ЦЕЛИКОМ, а ФОТ ОП по-прежнему
+  //   размазывается по доле выхода. Размажь мы и её - 10 000 за договор агентской сети растеклись
+  //   бы по всем четырём каналам, и стоимость сделки каждого стала бы неверной.
+  const dealFeeD=bflDealFeeByDir(),dealFeeTot=Object.keys(dealFeeD).reduce((a,k)=>a+dealFeeD[k],0);
+  const opBase=opGross-dealFeeTot;   // из ФОТ ОП адресные выплаты вычтены, размазывается остаток
   // ── СДЕЛЬНАЯ ВЫПЛАТА ОКС - СЛАГАЕМОЕ ОДНОГО НАПРАВЛЕНИЯ (28.08.2026) ────────
   // ⚠ Не размазывается по направлениям, как ФОТ КО и ОП: она начислена ЗА КОНКРЕТНОЕ
   //   направление и целиком относится к нему.
@@ -16097,7 +16122,8 @@ function bflDealCostByDir(){
   //   в расходах коммерческого. Проверять это при правках: bflCommercial НЕ должна начать
   //   складывать production.
   return order.map(dir=>{
-    const mktC=mktByDir[dir]||0,koC=koOutTot?koGross*(koOut[dir]||0)/koOutTot:0,opC=opOutTot?opGross*(opOut[dir]||0)/opOutTot:0;
+    const mktC=mktByDir[dir]||0,koC=koOutTot?koGross*(koOut[dir]||0)/koOutTot:0;
+    const opC=(opOutTot?opBase*(opOut[dir]||0)/opOutTot:0)+(dealFeeD[dir]||0);
     const isAg=!!agentByDir[dir],omC=isAg?0:mktC,asC=isAg?mktC:0;
     const total=mktC+koC+opC,deals=opOut[dir]||0;        // omC+asC === mktC, итог не двигается
     return {dir:dir,name:nameByDir[dir],deals:deals,mktC:mktC,omC:omC,asC:asC,isAgent:isAg,koC:koC,opC:opC,total:total,costPerDeal:bflSafeDiv(total,deals)};});
@@ -16415,9 +16441,9 @@ window.bflPrintBlocks=function(){
       if(!hasFee&&!hasStaff)return;
       h+=`<div class="sub"><div class="sh">${esc(L.name)} · ${hasFee?'вознаграждение за канал и штат':'штатное расписание'}</div>`;
       if(hasFee)h+=`<table><tbody>`
-        +(L.feeTo?`<tr><td class="l" colspan="3">получатель: ${esc(nameOf(L.feeTo))} - это расход маркетинга, в расходы получателя он НЕ входит</td></tr>`:'')
+        +(L.feeTo?`<tr><td class="l" colspan="3">получатель: ${esc(nameOf(L.feeTo))} - в его расходы это НЕ входит; за квал-лиды платит ОМ, за сделки ОП</td></tr>`:'')
         +`<tr><td class="l">₽ за К-лид агенту × квал-лиды</td><td>${bflM(L.feePerQual)} × ${bflI(L.qual)}</td><td>${bflM(L.agentQual)}</td></tr>`
-        +`<tr><td class="l">сделки × ₽ за сделку${L.dealsInherited?' (сделки из ОП)':''}</td><td>${bflI(L.deals)} × ${bflM(L.feePerDeal)}</td><td>${bflM(L.agentDeal)}</td></tr>`
+        +`<tr><td class="l">сделки × ₽ за сделку${L.dealsInherited?' (сделки из ОП)':''} - в расходы ОП</td><td>${bflI(L.deals)} × ${bflM(L.feePerDeal)}</td><td>${bflM(L.agentDeal)}</td></tr>`
         +`<tr class="tot"><td class="l">Итого агентам</td><td></td><td>${bflM(L.agentFee)}</td></tr></tbody></table>`;
       if(hasStaff)h+=staffTbl(L.staff,'Штат направления: '+L.name);
       h+=`</div>`;});
@@ -16619,8 +16645,8 @@ function bflRenderDepts(host){
       //   «+ добавить роль». Дыра ровно та же, что чинится этой правкой, только этажом выше.
       const agentBlock=(L.feePerQual||L.feePerDeal)?`<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:12px;margin:2px 0 6px">
         <span style="color:var(--text2)">₽ за К-лид агенту ${inp('leadgen.'+i+'.feePerQual',L.feePerQual,66)} × ${bflI(L.qual)} квал-лидов = <b>${bflM(L.agentQual)}</b></span>
-        <span style="color:var(--text2)">Сделки ${L.dealsInherited?`<b style="color:var(--accent)">${bflI(L.deals)}</b> <span style="font-size:10px;color:var(--text3)">(из ОП)</span>`:inp('leadgen.'+i+'.deals',L.deals,56)} × ₽ за сделку (до) ${inp('leadgen.'+i+'.feePerDeal',L.feePerDeal,80)} = <b>${bflM(L.agentDeal)}</b></span>
-        <span style="color:var(--text2)">Итого: <b style="color:var(--outcome)">${bflM(L.agentFee)}</b></span>
+        <span style="color:var(--text2)">Сделки ${L.dealsInherited?`<b style="color:var(--accent)">${bflI(L.deals)}</b> <span style="font-size:10px;color:var(--text3)">(из ОП)</span>`:inp('leadgen.'+i+'.deals',L.deals,56)} × ₽ за сделку (до) ${inp('leadgen.'+i+'.feePerDeal',L.feePerDeal,80)} = <b>${bflM(L.agentDeal)}</b> <span style="font-size:10px;color:var(--text3)">→ в расходы ОП</span></span>
+        <span style="color:var(--text2)">Итого по каналу: <b style="color:var(--outcome)">${bflM(L.agentFee)}</b> <span style="font-size:10px;color:var(--text3)">из них в ОМ ${bflM(L.agentQual)}, в ОП ${bflM(L.agentDeal)}</span></span>
         ${L.feeTo?`<span style="font-size:10.5px;color:var(--text3)">получатель: ${esc(nameOfDept(L.feeTo))} - это расход маркетинга, в расходы получателя он НЕ входит</span>`:''}</div>`:'';
       // ⚠ Сторож пустоты снят: пока он стоял, направление БЕЗ штата не давало ни таблицы, ни
       //   кнопки, и первую роль в нём завести было негде. Пустое расписание рисуется одной кнопкой.
@@ -16699,6 +16725,13 @@ function bflRenderDepts(host){
       ${open?`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">
         <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 6px">Воронка по направлениям: ${esc(fl.inLabel||'вход')} (наследуется от ${esc(upName||'предыдущего отдела')}) → конверсия и % отвала РАЗНЫЕ по направлениям → ${esc(fl.outLabel||'выход')}</div>
         ${funnelBox}${staff}${costsBlock}
+        ${c.dealFees>0.005?`<div style="margin-top:10px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)">
+          <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:12.5px">
+            <span style="color:var(--text2)">Выплаты за сделку по каналам</span>
+            <b style="font-family:var(--mono);color:var(--outcome)">${bflM(c.dealFees)}</b>
+          </div>
+          <div style="font-size:10.5px;color:var(--text3);margin-top:5px">Сделка - результат этого отдела, поэтому плата за неё его расход. Ставки задаются в направлениях карточки маркетинга: там известна привязка к каналу. Входит в расходы отдела и в ЦКП ниже.</div>
+        </div>`:''}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">ЦКП = ${bflM(c.gross)} / ${bflI(c.output)} ${esc(fl.outLabel||'')} = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
         ${fl.money?(()=>{const cm=bflCommercial();return `<div style="margin-top:6px;font-size:11.5px;color:var(--text2)">Сумма сделок (договорная) = Σ сделки × средний чек = <b>${bflM(c.sumaTotal)}</b> (НЕ деньги в кассе). ОП собирает первый чек = <b style="color:var(--income)">${bflM(c.incassation)}</b>; остаток клиент платит в рассрочку ${cm.rassMonths} мес через ОКС (≈ <b>${bflM(cm.rassPerClientMonth)}</b>/мес с клиента). В установившемся режиме (платят ${cm.rassMonths} когорт) ОКС собирает в месяц = <b style="color:var(--income)">${bflM(cm.rass)}</b>.</div>`;})():''}
         ${fl.money?`<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:11.5px;color:var(--text2);padding:9px 11px;background:var(--surface2);border-radius:7px">
@@ -16749,13 +16782,20 @@ function bflRenderDepts(host){
       //   ПОЛУЧЕННОЕ: посчитай мы её вторым разом в расходах ОКС, одна и та же сумма легла бы и в
       //   коммерческий блок, и в производственный. Полей ввода тут нет: ставки живут в
       //   направлении, как у агентской сети.
+      const dealFeeBlock=(c.dealFees>0.005)?`<div style="margin-top:10px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)">
+        <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:12.5px">
+          <span style="color:var(--text2)">Выплаты за сделку по каналам</span>
+          <b style="font-family:var(--mono);color:var(--outcome)">${bflM(c.dealFees)}</b>
+        </div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:5px">Сделка - результат этого отдела, поэтому плата за неё его расход. Ставки задаются в направлениях карточки маркетинга: там известна привязка к каналу. Входит в расходы отдела.</div>
+      </div>`:'';
       const bonusBlock=(c.feeIn>0.005)?`<div style="margin-top:10px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)">
         <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:12.5px">
-          <span style="color:var(--text2)">Получено из маркетинга за рекомендации</span>
+          <span style="color:var(--text2)">Получено за рекомендации</span>
           <b style="font-family:var(--mono);color:var(--income)">${bflM(c.feeIn)}</b>
           <span style="font-size:10.5px;color:var(--text3)">увеличивает ФОТ отдела</span>
         </div>
-        <div style="font-size:10.5px;color:var(--text3);margin-top:5px">В расходы отдела НЕ входит: эти деньги уже учтены расходом маркетинга, второй раз считать нельзя. Ставки - в карточке маркетинга, у направления.</div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:5px">За квал-лиды платит маркетинг, за сделки - отдел продаж. В расходы этого отдела НЕ входит: деньги уже учтены расходом плательщика, второй раз считать нельзя. Ставки - в карточке маркетинга, у направления.</div>
       </div>`:'';
       // per-case затраты (ОПАУ): Затрата | ₽/дело (ред.) | Дел | Сумма
       const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
@@ -16794,7 +16834,7 @@ function bflRenderDepts(host){
         ${(d.capacity&&d.capacity.wipAuto)?`<label style="color:var(--text2)">Портфель в работе (Литтл): <b>${bflI(bflCasesProd()*bflAvgTerm())}</b> <span style="color:var(--text3)">= ${bflI(bflCasesProd())}/мес × ${bflAvgTerm().toFixed(1).replace('.',',')} мес</span></label>`:(d.capacity&&d.capacity.base!=null&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Портфель/вход ${inp('capacity.base',d.capacity.base,90)}</label>`:''}
         ${(d.capacity&&d.capacity.norm!=null)?`<label style="color:var(--text2)">Норма на ШЕ ${inp('capacity.norm',d.capacity.norm,70)}</label>`:''}
       </div>`;
-      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${bonusBlock}${revTbl}${costTbl}${perCaseTbl}${selfBlock}${rampTbl}${flow}
+      body=`<div style="padding:4px 13px 13px;border-top:1px dashed var(--border)">${rolesTbl}${dealFeeBlock}${bonusBlock}${revTbl}${costTbl}${perCaseTbl}${selfBlock}${rampTbl}${flow}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы (gross): <b style="color:var(--outcome)">${bflM(c.gross)}</b>${c.pass>0?` · из них pass-through: ${bflM(c.pass)} · net (P&L, ФОТ): <b>${bflM(c.net)}</b>`:''}${d.supportDept?'':` · ЦКП = ${bflM(c.gross)} / ${bflI(c.base)}${d.tskpFromOp?' сделок от ОП':''} = <b style="color:var(--accent)">${bflM(c.tskp)}</b>`}</div>
       </div>`;
     }
@@ -17141,9 +17181,12 @@ function bflRunTests(){
       ok('поля oksBonus не осталось ни у одного отдела',!(_bflModel.departments||[]).some(x=>x&&x.oksBonus),'-');
       const r3=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='R-bfl');
       ok('#3 закупки трафика нет (цена лида 0)',r3.media===0,r3.media);
-      ok('#3 расход направления = комиссия',ap(r3.dirCost,r3.agentFee)&&r3.agentFee>0,Math.round(r3.dirCost));
-      ok('#3 комиссия = ставка×квал-лиды + ставка×сделки',
+      // ⚠ Было `dirCost === agentFee`. После переноса выплат за сделку в ОП (29.08.2026) расход
+      //   НАПРАВЛЕНИЯ - это только плата за квал-лид; плата за сделку ушла в отдел продаж.
+      ok('#3 расход направления = плата за квал-лид',ap(r3.dirCost,r3.agentQual)&&r3.agentQual>0,Math.round(r3.dirCost));
+      ok('#3 комиссия канала = ставка×квал-лиды + ставка×сделки',
          ap(r3.agentFee,1000*r3.qual+1000*r3.deals),Math.round(r3.agentFee));
+      ok('#3 комиссия канала делится на ОМ и ОП',ap(r3.agentFee,r3.agentQual+r3.agentDeal),Math.round(r3.agentQual)+'+'+Math.round(r3.agentDeal));
       // сумма идёт в колонку ОМ, отдельной колонки ОКС нет
       const row3=bflDealCostByDir().find(x=>x.dir==='R-bfl');
       ok('#3 расход стоит в колонке ОМ',ap(row3.omC,r3.dirCost)&&row3.omC>0,Math.round(row3.omC));
@@ -17159,7 +17202,11 @@ function bflRunTests(){
       // ОП комиссий не несёт вовсе
       const opD2=_bflModel.departments.find(x=>x.dealStage);
       const opc=bflDeptCalc(opD2,g);
-      ok('ОП: комиссий каналов в расходах нет',ap(opc.gross,opc.fot+opc.nach+opc.other+(opc.perCaseTotal||0)+(opc.ovhTotal||0),1),Math.round(opc.gross));
+      // ⚠ Было «комиссий каналов в расходах ОП нет». Ровно это и развёрнуто: плата за СДЕЛКУ -
+      //   результат ОП, значит его расход. Теперь сторожим обратное: она там есть и ровно одна.
+      ok('ОП: выплаты за сделку входят в расходы и считаются один раз',
+         ap(opc.gross,opc.fot+opc.nach+opc.other+(opc.perCaseTotal||0)+(opc.ovhTotal||0)+opc.dealFees,1),Math.round(opc.gross));
+      ok('ОП: плата за КВАЛ-ЛИД в его расходы НЕ попала',!ap(opc.dealFees,0)?opc.dealFees<bflDealFeeTotal()+0.01:true,Math.round(opc.dealFees));
       // по компании сумма считается ОДИН раз: она внутри расходов коммерческого блока
       const com=bflCommercial();
       ok('комиссия внутри расходов коммерческого блока',com.gross>=r3.agentFee,Math.round(com.gross));
@@ -17169,6 +17216,27 @@ function bflRunTests(){
       const d2c=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='Agbfl');
       ok('#2 комиссия считается по-прежнему',ap(d2c.agentFee,d2c.qual*d2c.feePerQual+d2c.deals*d2c.feePerDeal),Math.round(d2c.agentFee));
       ok('#2 расход = ФОТ + начисления + комиссия',ap(d2c.dirCost,d2c.dFot+d2c.dNach+d2c.agentFee),Math.round(d2c.dirCost));
+      // ── ВЫПЛАТЫ ЗА СДЕЛКУ - РАСХОД ОП, А НЕ ОМ (29.08.2026) ──
+      // Принцип: расход, привязанный к результату отдела, ложится на этот отдел. Сторожат
+      // главное: сумма ПЕРЕЕХАЛА между колонками, а не появилась и не исчезла.
+      {
+        const opD3=_bflModel.departments.find(x=>x.dealStage);
+        const r3d=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='R-bfl');
+        ok('#3 в расход ОМ идёт только плата за квал-лид',ap(r3d.dirCost,r3d.agentQual),Math.round(r3d.dirCost));
+        ok('#3 плата за сделку из расхода направления исключена',r3d.agentDeal>0&&!ap(r3d.agentFee,r3d.dirCost),Math.round(r3d.agentDeal));
+        ok('#3 полная стоимость квал-лида = ставке',ap(r3d.costQual,d3.feePerQual),Math.round(r3d.costQual));
+        const fees=bflDealFeeByDir(),feeTot=bflDealFeeTotal();
+        ok('выплаты за сделку собраны по направлениям',ap(feeTot,Object.keys(fees).reduce((a,k)=>a+fees[k],0)),Math.round(feeTot));
+        ok('ОП несёт выплаты за сделку',ap(bflDeptCalc(opD3,g).dealFees,feeTot)&&feeTot>0,Math.round(feeTot));
+        const row3d=bflDealCostByDir().find(x=>x.dir==='R-bfl');
+        ok('выплата за сделку #3 сидит в колонке ОП адресно',row3d.opC>fees['R-bfl']-0.01,Math.round(row3d.opC));
+        ok('Σ по направлению = ОМ+КО+ОП по-прежнему',ap(row3d.total,row3d.omC+row3d.koC+row3d.opC,0.01),Math.round(row3d.total));
+        // ⚠ адресность: 10 000 за договор агентской сети НЕ размазаны по чужим направлениям
+        const rows=bflDealCostByDir(),sumFees=Object.keys(fees).reduce((a,k)=>a+fees[k],0);
+        const opSum=rows.reduce((a,r)=>a+r.opC,0);
+        ok('Σ колонки ОП = расходам ОП',ap(opSum,bflDeptCalc(opD3,g).gross,1),Math.round(opSum));
+        ok('сумма адресных выплат не потерялась',sumFees>0&&opSum>=sumFees,Math.round(sumFees));
+      }
       // ── ЗА ЧТО ПЛАТИМ: у #3 ставка за КВАЛ-ЛИД, цены грязного лида нет ──
       ok('#3 платим за квал-лид (payFor)',d3.payFor==='qual',d3.payFor);
       ok('#1 платим за лид',mkDept.leadgen.find(x=>x.dir==='ofbfl').payFor==='lead',mkDept.leadgen.find(x=>x.dir==='ofbfl').payFor);
@@ -17176,9 +17244,14 @@ function bflRunTests(){
       ok('поля rawCostMode не осталось',!mkDept.leadgen.some(x=>x&&x.rawCostMode!==undefined),'-');
       {const sc=d3.costRaw; d3.costRaw=100;   // ровно тот ввод, что дал лишние 6 000
        const rr=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='R-bfl');
-       ok('#3 цена лида в расходы НЕ входит',rr.media===0&&ap(rr.dirCost,rr.agentFee),Math.round(rr.dirCost));
+       ok('#3 цена лида в расходы НЕ входит',rr.media===0&&ap(rr.dirCost,rr.agentQual),Math.round(rr.dirCost));
        ok('#3 стоим. лида = ставка × (1 - брак)',ap(rr.rawCost,(d3.feePerQual||0)*(1-1/3)),Math.round(rr.rawCost));
-       ok('#3 ставка и полная стоимость - РАЗНЫЕ поля',rr.feeQual===d3.feePerQual&&!ap(rr.feeQual,rr.costQual),rr.feeQual+' / '+Math.round(rr.costQual));
+       // ⚠ Сравнивать их ЧИСЛА больше нельзя: после переноса выплат за сделку в ОП полная
+       //   стоимость квал-лида у #3 стала РАВНА ставке (1 000) - и это ожидаемо, а не совпадение.
+       //   Сторожим то, что они остаются РАЗНЫМИ ВЕЛИЧИНАМИ: ставка приходит из модели, полная
+       //   считается из расходов направления.
+       ok('#3 ставка берётся из модели',rr.feeQual===d3.feePerQual,rr.feeQual);
+       ok('#3 полная стоимость считается из расходов',ap(rr.costQual,bflSafeDiv(rr.dirCost,rr.qual)),Math.round(rr.costQual));
        ok('#3 полная стоимость = расходы / квал-лиды',ap(rr.costQual,bflSafeDiv(rr.dirCost,rr.qual)),Math.round(rr.costQual));
        d3.costRaw=sc;}
       {const r1=bflDeptCalc(mkDept,g).leadRows.find(x=>x.dir==='ofbfl');
