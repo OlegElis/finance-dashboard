@@ -16135,6 +16135,26 @@ window.bflRoleDel=function(deptId,prefix,idx){
   if(!confirm('Удалить «'+nm+'» из штатного расписания?\n\nМодель сохраняется автоматически - отменить будет нечем.'))return;
   o.splice(idx,1); _bflModelSave(); renderBflModel();
 };
+// Добавление строки штатного расписания. ⚠ ПАРНАЯ К bflRoleDel И ХОДИТ ТЕМ ЖЕ ПУТЁМ: удаление
+// без добавления - односторонняя дверь, строку можно потерять и нельзя завести обратно.
+// ⚠ Подтверждения НЕ спрашивает (в отличие от удаления): пустая строка ничего не стоит и
+// убирается тем же ✕, а лишний вопрос на безобидном действии учит жать «ОК» не глядя.
+// ⚠ Массив СОЗДАЁТСЯ, если его нет: у направления лидогенерации staff может отсутствовать
+// вовсе, и первую роль иначе негде было бы завести.
+window.bflRoleAdd=function(deptId,prefix){
+  const d=(_bflModel.departments||[]).find(x=>x&&x.id===deptId); if(!d)return;
+  const p=String(prefix||'').split('.'); let o=d;
+  for(let i=0;i<p.length;i++){const k=/^\d+$/.test(p[i])?+p[i]:p[i];
+    if(i===p.length-1){if(!Array.isArray(o[k]))o[k]=[];o=o[k];} else {o=o&&o[k]; if(!o)return;}}
+  if(!Array.isArray(o))return;
+  o.push({name:'',fte:1,rate:0});                  // ставка 0 - чтобы новая строка не двигала ФОТ, пока её не заполнили
+  const idx=o.length-1;
+  _bflModelSave(); renderBflModel();
+  // ⚠ Фокус ставится ПОСЛЕ перерисовки и по тому же пути, что и поле: строка с пустым названием,
+  //   в которую не поставили курсор, читается как сбой - «кнопка нажалась, ничего не произошло».
+  try{const sel='#tabBflmodel input[data-dept="'+CSS.escape(deptId)+'"][data-path="'+CSS.escape(prefix+'.'+idx+'.name')+'"]';
+      const el=document.querySelector(sel); if(el){el.focus();el.select();}}catch(e){}
+};
 window.bflToggleDept=function(id){window._bflOpen=window._bflOpen||{};window._bflOpen[id]=!window._bflOpen[id];renderBflModel();};
 window.bflToggleBlock=function(sk){window._bflBlockOpen=window._bflBlockOpen||{};window._bflBlockOpen[sk]=!window._bflBlockOpen[sk];renderBflModel();};
 window.bflDeptEdit=function(el){
@@ -16488,6 +16508,9 @@ function bflRenderDepts(host){
   const staffTbl=(deptId,roles,prefix,title)=>{
     roles=roles||[];const cellR='padding:3px 8px;text-align:right;font-family:var(--mono);font-size:12px';
     const in2=(p,v,w)=>`<input type="text" inputmode="decimal" value="${v==null?'':v}" data-dept="${deptId}" data-path="${p}" onchange="bflDeptEdit(this)" style="width:${w}px;text-align:right;font-family:var(--mono);font-size:12px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:#fffdf0">`;
+    // ⚠ НАЗВАНИЕ РОЛИ ТЕПЕРЬ ВВОДИМОЕ. Без этого кнопка «+ добавить роль» заводила бы строку,
+    //   которую нечем назвать, - хуже, чем отсутствие кнопки.
+    const inName=(p,v)=>`<input type="text" value="${esc(v==null?'':v)}" data-text="1" data-dept="${deptId}" data-path="${p}" onchange="bflDeptEdit(this)" placeholder="название роли" style="width:100%;max-width:230px;font-size:12px;padding:2px 5px;border:1px solid var(--border);border-radius:4px;background:#fffdf0;color:var(--text)">`;
     const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=bflRolesNach(roles);
     const effPct=fot?Math.round(nach/fot*100):0;
     const th=t=>`<th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${t}</th>`;
@@ -16501,10 +16524,17 @@ function bflRenderDepts(host){
     const hasDup=roles.some(_dup);
     const delBtn=i=>`<button type="button" onclick="bflRoleDel('${jesc(deptId)}','${jesc(prefix)}',${i})" title="Удалить строку" style="font-size:11px;line-height:1;width:20px;height:20px;padding:0;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text3);cursor:pointer">✕</button>`;
     const dupTag='<span title="Такая роль в этом расписании уже есть. Строки стоит объединить в одну и поставить количество единиц: ФОТ считается верно и так, но состав читается как разные роли." style="font-size:9px;color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 4px;margin-left:5px;white-space:nowrap">дубль</span>';
-    const rows=roles.map((r,i)=>`<tr${_dup(r)?' style="background:rgba(232,134,43,.10)"':''}><td style="padding:3px 8px;font-size:12px">${esc(r.name)}${_dup(r)?dupTag:''}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.rate',r.rate,92)}</td><td style="padding:3px 8px">${empSel(prefix+'.'+i+'.emp',r.emp)}</td><td style="${cellR};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td><td style="padding:3px 6px;text-align:center">${delBtn(i)}</td></tr>`).join('');
+    const rows=roles.map((r,i)=>`<tr${_dup(r)?' style="background:rgba(232,134,43,.10)"':''}><td style="padding:3px 8px;font-size:12px">${inName(prefix+'.'+i+'.name',r.name)}${_dup(r)?dupTag:''}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.fte',r.fte,52)}</td><td style="padding:3px 8px;text-align:right">${in2(prefix+'.'+i+'.rate',r.rate,92)}</td><td style="padding:3px 8px">${empSel(prefix+'.'+i+'.emp',r.emp)}</td><td style="${cellR};color:var(--text2)">${bflM((r.fte||0)*(r.rate||0))}</td><td style="padding:3px 6px;text-align:center">${delBtn(i)}</td></tr>`).join('');
+    // ⚠ КНОПКА ДОБАВЛЕНИЯ ЖИВЁТ ВНУТРИ staffTbl - тогда она есть В КАЖДОМ штатном расписании
+    //   ПО ПОСТРОЕНИЮ (общее у отдела и штат направления в карточке ОМ), а не потому, что её не
+    //   забыли дописать в каждое место вызова. Тот же приём, что у ✕: один prefix на обе операции.
+    const addBtn=`<div style="margin-top:${roles.length?4:0}px"><button type="button" onclick="bflRoleAdd('${jesc(deptId)}','${jesc(prefix)}')" title="Добавить строку в это штатное расписание" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">+ добавить роль</button></div>`;
+    // ⚠ ПУСТОЕ РАСПИСАНИЕ - ЭТО ОДНА КНОПКА, А НЕ ПУСТАЯ ТАБЛИЦА: шапка с нулевым ФОТ над пустотой
+    //   выглядит как сбой, а завести первую роль всё равно надо где-то.
+    if(!roles.length)return `<div style="margin-top:8px"><div style="font-size:10px;color:var(--label);font-weight:600;margin-bottom:3px">${esc(title||'Штатное расписание')}</div>${addBtn}</div>`;
     return `<table style="width:100%;border-collapse:collapse;margin-top:8px;max-width:620px">
       <thead><tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${esc(title||'Штатное расписание')}</th>${th('Кол-во ед')}${th('Ставка ₽/мес')}<th style="text-align:left;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">Вид сотрудничества</th>${th('ФОТ')}<th></th></tr></thead>
-      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td><td></td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (≈${effPct}%)</td><td></td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td><td></td></tr></tbody></table>${hasDup?`<div style="font-size:10.5px;color:var(--orange);margin-top:3px">⚠ Одинаковые роли отмечены «дубль»: их стоит объединить в одну строку и поставить количество единиц. На сумму ФОТ это не влияет - влияет на то, как читается состав.</div>`:''}`;
+      <tbody>${rows}<tr style="border-top:1px solid var(--border);font-weight:600"><td style="padding:3px 8px;font-size:12px">ФОТ (голый)</td><td></td><td></td><td></td><td style="${cellR}">${bflM(fot)}</td><td></td></tr><tr><td style="padding:3px 8px;font-size:11.5px;color:var(--text2)">Начисления на ФОТ (≈${effPct}%)</td><td></td><td></td><td></td><td style="${cellR};color:var(--text2)">${bflM(nach)}</td><td></td></tr></tbody></table>${addBtn}${hasDup?`<div style="font-size:10.5px;color:var(--orange);margin-top:3px">⚠ Одинаковые роли отмечены «дубль»: их стоит объединить в одну строку и поставить количество единиц. На сумму ФОТ это не влияет - влияет на то, как читается состав.</div>`:''}`;
   };
   // Единая таблица прямых затрат: Затрата | ₽/мес (редактируемое)
   const costsTbl=(deptId,costs)=>{
@@ -16544,16 +16574,21 @@ function bflRenderDepts(host){
         <span style="color:var(--text2)">₽ за квал-лид <b style="font-family:var(--mono)">${bflM(L.oksPerQual)}</b></span>
         <span style="color:var(--text2)">₽ за сделку <b style="font-family:var(--mono)">${bflM(L.oksPerDeal)}</b></span>
         <span style="font-size:10.5px;color:var(--text3)">ставки задаются в карточке${L.oksPayer?' «'+esc(L.oksPayer)+'»':' отдела-плательщика'}; расход направления считается там же, в колонке этого отдела</span></div>`:'';
-      if(!(L.staff&&L.staff.length)&&!L.feePerQual&&!L.feePerDeal)return oksBlock?`<div style="margin-top:10px;padding-left:10px;border-left:2px solid var(--divider)"><div style="font-size:11px;color:var(--label);margin-bottom:4px">${esc(L.name)} · сдельная мотивация</div>${oksBlock}</div>`:'';
+      // ⚠ РАННЕГО ВЫХОДА БОЛЬШЕ НЕТ, И ЭТО НЕ КОСМЕТИКА: пока он стоял, направление без штата,
+      //   без агентской комиссии и без мотивации (#4) не давало блока ВООБЩЕ - а значит, и кнопки
+      //   «+ добавить роль». Дыра ровно та же, что чинится этой правкой, только этажом выше.
       const agentBlock=(L.feePerQual||L.feePerDeal)?`<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:12px;margin:2px 0 6px">
         <span style="color:var(--text2)">₽ за К-лид агенту ${inp('leadgen.'+i+'.feePerQual',L.feePerQual,66)} × ${bflI(L.qual)} квал-лидов = <b>${bflM(L.agentQual)}</b></span>
         <span style="color:var(--text2)">Сделки ${L.dealsInherited?`<b style="color:var(--accent)">${bflI(L.deals)}</b> <span style="font-size:10px;color:var(--text3)">(из ОП)</span>`:inp('leadgen.'+i+'.deals',L.deals,56)} × ₽ за сделку (до) ${inp('leadgen.'+i+'.feePerDeal',L.feePerDeal,80)} = <b>${bflM(L.agentDeal)}</b></span>
         <span style="color:var(--text2)">Итого агентам: <b style="color:var(--outcome)">${bflM(L.agentFee)}</b></span></div>`:'';
-      const staffBlock=(L.staff&&L.staff.length)?staffTbl(d.id,L.staff,'leadgen.'+i+'.staff','Штат направления: '+L.name):'';
-      const dtitle=(L.feePerQual||L.feePerDeal)?'агентское вознаграждение и штат':'штатное расписание';
+      // ⚠ Сторож пустоты снят: пока он стоял, направление БЕЗ штата не давало ни таблицы, ни
+      //   кнопки, и первую роль в нём завести было негде. Пустое расписание рисуется одной кнопкой.
+      const staffBlock=staffTbl(d.id,L.staff,'leadgen.'+i+'.staff','Штат направления: '+L.name);
+      const dtitle=(L.feePerQual||L.feePerDeal)?'агентское вознаграждение и штат'
+                  :(L.rawCostMode==='oks')?'сдельная мотивация и штат':'штатное расписание';
       return `<div style="border:1px solid var(--divider);border-radius:8px;padding:9px 11px;margin-top:8px;background:var(--surface2)">
         <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">${esc(L.name)} - ${dtitle}</div>
-        ${agentBlock}${staffBlock}</div>`;
+        ${agentBlock}${oksBlock}${staffBlock}</div>`;
     }).join('');
     const head=`<div onclick="bflToggleDept('${d.id}')" style="display:flex;align-items:center;gap:16px;padding:11px 13px;cursor:pointer">
       <div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(d.name)}</div>
@@ -16566,7 +16601,7 @@ function bflRenderDepts(host){
         <div style="font-size:10.5px;color:var(--label);text-transform:uppercase;letter-spacing:.06em;margin:9px 0 4px">Лидогенерация по направлениям (квал-лид = лиды × (1 − % отбраковки); стоимость квал-лида = стоимость грязного / (1 − % отбраковки))</div>
         <div style="overflow-x:auto">${leadTbl}</div>
         <div style="font-size:10px;color:var(--text3);margin-top:3px">«Расходы» по направлению = закупка лидов + агентские комиссии + штат направления с начислениями</div>
-        ${(d.roles&&d.roles.length)?staffTbl(d.id,d.roles,'roles','Штатное расписание ОМ (общий)'):''}
+        ${staffTbl(d.id,d.roles,'roles','Штатное расписание ОМ (общий)')}
         ${dirDetails}
         <div style="margin-top:8px;font-size:12px;color:var(--text2)">Расходы маркетинга = переменные (закупка + агентам) ${bflM(c.leadSpend)} + ФОТ ${bflM(c.fot)} + начисления ${bflM(c.nach)} + прочее ${bflM(c.other)} = <b style="color:var(--outcome)">${bflM(c.gross)}</b> · ЦКП = ${bflM(c.gross)} / ${bflI(c.qualTotal)} квал-лидов = <b style="color:var(--accent)">${bflM(c.tskp)}</b></div>
       </div>`:''}</div>`;
