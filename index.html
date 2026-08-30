@@ -1427,7 +1427,7 @@ const _tabFilters={
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
   planfact:{dir:'',year:0,level:'article',period:'',articles:[],subarticles:[],sides:[],rowDim:'article'}, // period:'' = «ещё не выбрано»; умолчание (текущий месяц) считается ОДИН РАЗ в renderPlanFact
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
-  bflmodel:{view:'depts',block:'all',month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
+  bflmodel:{view:'depts',block:'all',showOverhead:false,month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
   registry:{q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}}
 };
 
@@ -16050,7 +16050,7 @@ function bflDeptCalc(d,g){
   // ⚠ Накладные входят в расходы ТОГО отдела, у которого стоит признак (АУП), и дальше идут
   //   общим путём: в «Расходы блока», в ОПИУ и в полную себестоимость сделки. Отдельного
   //   сложения нигде нет - иначе оно разъехалось бы с этим.
-  const ovhTotal=d.overheadFromRaw?(bflOverhead().total||0):0;
+  const ovhTotal=(d.overheadFromRaw&&_tabFilters.bflmodel.showOverhead)?(bflOverhead().total||0):0;
   const passAll=pass+perCasePass;
   const gross=fot+nach+other+leadSpend+perCaseTotal+ovhTotal+dealFees, net=gross-passAll;
   // ⚠ ДВА РЕЗУЛЬТАТА ТРУДА - ДВЕ СТОИМОСТИ, И КАЖДАЯ В ДВУХ РАЗРЕЗАХ (29.08.2026).
@@ -16323,12 +16323,19 @@ function bflViewBar(){
     <label style="font-size:11px;color:var(--label);text-transform:uppercase;letter-spacing:.06em">Блок</label>
     <select onchange="bflSetBlock(this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11.5px;font-family:var(--sans)">${opts}</select>
     <label style="font-size:11.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${_tabFilters.bflmodel.exclPayrollTax?'checked':''} onchange="bflToggleExclTax(this)"> Без налогов на ФОТ</label>
+    <label title="Накладные (аренда, связь, ПО, АХО) считаются из БДР и лежат в расходах АУП. Выключено - в расчёт не входят нигде: ни в расходы АУП, ни в ОПИУ, ни на листе." style="font-size:11.5px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${_tabFilters.bflmodel.showOverhead?'checked':''} onchange="bflToggleOverhead(this)"> Показывать накладные</label>
   </div>`;
 }
 window.bflSetBlock=function(v){_tabFilters.bflmodel.block=v;renderBflModel();};
 window.bflSetView=function(v){_tabFilters.bflmodel.view=v;renderBflModel();};
 window.bflToggleDeposit=function(cb){_tabFilters.bflmodel.depositExcluded=cb.checked;renderBflModel();};
 window.bflToggleExclTax=function(cb){_tabFilters.bflmodel.exclPayrollTax=cb.checked;renderBflModel();};
+// ⚠ НАКЛАДНЫЕ ВЫКЛЮЧЕНЫ ПО УМОЛЧАНИЮ, НО КОД ЖИВ И ПРОВЕРЕН - это переключатель, а не удаление.
+//   Расчёт из RAW (`bflOverhead`) отлажен 28-29.08 и понадобится для разговора о чистой прибыли
+//   компании; выключено - значит НЕ МЕШАЕТ НА ЭКРАНЕ, а не «удалено и писать заново».
+// ⚠ Выключено = не попадает НИКУДА: ни в расходы АУП, ни в ОПИУ, ни в печать. Иначе получился бы
+//   худший из вариантов - на экране группы нет, а в итогах она сидит.
+window.bflToggleOverhead=function(cb){_tabFilters.bflmodel.showOverhead=cb.checked;renderBflModel();};
 // Удаление строки штатного расписания. ⚠ Спрашивает подтверждение: модель сохраняется
 // автоматически, отката нет, и случайное нажатие ✕ потеряло бы строку молча.
 // ⚠ Путь приходит тем же prefix, которым строится таблица ('roles' или 'leadgen.N.staff'),
@@ -16448,7 +16455,9 @@ window.bflPrintBlocks=function(){
       //   развёртки карточек: свёрнутый лист остаётся одностраничным, и двадцать пять строк
       //   подстатей его бы гарантированно порвали. Выключен - итоговая строка; включён - обе
       //   таблицы полностью, потому что на бумаге строку уже не раскрыть.
-      const ovh=`<div class="sect"><div class="sh">Содержание компании · накладные</div>
+      // ⚠ На листе накладные подчиняются ТОЙ ЖЕ галочке, что и экран: лист повторяет экран, а
+      //   выключенная группа не имеет права появиться на бумаге.
+      const ovh=!_tabFilters.bflmodel.showOverhead?'':`<div class="sect"><div class="sh">Содержание компании · накладные</div>
         <div class="note">Среднее за ${O.windowMonths} мес: ${esc(O.from)} - ${esc(O.to)}${O.reason?' · '+esc(O.reason):''} · направление ${esc(O.dir)} · постоянных ${O.regular.length}, нерегулярных ${O.irregular.length} · считается из БДР при каждом открытии, в модели не хранится. Исключены префиксы: ${esc((O.exclude||[]).join(', '))}.</div>
         <table><tbody><tr class="tot"><td class="l">Постоянные накладные, в месяц</td><td>${bflM(O.total)}</td></tr>
         <tr><td class="l" style="color:#5b6376">Нерегулярные (в сумму не входят)</td><td style="color:#5b6376">${bflM(O.irregularTotal)}</td></tr></tbody></table></div>`
@@ -16481,8 +16490,10 @@ window.bflPrintBlocks=function(){
                tile('Первый платёж · ОП',bflM(com.firstPay),GRN,'чистый, после возврата')];
       if(com.refund>0)t.push(tile('Возврат клиентам (отвал)','−'+bflM(com.refund),RED,Math.round(bflPreCourtOtval()*100)+'% × первый платёж'));
       t.push(tile('Рассрочка · ОКС (в мес)',bflM(com.rass),GRN,'устан. режим, '+com.rassMonths+' когорт'));
-      {const O=bflOverhead(),fc=com.deals?(com.tskpDeal+O.total/com.deals):null;
-       t.push(tile('Полная себестоимость сделки',bflM(fc),RED,'стоимость сделки + накладные ('+bflM(O.total)+') ÷ сделки'));}
+      // ⚠ ПЛИТКА «ПОЛНАЯ СЕБЕСТОИМОСТЬ СДЕЛКИ» УБРАНА (30.08.2026): она подмешивала расходы АУП
+      //   в разговор про КОММЕРЧЕСКИЙ блок. Здесь нужна ЧИСТАЯ стоимость сделки; накладные лежат
+      //   в расходах АУП и в стоимость сделки не входят - ни до правки, ни после, это ТОЛЬКО
+      //   снятие плитки, ни одного числа она не считала в общий итог.
       return {rightLbl:'Стоимость сделки · ЦКП блока',rightVal:bflM(com.tskpDeal),extra:extra,tiles:t.join(''),tables:tbl};
     }
     if(sk==='opau'){
@@ -17101,8 +17112,6 @@ function bflRenderDepts(host){
           ${_chip('Первый платёж · ОП',bflM(com.firstPay),'var(--income)','чистый, после возврата')}
           ${com.refund>0?_chip('Возврат клиентам (отвал)','−'+bflM(com.refund),'var(--outcome)',Math.round(bflPreCourtOtval()*100)+'% × первый платёж'):''}
           ${_chip('Рассрочка · ОКС (в мес)',bflM(com.rass),'var(--income)','устан. режим, '+com.rassMonths+' когорт')}
-          ${(()=>{const O=bflOverhead(),fc=com.deals?(com.tskpDeal+O.total/com.deals):null;
-            return _chip('Полная себестоимость сделки',bflM(fc),'var(--outcome)','стоимость сделки + накладные ('+bflM(O.total)+') ÷ сделки');})()}
         </div>
         ${dcTbl}`:''}</div>`;
     }
@@ -17205,7 +17214,7 @@ function bflRenderDepts(host){
     }
     if(gr[0]!=='overhead')html+=`<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin:14px 0 7px">${gr[1]}</div>`; // у АУП блок=отдел, под-заголовок не нужен
     html+=list.map(card).join('');
-    if(gr[0]==='overhead')html+=ovhCard(); // накладные - в блоке АУП, следом за самим АУП
+    if(gr[0]==='overhead'&&_tabFilters.bflmodel.showOverhead)html+=ovhCard(); // накладные - в блоке АУП, следом за самим АУП; за галочкой
   });
   if(superOpen)html+=`</div>`;
   html+=`</div>`;
@@ -17284,6 +17293,10 @@ function bflRunTests(){
   const ap=(a,b,t)=>a!=null&&Math.abs(a-b)<=(t||0.005);
   const save=_bflModel;_bflModel=bflModelDefault();const savedAuto=_bflAuto;_bflAuto={};
   const savedDep=_tabFilters.bflmodel.depositExcluded;_tabFilters.bflmodel.depositExcluded=false;
+  // ⚠ Накладные на время прогона ВКЛЮЧЕНЫ: тесты проверяют РАСЧЁТ, а не положение галочки, и
+  //   не должны падать от того, каким человек оставил экран. Отдельный блок ниже проверяет
+  //   САМУ галочку - оба её положения.
+  const savedOvh=_tabFilters.bflmodel.showOverhead;_tabFilters.bflmodel.showOverhead=true;
   try{
     const jun=bflPeriod('2026-06'),may=bflPeriod('2026-05');
     const f1=bflFunnel(bflVol(jun,'plan','d1'));
@@ -17399,7 +17412,34 @@ function bflRunTests(){
       ok('#2 комиссия = встречи×ставка + сделки×ставка',
          ap(d2c.agentFee,d2c.meetings*d2c.feePerMeeting+d2c.deals*d2c.feePerDeal),Math.round(d2c.agentFee));
       ok('#2 расход = ФОТ + начисления + комиссия',ap(d2c.dirCost,d2c.dFot+d2c.dNach+d2c.agentFee),Math.round(d2c.dirCost));
-      // ── ОДНА ФУНКЦИЯ СТАДИЙ ВОРОНКИ НА ОБА РАСЧЁТА (29.08.2026) ──
+      // ── ГАЛОЧКА «ПОКАЗЫВАТЬ НАКЛАДНЫЕ» (30.08.2026) ──
+    {
+      const aup=_bflModel.departments.find(x=>x&&x.overheadFromRaw);
+      const sv=_tabFilters.bflmodel.showOverhead;
+      const O=bflOverhead(),ovh=O.total||0;
+      _tabFilters.bflmodel.showOverhead=true;
+      const onA=bflDeptCalc(aup,g).gross,onCom=bflCommercial(),onOp=bflOPIU().expenses;
+      _tabFilters.bflmodel.showOverhead=false;
+      const offA=bflDeptCalc(aup,g).gross,offCom=bflCommercial(),offOp=bflOPIU().expenses;
+      _tabFilters.bflmodel.showOverhead=sv;
+      ok('накладные в АУП есть и они ненулевые',ovh>0,Math.round(ovh));
+      // ⚠ ГЛАВНОЕ: разница РОВНО на сумму накладных и ни рублём больше.
+      ok('расходы АУП меняются ровно на сумму накладных',ap(onA-offA,ovh,0.01),Math.round(onA-offA));
+      ok('ОПИУ меняется ровно на ту же сумму',ap(onOp-offOp,ovh,0.01),Math.round(onOp-offOp));
+      // ⚠ Коммерческий блок к накладным отношения не имеет НИ ПРИ КАКОМ положении галочки:
+      //   они лежат в АУП. Плитка «полная себестоимость сделки» их сюда подмешивала - убрана.
+      ok('расходы коммерческого блока от галочки НЕ зависят',ap(onCom.gross,offCom.gross,0.01),Math.round(onCom.gross));
+      ok('стоимость сделки от галочки НЕ зависит',ap(onCom.tskpDeal,offCom.tskpDeal,0.01),Math.round(onCom.tskpDeal));
+      // ⚠ Выключено = не попало НИКУДА: слагаемое накладных у АУП РОВНО НОЛЬ, а не «почти».
+      _tabFilters.bflmodel.showOverhead=false;
+      const offOvh=bflDeptCalc(aup,g).ovhTotal;
+      _tabFilters.bflmodel.showOverhead=true;
+      const onOvh=bflDeptCalc(aup,g).ovhTotal;
+      _tabFilters.bflmodel.showOverhead=sv;
+      ok('выключено - слагаемое накладных ровно ноль',offOvh===0,String(offOvh));
+      ok('включено - слагаемое равно сумме накладных',ap(onOvh,ovh,0.01),Math.round(onOvh));
+    }
+    // ── ОДНА ФУНКЦИЯ СТАДИЙ ВОРОНКИ НА ОБА РАСЧЁТА (29.08.2026) ──
     {
       const ko7=_bflModel.departments.find(x=>x&&x.id==='client_ko');
       // ⚠ ГЛАВНЫЙ ТЕСТ - СТРУКТУРНЫЙ: «оба пути идут через ОДНУ функцию», а не «значения совпали».
@@ -17635,7 +17675,7 @@ function bflRunTests(){
     ok('Депозит pass-through (ОИ депозит суда 25000 × дела)',o.deposit>0&&isFinite(o.deposit),Math.round(o.deposit));
     ok('ОПИУ Расходы посчитаны (14-24М, ОПАУ - свой ОПИУ)',o.expenses>14000000&&o.expenses<24000000,Math.round(o.expenses));
     ok('ОПИУ Рентабельность конечна',o.rent!=null&&isFinite(o.rent),+(o.rent*100).toFixed(1));
-  }finally{_bflModel=save;_bflAuto=savedAuto;_tabFilters.bflmodel.depositExcluded=savedDep;}
+  }finally{_bflModel=save;_bflAuto=savedAuto;_tabFilters.bflmodel.depositExcluded=savedDep;_tabFilters.bflmodel.showOverhead=savedOvh;}
   const passed=R.filter(r=>r.pass).length;
   console.log('[BFL tests] '+passed+'/'+R.length+' прошли');
   R.forEach(r=>console.log((r.pass?'✓':'✗')+' '+r.n+' = '+r.got));
