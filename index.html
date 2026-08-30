@@ -13629,11 +13629,14 @@ function _planRenderMatrix(){
   const dirYearPlan=(rl,code,d)=>{const all=eRecs(d,rl,code);if(!all.length)return null;const F=FAD[d];const cvt=(r,m)=>r.mode==='pct'?r.value*(m?revM(d,m):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):netYrD(d)):r.value;
     const sides=[...new Set(all.map(p=>String(p.side||'')))];let tot=null;
     sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvt(y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvt(r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
-  const subYearPlan=(rl,code)=>{let s=null;dirsShown.forEach(d=>{const v=dirYearPlan(rl,code,d);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: при фильтре направления итоги свёрнутых строк согласованы с развёрнутым видом
+  // ⚠ ИТОГ РАВЕН СУММЕ ПОКАЗАННЫХ СТРОК (правило CLAUDE.md): под фильтром ответственного
+  //   складываются только прошедшие направления. Скрытие ПУСТЫХ строк на итог по-прежнему не
+  //   влияет - у них вклад нулевой по определению признака, - а фильтр ЦФО влияет и обязан.
+  const subYearPlan=(rl,code)=>{let s=null;dirsOwn(code).forEach(d=>{const v=dirYearPlan(rl,code,d);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: при фильтре направления итоги свёрнутых строк согласованы с развёрнутым видом
   const subYearFact=(rl,code)=>{let s=0;dirsShown.forEach(d=>{s+=factYr(d,rl,code);});return s;};
   // помесячный план направления (из сохранённых записей, с разрешением %/%ЧП) и сумма по группе - для свёрнутой шапки
   const dirMonthPlan=(rl,code,d,m)=>{const recs=eRecs(d,rl,code).filter(p=>p.month===m);if(!recs.length)return null;const F=FAD[d];let s=0;recs.forEach(r=>{s+=r.mode==='pct'?r.value*revM(d,m):r.mode==='pct_profit'?r.value*Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):r.value;});return s;};
-  const subMonthPlan=(rl,code,m)=>{let s=null;dirsShown.forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: итоги при фильтре направления
+  const subMonthPlan=(rl,code,m)=>{let s=null;dirsOwn(code).forEach(d=>{const v=dirMonthPlan(rl,code,d,m);if(v!=null)s=(s||0)+v;});return s;}; // dirsShown: итоги при фильтре направления
   const _n0=v=>{const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?0:n;}; // число из значения ячейки/факта (пусто → 0)
   // ── ФАКТ ПОД ЯЧЕЙКОЙ ПЛАНА (27.08.2026) ─────────────────────────────────────
   // ⚠ Ничего не считает: факт по паре «направление + подстатья» за месяц уже лежит в data-fact
@@ -13731,6 +13734,16 @@ function _planRenderMatrix(){
   const showAllDirs=!!window._planShowAllDirs;
   const dirFlt=String(window._planDirFlt||'');
   const dirsShown=(dirFlt&&allDirs.includes(dirFlt))?[dirFlt]:allDirs;
+  // ⚠ ФИЛЬТР ОТВЕТСТВЕННОГО РЕЖЕТ СТРОКИ НАПРАВЛЕНИЙ, А НЕ ПОДСТАТЬИ (30.08.2026). До правки
+  //   подстатья показывалась целиком, если ХОТЯ БЫ ОДНО направление под ней принадлежало
+  //   выбранному, и рядом с его строками рисовались чужие: под фильтром «Корчагина» в
+  //   244_АХО (HoReCa) к её АК/АП/БФЛ добавлялись САУ (Кольцова) и ГУСЭ/СИБСУДЭКС без
+  //   ответственного вовсе. Правило то же, что в сводной БДР (`dirOwnPass` там же) - ВТОРОЙ
+  //   такой же рядом не пишем, иначе они разъедутся, как разъехались `bflQtyFlow`/`bflDeptCalc`.
+  // ⚠ Пустой ответственный проходит по пункту «__none__» - он в списке предусмотрен.
+  const dirOwnPass=(d,code)=>{const os=window._planOwnerSel; if(!os||!os.size)return true;
+    const o=String(_planOwners[_ownerKey(d,code)]||'').trim(); return o?os.has(o):os.has('__none__');};
+  const dirsOwn=code=>dirsShown.filter(d=>dirOwnPass(d,code));
   // ⚠ dirsShown НЕ РЕЖЕТСЯ: на нём стоят итоги свёрнутых подстатей (subYearPlan/subMonthPlan)
   //   и фильтр ответственных. Скрытие живёт ТОЛЬКО на отрисовке строк, поэтому ни один итог
   //   не может измениться, что бы ни скрылось - это свойство конструкции, а не проверки.
@@ -13738,10 +13751,14 @@ function _planRenderMatrix(){
   const pairHasFact=(d,rl,code)=>{for(let m=1;m<=12;m++)if(Math.abs(factOf(d,rl,code,m))>0.005)return true;return false;};
   const pairUsed=(d,rl,code)=>!!eRecs(d,rl,code).length||pairHasFact(d,rl,code);
   const dirsForCode=(rl,code)=>{
-    if(showAllDirs||dirsShown.length<2)return dirsShown;
-    const keep=dirsShown.filter(d=>pairUsed(d,rl,code));
-    if(!keep.length)return dirsShown; // по подстатье пусто во всех направлениях - показываем все: иначе её нечем завести
-    _hiddenRows+=dirsShown.length-keep.length;
+    // ⚠ ФИЛЬТР ОТВЕТСТВЕННОГО ПРИМЕНЯЕТСЯ ПЕРВЫМ и не отменяется ничем ниже: и «показывать все
+    //   строки», и запасной путь «по подстатье пусто - показываем все» работают уже ВНУТРИ
+    //   отобранного набора. Иначе чужие направления возвращались бы на экран через запасной путь.
+    const own=dirsOwn(code);
+    if(showAllDirs||own.length<2)return own;
+    const keep=own.filter(d=>pairUsed(d,rl,code));
+    if(!keep.length)return own; // по подстатье пусто во всех направлениях - показываем все: иначе её нечем завести
+    _hiddenRows+=own.length-keep.length;
     return keep;};
   // счётчик - в шапку панели (она рисуется отдельно и живёт между перерисовками матрицы).
   // ⚠ Считаются РЕАЛЬНО СКРЫТЫЕ строки, то есть только внутри РАЗВЁРНУТЫХ подстатей: свёрнутая
@@ -13816,7 +13833,9 @@ function _planRenderMatrix(){
     }
     return html+dirsForCode(rl,code).map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
   const subSel=window._planSubartSel, ownerSel=window._planOwnerSel; // мультивыбор подстатей и ответственных (Set); пусто = все
-  const ownerOk=code=>{if(!ownerSel||!ownerSel.size)return true;return dirsShown.some(d=>{const o=String(_planOwners[_ownerKey(d,code)]||'').trim();return o?ownerSel.has(o):ownerSel.has('__none__');});};
+  // ⚠ Через ТОТ ЖЕ примитив: подстатья видна ровно тогда, когда у неё осталась хоть одна строка.
+  //   Не осталось ни одной - подстатьи нет вовсе.
+  const ownerOk=code=>dirsOwn(code).length>0;
   let body;
   if((subSel&&subSel.size)||(ownerSel&&ownerSel.size)){ // активен фильтр подстатей и/или ответственных
     let incSel=incCodes, expSel=codes;
