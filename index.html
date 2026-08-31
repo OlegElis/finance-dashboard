@@ -1898,19 +1898,42 @@ window.dataSourceSet=function(v){
 };
 // Подписка на config/dataSource: админ переключил - остальные сессии переезжают сами.
 // ⚠ Данные перезагружаются, только если они УЖЕ загружены; и не под открытым окном (_whenUiFree).
+// ⚠ СЛУЧАЕВ ТРИ, А НЕ ДВА: «snapshot», «sheets» и ОТСУТСТВИЕ УЗЛА - и третий НЕЛЬЗЯ приводить
+//   ко второму. Было `(s.val()==='snapshot')?'snapshot':'sheets'`: null не равен 'snapshot',
+//   значит ненастроенная ветка читалась как явное указание «работай через Sheets» и МОЛЧА
+//   перебивала локальный выбор. На боевой странице 31.08 это давало устойчивый цикл на КАЖДОМ
+//   открытии: зеркало говорит «снимок» → снимок грузится → облако (пустое) говорит «sheets» →
+//   полная перезагрузка вторым проходом. Отсутствие значения означает «облако ничего не говорит»,
+//   а не «облако выбрало Sheets», поэтому текущий источник остаётся как есть.
+//   ⚠ Отличить пустую ветку от 'sheets' можно ТОЛЬКО по null: значения одинаково валидны, и
+//   догадка по умолчанию тут запрещена - именно она и стоила лишнего прохода у каждого нового
+//   устройства.
 function startDataSourceSync(){
   if(window._dsSyncStarted)return; window._dsSyncStarted=true;
   try{
     if(!window.firebase||!FIREBASE_CONFIG.databaseURL)return;
     fbApp();
     firebase.database().ref('config/dataSource').on('value',s=>{
-      const v=(s.val()==='snapshot')?'snapshot':'sheets';
-      if(v===window._dataSource){_srcBadgeUpd();return;}
-      window._dataSource=v;
-      try{localStorage.setItem('fin_dataSource',v);}catch(e){_lsWarn('fin_dataSource',e);}
+      const raw=s.val();
+      const cloud=(raw==null)?null:((raw==='snapshot')?'snapshot':'sheets'); // null = «облако молчит»
+      const was=window._dsCloud; window._dsCloud=cloud;                      // что облако говорило в прошлый раз
+      if(cloud===null){ // ветки нет (или её удалили) - локальный выбор не трогаем
+        // Пишем один раз на ВХОД в это состояние, а не на каждое срабатывание: `.on` повторяется
+        // при переподключении, и строка про молчащее облако превратилась бы в шум.
+        if(was!==null)console.log('[источник] в облаке настройка не задана - оставляю «'+window._dataSource+'», выбор этой сессии');
+        _srcBadgeUpd();return;
+      }
+      if(cloud===window._dataSource){_srcBadgeUpd();return;}
+      const from=window._dataSource;
+      window._dataSource=cloud;
+      try{localStorage.setItem('fin_dataSource',cloud);}catch(e){_lsWarn('fin_dataSource',e);}
       _srcBadgeUpd();
-      console.log('[источник] переключён на «'+v+'» - перезагружаю данные');
-      if(window._appBooted&&typeof RAW!=='undefined'&&RAW.length)_whenUiFree(()=>_reloadKeepUi());
+      // ⚠ Строка печатается ПОСЛЕ решения и говорит, что произошло НА САМОМ ДЕЛЕ. Раньше она
+      //   стояла до проверки и утверждала «перезагружаю данные» даже когда RAW ещё пуст и
+      //   перезагрузки не было: сообщение опережало факт.
+      const willReload=!!(window._appBooted&&typeof RAW!=='undefined'&&RAW.length);
+      console.log('[источник] облако сменило «'+from+'» → «'+cloud+'»'+(willReload?' - перечитываю данные':' - данные ещё не загружены, перечитывать нечего'));
+      if(willReload)_whenUiFree(()=>_reloadKeepUi());
     });
   }catch(e){console.warn('[dataSource] синк не активен:',e&&e.message);}
 }
