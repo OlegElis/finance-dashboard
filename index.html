@@ -9714,6 +9714,60 @@ function pfRunTests(){
   ok('доля собранного от текущего плана',Math.round(f/p*1000)/10===87.2,Math.round(f/p*1000)/10);
   ok('от утверждённого вышло бы прежнее 96,5%',Math.round(f/17571807*1000)/10===96.5);
 
+  // 5. Сброс фильтров вкладки: состояние поле-в-поле, оба поля направления, счётчик
+  // ⚠ Проверяем _pfResetState (чистое состояние), а не pfResetFilters: второй дёргает
+  //   renderPlanFact, и набор тестов перерисовывал бы вкладку под руками у смотрящего.
+  // ⚠ Состояние вкладки сохраняем и возвращаем: тест не имеет права оставить человека
+  //   со сброшенными фильтрами - он их не задавал.
+  const _sv=_tabFilters.planfact,_svA=window._pfArtExp,_svS=window._pfSubExp;
+  const _svP=_activePreset.planfact,_svPs=_activePresetSig.planfact;
+  try{
+    const D=_pfBlankState();
+    // ⚠ Мусор кладём ВО ВСЕ поля умолчаний, а не в выбранные руками: приди новый фильтр -
+    //   и он попадёт под проверку сам, без правки теста.
+    const dirty={};Object.keys(D).forEach(k=>{dirty[k]=Array.isArray(D[k])?['мусор']:(typeof D[k]==='number'?1999:'мусор');});
+    dirty._defPeriodDone=1;
+    _tabFilters.planfact=dirty; window._pfArtExp=new Set(['exp|111']); window._pfSubExp=new Set(['exp|111_ФОТ']);
+    _activePreset.planfact='p1'; _activePresetSig.planfact='sig';
+    _pfResetState();
+    const F=_tabFilters.planfact,Dk=Object.keys(D);
+    const diff=Dk.filter(k=>JSON.stringify(F[k])!==JSON.stringify(D[k]));
+    ok('после сброса состояние равно умолчаниям поле в поле',diff.length===0,diff.join(', '));
+    ok('лишних полей в состоянии не осталось',Object.keys(F).length===Dk.length,Object.keys(F).join(', '));
+    ok('служебный _defPeriodDone снят - умолчание периода посчитается заново',!('_defPeriodDone' in F));
+    ok('ОБА поля направления очищены (dirs и устаревшее dir)',F.dir===''&&Array.isArray(F.dirs)&&F.dirs.length===0,F.dir+' / '+JSON.stringify(F.dirs));
+    ok('год и период сброшены тоже',F.year===0&&F.period==='',F.year+' / '+F.period);
+    ok('развороты строк свёрнуты',window._pfArtExp.size===0&&window._pfSubExp.size===0);
+    ok('пресет снят',_activePreset.planfact===''&&_activePresetSig.planfact==='');
+    ok('умолчания - ОДИН источник: сброс зовёт _pfBlankState и своего списка полей не держит',
+       String(_pfResetState).indexOf('_pfBlankState()')>=0&&!/articles:/.test(String(_pfResetState)));
+    ok('счётчик берёт поля оттуда же',String(_pfActiveFilters).indexOf('_pfBlankState()')>=0);
+
+    // счётчик активных фильтров
+    ok('счётчик: чистое состояние - 0',_pfActiveFilters(_pfBlankState()).length===0);
+    ok('счётчик: год и период НЕ считаются',
+       _pfActiveFilters(Object.assign(_pfBlankState(),{year:2026,period:'8'})).length===0);
+    ok('счётчик: одно направление - 1',_pfActiveFilters(Object.assign(_pfBlankState(),{dirs:['БФЛ']})).length===1);
+    // ⚠ dir и dirs - ОДИН фильтр в двух полях: заполненные оба обязаны дать единицу, а не двойку
+    ok('счётчик: dir и dirs вместе - всё равно 1',
+       _pfActiveFilters(Object.assign(_pfBlankState(),{dir:'БФЛ',dirs:['БФЛ']})).length===1);
+    ok('счётчик: устаревшее dir в одиночку - 1',
+       _pfActiveFilters(Object.assign(_pfBlankState(),{dir:'БФЛ'})).length===1);
+    ok('счётчик: три фильтра - 3',
+       _pfActiveFilters(Object.assign(_pfBlankState(),{dirs:['БФЛ'],articles:['111_ФОТ'],sides:['Иванов']})).length===3);
+    ok('счётчик: разрез «по направлениям» считается фильтром',
+       _pfActiveFilters(Object.assign(_pfBlankState(),{rowDim:'dir'})).length===1);
+    ok('счётчик: поле без подписи всё равно считается',
+       _pfActiveFilters(Object.assign(_pfBlankState(),{level:'subarticle'})).length===1);
+    // ⚠ Кнопка обязана СУЩЕСТВОВАТЬ всегда и в пустом состоянии быть запертой: исчезающий контрол
+    //   ничего не сообщает, а «фильтров нет» - это ответ, ради которого счётчик и заведён.
+    ok('кнопка всегда в разметке, состояние - через disabled',/const pfResetBtn=/.test(src)&&/\$\{pfResetBtn\}/.test(src)&&/'disabled'/.test(src));
+    ok('прежней частичной «× сброс» в баре не осталось',src.indexOf('pfResetExtra')<0);
+  }finally{
+    _tabFilters.planfact=_sv; window._pfArtExp=_svA; window._pfSubExp=_svS;
+    _activePreset.planfact=_svP; _activePresetSig.planfact=_svPs;
+  }
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
