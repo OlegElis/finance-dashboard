@@ -9609,11 +9609,30 @@ function pfRunTests(){
   ok('текущего нет - базы нет (бейдж «план не задан»)',_pfStatusBase(17571807,null)===null);
 
   // 2. Выбор базы живёт в ОДНОМ примитиве, оба свода зовут его и своего выбора не делают
-  ok('_pfStatusBase зовут ровно 3 места (строка + ЦФО-строка + ЦФО-ИТОГО)',cnt(/_pfStatusBase\(/g)===3,cnt(/_pfStatusBase\(/g));
+  ok('_pfStatusBase зовут ровно 4 места (строка + ЦФО-статус + ЦФО-ИТОГО + ЦФО-остаток)',cnt(/_pfStatusBase\(/g)===4,cnt(/_pfStatusBase\(/g));
   ok('сторона d (девбаза) в статусе не читается',cnt(/opts\.rem\.d\b/g)===0);
   ok('свод ЦФО не берёт baseline напрямую',cnt(/statusCell\(A\.base|statusCell\(tb,/g)===0);
   ok('гейта hasBaseline у статуса не осталось',cnt(/hasBaseline\?statusCell/g)===0);
   ok('вердикт st в строке считается один раз',cnt(/const st=/g)===1,cnt(/const st=/g));
+
+  // 2б. Свод «Исполнение по ЦФО»: СТАТУС и ОСТАТОК одной строки берут ОДНУ базу
+  // ⚠ Проверка структурная и только такой быть может: оба числа собираются внутри renderPlanFact.
+  //   Совпадение значений на одном наборе данных доказало бы лишь, что сегодня две ветки согласны;
+  //   «оба идут через _pfStatusBase» исключает расхождение вообще.
+  ok('ЦФО · остаток берёт базу через _pfStatusBase',/const v=_pfStatusBase\(b,p\);/.test(src));
+  ok('ЦФО · остаток копит именно её',/A\.remPlan=\(A\.remPlan\|\|0\)\+v;/.test(src));
+  ok('ЦФО · статус берёт базу через _pfStatusBase',/statusCell\(_pfStatusBase\(A\.base,A\.plan\)/.test(src));
+  ok('ЦФО · ИТОГО: статус и остаток от одной пары (tb,tp)',/_pfStatusBase\(tb,tp\)/.test(src)&&/remTd\(trp,trf,true,'exp','prog'/.test(src));
+  ok('ЦФО · прежней помесячной девбазы не осталось',cnt(/sc='utv'|sc==='utv'/g)===0);
+  ok('ЦФО · счётчики источника базы вычищены',cnt(/\bremSu\b|\bremSp\b/g)===0);
+  // ⚠ Открывающей фигурной скобки в регулярках этого набора нет НАМЕРЕННО (и в комментариях тоже):
+  //   файл разбирают наивные извлекатели по балансу скобок, и одиночная скобка внутри литерала
+  //   уводит их до конца файла - на чём этот комментарий и попался при написании.
+  ok('ЦФО · утверждённое читается РОВНО один раз (только для пары базы)',cnt(/basePlanDirSubM\(d,sub,m\)/g)===1,cnt(/basePlanDirSubM\(d,sub,m\)/g));
+  // ⚠ Приглушение отделено от подавления клика: своду ЦФО нужно первое и нельзя второе
+  //   (строки кликабельны - cfoToggleMgr разворачивает подчинённых).
+  ok('remTd: приглушением правит отдельный flat',/const remTd=\(planM,factM,applic,kind,src,lbl,main,w,flat\)/.test(src)&&/\(main\|\|flat\|\|!src/.test(src));
+  ok('ЦФО зовёт remTd с flat и БЕЗ main',cnt(/remTd\([^)]*'prog',null,false,undefined,true\)/g)===2,cnt(/remTd\([^)]*'prog',null,false,undefined,true\)/g));
   ok('подсветка «Факта» берёт тот же st',/const factCol=\(st&&st\.col&&st\.k!=='ok'\)/.test(src));
   ok('бейдж берёт тот же st',/statusBadge\(st,stRev\)/.test(src));
 
@@ -10322,14 +10341,17 @@ function renderPlanFact(f){
   // Остаток лимита за ВЫБРАННЫЙ период: planM − factM по ОДНОЙ стороне пары (u или t). Цвет по остатку относительно плана периода. applic=false → прочерк.
   const remDashL=(lbl,main)=>`<td style="${td};text-align:right${main?';cursor:default':''}"${lbl?` data-label="${lbl}"`:''}${main?' onclick="event.stopPropagation()"':''}><span style=color:var(--text3)>-</span></td>`;
   const remDash=remDashL('');
-  const remTd=(planM,factM,applic,kind,src,lbl,main,w)=>{
+  // ⚠ `main` («ячейка сводной») снимает приглушение И гасит всплытие клика - два разных свойства в одном
+  //   флаге. Своду ЦФО нужно первое и НЕЛЬЗЯ второе: его строки кликабельны (cfoToggleMgr разворачивает
+  //   подчинённых). Поэтому приглушением управляет отдельный `flat`, а не расширенный `main`.
+  const remTd=(planM,factM,applic,kind,src,lbl,main,w,flat)=>{
     const FW=';font-weight:'+(w||600);
     const CD=main?';cursor:default':'',NOCLK=main?' onclick="event.stopPropagation()"':''; // за остатком нет своих проводок - реестр по нему не открываем
     const DL=lbl?` data-label="${lbl}"`:'';
     if(!applic)return remDashL(lbl,main); // остаток считается за ВЫБРАННЫЙ период (месяц/год), а не «только если текущий календарный месяц заморожен»
     factM=factM||0;
     const hasP=planM!=null; // база, равная НУЛЮ, - валидный лимит (остаток = −факт), а не «плана нет»
-    const pst=(main||!src||src==='utv')?'':';font-style:italic;opacity:.72'; // flat - сводная: обе пары стоят рядом и подписаны заголовками группы, различать начертанием больше не нужно // база - текущий план (правится свободно) или смешанная: приглушаем, чтобы главбух не принял за лимит-обязательство
+    const pst=(main||flat||!src||src==='utv')?'':';font-style:italic;opacity:.72'; // flat - сводная: обе пары стоят рядом и подписаны заголовками группы, различать начертанием больше не нужно // база - текущий план (правится свободно) или смешанная: приглушаем, чтобы главбух не принял за лимит-обязательство
     const srcLbl=src==='utv'?'утверждено':src==='prog'?'текущий план (не утверждён)':src==='mix'?'смешанная (утв. + текущий)':'-'; // источник по РЕАЛЬНО давшей число стороне (см. #2)
     // Подсказка - единым компонентом: «база − факт = остаток» столбиком, отклонение отдельной строкой под итогом.
     // ⚠ Отклонение считается из ТЕХ ЖЕ planM/factM, что дали остаток - иначе подсказка спорила бы с числом ячейки
@@ -10811,20 +10833,29 @@ function renderPlanFact(f){
       const fv=perOf(expByDirSub[d+'||'+sub]),pv=planDirSub(d,sub),bv=basePlanDirSub(d,sub);
       if(!fv&&pv==null&&bv==null)return;
       const o=(_planOwners||{})[d+'||'+sub]||NOOWN;
-      const A=agg[o]||(agg[o]={plan:null,fact:0,base:null,remPlan:null,remFact:0,remSu:0,remSp:0});
+      const A=agg[o]||(agg[o]={plan:null,fact:0,base:null,remPlan:null,remFact:0});
       if(pv!=null)A.plan=(A.plan||0)+pv; if(bv!=null)A.base=(A.base||0)+bv; A.fact+=fv;
-      // остаток за ВЫБРАННЫЙ период: devBase помесячно (заморожен→baseline, иначе прогноз; источник по реально давшей стороне), факт ТОЛЬКО где есть база (#1)
-      remMonths.forEach(m=>{const fr=frozenSet.has(m);const b=basePlanDirSubM(d,sub,m),p=planDirSubM(d,sub,m);let v=null,sc=null;
-        if(fr){if(b!=null){v=b;sc='utv';}else if(p!=null){v=p;sc='prog';}}else{if(p!=null){v=p;sc='prog';}else if(b!=null){v=b;sc='utv';}}
-        if(v==null)return;A.remPlan=(A.remPlan||0)+v;const fm=expByDirSub[d+'||'+sub];A.remFact+=fm?(fm[m]||0):0;if(sc==='utv')A.remSu++;else A.remSp++;});
+      // Остаток за ВЫБРАННЫЙ период, факт ТОЛЬКО за месяцы, где база ЕСТЬ (#1).
+      // ⚠ БАЗА - ТА ЖЕ, ЧТО У «СТАТУСА» ЭТОЙ ЖЕ СТРОКИ, и берётся тем же `_pfStatusBase` (03.09.2026).
+      //   Была девбаза помесячно (заморожен → утверждённое, иначе текущий), и после перевода статуса на
+      //   текущий план в ОДНОЙ строке стояли два числа от ДВУХ баз: бейдж мерил от текущего, остаток от
+      //   утверждённого. Остаток отвечает «сколько ещё можно потратить» - он обязан мериться от того же
+      //   плана, по которому вынесен вердикт.
+      // ⚠ Второй колонки («к утв.») здесь НЕ заводим: свод ЦФО - персональный экран, лишняя колонка
+      //   дороже пользы, а след пересмотра плана уже стоит припиской в бейдже рядом.
+      // ⚠ Нет текущего плана - нет и остатка: месяц просто не копится, и «Статус» в той же строке
+      //   скажет «план не задан». Прежний фолбэк на утверждённое вернул бы вторую базу через заднюю дверь.
+      remMonths.forEach(m=>{const b=basePlanDirSubM(d,sub,m),p=planDirSubM(d,sub,m);
+        const v=_pfStatusBase(b,p); if(v==null)return;
+        A.remPlan=(A.remPlan||0)+v;const fm=expByDirSub[d+'||'+sub];A.remFact+=fm?(fm[m]||0):0;});
     });});
     const names=Object.keys(agg);
     if(names.length&&!(names.length===1&&names[0]===NOOWN)){ // показываем, только если ответственные вообще назначены
       const dash='<span style=color:var(--text3)>-</span>';
       // ИТОГО - по СЫРЫМ agg (листовые записи), не по свёрнутым строкам → факт ИТОГО не меняется при иерархии
       // ⚠ «плана нет» ≠ «план равен нулю»: tp/tb копятся с null-дисциплиной (как sumOrNull), иначе Σ пустых схлопывалась в 0 и Δ ИТОГО считалась ОТ НУЛЯ
-      let tp=null,tf=0,tb=null,trp=null,trf=0,tSu=0,tSp=0;
-      names.forEach(o=>{const A=agg[o];if(A.plan!=null)tp=(tp||0)+A.plan;tf+=A.fact;if(A.base!=null)tb=(tb||0)+A.base;if(A.remPlan!=null)trp=(trp||0)+A.remPlan;trf+=A.remFact;tSu+=A.remSu||0;tSp+=A.remSp||0;});
+      let tp=null,tf=0,tb=null,trp=null,trf=0; // ⚠ счётчиков источника базы (tSu/tSp) больше нет: база одна на всю таблицу и названа в шапке колонки
+      names.forEach(o=>{const A=agg[o];if(A.plan!=null)tp=(tp||0)+A.plan;tf+=A.fact;if(A.base!=null)tb=(tb||0)+A.base;if(A.remPlan!=null)trp=(trp||0)+A.remPlan;trf+=A.remFact;});
       // рендер 6 ячеек агрегата (Утв.|Прогноз|Факт|Δ|Остаток|Статус)
       // ⚠ Δ красится ПО ЗНАКУ, без допуска: допуска больше нет нигде (см. statusOf). Равенство копейка
       //   в копейку - нейтральный цвет. Статус этой таблицы идёт через statusCell и берёт новую логику сам.
@@ -10836,10 +10867,10 @@ function renderPlanFact(f){
           <td style="${td};text-align:right">${A.plan!=null?fmt(-A.plan):dash}</td>
           <td style="${td};text-align:right">${fmt(-A.fact)}</td>
           <td style="${td};text-align:right;color:${dc}">${d2!=null?((d2>0?'+':d2<0?'−':'')+fmt(Math.abs(d2))):'-'}</td>
-          ${remTd(A.remPlan,A.remFact,true,'exp',_remSrc(A.remSu,A.remSp))}
+          ${remTd(A.remPlan,A.remFact,true,'exp','prog',null,false,undefined,true)}
           <td style="${td};text-align:left">${statusCell(_pfStatusBase(A.base,A.plan),A.fact,false,_pfPlanRevNote(A.base,A.plan))}</td>`;};
-      const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0,remSu:0,remSp:0});
-      const addA=(dst,src)=>{if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;dst.remSu+=src.remSu||0;dst.remSp+=src.remSp||0;return dst;};
+      const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0});
+      const addA=(dst,src)=>{if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;return dst;};
       const sizeA=A=>(A.base||A.plan||A.fact||0);
       // дерево (строго один уровень; защита от цикла в _cfoMgrOf): подчинённый уходит под руководителя.
       // Руководитель блока показывается ВСЕГДА (даже без своих подстатей - тогда его строка = только сумма подчинённых).
@@ -10876,9 +10907,9 @@ function renderPlanFact(f){
         }
       });
       if(agg[NOOWN])body+=`<tr><td style="${td};text-align:left;color:var(--text3)">${cfoNameLink('__none__',NOOWN)}</td>${cfoCells(agg[NOOWN])}</tr>`; // (не назначен) - внизу плоско
-      body+=`<tr style="background:var(--total-bg)"><td style="${td};text-align:left;font-weight:700">ИТОГО</td><td style="${td};text-align:right;font-weight:700">${tb!=null?fmt(-tb):'-'}</td><td style="${td};text-align:right;font-weight:700">${tp!=null?fmt(-tp):'-'}</td><td style="${td};text-align:right;font-weight:700">${fmt(-tf)}</td><td style="${td}"></td>${remTd(trp,trf,true,'exp',_remSrc(tSu,tSp))}<td style="${td}">${statusCell(_pfStatusBase(tb,tp),tf,false,_pfPlanRevNote(tb,tp))}</td></tr>`;
+      body+=`<tr style="background:var(--total-bg)"><td style="${td};text-align:left;font-weight:700">ИТОГО</td><td style="${td};text-align:right;font-weight:700">${tb!=null?fmt(-tb):'-'}</td><td style="${td};text-align:right;font-weight:700">${tp!=null?fmt(-tp):'-'}</td><td style="${td};text-align:right;font-weight:700">${fmt(-tf)}</td><td style="${td}"></td>${remTd(trp,trf,true,'exp','prog',null,false,undefined,true)}<td style="${td}">${statusCell(_pfStatusBase(tb,tp),tf,false,_pfPlanRevNote(tb,tp))}</td></tr>`;
       window._pfCfoModal={has:true,title:'Исполнение по ЦФО · '+dirLabel+' · '+periodLbl,inner:`<div style="overflow:auto"><table class="report-table" style="width:100%;border-collapse:collapse;white-space:nowrap">
-          <thead><tr><th style="text-align:left;${th}">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий план (рабочий, правится свободно)">Текущий план</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита за ${remPerLbl}: база (утв., если заморожено, иначе текущий план) − факт за тот же период. Курсив/приглушение = база не утверждена.">Остаток · ${remPerLbl}</th><th style="text-align:left;${th}">Статус</th></tr></thead>
+          <thead><tr><th style="text-align:left;${th}">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий план (рабочий, правится свободно)">Текущий план</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита за ${remPerLbl}: текущий план − факт за тот же период. База та же, что у «Статуса» - отклонение от утверждённого показывает колонка «Δ к утв.» и приписка в бейдже.">Остаток к тек. · ${remPerLbl}</th><th style="text-align:left;${th}">Статус</th></tr></thead>
           <tbody>${body}</tbody></table></div>`};
     }
   }
