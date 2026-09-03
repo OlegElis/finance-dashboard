@@ -9553,6 +9553,96 @@ function _pfLastMonthWithData(year){
   });
   return last||12;
 }
+// ── БДР: база «Статуса» и след пересмотра плана ──────────────────────────────────────────────
+// ⚠ БАЗА СТАТУСА - ТЕКУЩИЙ ПЛАН (config/plans), и живёт она РОВНО ЗДЕСЬ. Решение Олега 03.09.2026:
+//   условия по ходу месяца меняются, план правится осознанно, и мерить надо от того плана, по
+//   которому работают СЕЙЧАС, а не от утверждённого когда-то. До правки базой была «девбаза»
+//   (заморожен → утверждённое, иначе текущий); вся её машинерия (_pickDev/_bmDev и сторона `d`
+//   у пары остатка) удалена вместе с этой правкой - единственным её потребителем был статус,
+//   а оставленная рядом живая ветка есть приглашение вернуть старое поведение мимо этой функции.
+// ⚠ Незамороженный месяц ведёт себя КАК ПРЕЖДЕ: девбаза там и так отдавала текущий план.
+//   Изменился ровно замороженный месяц - в нём статус перестал мериться от утверждённого.
+// ⚠ ВЫБОР ЖИВЁТ ЗДЕСЬ И БОЛЬШЕ НИГДЕ. Потребителей у него ДВА - сводная (`dRow`, где от одной базы
+//   кормятся И бейдж, И подсветка числа «Факт») и свод «Исполнение по ЦФО» (`cfoCells` и его ИТОГО).
+//   До правки второй считал статус от baseline СВОИМ путём, и после перевода первого они бы
+//   разошлись: один и тот же человек видел бы в сводной и в своде ЦФО разные вердикты по своей же
+//   подстатье. Поэтому база не «поправлена в обоих местах», а вынесена в общий примитив.
+// ⚠ Функция НАМЕРЕННО не смотрит на заморозку месяца и ни на что другое: весь её смысл в том, что
+//   выбор один и записан в одном месте. Аргументы обобщены (сторона пары остатка либо просто число) -
+//   иначе на две формы данных завелись бы две функции, то есть ровно то, от чего уходим.
+//   Стережёт это структурный тест в pfRunTests, а не договорённость.
+function _pfStatusBase(utv,tek){return tek;}
+// СЛЕД ПЕРЕСМОТРА. Статус от свободно правимого плана сам по себе перестаёт быть контролем:
+// перерасход закрывается поднятием лимита, и бейдж всегда зелёный. Поэтому рядом со статусом
+// видно, мерим мы от исходного решения или от пересмотренного, и на сколько план разошёлся.
+// ⚠ Сравнение по МОДУЛЮ - та же ось, что у стрелки пересмотра в колонке «Тек. план»: расходы
+//   хранятся со своим знаком, и «поднят» значит «лимит больше» у расхода и «цель выше» у дохода.
+// ⚠ Числа берутся ТЕ ЖЕ, что стоят в колонках «Утв.» и «Тек.» ЭТОЙ строки, поэтому показанная
+//   разность равна разности показанных (правило проекта: рубли из рублей, округление последним).
+// ⚠ Совпало, или утверждённого нет вовсе (месяц не заморожен) - пометки НЕТ: сравнивать не с чем,
+//   а пометка на каждой строке перестала бы читаться. Порог - полкопейки, как у _z0.
+function _pfPlanRevNote(base,plan){
+  if(base==null||plan==null)return'';
+  const dm=Math.round((Math.abs(plan)-Math.abs(base))*100)/100;
+  if(Math.abs(dm)<=0.005)return'';
+  return'план '+(dm>0?'поднят':'снижен')+' на '+fmt(Math.abs(dm))+' после утверждения';
+}
+// ── Тесты БДР: база «Статуса» и след пересмотра плана (pfRunTests() в консоли) ───────────────
+// ⚠ Прежних тестов, ждавших статус от baseline, в проекте НЕ БЫЛО - переписывать оказалось нечего
+//   (единственный набор, bflRunTests, про модель БФЛ и статуса не касается). Этот набор заводится
+//   вместе с правкой 03.09.2026, чтобы решение «база статуса - текущий план» держал тест, а не память.
+// ⚠ ЧАСТЬ ПРОВЕРОК - СТРУКТУРНЫЕ, ПО ИСХОДНИКУ renderPlanFact, и это не хитрость: statusOf и dRow
+//   живут замыканиями внутри неё и снаружи не зовутся. Числовое совпадение доказало бы лишь, что
+//   сегодня две ветки согласованы, - ровно то состояние, из которого расхождения и вырастают;
+//   «обе стороны читают ОДНУ базу» проверяется счётом вхождений, и это утверждение сильнее.
+function pfRunTests(){
+  const R=[],ok=(n,c,got)=>R.push({n,pass:!!c,got});
+  const src=String(renderPlanFact);
+  const cnt=re=>(src.match(re)||[]).length;
+
+  // 1. База статуса - ТЕКУЩИЙ план (сторона t), а не утверждённый и не девбаза
+  const rem={u:{pM:17571807,fM:16965565},t:{pM:19464477,fM:16965565}};
+  ok('база статуса = сторона t (текущий план)',_pfStatusBase(rem.u,rem.t)===rem.t,_pfStatusBase(rem.u,rem.t).pM);
+  ok('база статуса НЕ утверждённый',_pfStatusBase(rem.u,rem.t)!==rem.u);
+  ok('на числах то же правило (свод ЦФО)',_pfStatusBase(17571807,19464477)===19464477);
+  ok('утверждённого нет - база всё равно текущий',_pfStatusBase(null,19464477)===19464477);
+  ok('текущего нет - базы нет (бейдж «план не задан»)',_pfStatusBase(17571807,null)===null);
+
+  // 2. Выбор базы живёт в ОДНОМ примитиве, оба свода зовут его и своего выбора не делают
+  ok('_pfStatusBase зовут ровно 3 места (строка + ЦФО-строка + ЦФО-ИТОГО)',cnt(/_pfStatusBase\(/g)===3,cnt(/_pfStatusBase\(/g));
+  ok('сторона d (девбаза) в статусе не читается',cnt(/opts\.rem\.d\b/g)===0);
+  ok('свод ЦФО не берёт baseline напрямую',cnt(/statusCell\(A\.base|statusCell\(tb,/g)===0);
+  ok('гейта hasBaseline у статуса не осталось',cnt(/hasBaseline\?statusCell/g)===0);
+  ok('вердикт st в строке считается один раз',cnt(/const st=/g)===1,cnt(/const st=/g));
+  ok('подсветка «Факта» берёт тот же st',/const factCol=\(st&&st\.col&&st\.k!=='ok'\)/.test(src));
+  ok('бейдж берёт тот же st',/statusBadge\(st,stRev\)/.test(src));
+
+  // 3. Пометка о пересмотре: есть при расхождении, нет при совпадении
+  const A=_pfPlanRevNote(17571807,19464477);
+  ok('приёмка: поднятие 1 892 670 названо',A==='план поднят на '+fmt(1892670)+' после утверждения',A);
+  ok('свод ЦФО получает ту же пометку',_pfPlanRevNote(17571807,19464477)===A);
+  ok('снижение названо снижением',_pfPlanRevNote(19464477,17571807)==='план снижен на '+fmt(1892670)+' после утверждения');
+  ok('совпало - пометки нет',_pfPlanRevNote(100,100)==='');
+  ok('утверждённого нет - пометки нет',_pfPlanRevNote(null,19464477)===''&&_pfPlanRevNote(undefined,5)==='');
+  ok('текущего нет - пометки нет',_pfPlanRevNote(100,null)==='');
+  ok('разница меньше копейки - пометки нет',_pfPlanRevNote(100,100.004)==='',_pfPlanRevNote(100,100.004));
+  ok('копейка уже видна',_pfPlanRevNote(100,100.01)!=='');
+  // ⚠ Расход хранится со знаком: сравнение по МОДУЛЮ, иначе рост лимита читался бы как снижение
+  ok('расход: рост лимита - «поднят»',_pfPlanRevNote(-100000,-140000)==='план поднят на '+fmt(40000)+' после утверждения');
+  ok('расход: срез лимита - «снижен»',_pfPlanRevNote(-140000,-100000)==='план снижен на '+fmt(40000)+' после утверждения');
+
+  // 4. Приёмочная арифметика августа (БФЛ, 120·Поступление) - на числах, не на вёрстке
+  const p=19464477,f=16965565;
+  ok('недобор считается от ТЕКУЩЕГО плана',Math.abs((p-f)-2498912)<=0.005,p-f);
+  ok('доля собранного от текущего плана',Math.round(f/p*1000)/10===87.2,Math.round(f/p*1000)/10);
+  ok('от утверждённого вышло бы прежнее 96,5%',Math.round(f/17571807*1000)/10===96.5);
+
+  const bad=R.filter(r=>!r.pass);
+  console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
+  bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
+  return{total:R.length,failed:bad.length,tests:R};
+}
+window.pfRunTests=pfRunTests;
 function renderPlanFact(f){
   const el=document.getElementById('tabPlanfact');
   if(!RAW||!RAW.length){el.innerHTML=emptyState('Нет данных','Подключите таблицу (шестерёнка → Подключение)');return;}
@@ -10103,7 +10193,7 @@ function renderPlanFact(f){
   const nowD=new Date();
   const curY=nowD.getFullYear(),curM=nowD.getMonth()+1; // текущий календарный месяц - граница «закрытых» месяцев (отклонения, прогноз года)
   // ── Остаток лимита считается за ВЫБРАННЫЙ период отчёта (месяц/год), а не за текущий календарный месяц ──
-  // База = devBase (заморожен месяц → утверждённое, иначе → прогноз; фолбэк на другую сторону) - та же, что красит матрицу. Факт - за тот же период.
+  // Баз ДВЕ, по колонке на каждую (u - утверждённое, t - текущий план); факт period-matched к своей базе. ⚠ Девбазы («заморожен → утверждённое, иначе текущий») здесь БОЛЬШЕ НЕТ - она жила ради «Статуса», а он с 03.09.2026 считается от текущего плана (_pfStatusBase). В матрице «все месяцы» свой devBaseOf - он остаётся.
   // Источник базы ('utv'/'prog'/'mix') определяется по РЕАЛЬНО давшей число стороне (не по frozen(m): замороженный месяц без baseline берёт прогноз - фолбэк). remTd приглушает и подписывает по этому источнику.
   const remMonths=isYear?[1,2,3,4,5,6,7,8,9,10,11,12]:[+period];
   const remPerLbl=isYear?('год '+year):MON[+period-1];
@@ -10223,10 +10313,13 @@ function renderPlanFact(f){
     if(f>=p)return{k:'ok',col:PF_OK,txt:'план выполнен · собрано '+fmtPct(done)};
     return{k:left<=PF_WARN?'warn':'bad',col:left<=PF_WARN?PF_WRN:PF_BAD,txt:'недобор −'+fmt(p-f)+' · собрано '+fmtPct(done)};
   };
-  const statusBadge=s=>s.k==='none'?`<span style="padding:1px 8px;border-radius:8px;font-size:10px;background:var(--surface2);color:var(--text3)">план не задан</span>`
-    :`<span style="padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600;color:${s.col};background:color-mix(in srgb,${s.col} 12%,transparent)">${s.txt}</span>`;
-  const statusCell=(plan,fact,revenue)=>statusBadge(statusOf(plan,fact,revenue));
-  // Остаток лимита за ВЫБРАННЫЙ период: planM(devBase) − factM. Цвет по остатку относительно плана периода. applic=false → прочерк.
+  // ⚠ note (след пересмотра плана) НЕ красится цветом статуса и веса не имеет: пересмотр сам по себе
+  //   не хорош и не плох - оценку несёт вердикт, а это приписка к нему. Та же ось, что у стрелки в
+  //   «Тек. плане», где по этой же причине взяты синий и сине-серый, а не зелёный с красным.
+  const statusBadge=(s,note)=>s.k==='none'?`<span style="padding:1px 8px;border-radius:8px;font-size:10px;background:var(--surface2);color:var(--text3)">план не задан</span>`
+    :`<span style="padding:1px 8px;border-radius:8px;font-size:10px;font-weight:600;color:${s.col};background:color-mix(in srgb,${s.col} 12%,transparent)">${s.txt}${note?`<span style="font-weight:400;color:var(--text2)"> · ${note}</span>`:''}</span>`;
+  const statusCell=(plan,fact,revenue,note)=>statusBadge(statusOf(plan,fact,revenue),note);
+  // Остаток лимита за ВЫБРАННЫЙ период: planM − factM по ОДНОЙ стороне пары (u или t). Цвет по остатку относительно плана периода. applic=false → прочерк.
   const remDashL=(lbl,main)=>`<td style="${td};text-align:right${main?';cursor:default':''}"${lbl?` data-label="${lbl}"`:''}${main?' onclick="event.stopPropagation()"':''}><span style=color:var(--text3)>-</span></td>`;
   const remDash=remDashL('');
   const remTd=(planM,factM,applic,kind,src,lbl,main,w)=>{
@@ -10296,7 +10389,9 @@ function renderPlanFact(f){
     // ⚠ ФИО передаём СЫРЫМИ, без esc: _tipAttr эскейпит сам, двойной эскейп дал бы «&amp;amp;» в именах.
     return `<td style="${td};text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" ${_tipAttr(os.map(o=>[o,'']),null,os.length>1?'Ответственные · '+os.length:'Ответственный')}>${lbl}</td>`;
   };
-  // колонки: Ответственный | Утверждено (baseline) | Прогноз (текущий план) | Факт | Δ к утв. | Остаток (месяц) | Статус. Δ и статус считаются ТОЛЬКО от baseline.
+  // колонки: Ответственный | Утверждено (baseline) | Тек. план | Факт | Остаток к утв. | Остаток к тек. | Статус.
+  // ⚠ Δ считается от baseline, СТАТУС - от текущего плана (03.09.2026). Базы разные намеренно: Δ отвечает
+  //   «сошлось ли с тем, на что соглашались», статус - «укладываемся ли в план, по которому работаем».
   const dRow=(label,base,plan,fact,revenue,bold,kind,code,opts)=>{
     opts=opts||{};
     const _sk=kind||opts.skind; // семантический kind для Δ/статуса: у итоговых строк kind=null (не кликабельны), но net/vyv-семантика - через opts.skind
@@ -10328,14 +10423,15 @@ function renderPlanFact(f){
         tip:_tipAttr([['утверждено',fmt(shB)],['текущий план',fmt(shP)]],['изменение',(dm>0?'+':'−')+fmt(Math.abs(dm))],
           'План '+(loose?'ослаблен':'ужесточён')+' после утверждения',[['текущий план правится свободно','']])};
     })();
-    // ОДИН расчёт на бейдж и на подсветку «Факта» - та же база (base), тот же порог. ЧП/вывод 127 - без статуса и, следовательно, без подсветки.
-    // Статус - от ДЕВБАЗЫ периода (заморожен → утверждённое, иначе текущий план), а НЕ от одного утверждённого:
-    // иначе в незамороженном месяце он говорил «план не задан» рядом с заполненными «Тек. план» и «Остаток к тек.».
-    // Берём devBase-сторону пары остатка → база и факт period-matched (факт только за месяцы, где база есть), и число сходится с соседней колонкой остатка.
-    const _rd=opts.rem&&opts.rem.d;
+    // ОДИН расчёт на бейдж и на подсветку «Факта» - та же база, тот же порог. ЧП/вывод 127 - без статуса и, следовательно, без подсветки.
+    // База - ТЕКУЩИЙ план, и берётся она ЕДИНСТВЕННЫМ вызовом _pfStatusBase (см. комментарий у самой функции).
+    // Берём t-сторону пары остатка → база и факт period-matched (факт только за месяцы, где база есть), и число сходится с колонкой «Остаток к тек.».
+    const _rd=opts.rem?_pfStatusBase(opts.rem.u,opts.rem.t):null;
     const st=(_sk==='net'||_sk==='vyv'||!_rd||_rd.pM==null)?null:statusOf(_rd.pM,_rd.fM,revenue);
-    const stSrc=_rd?(_rd.src==='utv'?'утверждённого плана':_rd.src==='prog'?'текущего плана':_rd.src==='mix'?'смешанной базы (утв. + текущий)':''):'';
-    const statusHtml=st?statusBadge(st):dash;
+    // ⚠ Отклонение от утверждённого из статуса НЕ ушло, оно переехало в приписку и в колонку «Δ к утв.» -
+    //   после этой правки «Δ к утв.» единственное место, где видно отклонение от того, на что соглашались.
+    const stRev=st?_pfPlanRevNote(base,plan):'';
+    const statusHtml=st?statusBadge(st,stRev):dash;
     // ВЕС ЧИСЛОВЫХ ячеек = уровень агрегации: итоги 700, статьи 600, подстатьи и третий уровень 400.
     // Инлайн обязателен: .report-table td задаёт font-weight:600 всем ячейкам, без явного значения подстатьи остались бы жирными.
     // Первую колонку (названия) НЕ трогаем - там иерархия уже показана отступом и треугольником.
@@ -10353,7 +10449,7 @@ function renderPlanFact(f){
       <td style="${td};text-align:right;border-left:1px solid var(--border);border-right:1px solid var(--border);font-weight:${numW}${factCol}${opts.signColor?';color:'+(fact>=-0.0001?'var(--income)':'var(--outcome)'):''}${kind?';cursor:pointer':''}" data-label="Факт"${kind?' title="Клик - операции за период по этой строке"':''}>${fmt(revenue?fact:-fact)}</td>
       ${opts.rem?remTd(opts.rem.u.pM,opts.rem.u.fM,true,opts.rem.u.kind,opts.rem.u.src,'Остаток к утв.',true,numW):remDashL('Остаток к утв.')}
       ${opts.rem?remTd(opts.rem.t.pM,opts.rem.t.fM,true,opts.rem.t.kind,opts.rem.t.src,'Остаток к тек.',true,numW):remDashL('Остаток к тек.')}
-      <td style="${td};text-align:left;cursor:default" onclick="event.stopPropagation()" data-label="Статус"${st?' '+_tipAttr([['база',fmt(_rd.pM)],['факт',fmt(_rd.fM)]],['отклонение',(_rd.fM-_rd.pM<0?'−':'+')+fmt(Math.abs(_rd.fM-_rd.pM))],'Исполнение за '+remPerLbl+' от '+stSrc):''}>${statusHtml}</td>
+      <td style="${td};text-align:left;cursor:default" onclick="event.stopPropagation()" data-label="Статус"${st?' '+_tipAttr([['текущий план',fmt(_rd.pM)],['факт',fmt(_rd.fM)]],['отклонение',(_rd.fM-_rd.pM<0?'−':'+')+fmt(Math.abs(_rd.fM-_rd.pM))],'Исполнение за '+remPerLbl+' от ТЕКУЩЕГО плана'+(stRev?' · '+stRev:'')):''}>${statusHtml}</td>
     </tr>`;
   };
   const secRow=t=>`<tr><td colspan="8" style="padding:6px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
@@ -10407,14 +10503,15 @@ function renderPlanFact(f){
     remMonths.forEach(m=>{const r=baseM(lvl,sub,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=_remFactSubM(kind,sub,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});
     return{pM,fM,kind,src:_remSrc(su,sp)};};
   const _bmUtv=(l,s,m)=>_subOneBaseM(l,s,m,true),_bmTek=(l,s,m)=>_subOneBaseM(l,s,m,false);
-  // ДЕВБАЗА месяца - собирается из того же примитива, второй копии правила нет: заморожен → утверждённое, иначе текущий; фолбэк на другую сторону.
-  // Нужна «Статусу»: у остатка две базы, у статуса одна, и без девбазы в незамороженном месяце он говорил «план не задан» рядом с заполненными «Тек. план» и «Остаток к тек.».
-  const _pickDev=(fr,u,t)=>fr?(u.v!=null?u:(t.v!=null?t:u)):(t.v!=null?t:(u.v!=null?u:t));
-  const _bmDev=(l,sb,m)=>_pickDev(frozenSet.has(m),_subOneBaseM(l,sb,m,true),_subOneBaseM(l,sb,m,false));
+  // ⚠ ТРЕТЬЕЙ стороны у пары остатка НЕТ. Была «девбаза» (_pickDev/_bmDev: заморожен → утверждённое,
+  //   иначе текущий) - её единственным потребителем был «Статус», и 03.09.2026 он переведён на текущий
+  //   план целиком (_pfStatusBase). Считать её дальше значило бы тратить проход на каждую строку ради
+  //   никем не читаемого числа, а живая ветка рядом - готовое приглашение вернуть статус к baseline
+  //   мимо _pfStatusBase. Понадобится снова - возвращать вместе с потребителем, а не «про запас».
   const _remMerge=(kind,parts)=>{let pM=null,fM=0,su=0,sp=0;parts.forEach(r=>{if(!r||r.pM==null)return;pM=(pM||0)+r.pM;fM+=r.fM;if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind,src:_remSrc(su,sp)};};
   // ПАРА остатков {u:от утверждённого, t:от текущего плана} - именно её несёт opts.rem у dRow. Обе стороны идут через один примитив → Σ подстатей = статья по каждой.
-  const _remMergeP=(kind,parts)=>({u:_remMerge(kind,parts.map(p=>p&&p.u)),t:_remMerge(kind,parts.map(p=>p&&p.t)),d:_remMerge(kind,parts.map(p=>p&&p.d))});
-  const subRemFor=(kind,s)=>({u:remOfSubBy(kind,s,_bmUtv),t:remOfSubBy(kind,s,_bmTek),d:remOfSubBy(kind,s,_bmDev)});
+  const _remMergeP=(kind,parts)=>({u:_remMerge(kind,parts.map(p=>p&&p.u)),t:_remMerge(kind,parts.map(p=>p&&p.t))});
+  const subRemFor=(kind,s)=>({u:remOfSubBy(kind,s,_bmUtv),t:remOfSubBy(kind,s,_bmTek)});
   // ⚠ Под фильтром «Контрагент» у статьи со СМЕШАННОЙ группой остатка нет - ровно как плана.
   //   _remMerge пропускает части с pM==null, поэтому без этого выхода строка показала бы остаток по
   //   известной половине подстатей рядом с ПОЛНЫМ фактом строки, то есть завышенную «экономию».
@@ -10444,8 +10541,7 @@ function renderPlanFact(f){
   // база стороны по ОДНОЙ стороне (пара колонок) - зеркало _subOneBaseM на уровне «сотрудник/объект/контрагент»; _blSideM/_fcSideM уже per-dir по ownDirsOf
   const _sideOneBaseM=(sub,side,m,utv)=>{if(utv&&!_blSideMD)return{v:null,src:null};const v=utv?_blSideM(sub,side,m):_fcSideM(sub,side,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
   const sideRemBy=(sub,side,baseM)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=baseM(sub,side,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=sideFactM(sub,side,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind:'exp',src:_remSrc(su,sp)};};
-  const sideRemFor=(sub,side)=>({u:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,true)),t:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,false)),
-    d:sideRemBy(sub,side,(s,d,m)=>_pickDev(frozenSet.has(m),_sideOneBaseM(s,d,m,true),_sideOneBaseM(s,d,m,false)))});
+  const sideRemFor=(sub,side)=>({u:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,true)),t:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,false))});
   // мёртвая строка: за ВЫБРАННЫЙ период НЕТ ничего (|факт|=|утв|=|прог|=0, по модулю). Нулевой план+живой факт или план без факта - НЕ мёртвые. Фильтруем на РЕНДЕРЕ; суммы берутся из полных массивов (скрытые дают 0) → ИТОГО не меняется. Как sideHasActivity в выписке.
   const _rowDead=(fact,plan,base)=>Math.abs(fact||0)<0.005&&Math.abs(plan||0)<0.005&&Math.abs(base||0)<0.005;
   const _subAlive=(kind,sub)=>!_rowDead(childFact(kind,sub),childPlan(kind,sub),childBase(kind,sub)); // подстатья с движением за период (childFact/Plan/Base - period-aware, в матрице = год)
@@ -10519,8 +10615,7 @@ function renderPlanFact(f){
     // база направления по ОДНОЙ стороне (пара колонок) - зеркало _subOneBaseM на уровне направления; без фолбэка на другую сторону
     const dirOneBaseM=(d,m,utv)=>{const v=utv?baseDirM(d,m):planDirM(d,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
     const remDirBy=(d,baseM)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=baseM(d,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factMonth(d,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;});return{pM,fM,kind:sKind,src:_remSrc(su,sp)};}; // Σ_m база − Σ_m факт; факт только где есть база (#1)
-    const remDirOf=d=>({u:remDirBy(d,(dd,m)=>dirOneBaseM(dd,m,true)),t:remDirBy(d,(dd,m)=>dirOneBaseM(dd,m,false)),
-      d:remDirBy(d,(dd,m)=>_pickDev(frozenSet.has(m),dirOneBaseM(dd,m,true),dirOneBaseM(dd,m,false)))});
+    const remDirOf=d=>({u:remDirBy(d,(dd,m)=>dirOneBaseM(dd,m,true)),t:remDirBy(d,(dd,m)=>dirOneBaseM(dd,m,false))});
     const remFor=d=>remDirOf(d);
     // строки = направления с планом ИЛИ фактом (объединение, никого не прячем)
     const dirOwnPass=d=>{if(!selOwn.size)return true;const o=(_planOwners||{})[d+'||'+sub];return o?selOwn.has(o):selOwn.has(NOOWN);}; // «по направлениям»: при фильтре ЦФО показываем только направления, где ответственный этой подстатьи прошёл фильтр
@@ -10557,8 +10652,7 @@ function renderPlanFact(f){
       const baseOfD=d=>PB?_sidePer2(m=>baseM(d,m)):null;
       const oneBase=(d,m,utv)=>{const v=utv?baseM(d,m):planM(d,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
       const remBy=(d,bm)=>{let pM=null,fM=0,su=0,sp2=0;remMonths.forEach(m=>{const r=bm(d,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factM(d,m);if(r.src==='utv')su++;else if(r.src==='prog')sp2++;});return{pM,fM,kind,src:_remSrc(su,sp2)};};
-      const remOf=d=>({u:remBy(d,(dd,m)=>oneBase(dd,m,true)),t:remBy(d,(dd,m)=>oneBase(dd,m,false)),
-        d:remBy(d,(dd,m)=>_pickDev(frozenSet.has(m),oneBase(dd,m,true),oneBase(dd,m,false)))});
+      const remOf=d=>({u:remBy(d,(dd,m)=>oneBase(dd,m,true)),t:remBy(d,(dd,m)=>oneBase(dd,m,false))});
       const rows2=dirsToAgg.filter(d=>{const f=factOf(d),p=planOfD(d),b=baseOfD(d);return Math.abs(f||0)>0.005||(p!=null&&Math.abs(p)>0.005)||(b!=null&&Math.abs(b)>0.005);}).sort((a,b)=>a.localeCompare(b,'ru'));
       if(!rows2.length)return;
       // счётчик шапки: у контрагента секций может быть до трёх, строки каждой - направления
@@ -10734,13 +10828,16 @@ function renderPlanFact(f){
       // рендер 6 ячеек агрегата (Утв.|Прогноз|Факт|Δ|Остаток|Статус)
       // ⚠ Δ красится ПО ЗНАКУ, без допуска: допуска больше нет нигде (см. statusOf). Равенство копейка
       //   в копейку - нейтральный цвет. Статус этой таблицы идёт через statusCell и берёт новую логику сам.
+      // ⚠ БАЗА СТАТУСА - через общий `_pfStatusBase`, тот же, что в сводной: свой выбор здесь означал бы,
+      //   что человек видит в своде ЦФО и в сводной РАЗНЫЕ вердикты по одной и той же своей подстатье.
+      //   Гейт `hasBaseline` снят вместе с переводом: статусу нужен текущий план, а не утверждённый.
       const cfoCells=A=>{const d2=A.base!=null?A.fact-A.base:null;const dc=A.base==null?'var(--text3)':(kop(A.fact)>kop(A.base)?'var(--outcome)':kop(A.fact)<kop(A.base)?'var(--income)':'var(--text2)');
         return `<td style="${td};text-align:right">${A.base!=null?fmt(-A.base):dash}</td>
           <td style="${td};text-align:right">${A.plan!=null?fmt(-A.plan):dash}</td>
           <td style="${td};text-align:right">${fmt(-A.fact)}</td>
           <td style="${td};text-align:right;color:${dc}">${d2!=null?((d2>0?'+':d2<0?'−':'')+fmt(Math.abs(d2))):'-'}</td>
           ${remTd(A.remPlan,A.remFact,true,'exp',_remSrc(A.remSu,A.remSp))}
-          <td style="${td};text-align:left">${hasBaseline?statusCell(A.base,A.fact,false):dash}</td>`;};
+          <td style="${td};text-align:left">${statusCell(_pfStatusBase(A.base,A.plan),A.fact,false,_pfPlanRevNote(A.base,A.plan))}</td>`;};
       const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0,remSu:0,remSp:0});
       const addA=(dst,src)=>{if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;dst.remSu+=src.remSu||0;dst.remSp+=src.remSp||0;return dst;};
       const sizeA=A=>(A.base||A.plan||A.fact||0);
@@ -10779,7 +10876,7 @@ function renderPlanFact(f){
         }
       });
       if(agg[NOOWN])body+=`<tr><td style="${td};text-align:left;color:var(--text3)">${cfoNameLink('__none__',NOOWN)}</td>${cfoCells(agg[NOOWN])}</tr>`; // (не назначен) - внизу плоско
-      body+=`<tr style="background:var(--total-bg)"><td style="${td};text-align:left;font-weight:700">ИТОГО</td><td style="${td};text-align:right;font-weight:700">${tb!=null?fmt(-tb):'-'}</td><td style="${td};text-align:right;font-weight:700">${tp!=null?fmt(-tp):'-'}</td><td style="${td};text-align:right;font-weight:700">${fmt(-tf)}</td><td style="${td}"></td>${remTd(trp,trf,true,'exp',_remSrc(tSu,tSp))}<td style="${td}">${hasBaseline?statusCell(tb,tf,false):dash}</td></tr>`;
+      body+=`<tr style="background:var(--total-bg)"><td style="${td};text-align:left;font-weight:700">ИТОГО</td><td style="${td};text-align:right;font-weight:700">${tb!=null?fmt(-tb):'-'}</td><td style="${td};text-align:right;font-weight:700">${tp!=null?fmt(-tp):'-'}</td><td style="${td};text-align:right;font-weight:700">${fmt(-tf)}</td><td style="${td}"></td>${remTd(trp,trf,true,'exp',_remSrc(tSu,tSp))}<td style="${td}">${statusCell(_pfStatusBase(tb,tp),tf,false,_pfPlanRevNote(tb,tp))}</td></tr>`;
       window._pfCfoModal={has:true,title:'Исполнение по ЦФО · '+dirLabel+' · '+periodLbl,inner:`<div style="overflow:auto"><table class="report-table" style="width:100%;border-collapse:collapse;white-space:nowrap">
           <thead><tr><th style="text-align:left;${th}">Ответственный</th><th style="${th}" title="Утверждённый (замороженный) план">Утверждено</th><th style="${th}" title="Текущий план (рабочий, правится свободно)">Текущий план</th><th style="${th}">Факт</th><th style="${th}">Δ к утв.</th><th style="${th}" title="Остаток лимита за ${remPerLbl}: база (утв., если заморожено, иначе текущий план) − факт за тот же период. Курсив/приглушение = база не утверждена.">Остаток · ${remPerLbl}</th><th style="text-align:left;${th}">Статус</th></tr></thead>
           <tbody>${body}</tbody></table></div>`};
