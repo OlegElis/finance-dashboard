@@ -1413,6 +1413,19 @@ function _lsWarn(key,e,op){try{console.warn('[localStorage] ключ «'+key+'»
 function td(val,extra=''){const v=typeof val==='number'?val:parseNum(val);const cls=numClass(v);const display=typeof val==='number'?fmt(val):(val||'-');return`<td class="${cls} ${extra}">${display}</td>`;}
 
 function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${day}`;}
+// ── БДР: ЕДИНСТВЕННЫЙ источник умолчаний вкладки ────────────────────────────
+// ⚠ Отсюда берут умолчания ОБА места: инициализация _tabFilters.planfact ниже и кнопка «Сбросить»
+//   (_pfResetState). Второго экземпляра списка полей быть не должно: заведи кто-нибудь новый фильтр
+//   в одном месте - кнопка МОЛЧА перестала бы его сбрасывать, и человек читал бы отфильтрованные
+//   числа под подписью «фильтров нет». Тот же класс, что чинили в bflFunnelStages и _pfStatusBase.
+// ⚠ period:'' = «ещё не выбрано»; умолчание (текущий месяц) считается ОДИН РАЗ в renderPlanFact
+//   по флагу _defPeriodDone - служебные поля сюда не входят и при сбросе не переносятся.
+// ⚠ ПОЛЕЙ ДЛЯ НАПРАВЛЕНИЯ ДВА, и оба живые: dirs - мультивыбор, dir - устаревшее одиночное, но у
+//   него остался ОТКАТ (_cfoStmtData читает pf.dir, когда pf.dirs пуст). Обнулив только dirs, сброс
+//   вернул бы прежнее направление через этот откат - поэтому dir стоит здесь рядом с dirs.
+// ⚠ Функция, а не константа-объект: каждому вызывающему нужна СВОЯ копия массивов, иначе сброс
+//   раздал бы всем один и тот же [] и правка фильтра меняла бы умолчание.
+function _pfBlankState(){return {dir:'',dirs:[],year:0,level:'article',period:'',articles:[],subarticles:[],owners:[],sides:[],rowDim:'article'};}
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],articles:[],subarticles:[],finOps:[],fns:'',includeFuture:true},
@@ -1428,7 +1441,7 @@ const _tabFilters={
   dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
   opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false,dyn:''},
   fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
-  planfact:{dir:'',year:0,level:'article',period:'',articles:[],subarticles:[],sides:[],rowDim:'article'}, // period:'' = «ещё не выбрано»; умолчание (текущий месяц) считается ОДИН РАЗ в renderPlanFact
+  planfact:_pfBlankState(), // ⚠ литерала здесь БОЛЬШЕ НЕТ - умолчания живут в _pfBlankState (см. выше), иначе список полей был бы записан дважды
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
   bflmodel:{view:'depts',block:'all',showOverhead:false,month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
   registry:{q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}}
@@ -2459,7 +2472,7 @@ function _presetApplyRel(tab,rel){
 //   показывал бы прошлый год, и человек читал бы чужие числа, не заметив подмены. Кому нужен
 //   конкретный год - он виден в снимке пресета («Год: 2026»), но при применении берётся текущий.
 const PF_PRESET_KEYS=['dirs','articles','subarticles','owners','sides','rowDim','period','year','level'];
-function _pfBlankState(){return {dir:'',year:0,level:'article',period:'',articles:[],subarticles:[],owners:[],sides:[],dirs:[],rowDim:'article'};}
+// _pfBlankState объявлена рядом с _tabFilters - она же задаёт умолчания вкладки (см. комментарий там).
 function _pfStateSnapshot(){const F=_tabFilters.planfact||{},o={};
   PF_PRESET_KEYS.forEach(k=>{if(k in F)o[k]=F[k];});
   o.yearIsCurrent=(+F.year===new Date().getFullYear()); // см. ⚠ про год выше
@@ -6308,7 +6321,44 @@ window.pfActionLocked=function(key){
 };
 window.pfMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.planfact[field]=checked;};
 window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.pfMultiChange(ddId,btnId,field,labelAll);};
-window.pfResetExtra=function(){_tabFilters.planfact.articles=[];_tabFilters.planfact.subarticles=[];_tabFilters.planfact.owners=[];_tabFilters.planfact.sides=[];renderPlanFact(getFilters());}; // rowDim вернёт на «По статьям» правило по состоянию в renderPlanFact - второй копии тут не заводим
+// ══ БДР: СБРОС ФИЛЬТРОВ ВКЛАДКИ ═══════════════════════════════════════════════
+// ⚠ Кнопка называется «Сбросить», значит сбрасывает ВСЁ, включая год и период: останься год - подпись
+//   врала бы, а врущая подпись в проекте хуже отсутствующей. Целевое состояние - _pfBlankState()
+//   ЦЕЛИКОМ, поверх чистого объекта, а не вычищенные по списку поля (та же причина, что у
+//   _pfStateRestore: список полей, записанный второй раз, разъезжается с первым молча).
+// ⚠ _defPeriodDone НЕ переносим - без него renderPlanFact заново посчитает умолчание периода
+//   (текущий месяц), то есть вкладка встанет ровно туда, откуда открывается при первом входе.
+// ⚠ Развороты строк живут в глобальных Set, а не в фильтрах, и обнуляются отдельно - образец взят
+//   из _pfStateRestore (применение пресета), второй механики тут не заводим.
+// ⚠ Пресет снимаем ЯВНО: _presetActive снял бы его и сам по расхождению подписи, но состояние
+//   «пресет выбран, а фильтров нет» не должно существовать даже один кадр.
+function _pfResetState(){
+  _tabFilters.planfact=_pfBlankState();
+  window._pfArtExp=new Set(); window._pfSubExp=new Set();
+  _activePreset.planfact=''; _activePresetSig.planfact='';
+}
+window.pfResetFilters=function(){_pfResetState();renderPlanFact(getFilters());};
+// ── Что считается «активным фильтром» для счётчика на кнопке ──────────────────
+// ⚠ Список полей НЕ переписываем: ключи берутся из _pfBlankState(), и новый фильтр попадает в
+//   счётчик сам. Вычитаются ровно два имени - год и период: они выбраны ВСЕГДА, и счётчик показывал
+//   бы двойку на чистом экране, то есть отвечал бы «фильтры есть» там, где их нет.
+// ⚠ Направление - ОДИН фильтр в ДВУХ полях (dirs + устаревшее dir), поэтому считается один раз;
+//   иначе состояние из старого пресета давало бы двойку за одно выбранное направление.
+// ⚠ Подписи - только для подсказки; поле без подписи всё равно СЧИТАЕТСЯ и показывается ключом:
+//   забытая подпись обязана выглядеть небрежностью, а не отсутствием фильтра.
+const PF_COUNT_SKIP=['year','period'];
+const PF_FILTER_LABELS={dirs:'Направление',articles:'Статья',subarticles:'Подстатья',owners:'ЦФО',sides:'Контрагент',rowDim:'Разрез',level:'Уровень'};
+function _pfActiveFilters(f){
+  f=f||_tabFilters.planfact||{};
+  const D=_pfBlankState(),out=[];
+  const same=(k)=>JSON.stringify((k in f)?f[k]:D[k])===JSON.stringify(D[k]);
+  Object.keys(D).forEach(k=>{
+    if(PF_COUNT_SKIP.indexOf(k)>=0||k==='dir')return; // dir учтён вместе с dirs
+    if(k==='dirs'){if(!same('dirs')||!same('dir'))out.push('dirs');return;}
+    if(!same(k))out.push(k);
+  });
+  return out;
+}
 // ══ ФИЛЬТР «КОНТРАГЕНТ» (ID_SecondSide) в БДР - СВОЯ машинерия списка ══════════
 // ⚠ Почему не pfOptList+expFilterList, как у статьи/подстатьи/ЦФО: там десятки значений, а сторон
 //   тысячи. Общая схема рисует ВСЕ пункты в DOM и прячет неподходящие поиском - это 3-5 тысяч
@@ -10188,6 +10238,22 @@ function renderPlanFact(f){
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;line-height:15px;font-weight:600;padding:2px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
       <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('planApproveMonthOpen('+year+')','✓ Утвердить месяц','var(--income)',lk)}${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)',null)}${_actItem('pfCfoOpen()','👥 Исполнение по ЦФО','var(--accent)',null)}${_actItem('cfoStatementOpen()','👤 Выписка ЦФО','var(--accent)',null)}${_actItem('showPlansPanel()',(isAdmin?'✏ Редактировать планы':'👁 Планы (просмотр)'),'var(--accent)',null)}${_actItem('pfPresetSaveOpen()','💾 Сохранить текущий отбор как пресет','var(--accent)',lk)}${_actItem("showPresetsPanel('planfact')",'⚙ Пресеты отчётов','var(--text2)',lk)}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)',lkBk)}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)',lk)}</div>
     </div>`;
+  // ── «Сбросить (N)» - последним элементом фильтр-бара ─────────────────────────
+  // ⚠ Стоит В КОНЦЕ РЯДА и БЕЗ margin-left:auto: при flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки,
+  //   и кнопка прыгала бы справа налево в зависимости от того, сколько фильтров уместилось выше
+  //   (ровно та беда, ради которой «⚙ Действия» унесли на свою полосу).
+  // ⚠ Кнопка ЕСТЬ ВСЕГДА, меняется только её состояние: контрол, который появляется и исчезает,
+  //   заставляет искать его заново, а его отсутствие ничего не сообщает. Приглушённая кнопка без
+  //   счётчика - это ответ «фильтров нет», ради которого её и завели.
+  // ⚠ Прежняя частичная «× сброс» (статья/подстатья/ЦФО/контрагент) УДАЛЕНА вместе со своей
+  //   функцией: два разных сброса рядом в одном ряду - приглашение нажать не тот, а полный сброс
+  //   её покрывает целиком. (Имя функции здесь не написано НАМЕРЕННО: тест ниже ищет её вызов
+  //   по срезу String(renderPlanFact), и упоминание в комментарии он нашёл бы как живой код.)
+  // ⚠ Подсказка нативная СОЗНАТЕЛЬНО (правило подсказок): здесь нет чисел в столбик, есть
+  //   пояснение к контролу и перечисление заданных фильтров.
+  const _pfActive=_pfActiveFilters(f),_pfActN=_pfActive.length;
+  const _pfActLbl=_pfActive.map(k=>PF_FILTER_LABELS[k]||k).join(', ');
+  const pfResetBtn=`<button ${_pfActN?`onclick="pfResetFilters()"`:'disabled'} title="${_pfActN?_pfEsc('Сбросить все фильтры вкладки, включая год и период. Сейчас задано: '+_pfActLbl):'Фильтры не заданы - сбрасывать нечего (год и период выбраны всегда и в счёт не идут)'}" style="font-size:11px;line-height:15px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);font-family:var(--sans);${_pfActN?'color:var(--text2);cursor:pointer':'color:var(--text3);opacity:.55;cursor:not-allowed'}">Сбросить${_pfActN?' ('+_pfActN+')':''}</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:10px;padding:3px var(--secpx);min-height:31px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <div style="position:relative;display:inline-block"><button id="pf-dir-btn" onclick="pfMultiToggle('pf-dir-dd')" title="Направления (мультивыбор; пусто = все)" style="${pfBtnStyle}">${pfDirBtn}</button><div id="pf-dir-dd" style="${pfDDstyle}">${pfDirDD}</div></div>
@@ -10202,7 +10268,7 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${pfSides.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Контрагент:</label>
     <div style="position:relative;display:inline-block"><button id="pf-side-btn" onclick="pfMultiToggle('pf-side-dd');pfSideRender('')" title="Сторона операции (ID_SecondSide): сотрудник, объект аренды, подрядчик" style="${pfBtnStyle}">${pfSideBtn}</button><div id="pf-side-dd" style="${pfDDstyle};min-width:300px">${pfSideDD}</div></div>`:''}
-    ${(selArt.size||selSub.size||selOwn.size||selSide.size)?`<button onclick="pfResetExtra()" style="font-size:10px;line-height:15px;padding:2px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer">× сброс</button>`:''}
+    ${pfResetBtn}
   </div>`;
   // ── Статус заморозки + архив + «⚙ Действия» - СВОЯ полоса под фильтрами ───────────────
   // ⚠ Раньше троица стояла последними элементами переносящегося фильтр-бара, а у статуса был
