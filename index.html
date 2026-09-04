@@ -1197,6 +1197,17 @@ function _planSideMD(recsAll,cvt){return (d,code,side,m)=>{const recs=recsAll.fi
 // стороны кода: факт ∪ baseline ∪ прогноз ∪ объекты аренды (для 223); hasUn - есть план/факт без стороны
 function _sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code){const named={};let hasUn=false;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});if(_slRent(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};}
 
+// ⚠ Третий уровень обязан раскладывать ФАКТ НАЦЕЛО: сумма фактов показанных сторон = факт подстатьи.
+//   Возвращает 0 при сходимости и величину расхождения (в рублях, до копейки) иначе. Вынесено на
+//   верхний уровень СПЕЦИАЛЬНО - чтобы правило проверялось тестом, а не только глазами на живых данных.
+// ⚠ Округление до копеек ОБЯЗАТЕЛЬНО: сумма нескольких десятков float даёт хвост, и сторож без
+//   округления кричал бы на каждой второй подстатье, после чего его перестали бы читать.
+function _pfSplitOff(subFact,sideFacts){
+  const s=(sideFacts||[]).reduce((a,v)=>a+(+v||0),0);
+  const d=Math.round(((+subFact||0)-s)*100)/100;
+  return Math.abs(d)<0.005?0:d;
+}
+
 // Пояснения, снятые с заголовков вкладок: заголовок называет отчёт, пояснение отвечает
 // на «а что это». Хвост через дефис в самом заголовке ломал шаблон «название (СОКРАЩЕНИЕ)»
 // и удлинял строку в топбаре, поэтому переехал сюда.
@@ -9969,6 +9980,35 @@ function pfRunTests(){
     ok('подпись подставляется только вместо пустого значения',/base!=null\?fmt\(revenue\?base:-base\):planDash/.test(src)&&/plan!=null\?fmt\(revenue\?plan:-plan\):planDash/.test(src));
   }finally{ _planRecords=_svPR; }
 
+  // 8. Третий уровень у 223: расшифровка ФАКТА и только его
+  // ⚠ Боевой случай 04.09.2026: после свёртки весь план подстатьи оказался в безымянной стороне, и
+  //   строка «(не распределено)» показывала ПОЛНЫЙ план (655 760 у аренды БФЛ) рядом с крохотным
+  //   фактом и статусом «исполнено 0,9%» - читалось как недорасход на 649 560 ₽, которого нет.
+  ok('гейт плана стороны стоит в точке рождения плана, а не в каждой колонке',
+     /const _sideNoPlan=sub=>!_slPlanSide\(sub\);/.test(src));
+  ok('план стороны погашен у ОБЕИХ баз (тек. и утв.)',
+     /const sidePlanP=\(sub,side\)=>_sideNoPlan\(sub\)\?null:/.test(src)&&/const sideBaseP=\(sub,side\)=>\(_sideNoPlan\(sub\)\|\|!_blSideMD\)\?null:/.test(src));
+  // ⚠ Остаток и статус гасятся ЧЕРЕЗ БАЗУ, а не отдельной веткой: одна точка отказа вместо трёх.
+  ok('остаток и статус гасятся через _sideOneBaseM',/_sideOneBaseM=\(sub,side,m,utv\)=>\{if\(_sideNoPlan\(sub\)\)return\{v:null,src:null\}/.test(src));
+  ok('гейт не делает исключения для безымянной стороны',!/side!==''&&_sideNoPlan|_sideNoPlan\(sub\)&&side/.test(src));
+  // ⚠ Стрелка разворота у подстатьи, где показывать нечего, обязана ИСЧЕЗАТЬ, а не разворачивать пустоту.
+  ok('строки считаются ДО решения о стрелке',/const _sideRows=_isSub\?sidesOfSub\(sub\):\[\];/.test(src)&&/const _canOpen=_isSub&&_sideRows\.length>0;/.test(src));
+  ok('стрелка берётся из _canOpen, а не из _isSub',/subExpandable:_canOpen,subExpanded:_subOpen/.test(src)&&!/subExpandable:_isSub/.test(src));
+  ok('sidesOfSub зовётся один раз на подстатью',(src.match(/sidesOfSub\(sub\)/g)||[]).length===1,(src.match(/sidesOfSub\(sub\)/g)||[]).length);
+  // ── Сторож «факт раскладывается нацело» ──
+  // ⚠ Проверка на ЧИСЛАХ: сторож обязан молчать при сходимости и называть величину при расхождении.
+  ok('нацело - сторож молчит',_pfSplitOff(224977.50,[2512.50,213265,3000,6200])===0,_pfSplitOff(224977.50,[2512.50,213265,3000,6200]));
+  ok('недостача названа величиной',_pfSplitOff(224977.50,[2512.50,213265,3000])===6200,_pfSplitOff(224977.50,[2512.50,213265,3000]));
+  ok('лишнее названо отрицательной величиной',_pfSplitOff(100,[100,25])===-25,_pfSplitOff(100,[100,25]));
+  // ⚠ Хвост float обязан гаситься: без округления сторож кричал бы на каждой второй подстатье и его
+  //   перестали бы читать (то же основание, что у _z0 в форматтерах).
+  ok('хвост float не считается расхождением',_pfSplitOff(0.3,[0.1,0.2])===0,_pfSplitOff(0.3,[0.1,0.2]));
+  ok('полкопейки не считается расхождением',_pfSplitOff(100,[99.996])===0,_pfSplitOff(100,[99.996]));
+  ok('копейка уже видна',_pfSplitOff(100,[99.99])===0.01,_pfSplitOff(100,[99.99]));
+  ok('пустой список сторон - весь факт в расхождении',_pfSplitOff(500,[])===500);
+  ok('нет ни факта, ни сторон - сходится',_pfSplitOff(0,[])===0);
+  ok('сторож зовётся из рендера и печатает величину',/_pfSplitOff\(childFact\(kind,sub\),_sideFacts\)/.test(src)&&/не раскладывает факт нацело/.test(src));
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -10892,15 +10932,28 @@ function renderPlanFact(f){
   const _fcSideM=(sub,side,m)=>{let s=null;ownDirsOf(sub).forEach(d=>{const v=_fcSideMD(d,sub,side,m);if(v!=null)s=(s||0)+v;});return s;};
   const _blSideM=(sub,side,m)=>{if(!_blSideMD)return null;let s=null;ownDirsOf(sub).forEach(d=>{const v=_blSideMD(d,sub,side,m);if(v!=null)s=(s||0)+v;});return s;};
   const sideFactP=(sub,side)=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=sideFactM(sub,side,m);return s;}return sideFactM(sub,side,+period);};
-  const sidePlanP=(sub,side)=>_sidePer(_fcSideM,sub,side);
-  const sideBaseP=(sub,side)=>_blSideMD?_sidePer(_blSideM,sub,side):null;
+  // ⚠ ТРЕТИЙ УРОВЕНЬ ПОДСТАТЬИ, КОТОРУЮ ПО СТОРОНЕ НЕ ПЛАНИРУЮТ, - РАСШИФРОВКА ФАКТА И ТОЛЬКО ЕГО.
+  //   Гейт стоит ЗДЕСЬ, в точке, где план стороны рождается, и оттого закрывает всё разом: плановые
+  //   колонки (обе), остаток (обе) и статус - через _sideOneBaseM; и отбор строк в sidesOfSub, потому
+  //   что он смотрит на те же sidePlanP/sideBaseP.
+  // ⚠ Гейт распространяется и на БЕЗЫМЯННУЮ сторону (side=''), и это главное. После свёртки 04.09.2026
+  //   весь план подстатьи лежит именно в ней, и строка «(не распределено)» показывала ПОЛНЫЙ план
+  //   (655 760 у аренды БФЛ) рядом с крохотным фактом и статусом «исполнено 0,9%». Одна строка с
+  //   полным планом рядом с тремя строками факта читается как недорасход на 649 560 ₽, которого нет.
+  //   План подстатьи никуда не делся - он на строке самой ПОДСТАТЬИ, где ему и место.
+  // ⚠ Признак - предикат планирования, а не список кодов: второй список разошёлся бы с ним при
+  //   первой правке (это мы чинили всю неделю).
+  const _sideNoPlan=sub=>!_slPlanSide(sub);
+  const sidePlanP=(sub,side)=>_sideNoPlan(sub)?null:_sidePer(_fcSideM,sub,side);
+  const sideBaseP=(sub,side)=>(_sideNoPlan(sub)||!_blSideMD)?null:_sidePer(_blSideM,sub,side);
   // ⚠ При фильтре «Контрагент» третий уровень показывает ТОЛЬКО выбранные стороны: иначе строка-подстатья
   //   показывала бы одного человека, а её разворот - весь отдел, и сумма детей не сходилась бы с родителем.
   const sidesOfSub=sub=>{const U=_sideUniverse(_sfIdx,PB?PB.R:[],plans,ownDirsOf(sub),sub);let list=U.named.slice();if(U.hasUn)list.push('');
     if(selSide.size)list=list.filter(s=>selSide.has(s));
     return list.filter(side=>{const f=sideFactP(sub,side),p=sidePlanP(sub,side),b=sideBaseP(sub,side);return Math.abs(f)>0.005||(p!=null&&Math.abs(p)>0.005)||(b!=null&&Math.abs(b)>0.005);});}; // пустые стороны (нет факта/плана за период) не печатаем
   // база стороны по ОДНОЙ стороне (пара колонок) - зеркало _subOneBaseM на уровне «сотрудник/объект/контрагент»; _blSideM/_fcSideM уже per-dir по ownDirsOf
-  const _sideOneBaseM=(sub,side,m,utv)=>{if(utv&&!_blSideMD)return{v:null,src:null};const v=utv?_blSideM(sub,side,m):_fcSideM(sub,side,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
+  const _sideOneBaseM=(sub,side,m,utv)=>{if(_sideNoPlan(sub))return{v:null,src:null}; // нет плана по стороне → нет ни остатка, ни статуса: прочерк, а не ноль
+    if(utv&&!_blSideMD)return{v:null,src:null};const v=utv?_blSideM(sub,side,m):_fcSideM(sub,side,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
   const sideRemBy=(sub,side,baseM)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=baseM(sub,side,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=sideFactM(sub,side,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind:'exp',src:_remSrc(su,sp)};};
   const sideRemFor=(sub,side)=>({u:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,true)),t:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,false))});
   // мёртвая строка: за ВЫБРАННЫЙ период НЕТ ничего (|факт|=|утв|=|прог|=0, по модулю). Нулевой план+живой факт или план без факта - НЕ мёртвые. Фильтруем на РЕНДЕРЕ; суммы берутся из полных массивов (скрытые дают 0) → ИТОГО не меняется. Как sideHasActivity в выписке.
@@ -10913,13 +10966,32 @@ function renderPlanFact(f){
     if(selOwn.size){const _ent=subs.map(sub=>({sub,dirs:ownDirsOf(sub)}));window._pfOwnSubs[kind+'|'+code]=_ent;_ent.forEach(e=>{window._pfOwnSubs[kind+'|'+e.sub]=[e];});} // модал статьи/подстатьи под ЦФО = операции прошедших подстатей ТОЛЬКО по owner-passing направлениям
     let h=dRow(artLabel(code),base,plan,fact,revenue,false,kind,code,{expandable:has,expanded:open,rem:artRemFor(kind,code)});
     if(open)subs.forEach(sub=>{
-      const _isSub=(kind==='exp')&&_slFactSide(sub),_subOpen=_isSub&&subExp&&subExp.has(kind+'|'+sub); // третий уровень - только у расходных ФОТ/аренда/консалтинг подстатей
-      h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_isSub,subExpanded:_subOpen});
+      const _isSub=(kind==='exp')&&_slFactSide(sub); // третий уровень - только у расходных ФОТ/аренда/консалтинг подстатей
+      // ⚠ СТРОКИ СЧИТАЕМ ДО ТОГО, как решаем показывать ли стрелку: у подстатьи, где после гейта не
+      //   осталось ни плана, ни факта ни у одной стороны, разворачивать НЕЧЕГО, и стрелка, ведущая в
+      //   пустоту, - обещание, которого интерфейс не выполнит. Боевой случай 04.09.2026:
+      //   у 223_Коммунальные платежи единственной строкой было «(не распределено)» с планом −27 000 и
+      //   фактом 0,00; после гейта у неё не осталось ничего.
+      // ⚠ Считается ОДИН раз и переиспользуется ниже: sidesOfSub ходит в _sideUniverse и по всем
+      //   сторонам, второй вызов на ту же подстатью - лишний проход на каждый рендер.
+      const _sideRows=_isSub?sidesOfSub(sub):[];
+      const _canOpen=_isSub&&_sideRows.length>0;
+      const _subOpen=_canOpen&&subExp&&subExp.has(kind+'|'+sub);
+      h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_canOpen,subExpanded:_subOpen});
       // ⚠ Подпись вместо прочерка - ровно у тех подстатей, которые по стороне НЕ ПЛАНИРУЮТСЯ
       //   (сегодня это 223-аренда). Признак берём у предиката планирования, а не списком кодов:
       //   заведи кто-нибудь второй такой список - он разошёлся бы с предикатом при первой правке.
       const _sideNote=_slPlanSide(sub)?'':'ведётся по направлению';
-      if(_subOpen)sidesOfSub(sub).forEach(side=>{h+=dRow(_slIcon(sub)+' '+(side||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),sideFactP(sub,side),false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote});});
+      if(_subOpen){
+        const _sideFacts=[];
+        _sideRows.forEach(side=>{const _f=sideFactP(sub,side);_sideFacts.push(_f);
+          h+=dRow(_slIcon(sub)+' '+(side||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote});});
+        // ⚠ СТОРОЖ: третий уровень обязан раскладывать факт НАЦЕЛО - сумма фактов показанных сторон
+        //   равна факту подстатьи. Расшифровка, не сходящаяся со строкой, которую человек раскрыл,
+        //   заставляет искать потерянные деньги там, где их нет. Молчит, пока сходится.
+        const _off=_pfSplitOff(childFact(kind,sub),_sideFacts);
+        if(_off)console.warn('[БДР] третий уровень «'+sub+'» не раскладывает факт нацело: сумма сторон отличается от факта подстатьи на '+_off+' ₽ (сторон показано '+_sideRows.length+')');
+      }
     });
     return h;
   };
