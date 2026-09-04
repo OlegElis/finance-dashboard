@@ -9908,6 +9908,54 @@ function pfRunTests(){
       ok('печать без метки: таблица рисуется',_tab===1,_tab);
       ok('печать без метки: к боевой записи зовём',_cap.some(t=>t.indexOf('dry:false')>=0));
     }finally{ console.log=_oL; console.table=_oT; }
+    // ── Ветка BASELINE: та же свёртка, все годы, метаданные снимка неприкосновенны ──
+    // ⚠ Правило «baseline не редактируется» ОСТАЁТСЯ. Санкционировано ровно одно исключение
+    //   (Олег, 04.09.2026): тождественная свёртка формы хранения, где суммы не меняются ни на
+    //   копейку, а метаполя снимка не трогаются. Тесты держат обе половины этого обещания.
+    const _svBL=_plansBaseline;
+    try{
+      const meta=(m,extra)=>Object.assign({approvedAt:1700000000000+m,approvedBy:'o017ev@gmail.com',hadFact:true,factAtApproval:123456.78,retro:(m===2)},extra||{});
+      const bl={
+        2025:{1:meta(1,{records:[
+          {dir:'БФЛ',year:2025,month:1,level:'subarticle',code:'223_Аренда',side:'оф.1',mode:'money',value:10.10},
+          {dir:'БФЛ',year:2025,month:1,level:'subarticle',code:'223_Аренда',side:'оф.2',mode:'money',value:20.20},
+          {dir:'БФЛ',year:2025,month:1,level:'subarticle',code:'111_ФОТ',side:'Иванов',mode:'money',value:500}]})},
+        2026:{2:meta(2,{records:[
+          {dir:'БФЛ',year:2026,month:2,level:'subarticle',code:'223_Аренда',side:'оф.3',mode:'money',value:1.01},
+          {dir:'БФЛ',year:2026,month:2,level:'subarticle',code:'223_Аренда',side:'',mode:'money',value:2.02},
+          {dir:'САУ',year:2026,month:2,level:'subarticle',code:'226_Консалтинг',side:'ООО Р',mode:'money',value:70}]})}
+      };
+      Object.defineProperty(bl,'__fixture',{value:true,enumerable:false});
+      _plansBaseline=bl;
+      const metaKeys=['approvedAt','approvedBy','hadFact','factAtApproval','retro'];
+      const metaSnap=()=>JSON.stringify([[2025,1],[2026,2]].map(([y,m])=>metaKeys.map(k=>_plansBaseline[y][m][k])));
+      const mBefore=metaSnap();
+      const rb=pfFold223Sides({branch:'baseline',dry:true});
+      ok('baseline: свёрнуто обоих годов, 3 записи в 2 ячейки',!!rb&&rb.n===3&&rb.cells===2,rb&&(rb.n+'/'+rb.cells));
+      ok('baseline: годы найдены ОБА, не только текущий',!!rb&&String(rb.years)==='2025,2026',rb&&String(rb.years));
+      ok('baseline: сумма свёртки - только 223 со стороной',!!rb&&Math.abs(rb.sum-31.31)<0.005,rb&&rb.sum);
+      ok('baseline: сухой прогон снимок НЕ трогает',metaSnap()===mBefore&&_plansBaseline[2025][1].records.length===3);
+      // ⚠ Ветка выбирается ПАРАМЕТРОМ, а не второй функцией: свёртка одна на обе.
+      ok('свёртка одна на обе ветки - ядро вынесено',typeof _pfFoldCore==='function'&&String(pfFold223Sides).indexOf('_pfFoldCore(')>0);
+      ok('второй копии свёртки в самой функции нет',String(pfFold223Sides).indexOf('ex.value=(+ex.value||0)+c.sum')<0);
+      // ⚠ Метаданные: сверяются ПРОГРАММНО, а не глазами по одному месяцу.
+      const sig=_pfFoldMetaSig(_plansBaseline[2025][1]);
+      ok('слепок метаданных не включает records',sig.indexOf('records')<0);
+      ok('слепок ловит правку метаполя',(()=>{const o=Object.assign({},_plansBaseline[2025][1]);o.retro=!o.retro;return _pfFoldMetaSig(o)!==sig;})());
+      ok('слепок НЕ реагирует на правку records',(()=>{const o=Object.assign({},_plansBaseline[2025][1],{records:[]});return _pfFoldMetaSig(o)===sig;})());
+      ok('печать baseline на фикстуре тоже помечена',(()=>{const oL=console.log;let c=[];try{console.log=t=>c.push(String(t));pfFold223Sides({branch:'baseline',dry:true});}finally{console.log=oL;}
+        return c.length>0&&c.every(t=>t.indexOf('[ТЕСТ · ПОДСТАВНЫЕ ДАННЫЕ] ')===0);})());
+      // ⚠ Ветка прогноза от появления baseline-ветки НЕ должна была измениться.
+      _planRecords=fix([mk('БФЛ','223_Аренда',1,'оф.1',100.11),mk('БФЛ','223_Аренда',1,'оф.2',200.22)]);
+      const rp=pfFold223Sides({dry:true});
+      ok('ветка прогноза по умолчанию и считает по-прежнему',!!rp&&rp.n===2&&rp.cells===1&&Math.abs(rp.sum-300.33)<0.005,rp&&rp.sum);
+    }finally{ _plansBaseline=_svBL; }
+    // ── Подпись вместо голого прочерка в плановых колонках третьего уровня ──
+    // ⚠ Признак берётся у предиката планирования, а не списком кодов: второй список разошёлся бы.
+    ok('подпись нужна там, где по стороне не планируют',!_slPlanSide('223_Аренда')&&_slPlanSide('111_ФОТ'));
+    ok('подпись в разметке стоит в ОБЕИХ плановых колонках',
+       (String(renderPlanFact).match(/planDash/g)||[]).length>=3,(String(renderPlanFact).match(/planDash/g)||[]).length);
+    ok('подпись подставляется только вместо пустого значения',/base!=null\?fmt\(revenue\?base:-base\):planDash/.test(src)&&/plan!=null\?fmt\(revenue\?plan:-plan\):planDash/.test(src));
   }finally{ _planRecords=_svPR; }
 
   const bad=R.filter(r=>!r.pass);
@@ -10692,6 +10740,16 @@ function renderPlanFact(f){
     // клик по лейблу: у статьи - разворот подстатей; у подстатьи с 3-м уровнем - разворот сторон; у листа - гасим. Расшифровка операций - по клику на ячейки значений (строка сохраняет onclick)
     const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:opts.subExpandable?` onclick="event.stopPropagation();pfToggleSub('${kind}','${jesc2(code)}')" title="Клик - расшифровка по сторонам"`:(kind?` onclick="event.stopPropagation()"`:'');
     const dash='<span style=color:var(--text3)>-</span>';
+    // ── Прочерк в плановых колонках обязан ОТВЕЧАТЬ на вопрос, а не задавать его ──
+    // ⚠ После того как 223 убрали из планирования по стороне (04.09.2026), у строк третьего уровня
+    //   плана по объекту НЕТ И НЕ БУДЕТ - это не «забыли завести», а «ведётся на уровне выше».
+    //   Голый прочерк тут читается как дыра в данных и посылает человека искать пропавший план.
+    // ⚠ Подпись стоит в ОБЕИХ колонках - и «Утв.», и «Тек.»: основание у прочерка одно и то же, а
+    //   подпись в одной колонке рядом с прочерком в другой читалась бы как РАЗНЫЕ причины.
+    // ⚠ Ставится ТОЛЬКО вместо отсутствующего значения: есть число - показываем число (до миграции
+    //   старые записи со стороной ещё могут дать план, и прятать его за подписью нельзя).
+    const planDash=opts.planNote?`<span style="color:var(--text3);font-size:9px;font-weight:400;font-family:var(--sans)">${esc(opts.planNote)}</span>`:dash;
+    const planNoteTip=opts.planNote?[[opts.planNote,'']]:[];
     // ── ↑/↓ у «Тек. план»: план пересматривали ПОСЛЕ утверждения ──
     // Сравнение по МОДУЛЮ, а не по знаку: расходы хранятся со знаком, и −134 366 против −73 116 - это РОСТ расхода, а не снижение;
     // по модулю стрелка читается одинаково для доходов и расходов. Цветом НЕ красим - пересмотр плана сам по себе не хорош и не плох,
@@ -10736,8 +10794,8 @@ function renderPlanFact(f){
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${esc(label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
-      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr([],null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):dash,'')}</td>
-      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" ${planMark.tip}>${planNum(plan!=null?fmt(revenue?plan:-plan):dash,planMark.ar)}</td>
+      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr(planNoteTip,null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):planDash,'')}</td>
+      <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" ${(opts.planNote&&plan==null)?_tipAttr(planNoteTip,null,'Текущий план (рабочий, правится свободно)'):planMark.tip}>${planNum(plan!=null?fmt(revenue?plan:-plan):planDash,planMark.ar)}</td>
       <td style="${td};text-align:right;border-left:1px solid var(--border);border-right:1px solid var(--border);font-weight:${numW}${factCol}${opts.signColor?';color:'+(fact>=-0.0001?'var(--income)':'var(--outcome)'):''}${kind?';cursor:pointer':''}" data-label="Факт"${kind?' title="Клик - операции за период по этой строке"':''}>${fmt(revenue?fact:-fact)}</td>
       ${opts.rem?remTd(opts.rem.u.pM,opts.rem.u.fM,true,opts.rem.u.kind,opts.rem.u.src,'Остаток к утв.',true,numW):remDashL('Остаток к утв.')}
       ${opts.rem?remTd(opts.rem.t.pM,opts.rem.t.fM,true,opts.rem.t.kind,opts.rem.t.src,'Остаток к тек.',true,numW):remDashL('Остаток к тек.')}
@@ -10846,7 +10904,11 @@ function renderPlanFact(f){
     if(open)subs.forEach(sub=>{
       const _isSub=(kind==='exp')&&_slFactSide(sub),_subOpen=_isSub&&subExp&&subExp.has(kind+'|'+sub); // третий уровень - только у расходных ФОТ/аренда/консалтинг подстатей
       h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_isSub,subExpanded:_subOpen});
-      if(_subOpen)sidesOfSub(sub).forEach(side=>{h+=dRow(_slIcon(sub)+' '+(side||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),sideFactP(sub,side),false,false,null,null,{grand:true,rem:sideRemFor(sub,side)});});
+      // ⚠ Подпись вместо прочерка - ровно у тех подстатей, которые по стороне НЕ ПЛАНИРУЮТСЯ
+      //   (сегодня это 223-аренда). Признак берём у предиката планирования, а не списком кодов:
+      //   заведи кто-нибудь второй такой список - он разошёлся бы с предикатом при первой правке.
+      const _sideNote=_slPlanSide(sub)?'':'ведётся по направлению';
+      if(_subOpen)sidesOfSub(sub).forEach(side=>{h+=dRow(_slIcon(sub)+' '+(side||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),sideFactP(sub,side),false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote});});
     });
     return h;
   };
@@ -13555,85 +13617,149 @@ function _pfFoldKey(dir,code,month,mode){return JSON.stringify([String(dir),Stri
 // ⚠ Сравнение в ЦЕЛЫХ КОПЕЙКАХ: на суммах из тысяч записей хвост float даёт ложное расхождение
 //   (то же правило, что у kop() в светофоре БДР).
 function _pfFoldKop(v){return Math.round((+v||0)*100);}
-window.pfFold223Sides=function(opts){
-  opts=opts||{};
-  const year=+opts.year||2026, dry=(opts.dry!==false);
-  // ── ⚠ ПЕЧАТЬ НА ПОДСТАВНЫХ ДАННЫХ ОБЯЗАНА ОТЛИЧАТЬСЯ ОТ БОЕВОЙ ───────────────
-  // Поймано 04.09.2026: pfRunTests зовёт эту функцию ТРИЖДЫ на фикстурах, и её вывод был СЛОВО В
-  // СЛОВО как у настоящего сухого прогона - те же строки, та же таблица, три сценария подряд с
-  // противоречащими вердиктами. Вывод тестов приняли за сухой прогон, и это ровно тот класс, что
-  // «зонд врёт»: ИНСТРУМЕНТ ПРОВЕРКИ ВЫГЛЯДИТ КАК РЕЗУЛЬТАТ.
-  // ⚠ Признак живёт НА САМИХ ДАННЫХ (`__fixture` на массиве), а не только в опции вызова: подставу
-  //   делает подставной МАССИВ, и метка обязана ехать вместе с ним. Забудь будущий тест передать
-  //   опцию - метка на фикстуре всё равно сработает; ставит её общий помощник, так что забыть трудно.
-  //   opts.fixture оставлен как ручной переключатель для того, кто зовёт функцию из консоли руками.
-  // ⚠ ДВЕ МЕРЫ СРАЗУ, и одной мало. Префикс в КАЖДОЙ строке - чтобы человек видел по ПЕРВОЙ строке,
-  //   на чём считали (одного заголовка мало: строки листают и читают с середины). Таблица ячеек на
-  //   фикстуре НЕ печатается вовсе - именно она убедительнее всего выглядит боевым результатом, а
-  //   префикс в console.table поставить некуда, он рисует свою рамку.
-  // ⚠ typeof ПЕРЕД Array.isArray: ниже стоит гейт «_planRecords недоступна», и обращение к
-  //   необъявленной переменной здесь уронило бы функцию раньше, чем этот гейт успел бы ответить.
-  const fake=!!(opts.fixture||(typeof _planRecords!=='undefined'&&Array.isArray(_planRecords)&&_planRecords.__fixture));
-  const P=fake?'[ТЕСТ · ПОДСТАВНЫЕ ДАННЫЕ] ':'';
-  const say=t=>console.log(P+t);
-  if(typeof _planRecords==='undefined'||!Array.isArray(_planRecords)){say('⚠ _planRecords недоступна - планы не загружены');return null;}
-  if(window._planEditorOpen){say('⚠ Открыт редактор планов: в нём могут лежать несохранённые правки, и запись их затрёт. Закройте редактор и повторите.');return null;}
+// ── ЯДРО СВЁРТКИ: одно на ОБЕ ветки (прогноз и baseline) ─────────────────────────────────────
+// ⚠ ВТОРОЙ КОПИИ СВЁРТКИ НЕ ЗАВОДИТЬ. Ветки различаются только тем, ОТКУДА взят массив записей и
+//   КУДА он потом кладётся; само правило свёртки одно, и две его копии разошлись бы при первой же
+//   правке - на этой неделе мы чинили ровно такое расхождение трижды (_slSub, bflFunnelStages,
+//   _pfStatusBase). Ядро ЧИСТОЕ: ничего не печатает, ничего не пишет, работает на копиях.
+// Возвращает {src, cells, kept, mixed, bad, keys, maxDev, sum} - решение и печать снаружи.
+function _pfFoldCore(recs,year){
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
-  const isTarget=p=>p&&p.year===year&&p.level==='subarticle'&&c3(p.code)===PF_FOLD_C3;
+  const isTarget=p=>p&&+p.year===+year&&p.level==='subarticle'&&c3(p.code)===PF_FOLD_C3;
   const withSide=p=>isTarget(p)&&String(p.side||'').trim()!=='';
-  const src=_planRecords.filter(withSide);
-  if(!src.length){say('✓ '+year+': записей '+PF_FOLD_C3+' со стороной нет - сворачивать нечего');return{n:0,cells:0,sum:0,applied:false};}
-  // ── СНИМОК ДО: сумма по (направление, подстатья, месяц, режим) ──
-  // ⚠ Считаем по ВСЕМ записям 223, а не только по сворачиваемым: инвариант обещает неизменность ИТОГА
-  //   ячейки, а в ней может уже лежать безымянная запись, к которой мы прибавляем.
-  const totOf=arr=>{const m={};arr.forEach(p=>{if(!isTarget(p))return;const k=_pfFoldKey(p.dir,p.code,p.month,p.mode);m[k]=(m[k]||0)+(+p.value||0);});return m;};
-  const before=totOf(_planRecords);
-  // ── Группировка сворачиваемых по (направление, подстатья, месяц) ──
+  const src=(recs||[]).filter(withSide);
+  // ⚠ Снимок считаем по ВСЕМ записям 223, а не только по сворачиваемым: инвариант обещает
+  //   неизменность ИТОГА ячейки, а в ней может уже лежать безымянная запись, к которой прибавляем.
+  const totOf=arr=>{const m={};(arr||[]).forEach(p=>{if(!isTarget(p))return;const k=_pfFoldKey(p.dir,p.code,p.month,p.mode);m[k]=(m[k]||0)+(+p.value||0);});return m;};
+  if(!src.length)return{src:[],cells:[],kept:null,mixed:[],bad:[],keys:[],maxDev:0,sum:0};
+  const before=totOf(recs);
   // ⚠ РЕЖИМ проверяется отдельно: в value лежат и рубли (money), и доли (pct 0.3 / pct_profit 0.5).
-  //   Сложи мы их вместе - вышло бы число, которое ни рубли, ни проценты (на этом уже обжигались при
-  //   чистке article-записей 31.07.2026). У записи режим ОДИН, поэтому смешанная ячейка - ОТКАЗ, а не
+  //   Сложи мы их вместе - вышло бы число, которое ни рубли, ни проценты (обжигались при чистке
+  //   article-записей 31.07.2026). У записи режим ОДИН, поэтому смешанная ячейка - ОТКАЗ, а не
   //   догадка о том, какой режим считать главным.
-  const cells={};
+  const cellMap={};
   src.forEach(p=>{const k=_pfFoldKey(p.dir,p.code,p.month,'');
-    const c=cells[k]||(cells[k]={dir:p.dir,code:p.code,month:p.month,modes:{},n:0,sum:0,sides:new Set()});
+    const c=cellMap[k]||(cellMap[k]={dir:p.dir,code:p.code,month:p.month,modes:{},n:0,sum:0,sides:new Set()});
     c.modes[p.mode||'money']=1;c.n++;c.sum+=(+p.value||0);c.sides.add(String(p.side).trim());});
-  const list=Object.keys(cells).map(k=>cells[k]).sort((a,b)=>(a.dir+a.code).localeCompare(b.dir+b.code)||a.month-b.month);
-  const mixed=list.filter(c=>Object.keys(c.modes).length>1);
-  if(mixed.length){say('⚠ ОТКАЗ: в '+mixed.length+' ячейках смешаны режимы (₽ и %) - свернуть в одну запись нельзя. Разберите руками:');
-    mixed.slice(0,20).forEach(c=>say('   '+c.dir+' · '+c.code+' · мес '+c.month+' · режимы: '+Object.keys(c.modes).join(', ')));
-    return null;}
-  say((dry?'СУХОЙ ПРОГОН':'ЗАПИСЬ')+': '+year+', код '+PF_FOLD_C3+', level=subarticle, только прогноз (config/plans)');
-  say('  записей со стороной: '+src.length+' в '+list.length+' ячейках (направление × подстатья × месяц); сторон: '+new Set(src.map(p=>String(p.side).trim())).size);
-  // ⚠ Таблица - только на БОЕВЫХ данных: на фикстуре она выглядит настоящим результатом, а префикс
-  //   внутрь console.table не поставить. Вместо неё одна помеченная строка.
-  if(!fake)console.table(list.slice(0,60).map(c=>({'направление':c.dir,'подстатья':c.code,'месяц':c.month,'режим':Object.keys(c.modes)[0],'записей':c.n,'сторон':c.sides.size,'станет одной записью':c.sum})));
-  else say('таблица ячеек на подставных данных НЕ печатается - чтобы её нельзя было принять за боевой прогон');
-  if(!fake&&list.length>60)say('  … показаны первые 60 из '+list.length);
-  // ── Применение к КОПИИ и программная проверка инварианта на ВСЕХ ячейках ──
-  // ⚠ Работаем на КОПИЯХ записей: сухой прогон прибавляет к безымянной записи (ex.value+=...), и без
-  //   клонирования он молча правил бы живые планы в памяти, ничего никуда не записав.
-  const kept=_planRecords.filter(p=>!withSide(p)).map(p=>Object.assign({},p));
-  list.forEach(c=>{const mode=Object.keys(c.modes)[0];
+  const cells=Object.keys(cellMap).map(k=>cellMap[k]).sort((a,b)=>(a.dir+a.code).localeCompare(b.dir+b.code)||a.month-b.month);
+  const mixed=cells.filter(c=>Object.keys(c.modes).length>1);
+  if(mixed.length)return{src,cells,kept:null,mixed,bad:[],keys:[],maxDev:0,sum:0};
+  // ⚠ Работаем на КОПИЯХ записей: свёртка прибавляет к безымянной записи (ex.value+=...), и без
+  //   клонирования сухой прогон молча правил бы живые планы в памяти, ничего никуда не записав.
+  const kept=(recs||[]).filter(p=>!withSide(p)).map(p=>Object.assign({},p));
+  // ⚠ Записываем ОКРУГЛЁННОЕ до копеек: сумма нескольких float даёт хвост (30,299999999999997), и он
+  //   уехал бы в облако как «величина плана». Округление тут ПОСЛЕДНЯЯ операция над рублями - правило
+  //   проекта соблюдено, - и инвариант от него не страдает: он и так сравнивает в ЦЕЛЫХ копейках,
+  //   а сдвиг меньше полукопейки в копейках не виден. Проверять инвариант ПОСЛЕ округления, а не до.
+  const kop2=v=>Math.round((+v||0)*100)/100;
+  cells.forEach(c=>{const mode=Object.keys(c.modes)[0];
     const ex=kept.find(p=>isTarget(p)&&p.dir===c.dir&&p.code===c.code&&p.month===c.month&&(p.mode||'money')===mode&&!String(p.side||'').trim());
-    if(ex)ex.value=(+ex.value||0)+c.sum;  // безымянная запись в ячейке уже была - ПРИБАВЛЯЕМ, иначе итог поехал бы
-    else kept.push({dir:c.dir,year,month:c.month,level:'subarticle',code:c.code,mode,value:c.sum});});
+    if(ex)ex.value=kop2((+ex.value||0)+c.sum);  // безымянная запись в ячейке уже была - ПРИБАВЛЯЕМ, иначе итог поехал бы
+    else kept.push({dir:c.dir,year:+year,month:c.month,level:'subarticle',code:c.code,mode,value:kop2(c.sum),side:''});});
   const after=totOf(kept);
   const keys=[...new Set(Object.keys(before).concat(Object.keys(after)))];
-  const bad=keys.filter(k=>_pfFoldKop(before[k]||0)!==_pfFoldKop(after[k]||0));
+  const bad=keys.filter(k=>_pfFoldKop(before[k]||0)!==_pfFoldKop(after[k]||0)).map(k=>({k,was:before[k]||0,now:after[k]||0}));
   const maxDev=keys.reduce((mx,k)=>Math.max(mx,Math.abs((before[k]||0)-(after[k]||0))),0);
-  say('  инвариант: сверено ячеек '+keys.length+', расхождений '+bad.length+', максимум '+maxDev.toFixed(6)+' ₽');
-  if(bad.length){say('⚠ ОТКАЗ: итог по ячейке изменился - НИЧЕГО не записано:');
-    bad.slice(0,20).forEach(k=>{const a=JSON.parse(k);say('   '+a[0]+' · '+a[1]+' · мес '+a[2]+' · ['+a[3]+'] было '+(before[k]||0)+' стало '+(after[k]||0));});
+  return{src,cells,kept,mixed:[],bad,keys,maxDev,sum:cells.reduce((a,c)=>a+c.sum,0)};
+}
+// ⚠ Метаданные снимка НЕ ТРОГАЕМ: у baseline помесячно лежат approvedAt/approvedBy/hadFact/
+//   factAtApproval/retro, и меняться обязан ТОЛЬКО массив records. Сверяем это программно - слепок
+//   всех полей, кроме records, до и после; разошлись - отказ. Не «посмотрели глазами на один месяц».
+function _pfFoldMetaSig(monthObj){const o={};Object.keys(monthObj||{}).forEach(k=>{if(k!=='records')o[k]=monthObj[k];});
+  return JSON.stringify(Object.keys(o).sort().map(k=>[k,o[k]]));}
+window.pfFold223Sides=function(opts){
+  opts=opts||{};
+  const branch=(opts.branch==='baseline')?'baseline':'plans';
+  const dry=(opts.dry!==false);
+  // ── ⚠ ПЕЧАТЬ НА ПОДСТАВНЫХ ДАННЫХ ОБЯЗАНА ОТЛИЧАТЬСЯ ОТ БОЕВОЙ ───────────────
+  // Поймано 04.09.2026: pfRunTests зовёт эту функцию на фикстурах, и её вывод был СЛОВО В СЛОВО как
+  // у настоящего сухого прогона - те же строки, та же таблица, несколько сценариев подряд с
+  // противоречащими вердиктами. Вывод тестов приняли за сухой прогон, и это тот же класс, что
+  // «зонд врёт»: ИНСТРУМЕНТ ПРОВЕРКИ ВЫГЛЯДИТ КАК РЕЗУЛЬТАТ.
+  // ⚠ Признак живёт НА САМИХ ДАННЫХ (`__fixture` на массиве/объекте), а не только в опции вызова:
+  //   подставу делает подставной НАБОР, и метка обязана ехать вместе с ним. Забудь будущий тест
+  //   передать опцию - метка сработает; ставит её общий помощник, так что забыть трудно.
+  // ⚠ ДВЕ МЕРЫ СРАЗУ. Префикс в КАЖДОЙ строке - чтобы человек видел по ПЕРВОЙ строке, на чём считали
+  //   (одного заголовка мало: строки листают и читают с середины). Таблица ячеек на фикстуре НЕ
+  //   печатается вовсе - именно она убедительнее всего выглядит боевым результатом, а префикс в
+  //   console.table поставить некуда, он рисует свою рамку. Третье: на фикстуре не зовём к записи.
+  const fake=!!(opts.fixture
+    ||(typeof _planRecords!=='undefined'&&Array.isArray(_planRecords)&&_planRecords.__fixture)
+    ||(typeof _plansBaseline!=='undefined'&&_plansBaseline&&_plansBaseline.__fixture));
+  const P=fake?'[ТЕСТ · ПОДСТАВНЫЕ ДАННЫЕ] ':'';
+  const say=t=>console.log(P+t);
+  if(window._planEditorOpen){say('⚠ Открыт редактор планов: в нём могут лежать несохранённые правки, и запись их затрёт. Закройте редактор и повторите.');return null;}
+  // ── Единицы работы: ветка решает, ОТКУДА массив записей и КУДА он вернётся ──
+  // ⚠ У baseline единица - СНИМОК МЕСЯЦА, и годы берутся ВСЕ, какие есть в config/plansBaseline.
+  //   Ограничив одним годом, мы оставили бы 2024-2025 с записями по сторонам, а третьего уровня у
+  //   них уже нет - то есть ровно то состояние, ради ухода от которого миграция и делается.
+  const units=[];
+  if(branch==='plans'){
+    if(typeof _planRecords==='undefined'||!Array.isArray(_planRecords)){say('⚠ _planRecords недоступна - планы не загружены');return null;}
+    const y=+opts.year||2026;
+    units.push({label:'прогноз '+y,year:y,recs:_planRecords,put:kept=>{_planRecords=kept;}});
+  }else{
+    if(typeof _plansBaseline==='undefined'||!_plansBaseline||typeof _plansBaseline!=='object'){say('⚠ _plansBaseline недоступна - baseline не загружен');return null;}
+    const years=Object.keys(_plansBaseline).map(Number).filter(y=>y>=2000&&y<=2100).sort();
+    years.forEach(y=>{const map=_baselineMonthsMap(y);
+      Object.keys(map).map(Number).sort((a,b)=>a-b).forEach(m=>{
+        const mo=map[m]; // ⚠ ССЫЛКА на реальный объект месяца: правим records НА МЕСТЕ, не пересобирая
+        units.push({label:'baseline '+y+' · мес '+m,year:y,month:m,recs:(mo.records||[]),mo,
+                    metaBefore:_pfFoldMetaSig(mo),put:kept=>{mo.records=kept;}});});});
+    if(!units.length){say('✓ baseline пуст - ни одного замороженного месяца, сворачивать нечего');return{n:0,cells:0,sum:0,applied:false};}
+  }
+  // ── Прогон ядра по всем единицам ──
+  const res=units.map(u=>Object.assign({u},_pfFoldCore(u.recs,u.year)));
+  const hit=res.filter(r=>r.src.length);
+  const mixedAll=res.filter(r=>r.mixed.length);
+  const badAll=res.filter(r=>r.bad.length);
+  const nRec=hit.reduce((a,r)=>a+r.src.length,0), nCell=hit.reduce((a,r)=>a+r.cells.length,0);
+  const sumAll=hit.reduce((a,r)=>a+r.sum,0);
+  const sides=new Set(); hit.forEach(r=>r.src.forEach(p=>sides.add(String(p.side).trim())));
+  say((dry?'СУХОЙ ПРОГОН':'ЗАПИСЬ')+': ветка '+(branch==='baseline'?'BASELINE (config/plansBaseline)':'ПРОГНОЗ (config/plans)')+', код '+PF_FOLD_C3+', level=subarticle');
+  // ⚠ Сначала показываем, ЧТО НАШЛОСЬ по годам, и только потом вердикт: цифру сверяют с ожидаемой
+  //   ДО того, как соглашаются на запись (по замеру 04.09.2026 в baseline 2026 ждём 2 477 записей).
+  const byYear={}; hit.forEach(r=>{const y=r.u.year;const b=byYear[y]||(byYear[y]={year:y,recs:0,cells:0,sum:0,units:0});
+    b.recs+=r.src.length;b.cells+=r.cells.length;b.sum+=r.sum;b.units++;});
+  const yrs=Object.keys(byYear).map(Number).sort();
+  if(!hit.length){say('✓ записей '+PF_FOLD_C3+' со стороной нет ни в одной единице - сворачивать нечего');return{n:0,cells:0,sum:0,applied:false};}
+  say('  найдено по годам:');
+  yrs.forEach(y=>{const b=byYear[y];say('    '+y+': записей '+b.recs+', ячеек '+b.cells+', Σ '+b.sum.toFixed(2)+(branch==='baseline'?(', месяцев '+b.units):''));});
+  say('  всего: записей '+nRec+', ячеек '+nCell+', Σ '+sumAll.toFixed(2)+', сторон '+sides.size);
+  if(mixedAll.length){say('⚠ ОТКАЗ: смешаны режимы (₽ и %) в одной ячейке - свернуть в одну запись нельзя. Разберите руками:');
+    mixedAll.slice(0,10).forEach(r=>r.mixed.slice(0,10).forEach(c=>say('   '+r.u.label+' · '+c.dir+' · '+c.code+' · мес '+c.month+' · режимы: '+Object.keys(c.modes).join(', '))));
     return null;}
-  say('  ✓ инвариант сошёлся: сумма по (направление, подстатья, месяц, режим) не изменилась ни на копейку');
-  const _sum=list.reduce((a,c)=>a+c.sum,0);
-  // ⚠ На фикстуре НЕ зовём к боевой записи: приняв тестовый вывод за сухой прогон, человек пошёл бы
-  //   по этой инструкции - ровно так вывод тестов и стал выглядеть результатом.
-  if(dry){say(fake?'Это был прогон на ПОДСТАВНЫХ данных внутри pfRunTests. Боевые планы не читались и не менялись.':'Это был СУХОЙ ПРОГОН - ничего не записано. Порядок: (1) ⚙ Действия → «💾 Скачать архив настроек», (2) pfFold223Sides({dry:false}).');return{n:src.length,cells:list.length,sum:_sum,applied:false};}
-  if(!_isAdmin()){say('⚠ Запись config/plans разрешена только администратору - правила RTDB откажут.');return null;}
-  if(!confirm('Свернуть '+src.length+' записей плана '+PF_FOLD_C3+' со сторонами в '+list.length+' безымянных за '+year+' год?\n\nАрхив настроек скачан? Это единственная точка отката.\n\nИтог по каждой (направление, подстатья, месяц) проверен программно и не меняется.')){say('Отменено - ничего не записано');return null;}
-  _planRecords=kept;
-  return _plansSave().then(ok=>{say(ok?'✓ Записано в config/plans':'⚠ Запись НЕ прошла - см. сообщение выше. _planRecords в памяти уже свёрнут: перезагрузите страницу, чтобы вернуть облачное состояние.');return{n:src.length,cells:list.length,sum:_sum,applied:!!ok};});
+  // ⚠ Таблица - только на БОЕВЫХ данных: на фикстуре она выглядит настоящим результатом, а префикс
+  //   внутрь console.table не поставить.
+  const flat=[];hit.forEach(r=>r.cells.forEach(c=>flat.push({'единица':r.u.label,'направление':c.dir,'подстатья':c.code,'месяц':c.month,'режим':Object.keys(c.modes)[0],'записей':c.n,'сторон':c.sides.size,'станет одной записью':c.sum})));
+  if(!fake){console.table(flat.slice(0,60)); if(flat.length>60)say('  … показаны первые 60 из '+flat.length);}
+  else say('таблица ячеек на подставных данных НЕ печатается - чтобы её нельзя было принять за боевой прогон');
+  // ── Инвариант сумм ──
+  const nKeys=res.reduce((a,r)=>a+r.keys.length,0), maxDev=res.reduce((mx,r)=>Math.max(mx,r.maxDev),0);
+  say('  инвариант сумм: сверено ячеек '+nKeys+', расхождений '+badAll.reduce((a,r)=>a+r.bad.length,0)+', максимум '+maxDev.toFixed(6)+' ₽');
+  if(badAll.length){say('⚠ ОТКАЗ: итог по ячейке изменился - НИЧЕГО не записано:');
+    badAll.slice(0,10).forEach(r=>r.bad.slice(0,10).forEach(b=>{const a=JSON.parse(b.k);say('   '+r.u.label+' · '+a[0]+' · '+a[1]+' · мес '+a[2]+' · ['+a[3]+'] было '+b.was+' стало '+b.now);}));
+    return null;}
+  say('  ✓ инвариант сумм сошёлся: сумма по (направление, подстатья, месяц, режим) не изменилась ни на копейку');
+  if(dry){say(fake?'Это был прогон на ПОДСТАВНЫХ данных внутри pfRunTests. Боевые планы не читались и не менялись.'
+                 :'Это был СУХОЙ ПРОГОН - ничего не записано. Порядок: (1) свежий архив настроек, (2) pfFold223Sides({branch:\''+branch+'\',dry:false}).');
+    return{n:nRec,cells:nCell,sum:sumAll,years:yrs,applied:false};}
+  if(!_isAdmin()){say('⚠ Запись разрешена только администратору - правила RTDB откажут.');return null;}
+  const what=branch==='baseline'
+    ?('Свернуть '+nRec+' записей УТВЕРЖДЁННОГО плана '+PF_FOLD_C3+' со сторонами в '+nCell+' безымянных, годы: '+yrs.join(', ')+'?\n\n⚠ ЭТО ИСКЛЮЧЕНИЕ ИЗ ПРАВИЛА «baseline не редактируется». Свёртка ТОЖДЕСТВЕННА: суммы по (направление, подстатья, месяц, режим) проверены программно и не меняются ни на копейку, метаполя снимков (approvedAt/approvedBy/hadFact/factAtApproval/retro) не трогаются. Это миграция формы хранения, а не изменение утверждённого плана.\n\nАрхив настроек скачан СЕЙЧАС? Это единственная точка отката.')
+    :('Свернуть '+nRec+' записей плана '+PF_FOLD_C3+' со сторонами в '+nCell+' безымянных, годы: '+yrs.join(', ')+'?\n\nАрхив настроек скачан? Это единственная точка отката.\n\nИтог по каждой (направление, подстатья, месяц) проверен программно и не меняется.');
+  if(!confirm(what)){say('Отменено - ничего не записано');return null;}
+  // ── Запись: сначала кладём результат, потом СВЕРЯЕМ метаданные, и только потом сохраняем ──
+  res.forEach(r=>{if(r.kept)r.u.put(r.kept);});
+  if(branch==='baseline'){
+    const metaBad=units.filter(u=>u.metaBefore!==undefined&&_pfFoldMetaSig(u.mo)!==u.metaBefore);
+    if(metaBad.length){say('⚠ ОТКАЗ: метаданные снимка изменились - в облако НЕ пишем, перезагрузите страницу:');
+      metaBad.slice(0,10).forEach(u=>say('   '+u.label));
+      return null;}
+    say('  ✓ метаданные снимков целы: approvedAt/approvedBy/hadFact/factAtApproval/retro не изменились ни в одном месяце');
+    return _baselineSave().then(ok=>{say(ok?'✓ Записано в config/plansBaseline':'⚠ Запись НЕ прошла - см. сообщение выше. _plansBaseline в памяти уже свёрнут: перезагрузите страницу, чтобы вернуть облачное состояние.');return{n:nRec,cells:nCell,sum:sumAll,years:yrs,applied:!!ok};});
+  }
+  return _plansSave().then(ok=>{say(ok?'✓ Записано в config/plans':'⚠ Запись НЕ прошла - см. сообщение выше. _planRecords в памяти уже свёрнут: перезагрузите страницу, чтобы вернуть облачное состояние.');return{n:nRec,cells:nCell,sum:sumAll,years:yrs,applied:!!ok};});
 };
 // ===== BASELINE: замороженный план ПО МЕСЯЦАМ - config/plansBaseline/<year>/<month> =====
 // Отдельно от «живого» config/plans. Прогноз правится свободно; замороженный месяц НЕ редактируется никогда (повторная заморозка запрещена).
