@@ -9908,6 +9908,17 @@ function pfRunTests(){
       ok('печать без метки: таблица рисуется',_tab===1,_tab);
       ok('печать без метки: к боевой записи зовём',_cap.some(t=>t.indexOf('dry:false')>=0));
     }finally{ console.log=_oL; console.table=_oT; }
+    // ⚠ СУХОЙ ПРОГОН ОБЯЗАН ПЕЧАТАТЬ РОВНО ТО, ЧТО ЗАПИШЕТСЯ (поймано 04.09.2026): печаталось
+    //   39 823,259999999995, а записывалось 39 823,26 - сверять «до и после» после такого не с чем,
+    //   и сухой прогон перестаёт быть проверкой. Одно число на печать, на запись и на инвариант.
+    //   Тест берёт ОБА значения из одного прогона ядра: показанное в ячейке и легшее в запись.
+    const _fc=_pfFoldCore([
+      {dir:'БФЛ',year:2026,month:1,level:'subarticle',code:'223_Аренда',side:'a',mode:'money',value:10.10},
+      {dir:'БФЛ',year:2026,month:1,level:'subarticle',code:'223_Аренда',side:'b',mode:'money',value:20.20}],2026);
+    const _shown=_fc.cells[0].sum,_written=(_fc.kept.find(p=>p.code==='223_Аренда')||{}).value;
+    ok('показанное значение ячейки округлено до копеек',_shown===30.3,_shown);
+    ok('показывается РОВНО то, что записывается',_shown===_written,_shown+' / '+_written);
+    ok('хвост float до записи не доезжает',String(_written).length<=6,_written);
     // ── Ветка BASELINE: та же свёртка, все годы, метаданные снимка неприкосновенны ──
     // ⚠ Правило «baseline не редактируется» ОСТАЁТСЯ. Санкционировано ровно одно исключение
     //   (Олег, 04.09.2026): тождественная свёртка формы хранения, где суммы не меняются ни на
@@ -13641,17 +13652,19 @@ function _pfFoldCore(recs,year){
   src.forEach(p=>{const k=_pfFoldKey(p.dir,p.code,p.month,'');
     const c=cellMap[k]||(cellMap[k]={dir:p.dir,code:p.code,month:p.month,modes:{},n:0,sum:0,sides:new Set()});
     c.modes[p.mode||'money']=1;c.n++;c.sum+=(+p.value||0);c.sides.add(String(p.side).trim());});
-  const cells=Object.keys(cellMap).map(k=>cellMap[k]).sort((a,b)=>(a.dir+a.code).localeCompare(b.dir+b.code)||a.month-b.month);
+  // ⚠ ОКРУГЛЯЕМ ЗДЕСЬ, а не в момент записи: сухой прогон обязан печатать РОВНО ТО ЧИСЛО, которое
+  //   запишется. Печатал он 39 823,259999999995, а записывалось 39 823,26 - сверять «до и после»
+  //   после такого не с чем, и проверка перестаёт быть проверкой. Одно число на печать, на запись
+  //   и на инвариант; инвариант считается ПОСЛЕ округления, то есть проверяет реальный результат.
+  const kop2=v=>Math.round((+v||0)*100)/100;
+  const cells=Object.keys(cellMap).map(k=>{const c=cellMap[k];c.sum=kop2(c.sum);return c;}).sort((a,b)=>(a.dir+a.code).localeCompare(b.dir+b.code)||a.month-b.month);
   const mixed=cells.filter(c=>Object.keys(c.modes).length>1);
   if(mixed.length)return{src,cells,kept:null,mixed,bad:[],keys:[],maxDev:0,sum:0};
   // ⚠ Работаем на КОПИЯХ записей: свёртка прибавляет к безымянной записи (ex.value+=...), и без
   //   клонирования сухой прогон молча правил бы живые планы в памяти, ничего никуда не записав.
   const kept=(recs||[]).filter(p=>!withSide(p)).map(p=>Object.assign({},p));
-  // ⚠ Записываем ОКРУГЛЁННОЕ до копеек: сумма нескольких float даёт хвост (30,299999999999997), и он
-  //   уехал бы в облако как «величина плана». Округление тут ПОСЛЕДНЯЯ операция над рублями - правило
-  //   проекта соблюдено, - и инвариант от него не страдает: он и так сравнивает в ЦЕЛЫХ копейках,
-  //   а сдвиг меньше полукопейки в копейках не виден. Проверять инвариант ПОСЛЕ округления, а не до.
-  const kop2=v=>Math.round((+v||0)*100)/100;
+  // ⚠ c.sum уже округлён (см. выше). kop2 на сложении с существующей безымянной записью ОСТАЁТСЯ:
+  //   два числа с копейками в сумме снова дают хвост (0,1+0,2), и он уехал бы в облако.
   cells.forEach(c=>{const mode=Object.keys(c.modes)[0];
     const ex=kept.find(p=>isTarget(p)&&p.dir===c.dir&&p.code===c.code&&p.month===c.month&&(p.mode||'money')===mode&&!String(p.side||'').trim());
     if(ex)ex.value=kop2((+ex.value||0)+c.sum);  // безымянная запись в ячейке уже была - ПРИБАВЛЯЕМ, иначе итог поехал бы
