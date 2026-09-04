@@ -9852,7 +9852,14 @@ function pfRunTests(){
   const _svPR=_planRecords;
   try{
     const mk=(dir,code,month,side,value,mode)=>{const r={dir,year:2026,month,level:'subarticle',code,mode:mode||'money',value};if(side)r.side=side;return r;};
-    _planRecords=[
+    // ⚠ ПОДСТАВНОЙ НАБОР ПОМЕЧАЕТСЯ, и ставить метку руками на каждом присваивании нельзя - забудут.
+    //   Всё, что кладётся в _planRecords в тестах, идёт через fix(): она вешает __fixture на массив,
+    //   а pfFold223Sides по этой метке печатает каждую строку с префиксом «ТЕСТ · ПОДСТАВНЫЕ ДАННЫЕ»
+    //   и не рисует таблицу ячеек. Причина - 04.09.2026: вывод тестов приняли за сухой прогон, потому
+    //   что он был словом в слово таким же. Метка едет НА ДАННЫХ, а не в опции вызова: подставу
+    //   делает подставной массив, и признак обязан быть при нём.
+    const fix=arr=>{try{Object.defineProperty(arr,'__fixture',{value:true,enumerable:false});}catch(e){arr.__fixture=true;}return arr;};
+    _planRecords=fix([
       mk('БФЛ','223_Аренда',1,'Линейная 1 оф.301',100.11),
       mk('БФЛ','223_Аренда',1,'Линейная 1 оф.302',200.22),
       mk('БФЛ','223_Аренда',1,'',50.00),                  // безымянная запись в ячейке УЖЕ есть
@@ -9860,7 +9867,7 @@ function pfRunTests(){
       mk('БФЛ','111_ФОТ',1,'Иванов И.И.',999),            // планируется по стороне - не трогать
       mk('БФЛ','226_Консалтинг',1,'ООО Ромашка',777),     // решение отложено - не трогать
       {dir:'БФЛ',year:2025,month:1,level:'subarticle',code:'223_Аренда',mode:'money',value:5,side:'прошлый год'}
-    ];
+    ]);
     const snapBefore=JSON.stringify(_planRecords);
     const r=pfFold223Sides({dry:true});
     ok('миграция: отобраны только 223 нужного года со стороной',!!r&&r.n===3&&r.cells===2,r&&(r.n+' зап. / '+r.cells+' яч.'));
@@ -9875,10 +9882,32 @@ function pfRunTests(){
     ok('миграция: чужой год не попал в отбор',_planRecords.some(p=>p.year===2025&&p.side==='прошлый год'));
     // ⚠ Смешанные режимы в одной ячейке - ОТКАЗ, а не догадка: у записи режим один, а ₽ и доли
     //   в одну сумму не складываются (обжигались на этом при чистке article-записей 31.07.2026).
-    _planRecords=[mk('БФЛ','223_Аренда',3,'оф.1',1000),mk('БФЛ','223_Аренда',3,'оф.2',0.3,'pct')];
+    _planRecords=fix([mk('БФЛ','223_Аренда',3,'оф.1',1000),mk('БФЛ','223_Аренда',3,'оф.2',0.3,'pct')]);
     ok('миграция: смешанные ₽ и % в ячейке - отказ',pfFold223Sides({dry:true})===null);
-    _planRecords=[mk('БФЛ','111_ФОТ',1,'Иванов',10)];
+    _planRecords=fix([mk('БФЛ','111_ФОТ',1,'Иванов',10)]);
     ok('миграция: нечего сворачивать - пустой результат, не отказ',(()=>{const z=pfFold223Sides({dry:true});return !!z&&z.n===0;})());
+    // ── Печать на подставе обязана отличаться от боевой (разбор 04.09.2026) ──
+    // ⚠ Проверяем ПЕЧАТЬ, а не только флаг: дефект был именно в том, что строки совпадали. Ловим
+    //   вывод подменой console.log на время проверки и возвращаем в finally - иначе упавшая проверка
+    //   оставила бы консоль немой до конца сессии.
+    const _oL=console.log,_oT=console.table; let _cap=[],_tab=0;
+    try{
+      console.log=t=>_cap.push(String(t)); console.table=()=>{_tab++;};
+      _planRecords=fix([mk('БФЛ','223_Аренда',1,'оф.1',100),mk('БФЛ','223_Аренда',1,'оф.2',200)]);
+      _cap=[];_tab=0; pfFold223Sides({dry:true});
+      const pref=_cap.filter(t=>t.indexOf('[ТЕСТ · ПОДСТАВНЫЕ ДАННЫЕ] ')===0).length;
+      ok('печать на фикстуре: ПЕРВАЯ строка помечена',_cap.length>0&&_cap[0].indexOf('[ТЕСТ · ПОДСТАВНЫЕ ДАННЫЕ] ')===0,_cap[0]);
+      ok('печать на фикстуре: помечена КАЖДАЯ строка',pref===_cap.length,pref+' из '+_cap.length);
+      ok('печать на фикстуре: таблица ячеек НЕ рисуется',_tab===0,_tab);
+      ok('печать на фикстуре: к боевой записи не зовём',!_cap.some(t=>t.indexOf('dry:false')>=0),_cap.filter(t=>t.indexOf('dry:false')>=0)[0]);
+      // ⚠ И обратная сторона: на НЕпомеченных данных префикса быть НЕ должно, иначе боевой прогон
+      //   выглядел бы тестовым и человек не поверил бы настоящему результату.
+      _planRecords=[mk('БФЛ','223_Аренда',1,'оф.1',100),mk('БФЛ','223_Аренда',1,'оф.2',200)];
+      _cap=[];_tab=0; pfFold223Sides({dry:true});
+      ok('печать без метки: префикса НЕТ',_cap.length>0&&!_cap.some(t=>t.indexOf('[ТЕСТ')===0),_cap[0]);
+      ok('печать без метки: таблица рисуется',_tab===1,_tab);
+      ok('печать без метки: к боевой записи зовём',_cap.some(t=>t.indexOf('dry:false')>=0));
+    }finally{ console.log=_oL; console.table=_oT; }
   }finally{ _planRecords=_svPR; }
 
   const bad=R.filter(r=>!r.pass);
@@ -13529,13 +13558,31 @@ function _pfFoldKop(v){return Math.round((+v||0)*100);}
 window.pfFold223Sides=function(opts){
   opts=opts||{};
   const year=+opts.year||2026, dry=(opts.dry!==false);
-  if(typeof _planRecords==='undefined'||!Array.isArray(_planRecords)){console.log('⚠ _planRecords недоступна - планы не загружены');return null;}
-  if(window._planEditorOpen){console.log('⚠ Открыт редактор планов: в нём могут лежать несохранённые правки, и запись их затрёт. Закройте редактор и повторите.');return null;}
+  // ── ⚠ ПЕЧАТЬ НА ПОДСТАВНЫХ ДАННЫХ ОБЯЗАНА ОТЛИЧАТЬСЯ ОТ БОЕВОЙ ───────────────
+  // Поймано 04.09.2026: pfRunTests зовёт эту функцию ТРИЖДЫ на фикстурах, и её вывод был СЛОВО В
+  // СЛОВО как у настоящего сухого прогона - те же строки, та же таблица, три сценария подряд с
+  // противоречащими вердиктами. Вывод тестов приняли за сухой прогон, и это ровно тот класс, что
+  // «зонд врёт»: ИНСТРУМЕНТ ПРОВЕРКИ ВЫГЛЯДИТ КАК РЕЗУЛЬТАТ.
+  // ⚠ Признак живёт НА САМИХ ДАННЫХ (`__fixture` на массиве), а не только в опции вызова: подставу
+  //   делает подставной МАССИВ, и метка обязана ехать вместе с ним. Забудь будущий тест передать
+  //   опцию - метка на фикстуре всё равно сработает; ставит её общий помощник, так что забыть трудно.
+  //   opts.fixture оставлен как ручной переключатель для того, кто зовёт функцию из консоли руками.
+  // ⚠ ДВЕ МЕРЫ СРАЗУ, и одной мало. Префикс в КАЖДОЙ строке - чтобы человек видел по ПЕРВОЙ строке,
+  //   на чём считали (одного заголовка мало: строки листают и читают с середины). Таблица ячеек на
+  //   фикстуре НЕ печатается вовсе - именно она убедительнее всего выглядит боевым результатом, а
+  //   префикс в console.table поставить некуда, он рисует свою рамку.
+  // ⚠ typeof ПЕРЕД Array.isArray: ниже стоит гейт «_planRecords недоступна», и обращение к
+  //   необъявленной переменной здесь уронило бы функцию раньше, чем этот гейт успел бы ответить.
+  const fake=!!(opts.fixture||(typeof _planRecords!=='undefined'&&Array.isArray(_planRecords)&&_planRecords.__fixture));
+  const P=fake?'[ТЕСТ · ПОДСТАВНЫЕ ДАННЫЕ] ':'';
+  const say=t=>console.log(P+t);
+  if(typeof _planRecords==='undefined'||!Array.isArray(_planRecords)){say('⚠ _planRecords недоступна - планы не загружены');return null;}
+  if(window._planEditorOpen){say('⚠ Открыт редактор планов: в нём могут лежать несохранённые правки, и запись их затрёт. Закройте редактор и повторите.');return null;}
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const isTarget=p=>p&&p.year===year&&p.level==='subarticle'&&c3(p.code)===PF_FOLD_C3;
   const withSide=p=>isTarget(p)&&String(p.side||'').trim()!=='';
   const src=_planRecords.filter(withSide);
-  if(!src.length){console.log('✓ '+year+': записей '+PF_FOLD_C3+' со стороной нет - сворачивать нечего');return{n:0,cells:0,sum:0,applied:false};}
+  if(!src.length){say('✓ '+year+': записей '+PF_FOLD_C3+' со стороной нет - сворачивать нечего');return{n:0,cells:0,sum:0,applied:false};}
   // ── СНИМОК ДО: сумма по (направление, подстатья, месяц, режим) ──
   // ⚠ Считаем по ВСЕМ записям 223, а не только по сворачиваемым: инвариант обещает неизменность ИТОГА
   //   ячейки, а в ней может уже лежать безымянная запись, к которой мы прибавляем.
@@ -13552,13 +13599,16 @@ window.pfFold223Sides=function(opts){
     c.modes[p.mode||'money']=1;c.n++;c.sum+=(+p.value||0);c.sides.add(String(p.side).trim());});
   const list=Object.keys(cells).map(k=>cells[k]).sort((a,b)=>(a.dir+a.code).localeCompare(b.dir+b.code)||a.month-b.month);
   const mixed=list.filter(c=>Object.keys(c.modes).length>1);
-  if(mixed.length){console.log('⚠ ОТКАЗ: в '+mixed.length+' ячейках смешаны режимы (₽ и %) - свернуть в одну запись нельзя. Разберите руками:');
-    mixed.slice(0,20).forEach(c=>console.log('   '+c.dir+' · '+c.code+' · мес '+c.month+' · режимы: '+Object.keys(c.modes).join(', ')));
+  if(mixed.length){say('⚠ ОТКАЗ: в '+mixed.length+' ячейках смешаны режимы (₽ и %) - свернуть в одну запись нельзя. Разберите руками:');
+    mixed.slice(0,20).forEach(c=>say('   '+c.dir+' · '+c.code+' · мес '+c.month+' · режимы: '+Object.keys(c.modes).join(', ')));
     return null;}
-  console.log((dry?'СУХОЙ ПРОГОН':'ЗАПИСЬ')+': '+year+', код '+PF_FOLD_C3+', level=subarticle, только прогноз (config/plans)');
-  console.log('  записей со стороной: '+src.length+' в '+list.length+' ячейках (направление × подстатья × месяц); сторон: '+new Set(src.map(p=>String(p.side).trim())).size);
-  console.table(list.slice(0,60).map(c=>({'направление':c.dir,'подстатья':c.code,'месяц':c.month,'режим':Object.keys(c.modes)[0],'записей':c.n,'сторон':c.sides.size,'станет одной записью':c.sum})));
-  if(list.length>60)console.log('  … показаны первые 60 из '+list.length);
+  say((dry?'СУХОЙ ПРОГОН':'ЗАПИСЬ')+': '+year+', код '+PF_FOLD_C3+', level=subarticle, только прогноз (config/plans)');
+  say('  записей со стороной: '+src.length+' в '+list.length+' ячейках (направление × подстатья × месяц); сторон: '+new Set(src.map(p=>String(p.side).trim())).size);
+  // ⚠ Таблица - только на БОЕВЫХ данных: на фикстуре она выглядит настоящим результатом, а префикс
+  //   внутрь console.table не поставить. Вместо неё одна помеченная строка.
+  if(!fake)console.table(list.slice(0,60).map(c=>({'направление':c.dir,'подстатья':c.code,'месяц':c.month,'режим':Object.keys(c.modes)[0],'записей':c.n,'сторон':c.sides.size,'станет одной записью':c.sum})));
+  else say('таблица ячеек на подставных данных НЕ печатается - чтобы её нельзя было принять за боевой прогон');
+  if(!fake&&list.length>60)say('  … показаны первые 60 из '+list.length);
   // ── Применение к КОПИИ и программная проверка инварианта на ВСЕХ ячейках ──
   // ⚠ Работаем на КОПИЯХ записей: сухой прогон прибавляет к безымянной записи (ex.value+=...), и без
   //   клонирования он молча правил бы живые планы в памяти, ничего никуда не записав.
@@ -13571,17 +13621,19 @@ window.pfFold223Sides=function(opts){
   const keys=[...new Set(Object.keys(before).concat(Object.keys(after)))];
   const bad=keys.filter(k=>_pfFoldKop(before[k]||0)!==_pfFoldKop(after[k]||0));
   const maxDev=keys.reduce((mx,k)=>Math.max(mx,Math.abs((before[k]||0)-(after[k]||0))),0);
-  console.log('  инвариант: сверено ячеек '+keys.length+', расхождений '+bad.length+', максимум '+maxDev.toFixed(6)+' ₽');
-  if(bad.length){console.log('⚠ ОТКАЗ: итог по ячейке изменился - НИЧЕГО не записано:');
-    bad.slice(0,20).forEach(k=>{const a=JSON.parse(k);console.log('   '+a[0]+' · '+a[1]+' · мес '+a[2]+' · ['+a[3]+'] было '+(before[k]||0)+' стало '+(after[k]||0));});
+  say('  инвариант: сверено ячеек '+keys.length+', расхождений '+bad.length+', максимум '+maxDev.toFixed(6)+' ₽');
+  if(bad.length){say('⚠ ОТКАЗ: итог по ячейке изменился - НИЧЕГО не записано:');
+    bad.slice(0,20).forEach(k=>{const a=JSON.parse(k);say('   '+a[0]+' · '+a[1]+' · мес '+a[2]+' · ['+a[3]+'] было '+(before[k]||0)+' стало '+(after[k]||0));});
     return null;}
-  console.log('  ✓ инвариант сошёлся: сумма по (направление, подстатья, месяц, режим) не изменилась ни на копейку');
+  say('  ✓ инвариант сошёлся: сумма по (направление, подстатья, месяц, режим) не изменилась ни на копейку');
   const _sum=list.reduce((a,c)=>a+c.sum,0);
-  if(dry){console.log('Это был СУХОЙ ПРОГОН - ничего не записано. Порядок: (1) ⚙ Действия → «💾 Скачать архив настроек», (2) pfFold223Sides({dry:false}).');return{n:src.length,cells:list.length,sum:_sum,applied:false};}
-  if(!_isAdmin()){console.log('⚠ Запись config/plans разрешена только администратору - правила RTDB откажут.');return null;}
-  if(!confirm('Свернуть '+src.length+' записей плана '+PF_FOLD_C3+' со сторонами в '+list.length+' безымянных за '+year+' год?\n\nАрхив настроек скачан? Это единственная точка отката.\n\nИтог по каждой (направление, подстатья, месяц) проверен программно и не меняется.')){console.log('Отменено - ничего не записано');return null;}
+  // ⚠ На фикстуре НЕ зовём к боевой записи: приняв тестовый вывод за сухой прогон, человек пошёл бы
+  //   по этой инструкции - ровно так вывод тестов и стал выглядеть результатом.
+  if(dry){say(fake?'Это был прогон на ПОДСТАВНЫХ данных внутри pfRunTests. Боевые планы не читались и не менялись.':'Это был СУХОЙ ПРОГОН - ничего не записано. Порядок: (1) ⚙ Действия → «💾 Скачать архив настроек», (2) pfFold223Sides({dry:false}).');return{n:src.length,cells:list.length,sum:_sum,applied:false};}
+  if(!_isAdmin()){say('⚠ Запись config/plans разрешена только администратору - правила RTDB откажут.');return null;}
+  if(!confirm('Свернуть '+src.length+' записей плана '+PF_FOLD_C3+' со сторонами в '+list.length+' безымянных за '+year+' год?\n\nАрхив настроек скачан? Это единственная точка отката.\n\nИтог по каждой (направление, подстатья, месяц) проверен программно и не меняется.')){say('Отменено - ничего не записано');return null;}
   _planRecords=kept;
-  return _plansSave().then(ok=>{console.log(ok?'✓ Записано в config/plans':'⚠ Запись НЕ прошла - см. сообщение выше. _planRecords в памяти уже свёрнут: перезагрузите страницу, чтобы вернуть облачное состояние.');return{n:src.length,cells:list.length,sum:_sum,applied:!!ok};});
+  return _plansSave().then(ok=>{say(ok?'✓ Записано в config/plans':'⚠ Запись НЕ прошла - см. сообщение выше. _planRecords в памяти уже свёрнут: перезагрузите страницу, чтобы вернуть облачное состояние.');return{n:src.length,cells:list.length,sum:_sum,applied:!!ok};});
 };
 // ===== BASELINE: замороженный план ПО МЕСЯЦАМ - config/plansBaseline/<year>/<month> =====
 // Отдельно от «живого» config/plans. Прогноз правится свободно; замороженный месяц НЕ редактируется никогда (повторная заморозка запрещена).
