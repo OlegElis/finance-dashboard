@@ -1197,6 +1197,41 @@ function _planSideMD(recsAll,cvt){return (d,code,side,m)=>{const recs=recsAll.fi
 // стороны кода: факт ∪ baseline ∪ прогноз ∪ объекты аренды (для 223); hasUn - есть план/факт без стороны
 function _sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code){const named={};let hasUn=false;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});if(_slRent(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};}
 
+// ── Общий префикс в списке сторон срезается, чтобы строки РАЗЛИЧАЛИСЬ НА ГЛАЗ ──
+// ⚠ Полное значение и раньше было доступно - в нативном title на строке. Проблема была не «не узнать
+//   значение», а «не отличить одну строку от другой, не наводя на каждую»: у 223 пятнадцать разных
+//   офисов в ОДНОМ здании, и колонка (max-width:200px + ellipsis) резала их по общему хвосту адреса,
+//   оставляя на экране «630105, г. Новосибирск, ул. Линейная, 1…» пятнадцать раз подряд.
+// ⚠ Лечится ПОКАЗОМ, а не данными: справочник чист (19 записей, 19 уникальных - замер 04.09.2026),
+//   и «почистить дубли» тут нечего.
+// ⚠ Граница среза - СИЛЬНЫЙ разделитель (запятая, точка с запятой, слэш), а НЕ любой пробел.
+//   По символу вышло бы «…инейная, 1, оф. 301» - не прочитать вслух. Но и пробел не годится: общий
+//   префикс трёх офисов кончается на «…, оф. », и срез по последнему ПРОБЕЛУ дал бы «…301» / «…302» /
+//   «…415» - строки различаются, а что это за числа, уже не понять. По последней ЗАПЯТОЙ выходит
+//   «…оф. 301» - и различимо, и читается.
+// ⚠ Нет сильного разделителя в общем префиксе - НЕ РЕЖЕМ ВООБЩЕ. Правило работает на структурированных
+//   значениях (адреса), а на произвольном тексте («ООО Ромашка Северная» / «ООО Ромашка Южная»)
+//   молчит: сократить его так, чтобы осталось читаемо, нечем, а неудачное сокращение хуже длинного.
+// ⚠ Порог PF_PREFIX_MIN нужен, чтобы правило не срабатывало на случайном совпадении первых букв
+//   («Иванов»/«Иваненко» дали бы «…ов»/«…енко» - хуже исходного).
+// ⚠ Пустые строки (безымянная сторона «(не распределено)») в расчёте префикса НЕ участвуют и не
+//   трогаются: одна такая строка иначе обнуляла бы общий префикс и правило молчало бы всегда.
+// ⚠ Если хоть одна строка схлопывается в пустоту (она САМА равна префиксу) - не трогаем НИЧЕГО:
+//   строка без текста хуже неразличимой.
+const PF_PREFIX_MIN=12;
+function _pfTrimCommon(labels){
+  const out=(labels||[]).map(l=>String(l==null?'':l));
+  const idx=[]; out.forEach((l,i)=>{if(l.trim())idx.push(i);});
+  if(idx.length<2)return out;
+  let pre=out[idx[0]];
+  idx.forEach(i=>{const s=out[i];let k=0;while(k<pre.length&&k<s.length&&pre.charAt(k)===s.charAt(k))k++;pre=pre.slice(0,k);});
+  const m=pre.match(/^.*[,;\/]\s*/); pre=m?m[0]:'';
+  if(pre.length<PF_PREFIX_MIN)return out;
+  if(idx.some(i=>out[i].slice(pre.length).trim()===''))return out;
+  idx.forEach(i=>{out[i]='…'+out[i].slice(pre.length);});
+  return out;
+}
+
 // ⚠ Третий уровень обязан раскладывать ФАКТ НАЦЕЛО: сумма фактов показанных сторон = факт подстатьи.
 //   Возвращает 0 при сходимости и величину расхождения (в рублях, до копейки) иначе. Вынесено на
 //   верхний уровень СПЕЦИАЛЬНО - чтобы правило проверялось тестом, а не только глазами на живых данных.
@@ -10009,6 +10044,38 @@ function pfRunTests(){
   ok('нет ни факта, ни сторон - сходится',_pfSplitOff(0,[])===0);
   ok('сторож зовётся из рендера и печатает величину',/_pfSplitOff\(childFact\(kind,sub\),_sideFacts\)/.test(src)&&/не раскладывает факт нацело/.test(src));
 
+  // 9. Общий префикс в списке сторон: строки обязаны РАЗЛИЧАТЬСЯ НА ГЛАЗ
+  // ⚠ Полное значение и раньше было в нативном title строки. Проблема была не «не узнать значение», а
+  //   «не отличить одну строку от другой, не наводя на каждую»: пятнадцать офисов в одном здании
+  //   колонка резала по общему хвосту адреса и печатала одинаково.
+  const ADDR=['630105, г. Новосибирск, ул. Линейная, 1, оф. 301',
+              '630105, г. Новосибирск, ул. Линейная, 1, оф. 302',
+              '630105, г. Новосибирск, ул. Линейная, 1, оф. 415'];
+  const _tc=_pfTrimCommon(ADDR);
+  ok('общий префикс срезан',_tc.every(s=>s.indexOf('…')===0),_tc[0]);
+  ok('различающий хвост остался целиком',_tc[0]==='…оф. 301'&&_tc[2]==='…оф. 415',_tc.join(' | '));
+  // ⚠ Срез по ГРАНИЦЕ ТОКЕНА, а не по символу: посимвольный дал бы «…1» / «…2» / «…5» - строки,
+  //   которые различаются, но не читаются.
+  ok('режется по границе токена, а не по символу',_tc.every(s=>!/^…\d/.test(s)),_tc[0]);
+  ok('строки стали различимы',new Set(_tc).size===3);
+  // ⚠ Порог: случайное совпадение первых букв трогать нельзя - «…ов» / «…енко» хуже исходного.
+  ok('короткий общий префикс не трогаем',_pfTrimCommon(['Иванов','Иваненко']).join()==='Иванов,Иваненко');
+  ok('одна строка не трогается',_pfTrimCommon(['630105, г. Новосибирск, ул. Линейная, 1, оф. 301']).length===1
+     &&_pfTrimCommon(['630105, г. Новосибирск, ул. Линейная, 1, оф. 301'])[0].indexOf('…')<0);
+  ok('без общего префикса ничего не меняется',_pfTrimCommon(['Альфа','Бета','Гамма']).join()==='Альфа,Бета,Гамма');
+  // ⚠ Безымянная сторона в расчёте префикса НЕ участвует: одна такая строка иначе обнуляла бы общий
+  //   префикс и правило молчало бы всегда - ровно там, где оно нужнее всего.
+  const _tcU=_pfTrimCommon([ADDR[0],'',ADDR[1]]);
+  ok('пустая сторона префикс не обнуляет',_tcU[0]==='…оф. 301'&&_tcU[2]==='…оф. 302',_tcU.join(' | '));
+  ok('пустая сторона остаётся пустой',_tcU[1]==='');
+  // ⚠ Схлопывание в пустоту запрещено: строка без текста хуже неразличимой.
+  ok('строка, равная префиксу, отменяет срез целиком',
+     _pfTrimCommon(['630105, г. Новосибирск, ул. Линейная, ','630105, г. Новосибирск, ул. Линейная, 1'])[0].indexOf('…')<0);
+  ok('нестроковые значения не роняют',_pfTrimCommon([null,undefined,'Альфа']).length===3);
+  // полное значение обязано остаться в подсказке строки
+  ok('подсказка берёт ПОЛНОЕ значение, а не показанное',/opts\.grand\?` title="\$\{esc\(opts\.fullLabel\|\|label\)\}"`/.test(src));
+  ok('третий уровень передаёт и показанное, и полное',/fullLabel:_ic\+\(side\|\|_SL_UNALLOC\)/.test(src)&&/_pfTrimCommon\(_sideRows\)/.test(src));
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -10843,7 +10910,7 @@ function renderPlanFact(f){
     // Классификация остаётся ЕДИНОЙ (тот же statusOf, тот же PF_WARN) - расходится только объём краски.
     const factCol=(st&&st.col&&st.k!=='ok')?';color:'+st.col:'';
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
-      <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${esc(label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
+      <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${esc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr(planNoteTip,null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):planDash,'')}</td>
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" ${(opts.planNote&&plan==null)?_tipAttr(planNoteTip,null,'Текущий план (рабочий, правится свободно)'):planMark.tip}>${planNum(plan!=null?fmt(revenue?plan:-plan):planDash,planMark.ar)}</td>
@@ -10984,8 +11051,12 @@ function renderPlanFact(f){
       const _sideNote=_slPlanSide(sub)?'':'ведётся по направлению';
       if(_subOpen){
         const _sideFacts=[];
-        _sideRows.forEach(side=>{const _f=sideFactP(sub,side);_sideFacts.push(_f);
-          h+=dRow(_slIcon(sub)+' '+(side||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote});});
+        // ⚠ Показываем РАЗЛИЧАЮЩИЙ хвост, полное значение остаётся в подсказке (opts.fullLabel).
+        //   Иначе пятнадцать офисов в одном здании выглядят одной и той же строкой - см. _pfTrimCommon.
+        const _sideDisp=_pfTrimCommon(_sideRows);
+        _sideRows.forEach((side,_i)=>{const _f=sideFactP(sub,side);_sideFacts.push(_f);
+          const _ic=_slIcon(sub)+' ';
+          h+=dRow(_ic+(_sideDisp[_i]||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote,fullLabel:_ic+(side||_SL_UNALLOC)});});
         // ⚠ СТОРОЖ: третий уровень обязан раскладывать факт НАЦЕЛО - сумма фактов показанных сторон
         //   равна факту подстатьи. Расшифровка, не сходящаяся со строкой, которую человек раскрыл,
         //   заставляет искать потерянные деньги там, где их нет. Молчит, пока сходится.
