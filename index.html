@@ -1232,6 +1232,24 @@ function _pfTrimCommon(labels){
   return out;
 }
 
+// ── Тот же срез, но для БУМАГИ: на листе подсказки нет, и срезанный адрес пропал бы совсем ──
+// ⚠ Возвращает и показанные метки, и общий префикс - чтобы префикс можно было назвать ОДИН раз
+//   подписью под таблицей. На экране полное значение остаётся в title строки, на печати такого
+//   места нет: срезать молча значило бы выкинуть адрес из отчёта, который уносят с собой.
+// ⚠ ВТОРОЙ РЕАЛИЗАЦИИ СРЕЗА ЗДЕСЬ НЕТ И БЫТЬ НЕ ДОЛЖНО: правило (порог PF_PREFIX_MIN, граница по
+//   сильному разделителю, отказ при схлопывании) живёт в _pfTrimCommon, а префикс ВЫЧИСЛЯЕТСЯ ИЗ ЕЁ
+//   РЕЗУЛЬТАТА - disp = '…' + s.slice(pre.length), значит pre.length = s.length - (disp.length - 1).
+//   Посчитай мы префикс своей формулой - подпись однажды назвала бы не то, что реально срезано.
+// ⚠ Хвостовая пунктуация из подписи убирается: «…ул. Линейная, 1, оф. » как «общий адрес» не читается.
+//   Срез при этом остаётся прежним - подчищается ТОЛЬКО текст подписи.
+// prefix==='' означает «среза не было»: подпись в этом случае не печатается вовсе.
+function _pfTrimNote(labels){
+  const disp=_pfTrimCommon(labels),src=(labels||[]).map(l=>String(l==null?'':l));
+  let pre='';
+  for(let i=0;i<disp.length;i++){if(src[i]&&disp[i]!==src[i]){pre=src[i].slice(0,src[i].length-(disp[i].length-1));break;}}
+  return {disp,prefix:pre.replace(/[,;\s]+$/,'')};
+}
+
 // ⚠ Третий уровень обязан раскладывать ФАКТ НАЦЕЛО: сумма фактов показанных сторон = факт подстатьи.
 //   Возвращает 0 при сходимости и величину расхождения (в рублях, до копейки) иначе. Вынесено на
 //   верхний уровень СПЕЦИАЛЬНО - чтобы правило проверялось тестом, а не только глазами на живых данных.
@@ -10076,6 +10094,60 @@ function pfRunTests(){
   ok('подсказка берёт ПОЛНОЕ значение, а не показанное',/opts\.grand\?` title="\$\{esc\(opts\.fullLabel\|\|label\)\}"`/.test(src));
   ok('третий уровень передаёт и показанное, и полное',/fullLabel:_ic\+\(side\|\|_SL_UNALLOC\)/.test(src)&&/_pfTrimCommon\(_sideRows\)/.test(src));
 
+  // 10. Тот же срез на БУМАГЕ: выписка ЦФО и печать плана
+  // ⚠ На листе подсказки нет: срезав молча, мы выкинули бы адрес из отчёта, который уносят с собой.
+  //   Поэтому срез сопровождается подписью, и подпись обязана называть РЕАЛЬНО срезанное.
+  const _tn=_pfTrimNote(ADDR);
+  ok('на бумаге срез тот же',_tn.disp[0]==='…оф. 301'&&_tn.disp[2]==='…оф. 415',_tn.disp.join(' | '));
+  ok('строки листа различимы',new Set(_tn.disp).size===3);
+  ok('подпись называет общий префикс',_tn.prefix==='630105, г. Новосибирск, ул. Линейная, 1',_tn.prefix);
+  // ⚠ Хвостовая запятая с пробелом («…Линейная, 1, оф. ») как «общий адрес» не читается - в подписи её нет.
+  //   Срез при этом не меняется: подчищается ТОЛЬКО текст подписи.
+  ok('в подписи нет хвостовой пунктуации',!/[,;\s]$/.test(_tn.prefix),JSON.stringify(_tn.prefix));
+  ok('подпись одна на список',typeof _tn.prefix==='string');
+  // ⚠ Разные здания - среза нет, и подписи быть не должно: сообщение про то, чего не происходило,
+  //   читается как дефект отчёта.
+  const _tn2=_pfTrimNote(['630105, г. Новосибирск, ул. Линейная, 1, оф. 301','г. Омск, ул. Мира, 4']);
+  ok('разные здания - среза нет',_tn2.disp[0].indexOf('…')<0&&_tn2.disp[1].indexOf('…')<0,_tn2.disp.join(' | '));
+  ok('без среза нет и подписи',_tn2.prefix==='',JSON.stringify(_tn2.prefix));
+  ok('короткий общий префикс подписи не даёт',_pfTrimNote(['Иванов','Иваненко']).prefix==='');
+  // ⚠ ВТОРОЙ РЕАЛИЗАЦИИ СРЕЗА НЕТ: _pfTrimNote обязана отдавать РОВНО то, что вернула _pfTrimCommon.
+  //   Разъедься они - подпись называла бы один префикс, а строки были бы срезаны по другому.
+  ok('срез берётся у _pfTrimCommon, а не считается заново',_pfTrimNote(ADDR).disp.join('|')===_pfTrimCommon(ADDR).join('|'));
+  ok('префикс+хвост восстанавливают исходную строку',
+     (_tn.prefix+', '+_tn.disp[0].slice(1))===ADDR[0],_tn.prefix+', '+_tn.disp[0].slice(1));
+  const cg=String(cfoStatementGen);
+  ok('подпись печатается только при состоявшемся срезе',/const trimNote=\(\)=>\{if\(!_trimPre\.length\)return '';/.test(cg));
+  ok('копилка сбрасывается перед сборкой строк секции',/trimReset\(\);\n\s*const inner=sec\.codes\.length/.test(cg)&&/trimReset\(\);\n\s*sec\.codes\.forEach/.test(cg));
+  ok('подпись стоит под таблицей своей секции',/<\/tbody><\/table>'\+trimNote\(\)/.test(cg));
+  // ⚠ Список сторон считается ОДИН раз: строки и префикс обязаны быть от одного списка.
+  ok('стороны берутся один раз на подстатью',(cg.match(/sidesWithActivity\(dirsSet,code\)/g)||[]).length===2,
+     (cg.match(/sidesWithActivity\(dirsSet,code\)/g)||[]).length);
+  ok('в строке печатается показанное, а не исходное',!/esc\(side\|\|UNALLOC\)/.test(cg)&&(cg.match(/esc\(T\.disp\[si\]\|\|UNALLOC\)/g)||[]).length===2);
+
+  // ⚠ Гейт плана стороны в ВЫПИСКЕ - в точке рождения плана (sideBlMonth/sideFcMonth), а не в местах
+  //   вывода: отсюда он закрывает обе плановые колонки, обе Δ и отбор строк (sideHasActivity смотрит
+  //   на те же функции) в ОБОИХ режимах листа. Тот же дефект чинили в сводной 04.09.2026.
+  const cd=String(_cfoStmtData);
+  ok('выписка: гейт стоит в точке рождения плана стороны',
+     /const sideNoPlan=code=>!_slPlanSide\(code\);/.test(cd)
+     &&/const sideBlMonth=\(dirsSet,code,side,m\)=>\{if\(sideNoPlan\(code\)\)return null;/.test(cd)
+     &&/const sideFcMonth=\(dirsSet,code,side,m\)=>\{if\(sideNoPlan\(code\)\)return null;/.test(cd));
+  ok('выписка: гейт не делает исключения для безымянной стороны',!/side!==''&&sideNoPlan|sideNoPlan\(code\)&&side/.test(cd));
+  ok('выписка: расшифровка ФАКТА гейтом не тронута',/isSubLevel=_slFactSide/.test(cd));
+  // ⚠ ИТОГО секции обязано остаться суммой строк ПОДСТАТЕЙ: стороны в суммы не входят вовсе.
+  //   Разъедься это - гейт двигал бы итоги, а он всего лишь разворот поверх посчитанного.
+  ok('суммы секции считаются по кодам, а не по сторонам',
+     /if\(bP!=null\)sBP=\(sBP\|\|0\)\+bP; sFP\+=fP;/.test(cd)
+     &&!/sBP[^\n]*side|sFP[^\n]*side/.test(cd));
+
+  // ⚠ Печать плана (planPrintOwners) держала ТРЕТЬЮ копию правила «у каких подстатей есть сторона»
+  //   и к сентябрю 2026 разошлась в обе стороны. Цифры кода подстатьи в этой функции = копия вернулась.
+  const pp=String(planPrintOwners);
+  ok('печать плана зовёт общий предикат',/if\(_slPlanSide\(code\)\)sidesOf\(/.test(pp));
+  ok('печать плана не разбирает код подстатьи сама',!/111|223/.test(pp),(pp.match(/111|223/g)||[]).join());
+  ok('это ПЛАНИРОВАНИЕ по стороне, а не факт',pp.indexOf('_slFactSide')<0);
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -14852,7 +14924,6 @@ window.planPrintOwners=function(){
   try{_planStage();}catch(e){}
   const wrap=document.getElementById('plan-matrix'); if(!wrap){alert('Откройте редактор планов');return;}
   const year=+wrap.dataset.year, level=wrap.dataset.level||'subarticle';
-  const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const f=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
@@ -14878,7 +14949,6 @@ window.planPrintOwners=function(){
   const cvtD=(d,r,m)=>r.mode==='pct'?r.value*(m?baseM(d,m):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,ctx[d].rev[m]-ctx[d].npExp[m]):netYrD(d)):r.value;
   // фильтры редактора (подстатьи + ответственные)
   const _selP=window._planSubartSel, _ownP=window._planOwnerSel;
-  const isSub=code=>{const c=c3(code);return c==='111'||c==='223';}; // 111-ФОТ / 223-аренда - есть 3-й уровень (сотрудники/объекты)
   // план по направлению (сумма сотрудников) и по конкретному сотруднику/объекту - по месяцу и за год (%/%ЧП → рубли через ctx)
   const dirsWithPlan=(lvl,code)=>allDirs.filter(d=>_planRecords.some(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code));
   const dirsForCode=(lvl,code)=>dirsWithPlan(lvl,code).filter(d=>{if(!_ownP||!_ownP.size)return true;const o=String(_planOwners[_ownerKey(d,code)]||'').trim();return o?_ownP.has(o):_ownP.has('__none__');});
@@ -14896,13 +14966,21 @@ window.planPrintOwners=function(){
   const MON=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   // строка матрицы (подстатья/направление/сотрудник) + 12 месяцев + Год (план ₽)
   const rowH=(getM,getY,labelHtml,cls)=>{let cells='';for(let m=1;m<=12;m++)cells+='<td class="r">'+f0(getM(m))+'</td>';return '<tr class="'+cls+'"><td class="nm '+cls+'">'+labelHtml+'</td>'+cells+'<td class="r yr">'+f0(getY())+'</td></tr>';};
-  // максимальная развёртка: код → направления → (сотрудники/объекты для 111/223)
+  // максимальная развёртка: код → направления → (стороны у подстатей, которые планируют по стороне - _slPlanSide)
   const codeRows=(lvl,code)=>{
     let html=rowH(m=>codeM(lvl,code,m),()=>codeY(lvl,code),esc(code),'codeR');
     dirsForCode(lvl,code).forEach(d=>{
       const ow=String(_planOwners[_ownerKey(d,code)]||'').trim();
       html+=rowH(m=>planMD(d,lvl,code,m),()=>planYD(d,lvl,code),'↳ '+esc(d)+(ow?' · <i>'+esc(ow)+'</i>':''),'dirR');
-      if(isSub(code))sidesOf(d,lvl,code).forEach(side=>{html+=rowH(m=>planMS(d,lvl,code,side,m),()=>planYS(d,lvl,code,side),'• '+(side?esc(side):'(не распределено)'),'sideR');});
+      // ⚠ Признак третьего уровня - ОБЩИЙ предикат _slPlanSide, и это ПЛАНИРОВАНИЕ по стороне: лист
+      //   печатает записи _planRecords, то есть план, а не факт. Здесь жила ТРЕТЬЯ копия правила -
+      //   свой разбор кода подстатьи по трём цифрам, - и к сентябрю 2026 она разошлась в ОБЕ стороны:
+      //   аренду по стороне больше не планируют (после свёртки лист печатал лишнюю строку
+      //   «• (не распределено)», дословно повторявшую строку направления), а консалтинг по стороне
+      //   планируют - и он не печатался вовсе.
+      // ⚠ Кодов подстатей цифрами здесь БОЛЬШЕ НЕТ И БЫТЬ НЕ ДОЛЖНО - это стережёт тест: цифры в этой
+      //   функции означают, что правило снова завели копией. Разбор кодов живёт в _slC3/_slPlanSide.
+      if(_slPlanSide(code))sidesOf(d,lvl,code).forEach(side=>{html+=rowH(m=>planMS(d,lvl,code,side,m),()=>planYS(d,lvl,code,side),'• '+(side?esc(side):'(не распределено)'),'sideR');});
     });
     return html;};
   const sumRow=(label,lvl,list)=>{let cells='',yt=0;
@@ -15404,8 +15482,22 @@ function _cfoStmtData(P){
   const blPlanSideMD=_planSideMD(blRecs,blCvt),fcPlanSideMD=_planSideMD(fcRecs,fcCvt);
   const stmtSides=(dirsSet,code)=>_sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code);
   const sideFactMonth=(dirsSet,code,side,m)=>{let s=0;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
-  const sideBlMonth=(dirsSet,code,side,m)=>{let s=null;dirsSet.forEach(d=>{const v=blPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
-  const sideFcMonth=(dirsSet,code,side,m)=>{let s=null;dirsSet.forEach(d=>{const v=fcPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
+  // ⚠ ПОДСТАТЬЯ, КОТОРУЮ ПО СТОРОНЕ НЕ ПЛАНИРУЮТ (сегодня 223-аренда), В ВЫПИСКЕ - РАСШИФРОВКА
+  //   ФАКТА И ТОЛЬКО ЕГО. Гейт стоит ЗДЕСЬ, в точке, где план стороны рождается, а не в местах вывода:
+  //   отсюда он закрывает разом обе плановые колонки, обе Δ, отбор строк (sideHasActivity смотрит на
+  //   те же две функции) и оба режима листа - месяц и матрицу.
+  // ⚠ Гейт распространяется и на БЕЗЫМЯННУЮ сторону (side=''), и это главное. После свёртки
+  //   04.09.2026 весь план подстатьи лежит именно в ней, и строка «(не распределено)» печатала ПОЛНЫЙ
+  //   план подстатьи рядом с крохотным фактом, а Δ считалась от него - на листе выходила «экономия»
+  //   на весь план, которой нет. На бумаге это хуже, чем было на экране: подсказки нет, переспросить
+  //   не у кого. План подстатьи никуда не делся - он на строке самой ПОДСТАТЬИ, где ему и место.
+  // ⚠ Признак - предикат планирования _slPlanSide, а не список кодов: второй список разошёлся бы
+  //   с ним при первой правке. Та же правка в сводной БДР - _sideNoPlan в renderPlanFact.
+  // ⚠ ИТОГО секций от гейта НЕ двигается: суммы складываются по КОДАМ (blMonth/factMonth), стороны
+  //   в них не участвуют вовсе - третий уровень был и остаётся разворотом поверх посчитанного.
+  const sideNoPlan=code=>!_slPlanSide(code);
+  const sideBlMonth=(dirsSet,code,side,m)=>{if(sideNoPlan(code))return null;let s=null;dirsSet.forEach(d=>{const v=blPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
+  const sideFcMonth=(dirsSet,code,side,m)=>{if(sideNoPlan(code))return null;let s=null;dirsSet.forEach(d=>{const v=fcPlanSideMD(d,code,side,m);if(v!=null)s=(s||0)+v;});return s;};
   // строка стороны печатается ТОЛЬКО при реальном движении за год: Σ факта за 12 мес > 0 ИЛИ Σ плана (baseline+прогноз) за 12 мес > 0.
   // Иначе объекты из справочника _rentObjects (и нулевые план-записи) засоряют таблицу. Общий фильтр для ФОТ/аренды/консалтинга.
   const sideHasActivity=(dirsSet,code,side)=>{let fY=0,pY=0;for(let m=1;m<=12;m++){fY+=sideFactMonth(dirsSet,code,side,m);const b=sideBlMonth(dirsSet,code,side,m);if(b)pY+=b;const c=sideFcMonth(dirsSet,code,side,m);if(c)pY+=c;}return Math.abs(fY)>0.005||Math.abs(pY)>0.005;};
@@ -15480,22 +15572,39 @@ window.cfoStatementGen=function(O){
   const isSubLevel=_slFactSide,sideIcon=_slIcon,UNALLOC=_SL_UNALLOC;
   // дочерние строки, 7-колоночный режим (конкретный месяц). Приглушённые, факт без знак-цвета
   const dcSub=dv=>dv==null?'<td class="r sub">-</td>':'<td class="r sub" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#6f7682')+'">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
+  // ── Общий префикс сторон: срезается в строке, называется ОДИН раз подписью под таблицей секции ──
+  // ⚠ Копилка сбрасывается ПЕРЕД сборкой строк секции и читается СРАЗУ после - подпись обязана
+  //   относиться к той таблице, под которой стоит. Обе таблицы (месяц и матрица) идут через неё.
+  // ⚠ Подпись печатается ТОЛЬКО при реально состоявшемся срезе (_pfTrimNote вернула префикс).
+  //   Без среза подписи нет: сообщение про то, чего на листе не происходило, читается как дефект.
+  let _trimPre=[];
+  const trimReset=()=>{_trimPre=[];};
+  const trimPush=(code,pre)=>{if(pre&&!_trimPre.some(x=>x.pre===pre))_trimPre.push({code,pre});};
+  const trimNote=()=>{if(!_trimPre.length)return '';
+    // ⚠ Несколько разных префиксов в одной секции - каждый своей строкой И с названием подстатьи:
+    //   две одинаковые с виду подписи с разными значениями хуже отсутствующей.
+    const many=_trimPre.length>1;
+    return '<p class="trimnote">'+_trimPre.map(x=>'Общий адрес объектов'+(many?' · '+esc(x.code):'')+': '+esc(x.pre)).join('<br>')+'</p>';};
   const secSubRows=(dirsSet,code)=>{ if(!wantDetail||!isSubLevel(code))return '';
     let out='';
-    sidesWithActivity(dirsSet,code).forEach(side=>{const bP=frozenSet.has(M)?sideBlMonth(dirsSet,code,side,M):null,fP=sideFactMonth(dirsSet,code,side,M);
+    // ⚠ Список сторон считается ОДИН раз: по нему идут и строки, и общий префикс. Второй вызов
+    //   sidesWithActivity - лишний обход всех сторон и риск получить префикс от другого списка.
+    const sides=sidesWithActivity(dirsSet,code),T=_pfTrimNote(sides);trimPush(code,T.prefix);
+    sides.forEach((side,si)=>{const bP=frozenSet.has(M)?sideBlMonth(dirsSet,code,side,M):null,fP=sideFactMonth(dirsSet,code,side,M);
       let bY=null,fY=0;frozen.forEach(m=>{if(m>M)return;const v=sideBlMonth(dirsSet,code,side,m);if(v!=null)bY=(bY||0)+v;fY+=sideFactMonth(dirsSet,code,side,m);});
       const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
-      out+='<tr class="secsub"><td class="nm sub">'+sideIcon(code)+' '+esc(side||UNALLOC)+'</td><td class="r sub">'+(bP!=null?f(bP):'-')+'</td><td class="r sub">'+f(fP)+'</td>'+dcSub(dP)+'<td class="r sub">'+(bY!=null?f(bY):'-')+'</td><td class="r sub">'+f(fY)+'</td>'+dcSub(dY)+'</tr>';});
+      out+='<tr class="secsub"><td class="nm sub">'+sideIcon(code)+' '+esc(T.disp[si]||UNALLOC)+'</td><td class="r sub">'+(bP!=null?f(bP):'-')+'</td><td class="r sub">'+f(fP)+'</td>'+dcSub(dP)+'<td class="r sub">'+(bY!=null?f(bY):'-')+'</td><td class="r sub">'+f(fY)+'</td>'+dcSub(dY)+'</tr>';});
     return out;};
   // дочерние строки, матрица (12 мес + ГОД). факт нейтрально + утв(замороженный)/прогноз(незамороженный) мелким
   const mSubCell=(fv,pv,fr,fcv)=>{let sub='';if(fr&&pv!=null)sub='<span class="mp">'+fM(pv)+'</span>';else if(!fr&&fcv!=null)sub='<span class="mpf">'+fM(fcv)+'</span>';return '<td class="mx sub"><span class="mf">'+fM(fv)+'</span>'+sub+'</td>';};
   const mSubYear=(yf,ypf,yfc)=>'<td class="mx sub"><span class="mf">'+fM(yf)+'</span>'+(ypf!=null?'<span class="mp">'+fM(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+fM(yfc)+'</span>':'')+'</td>';
   const mSubRows=(sec,code)=>{ if(!wantDetail||sec.kind==='inc'||!isSubLevel(code))return '';
     const dirsSet=sec.pairSet[code];let out='';
-    sidesWithActivity(dirsSet,code).forEach(side=>{let yf=0,ypf=null,yfc=null,cells='';
+    const sides=sidesWithActivity(dirsSet,code),T=_pfTrimNote(sides);trimPush(code,T.prefix);
+    sides.forEach((side,si)=>{let yf=0,ypf=null,yfc=null,cells='';
       for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const fv=sideFactMonth(dirsSet,code,side,m);const pv=fr?sideBlMonth(dirsSet,code,side,m):null;const fcv=sideFcMonth(dirsSet,code,side,m);
         yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;if(fcv!=null)yfc=(yfc||0)+fcv;cells+=mSubCell(fv,pv,fr,fr?null:fcv);}
-      out+='<tr class="mxsub"><td class="nm sub">'+sideIcon(code)+' '+esc(side||UNALLOC)+'</td>'+cells+mSubYear(yf,ypf,yfc)+'</tr>';});
+      out+='<tr class="mxsub"><td class="nm sub">'+sideIcon(code)+' '+esc(T.disp[si]||UNALLOC)+'</td>'+cells+mSubYear(yf,ypf,yfc)+'</tr>';});
     return out;};
   // цветная Δ-ячейка РАСХОДОВ (перерасход красный, экономия зелёная)
   const dCell=(dv,bold)=>dv==null?'<td class="r'+(bold?' b':'')+'">-</td>':'<td class="r'+(bold?' b':'')+'" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#23272f')+';font-weight:700">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
@@ -15536,8 +15645,9 @@ window.cfoStatementGen=function(O){
     return rows;};
   const secTable=(sec,totLabel)=>{const dSP=sec.sBP!=null?sec.sFP-sec.sBP:null,dSY=sec.sBY!=null?sec.sFY-sec.sBY:null;const dc=sec.kind==='inc'?dCellInc:dCell;
     const totRow=sec.codes.length?'<tr class="tot"><td class="nm b">'+esc(totLabel||'ИТОГО')+'</td><td class="r b">'+(sec.sBP!=null?f(sec.sBP):'-')+'</td><td class="r b">'+f(sec.sFP)+'</td>'+dc(dSP,true)+'<td class="r b">'+(sec.sBY!=null?f(sec.sBY):'-')+'</td><td class="r b">'+f(sec.sFY)+'</td>'+dc(dSY,true)+'</tr>':'';
+    trimReset();
     const inner=sec.codes.length?(secRows(sec)+totRow):'<tr><td colspan="7" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
-    return '<table>'+COLG+THEAD+'<tbody>'+inner+'</tbody></table>';};
+    return '<table>'+COLG+THEAD+'<tbody>'+inner+'</tbody></table>'+trimNote();};
   // строка ИТОГО в 7-колоночном режиме (месяц) - для блок-итогов и ЧП; inc=true → обратный цвет Δ
   const secTotRow=(label,sBP,sFP,sBY,sFY,inc,sign)=>{const dc=inc?dCellInc:dCell;const dSP=sBP!=null?sFP-sBP:null,dSY=sBY!=null?sFY-sBY:null;const vc=v=>sign?' style="color:'+(v>=-0.0001?'#1e8a54':'#c0392b')+'"':'';return '<tr class="tot"><td class="nm b">'+esc(label)+'</td><td class="r b">'+(sBP!=null?f(sBP):'-')+'</td><td class="r b"'+vc(sFP)+'>'+f(sFP)+'</td>'+dc(dSP,true)+'<td class="r b">'+(sBY!=null?f(sBY):'-')+'</td><td class="r b"'+vc(sFY)+'>'+f(sFY)+'</td>'+dc(dSY,true)+'</tr>';};
   const secTotTable=rowsHtml=>'<table>'+COLG+THEAD+'<tbody>'+rowsHtml+'</tbody></table>';
@@ -15558,6 +15668,7 @@ window.cfoStatementGen=function(O){
   const matrixTable=(sec,totLabel)=>{
     const inc=sec.kind==='inc';
     const totF=new Array(13).fill(0),totP=new Array(13).fill(null),totFC=new Array(13).fill(null);let yfT=0,ypfT=null,yfcT=null,rows='';
+    trimReset();
     sec.codes.forEach(code=>{let yf=0,ypf=null,yfc=null,cells='';
       for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const fv=sec.factMonth(code,m);const pv=fr?sec.blMonth(code,m):null;const fcv=sec.fcMonth(code,m); // прогноз считаем для всех 12 мес (год = прогноз 12 мес); в ячейке показываем только для незамороженных
         yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;if(fcv!=null)yfc=(yfc||0)+fcv;
@@ -15566,7 +15677,7 @@ window.cfoStatementGen=function(O){
       yfT+=yf;if(ypf!=null)ypfT=(ypfT||0)+ypf;if(yfc!=null)yfcT=(yfcT||0)+yfc;
       rows+='<tr><td class="nm">'+esc(code)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>'+mSubRows(sec,code);});
     const inner=sec.codes.length?(rows+mTotRow(totLabel||'ИТОГО',totF,totP,yfT,ypfT,inc,totFC,yfcT)):'<tr><td colspan="14" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
-    return {html:'<table class="mtx">'+mColg+mHead+'<tbody>'+inner+'</tbody></table>',totF,totP,totFC,yf:yfT,ypf:ypfT,yfc:yfcT};
+    return {html:'<table class="mtx">'+mColg+mHead+'<tbody>'+inner+'</tbody></table>'+trimNote(),totF,totP,totFC,yf:yfT,ypf:ypfT,yfc:yfcT};
   };
   // строка ЧП/net в матрице из двух секций (доходы − расходы), по месяцам + ГОД. inc-семантика цвета (выше плана = зелёный)
   const mNetRow=(label,incTotF,incTotP,incYf,incYpf,expTotF,expTotP,expYf,expYpf,incTotFC,expTotFC,incYfc,expYfc)=>{
@@ -15672,6 +15783,7 @@ window.cfoStatementGen=function(O){
     +'tr.opsec td{background:#f3f5f8;font-weight:700;color:#2b3145;font-size:7.5pt;border:0.75pt solid #9aa1b0}' /* строка-заголовок подстатьи (colspan) - явная рамка */
     +'.noover{margin:14px 0;padding:10px 12px;background:#eef7f0;border:1px solid #bfe3cd;border-radius:6px;color:#1e8a54;font-weight:600;font-size:8.5pt}'
     +'.noinc{margin:4px 0 8px;padding:9px 12px;background:#f5f6f8;border:1px solid #dfe3ea;border-radius:6px;color:#6f7682;font-weight:600;font-size:8pt}'
+    +'.trimnote{margin:3px 0 8px;color:#6f7682;font-size:6.75pt;line-height:1.35}'/* подпись к срезанному общему префиксу сторон: печатается только когда срез был (см. _pfTrimNote) */
     +'.warn{margin-top:8px;padding:7px 10px;background:#fdf3e7;border:1px solid #f0c58a;border-radius:6px;color:#b5651d;font-weight:600;font-size:8pt}'
     +'.sign{margin-top:28px;font-size:8.5pt;color:#333;line-height:2.4}'
     /* ── матрица подстатья × 12: две строки в ячейке (факт крупно + утв. мелким). Границы наследуются от общего table/td выше - модель не трогаем ── */
