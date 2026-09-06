@@ -1153,6 +1153,11 @@ const OPIU_CATS=['Прямые / Переменные','Прямые / Пост�
 //   (у неё возврат идёт ПОСТУПЛЕНИЕМ - своя двусторонняя механика), Дебиторка БФЛ (возврат по
 //   отдельной подстатье 112_Возвраты клиентам) и Займы сотрудникам (знаковая модель inc+out).
 const expOf=r=>-(parseNum(r[COL.OUTCOME])||0);
+// ⚠ ОДИН предикат «вывод чистой прибыли» (127) на файл: аналитика содержит «вывод» и «прибыл».
+//   Жил в шести копиях (главный проход БДР, «факт без плана», разрез по направлениям, индекс факта по
+//   стороне, запекание baseline, факт месяца для заморозки) - разойдись они, строка 127 ушла бы в
+//   расход в одном месте и в распределение в другом, и итоги перестали бы сходиться с ОПиУ.
+const isVyvodRow=r=>{const a=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');return a.includes('вывод')&&a.includes('прибыл');};
 let RAW=[];
 let activeTab='bank';
 // ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи по стороне (ФОТ→сотрудник 👤, аренда→объект 🏢, консалтинг→контрагент 👤). ЕДИНЫЙ источник для Выписки ЦФО, редактора планов и сводной БДР - иначе две копии классификации разъедутся (как было бы с OPIU_CATS). Матрицу «все месяцы» это не касается.
@@ -1188,9 +1193,14 @@ const _slFactSide=c=>_slFot(c)||_slConsult(c); // 111 + консалтинг; 22
 const _slIcon=c=>_slRent(c)?'🏢':'👤';
 const _SL_UNALLOC='(не распределено)';
 // факт по стороне: {dir||ARTICLE_NAME → {сторона → [13 мес]}} - списания sub-level подстатей (вывод прибыли исключён), за год+направления
-function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const v=expOf(r);if(!v)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(!an||!_slFactSide(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=v;});return idx;}
+function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const v=expOf(r);if(!v)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(!an||!_slFactSide(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;if(isVyvodRow(r))return;const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=v;});return idx;}
 // план по стороне: записи level='subarticle' с этой стороной, конвертер cvt(d,rec,m). Σ по сторонам = план кода → дочерние строки сходятся к строке-подстатье.
-function _planSideMD(recsAll,cvt){return (d,code,side,m)=>{const recs=recsAll.filter(p=>p.level==='subarticle'&&p.dir===d&&p.code===code&&String(p.side||'')===side);if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};}
+// ⚠ Индекс dir|code|side строится ОДИН раз при создании (как PIDX в renderPlanFact): раньше каждый
+//   вызов фильтровал весь массив планов (тысячи записей × стороны × месяцы на каждый рендер).
+//   Индексируется снимок массива на момент вызова _planSideMD - все потребители создают его на
+//   один рендер/расчёт и в его пределах записи не меняют.
+function _planSideMD(recsAll,cvt){const IDX=new Map();(recsAll||[]).forEach(p=>{if(p.level!=='subarticle')return;const k=p.dir+'|'+p.code+'|'+String(p.side||'');let a=IDX.get(k);if(!a)IDX.set(k,a=[]);a.push(p);});
+  return (d,code,side,m)=>{const recs=IDX.get(d+'|'+code+'|'+side)||[];if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};}
 // стороны кода: факт ∪ baseline ∪ прогноз (∪ справочник объектов аренды - ветка МЁРТВАЯ, см. ниже); hasUn - есть план/факт без стороны
 // ⚠ Ветка _slRent(code) → config/rentObjects НЕДОСТИЖИМА с 05.09.2026: 223 убран из третьего уровня
 //   целиком (ни в _slPlanSide, ни в _slFactSide), а сюда приходят только коды, прошедшие один из них.
@@ -10247,6 +10257,24 @@ function pfRunTests(){
    ok('алерт заморозки не обещает статус от утверждённого',_am.indexOf('Отклонения по этому месяцу считаются от утверждённого плана')<0&&/Статус и «Остаток к тек\.» по-прежнему считаются от текущего плана/.test(_am));
    ok('окно заморозки называет обе базы',_ao.indexOf('Отклонения считаются только по замороженным месяцам')<0&&/статус и «Остаток к тек\.» - от текущего плана/.test(_ao));}
 
+  // 17. Один предикат «вывод прибыли» на файл; индекс планов по стороне
+  ok('isVyvodRow: «Вывод чистой прибыли»',isVyvodRow({[COL.ANALYTICS]:'Вывод чистой прибыли'})===true);
+  ok('isVyvodRow: регистр и пунктуация не мешают',isVyvodRow({[COL.ANALYTICS]:'ВЫВОД ПРИБЫЛИ (дивиденды)'})===true);
+  ok('isVyvodRow: просто прибыль - не вывод',isVyvodRow({[COL.ANALYTICS]:'Прибыль'})===false&&isVyvodRow({})===false);
+  [['renderPlanFact',renderPlanFact],['_buildSideFactIdx',_buildSideFactIdx],['_baselineBakeMonth',_baselineBakeMonth],['_baselineFactMonth',_baselineFactMonth]]
+    .forEach(([n,fn])=>{const t=String(fn);ok('предикат вывода не скопирован: '+n,t.indexOf('isVyvodRow(')>=0&&t.indexOf("includes('вывод')")<0);});
+  ok('в renderPlanFact три вызова (главный проход, факт без плана, разрез)',(String(renderPlanFact).match(/isVyvodRow\(r\)/g)||[]).length===3,(String(renderPlanFact).match(/isVyvodRow\(r\)/g)||[]).length);
+  {const recs=[{level:'subarticle',dir:'Д',code:'111_ФОТ',side:'Иванов',month:1,mode:'money',value:100},
+               {level:'subarticle',dir:'Д',code:'111_ФОТ',side:'Иванов',month:1,mode:'money',value:50},
+               {level:'subarticle',dir:'Д',code:'111_ФОТ',side:'',month:0,mode:'money',value:1200},
+               {level:'income',dir:'Д',code:'111_ФОТ',side:'Иванов',month:1,mode:'money',value:999}];
+   const f=_planSideMD(recs,(d,r,m)=>r.value);
+   ok('индекс: сумма записей стороны за месяц',f('Д','111_ФОТ','Иванов',1)===150,f('Д','111_ФОТ','Иванов',1));
+   ok('индекс: годовая запись без помесячных - /12',Math.abs(f('Д','111_ФОТ','',3)-100)<1e-9,f('Д','111_ФОТ','',3));
+   ok('индекс: месяц без записи при наличии помесячных - null',f('Д','111_ФОТ','Иванов',2)===null);
+   ok('индекс: чужой уровень и чужое направление - null',f('Х','111_ФОТ','Иванов',1)===null);
+   ok('индекс строится один раз, фильтра по всему массиву на вызов нет',/new Map\(\)/.test(String(_planSideMD))&&!/recsAll\.filter\(/.test(String(_planSideMD)));}
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -10347,7 +10375,7 @@ function renderPlanFact(f){
     const av=expOf(r);
     if(t==='списание'&&av){
       const c=level==='article'?gkey:an;
-      const anl=nrm(r[COL.ANALYTICS]),isVyvod=anl.includes('вывод')&&anl.includes('прибыл'); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
+      const isVyvod=isVyvodRow(r); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
       if(isVyvod){if(c)vyvodAllM[m]+=av; // ⚠ БЕЗ sp: график ЧП идёт под бейджем «по компании», и вывод для него обязан быть по компании (см. vyvodMonth)
         if(sp&&c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
         if(sp&&level==='article'&&sn){(vyvodSubN[sn]=vyvodSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+sn]=pfTxn['vyv|'+sn]||[]).push(r);const K=rd+'||'+sn;(_pdVyv[K]=_pdVyv[K]||new Array(13).fill(0))[m]+=av;}}
@@ -10380,8 +10408,7 @@ function renderPlanFact(f){
       const out=expOf(r),inc=parseNum(r[COL.INCOME]);
       // расходы
       if(t==='списание'&&out&&!isOpeningBalance(an)){
-        const anl=nrm(r[COL.ANALYTICS]);
-        if(!(anl.includes('вывод')&&anl.includes('прибыл'))){ // вывод 127 - распределение, не расход
+        if(!isVyvodRow(r)){ // вывод 127 - распределение, не расход
           const av=out;
           if(!an){_npEmpty.sum+=av;_npEmpty.cnt++;_npEmpty.rows.push(r);}
           else _npBump(_npExpAcc,an,av,rd,r);
@@ -11294,7 +11321,7 @@ function renderPlanFact(f){
     RAW.forEach(r=>{const d=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirsToAgg.indexOf(d)<0)return;if(!sidePassRow(r))return; // ⚠ фильтр по стороне: без него строка направления показывала бы факт всей подстатьи
       const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t==='перемещение')return;const dt=parseDate(r[COL.DATE_OPIU]);if(!dt||dt.getFullYear()!==year)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(an!==sub)return;const m=dt.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=expOf(r),ac=String(r[COL.ARTICLE_CODE]||'').trim();const arr=dirFact[d]||(dirFact[d]=new Array(13).fill(0));
       if(sKind==='inc'){if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))arr[m]+=inc;}
-      else if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');const isV=anl.includes('вывод')&&anl.includes('прибыл');if(sKind==='vyv'?isV:!isV)arr[m]+=out;}});
+      else if(t==='списание'&&out){const isV=isVyvodRow(r);if(sKind==='vyv'?isV:!isV)arr[m]+=out;}});
     const factOf=d=>{const a=dirFact[d];if(!a)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=a[m];return s;}return a[+period]||0;};
     const factMonth=(d,m)=>{const a=dirFact[d];return a?(a[m]||0):0;};
     // прогноз (направление) помесячно - аналог baseDirM, но из прогноза (plans+cvtD); для devBase остатка незамороженного месяца
@@ -14136,7 +14163,7 @@ function _baselineBakeMonth(year,m){
   year=+year;m=+m;
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))];
   const ctx={};allDirs.forEach(dir=>{const rev=new Array(13).fill(0),npExp=new Array(13).fill(0);
-    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const mm=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[mm]+=inc; if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[mm]+=out;} });
+    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const mm=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[mm]+=inc; if(t==='списание'&&out){if(!isVyvodRow(r))npExp[mm]+=out;} });
     ctx[dir]={rev,npExp};});
   const _rpM=(d,mo)=>{const r=(_planRecords||[]).find(p=>p.dir===d&&p.year===year&&p.level==='revenue'&&p.month===mo);return(r&&r.value>0)?r.value:null;};
   const baseM=(d,mo)=>{const rp=_rpM(d,mo);if(rp!=null)return rp;const ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,mo):0;if(ip>0)return ip;return (ctx[d]?ctx[d].rev[mo]:0)||0;};
@@ -14155,7 +14182,7 @@ function _baselineBakeMonth(year,m){
 // факт расходов месяца m (все направления, без «вывода прибыли») + число операций - для factAtApproval/предупреждения
 function _baselineFactMonth(year,m){
   year=+year;m=+m;let sum=0,cnt=0;
-  (RAW||[]).forEach(r=>{const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const out=expOf(r);if(!out)return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year||(d.getMonth()+1)!==m)return;const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');if(anl.includes('вывод')&&anl.includes('прибыл'))return;sum+=out;cnt++;});
+  (RAW||[]).forEach(r=>{const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const out=expOf(r);if(!out)return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year||(d.getMonth()+1)!==m)return;if(isVyvodRow(r))return;sum+=out;cnt++;});
   return {sum,cnt};
 }
 function startBaselineSync(){
