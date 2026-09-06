@@ -10178,6 +10178,18 @@ function pfRunTests(){
    ['planAddEmp',planAddEmp],['planPrintOwners',planPrintOwners]].forEach(([n,fn])=>{
     const h=_lit223(fn);ok('нет литерала кода аренды: '+n,h.length===0,h.join(' '));});
 
+  // 12. Эскейп в АТРИБУТЕ: title/value внутри renderPlanFact - только через _pesc
+  // ⚠ Локальный esc гасит только <. В данных 16 контрагентов с кавычками, включая вложенные
+  //   (ООО "ЮРИДИЧЕСКАЯ КОМПАНИЯ "ОПОРА"), консалтинг остался в третьем уровне - title рвался.
+  {const _name='ООО "ЮРИДИЧЕСКАЯ КОМПАНИЯ "ОПОРА" & партнёры <тест>';
+   const _tmp=document.createElement('div');_tmp.innerHTML='<td title="'+_pesc(_name)+'" data-x="1">x</td>';
+   const _td=_tmp.querySelector('td')||_tmp.firstElementChild;
+   ok('атрибут после разбора равен исходной строке',_td&&_td.getAttribute('title')===_name,_td&&_td.getAttribute('title'));
+   ok('лишних атрибутов от кавычек не появилось',_td&&_td.attributes.length===2,_td&&_td.attributes.length);
+   ok('title третьего уровня идёт через _pesc',/opts\.grand\?` title="\$\{_pesc\(opts\.fullLabel\|\|label\)\}"`/.test(src));
+   ok('в renderPlanFact нет esc( внутри title=/value=',!/(title|value)="[^"\n]*\$\{esc\(/.test(src),(src.match(/(title|value)="[^"\n]*\$\{esc\(/g)||[]).join(' | '));
+   ok('своей копии эскейпа атрибутов в renderPlanFact нет',src.indexOf('_pfEsc')<0);}
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -10187,6 +10199,11 @@ window.pfRunTests=pfRunTests;
 function renderPlanFact(f){
   const el=document.getElementById('tabPlanfact');
   if(!RAW||!RAW.length){el.innerHTML=emptyState('Нет данных','Подключите таблицу (шестерёнка → Подключение)');return;}
+  // ⚠ esc - ТОЛЬКО для текстового содержимого (гасит <). В АТРИБУТ (title=/value=) им вставлять
+  //   нельзя: кавычка в имени контрагента (ООО "ЮРИДИЧЕСКАЯ КОМПАНИЯ "ОПОРА") рвёт атрибут, и хвост
+  //   имени превращается в «атрибуты» тега. Для атрибутов - общий _pesc (&, <, "); своей локальной
+  //   копии эскейпа атрибутов больше нет (тест ищет её имя, поэтому здесь оно не названо).
+  //   Стережёт тест: ни одного esc( внутри title="/value=" в этой функции.
   const esc=s=>String(s||'').replace(/</g,'&lt;');
   const MON=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const dirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
@@ -10643,8 +10660,7 @@ function renderPlanFact(f){
   const perOpts=`<option value="monthly"${isMonthly?' selected':''}>Все месяцы (план/факт)</option><option value="year"${period==='year'?' selected':''}>Весь год (итог)</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>${m}</option>`).join('');
   // year/period select coerces to string; нормализуем в onchange через число для period - оставим строкой, обрабатываем +period
   // мультивыбор Статья/Подстатья (поиск + все/снять); применяется по клику на кнопку (закрытие дропдауна)
-  const _pfEsc=s=>String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');
-  const pfOptList=(items,sel2,change)=>items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_pfEsc(v)}" ${sel2.has(v)?'checked':''} onchange="${change}"> <span>${_pfEsc(v)}</span></label>`).join('');
+  const pfOptList=(items,sel2,change)=>items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_pesc(v)}" ${sel2.has(v)?'checked':''} onchange="${change}"> <span>${_pesc(v)}</span></label>`).join('');
   const pfSearch=ddId=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="expFilterList('${ddId}',this.value)" placeholder="Поиск..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`;
   const pfAllBtns=call=>`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${call.replace('%s','true')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Все</button><button onclick="${call.replace('%s','false')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Снять</button></div>`;
   const pfDDstyle='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:320px;overflow-y:auto;min-width:240px;margin-top:2px';
@@ -10717,7 +10733,7 @@ function renderPlanFact(f){
   //   пояснение к контролу и перечисление заданных фильтров.
   const _pfActive=_pfActiveFilters(f),_pfActN=_pfActive.length;
   const _pfActLbl=_pfActive.map(k=>PF_FILTER_LABELS[k]||k).join(', ');
-  const pfResetBtn=`<button ${_pfActN?`onclick="pfResetFilters()"`:'disabled'} title="${_pfActN?_pfEsc('Сбросить все фильтры вкладки, включая год и период. Сейчас задано: '+_pfActLbl):'Фильтры не заданы - сбрасывать нечего (год и период выбраны всегда и в счёт не идут)'}" style="font-size:11px;line-height:15px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);font-family:var(--sans);${_pfActN?'color:var(--text2);cursor:pointer':'color:var(--text3);opacity:.55;cursor:not-allowed'}">Сбросить${_pfActN?' ('+_pfActN+')':''}</button>`;
+  const pfResetBtn=`<button ${_pfActN?`onclick="pfResetFilters()"`:'disabled'} title="${_pfActN?_pesc('Сбросить все фильтры вкладки, включая год и период. Сейчас задано: '+_pfActLbl):'Фильтры не заданы - сбрасывать нечего (год и период выбраны всегда и в счёт не идут)'}" style="font-size:11px;line-height:15px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);font-family:var(--sans);${_pfActN?'color:var(--text2);cursor:pointer':'color:var(--text3);opacity:.55;cursor:not-allowed'}">Сбросить${_pfActN?' ('+_pfActN+')':''}</button>`;
   const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:10px;padding:3px var(--secpx);min-height:31px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
     <div style="position:relative;display:inline-block"><button id="pf-dir-btn" onclick="pfMultiToggle('pf-dir-dd')" title="Направления (мультивыбор; пусто = все)" style="${pfBtnStyle}">${pfDirBtn}</button><div id="pf-dir-dd" style="${pfDDstyle}">${pfDirDD}</div></div>
@@ -11012,7 +11028,7 @@ function renderPlanFact(f){
     // Классификация остаётся ЕДИНОЙ (тот же statusOf, тот же PF_WARN) - расходится только объём краски.
     const factCol=(st&&st.col&&st.k!=='ok')?';color:'+st.col:'';
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
-      <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${esc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
+      <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${_pesc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr(planNoteTip,null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):planDash,'')}</td>
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" ${(opts.planNote&&plan==null)?_tipAttr(planNoteTip,null,'Текущий план (рабочий, правится свободно)'):planMark.tip}>${planNum(plan!=null?fmt(revenue?plan:-plan):planDash,planMark.ar)}</td>
