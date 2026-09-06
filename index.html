@@ -10392,6 +10392,12 @@ function pfRunTests(){
     finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
   }
 
+  // 21. Экран выписки ЦФО - от текущего плана, цвет общим statusOf
+  {const cs=String(cfoScreenRender);
+   ok('экран: план направления - только текущий (fc), выбора по заморозке нет',/const planDir=\(d,code\)=>\{const fc=rev\?D\.fcPlanIncMD:D\.fcPlanMD;/.test(cs)&&cs.indexOf('frozenSet.has(m)?bl')<0);
+   ok('экран: цвет - общий statusOf',/const col=\(fa,p\)=>\{const st=statusOf\(p,fa,rev\);/.test(cs));
+   ok('экран: своей копии светофора нет (порог литералом)',cs.indexOf('<=0.2')<0);}
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -15520,8 +15526,9 @@ function cfoScreenRender(){
   const sel=rev?'inc':'exp';
   // ── ПЛАН и ФАКТ по КОНКРЕТНОМУ НАПРАВЛЕНИЮ (не сумма по всем, как в секциях выписки) ──
   // ⚠ Своей арифметики тут нет: те же blPlanMD/fcPlanMD/factIdx из _cfoStmtData, просто без
-  //   сложения направлений. Правило выбора базы прежнее: замороженный месяц - утверждённое,
-  //   иначе текущий план.
+  //   сложения направлений. База исполнения - ТЕКУЩИЙ план (решение Олега 06.09.2026, как в
+  //   сводной и своде ЦФО с 03.09): выбора по заморозке здесь больше нет. Утверждённое на экране
+  //   не показывается - оно в колонке «Утв.» печатного листа.
   const MS=ytd?Array.from({length:M},(_,i)=>i+1):[M];
   // ⚠ «Плана НЕТ» (null) и «план равен НУЛЮ» - разные вещи, и путать их нельзя. Пустая ячейка
   //   в редакторе не сохраняется вовсе, явный 0 сохраняется (_planStage), то есть «запланировали
@@ -15529,9 +15536,8 @@ function cfoScreenRender(){
   //   отрицательный. Поэтому копим через null (правило проекта sumOrNull), а не через `||0`:
   //   иначе отсутствующий план схлопывался бы в ноль и давал «остаток −33 000» там, где рядом
   //   написано «плана нет».
-  const planDir=(d,code)=>{const bl=rev?D.blPlanIncMD:D.blPlanMD,fc=rev?D.fcPlanIncMD:D.fcPlanMD;
-    let s=null;MS.forEach(m=>{const b=D.frozenSet.has(m)?bl(d,code,m):null;const v=(b!=null)?b:fc(d,code,m);
-      if(v!=null)s=(s||0)+v;});return s;};
+  const planDir=(d,code)=>{const fc=rev?D.fcPlanIncMD:D.fcPlanMD;
+    let s=null;MS.forEach(m=>{const v=fc(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
   const factDir=(d,code)=>{const FI=rev?D.factIncIdx:D.factIdx,a=FI[d+'||'+code];if(!a)return 0;
     let s=0;MS.forEach(m=>{s+=a[m]||0;});return s;};
   const opsDir=(d,code)=>{let o=[];MS.forEach(m=>{o=o.concat(D.opsOf(d,code,m)||[]);});
@@ -15552,8 +15558,10 @@ function cfoScreenRender(){
   //   ≤20% - оранжевый), у ДОХОДОВ - недобрать (факт≥плана зелёный, иначе оранжевый). Правило то же,
   //   что в БДР; второй копии не заводим.
   const hasP=p=>p!=null&&Math.abs(p)>0.005; // есть ЧЕМ мерить исполнение (у нулевого плана процента нет по арифметике)
-  const col=(fa,p)=>p==null?'var(--text3)':(rev?(fa>=p?'var(--income)':'var(--orange)')
-                      :(fa>p?'var(--outcome)':(hasP(p)&&(p-fa)/p<=0.2?'var(--orange)':'var(--income)')));
+  // ⚠ Цвет - ОБЩИЙ statusOf (порог PF_WARN, копейка в копейку, база ровно ноль, доходное зеркало).
+  //   Здесь жила своя копия светофора: порог литералом 0.2, без округления, без ветки нулевой базы -
+  //   вердикт на экране мог разойтись со сводной по той же подстатье. Снята 06.09.2026.
+  const col=(fa,p)=>{const st=statusOf(p,fa,rev);return st.k==='none'?'var(--text3)':st.col;};
   const w=(fa,p)=>Math.min(100,Math.round(hasP(p)?fa/p*100:(fa?100:0)));
   // ⚠ null - это «нет величины», и в ячейке стоит ПРОЧЕРК, а не 0,00: минус-факт в колонке «Осталось»
   //   читается как перерасход, хотя перерасходовать нечего - плана нет.
