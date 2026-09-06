@@ -8922,7 +8922,7 @@ window.pfShowTxn=function(kind,code,m,dir){
   if(!rows.length)return;
   const meta=window._pfTxnMeta||{};
   window._opiuTxnMap=window._opiuTxnMap||{};
-  window._opiuTxnMap['__pfcell']={label:code,artLabel:kind==='inc'?'Доходы':kind==='vyv'?'Распределение прибыли':'Расходы',secLabel:'БДР · '+(dir||meta.dirLabel||'')+' · '+(meta.year||'')+plbl,rows,pks:[]};
+  window._opiuTxnMap['__pfcell']={label:String(code).startsWith('__side:')?code.slice(7):code,artLabel:kind==='inc'?'Доходы':kind==='vyv'?'Распределение прибыли':'Расходы',secLabel:'БДР · '+(dir||meta.dirLabel||'')+' · '+(meta.year||'')+plbl,rows,pks:[]};
   if(window.opiuShowTxnModal)opiuShowTxnModal('__pfcell');
 };
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
@@ -10200,6 +10200,36 @@ function pfRunTests(){
    ok('planSave возвращает результат облака',/return allOk;/.test(_ps));
    ok('planSave не зовётся с кнопкой заморозки (подпись не переименовывается)',/ok=await planSave\(\)/.test(_sta)&&!/planSave\(btn\)/.test(_sta));}
 
+  // 14. ЖИВОЙ ПРОГОН на данных вкладки: разрез «по направлениям» под контрагентом
+  // ⚠ Перерисовывает вкладку с подменённым фильтром и возвращает состояние; запускать С ВКЛАДКИ БДР
+  //   (рендерер выходит первой строкой, если контейнера нет - см. правило про снимки для консоли).
+  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
+  else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
+    try{
+      const yr=+F0.year||new Date().getFullYear();
+      // сторона с наибольшим числом списаний за год - чтобы разрез был непустым
+      const cnt={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание'||!expOf(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;const sd=String(r[COL.SECOND_SIDE]||'').trim();if(!sd||!String(r[COL.ACTIVITY_DIR]||'').trim())return;cnt[sd]=(cnt[sd]||0)+1;});
+      const side=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
+      ok('живой прогон: есть сторона со списаниями за '+yr,!!side,side);
+      if(side){
+        Object.assign(_tabFilters.planfact,{sides:[side],rowDim:'dir',period:'year',year:yr,_defPeriodDone:true});
+        renderActiveTab();
+        const num=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
+        const trs=[...document.querySelectorAll('#tabPlanfact tr[onclick*="__side:"]')];
+        ok('строки направлений под контрагентом кликабельны (ключ __side:)',trs.length>0,trs.length);
+        let checked=0,badRows=[];
+        trs.forEach(tr=>{const m=tr.getAttribute('onclick').match(/pfShowTxn\('(\w+)','__side:([^']*)'/);if(!m)return;
+          const kind=m[1],dir=m[2].replace(/\\'/g,"'");const own=(window._pfOwnSubs||{})[kind+'|__side:'+dir]||[];
+          const rows=own.reduce((a,e)=>a.concat(((window._pfTxn||{})[kind+'|'+e.sub]||[]).filter(r=>e.dirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()))),[]);
+          const sum=rows.reduce((s,r)=>s+(kind==='inc'?(parseNum(r[COL.INCOME])||0):expOf(r)),0);
+          const shown=num(tr.children[4]&&tr.children[4].textContent);
+          checked++;if(Math.abs(Math.abs(sum)-Math.abs(shown))>0.006)badRows.push(kind+'|'+dir+': строка '+shown+' ≠ модал '+sum.toFixed(2));});
+        ok('сумма операций модала = факту строки направления ('+checked+' строк)',checked>0&&!badRows.length,badRows.join('; ')||checked);
+      }
+    }catch(e){ok('живой прогон упал',false,String(e&&e.message||e));}
+    finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
+  }
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -11296,7 +11326,14 @@ function renderPlanFact(f){
       // счётчик шапки: у контрагента секций может быть до трёх, строки каждой - направления
       _cntDir=(_cntDir||0)+rows2.length;
       if(kind==='inc')_cntInc=(_cntInc||0)+rows2.length;else _cntExp=(_cntExp||0)+rows2.length;
-      const body2=rows2.map(d=>dRow(d,baseOfD(d),planOfD(d),factOf(d),isRev,false,kind,null,{dir:d,rem:remOf(d)})).join('');
+      // ⚠ Клик по строке направления обязан открывать операции, а не молчать. С code=null строка
+      //   получала курсор-руку и подпись «Клик - операции по строке», а pfShowTxn с пустым ключом
+      //   молча выходил. Ключ '__side:'+направление кладётся в _pfOwnSubs так же, как под фильтром
+      //   ЦФО: [{sub,dirs:[d]}] - pfShowTxn уже читает его и режет операции по dirs; _pfTxn при этом
+      //   собран под флагом sp, то есть в модал попадают операции ТОЛЬКО выбранной стороны - ровно
+      //   то, из чего сложен факт строки (_sideDirFactM по _pd*-картам). Второго прохода по RAW нет.
+      rows2.forEach(d=>{window._pfOwnSubs[kind+'|__side:'+d]=subsOf(d).map(sub=>({sub,dirs:[d]}));});
+      const body2=rows2.map(d=>dRow(d,baseOfD(d),planOfD(d),factOf(d),isRev,false,kind,'__side:'+d,{dir:d,rem:remOf(d)})).join('');
       const tB=sumOrNull(rows2,d=>baseOfD(d)),tP=sumOrNull(rows2,d=>planOfD(d)),tF=rows2.reduce((s,d)=>s+factOf(d),0);
       html+=secRow(word+' · '+esc(sideLabel)+' - по направлениям')+body2
         +dRow('ИТОГО по направлениям',tB,tP,tF,isRev,true,null,null,{rem:_remMergeP(kind,rows2.map(remOf)),skind:kind});
