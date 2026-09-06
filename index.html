@@ -10339,6 +10339,15 @@ function pfRunTests(){
   ok('доход: выполнен / недобор-warn / недобор-bad',statusOf(100,100,true).k==='ok'&&statusOf(100,90,true).k==='warn'&&statusOf(100,50,true).k==='bad');
   ok('возврат при положительной базе - в рамках плана (модуль только у знаменателя)',statusOf(100000,-90000,false).k==='ok');
 
+  // 19. Выписка ЦФО - от ТЕКУЩЕГО плана (06.09.2026): база рождается в _cfoStmtData через общие примитивы
+  {const cd=String(_cfoStmtData);
+   ok('выписка: вердикт строки - общий statusOf через _pfStatusBase(утв, тек)',
+      /const stMonth=code=>statusOf\(_pfStatusBase\(blMonth\(code,M\),fcMonth\(code,M\)\),factMonth\(code,M\),isInc\);/.test(cd)
+      &&/const stYTD=code=>statusOf\(_pfStatusBase\(blYTD\(code\),fcYTD\(code\)\),factYTD\(code\),isInc\);/.test(cd));
+   ok('выписка: YTD плана и факта - по всем месяцам 1..M',/const fcYTD=code=>\{let s=null;for\(let m=1;m<=M;m\+\+\)/.test(cd)&&/const factYTD=code=>\{let s=0;for\(let m=1;m<=M;m\+\+\)s\+=factMonth/.test(cd));
+   ok('выписка: по заморозке остаётся только утверждённое (blYTD)',/const blYTD=code=>\{let s=null;frozen\.forEach/.test(cd)&&cd.indexOf('frozenSet.has(M)?')<0);
+   ok('выписка: превышение YTD - от текущего плана',/const overCodes=codes\.filter\(code=>\{const pY=fcYTD\(code\);/.test(cd));}
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -15701,13 +15710,27 @@ function _cfoStmtData(P){
     const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
     const fcMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=fcPlanFF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
     const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=FI[d+'||'+code];if(a)s+=a[m]||0;});return s;};
-    const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;}; // YTD - только замороженные месяцы ≤ M
-    const factYTD=code=>{let s=0;frozen.forEach(m=>{if(m>M)return;s+=factMonth(code,m);});return s;};
-    let sBP=null,sFP=0,sBY=null,sFY=0;
-    codes.forEach(code=>{const bP=blMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),fY=factYTD(code);
-      if(bP!=null)sBP=(sBP||0)+bP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; sFY+=fY;});
-    const overCodes=codes.filter(code=>{const bY=blYTD(code);return bY!=null&&(factYTD(code)-bY)>0;});
-    return {kind:isInc?'inc':'exp',codes,sBP,sFP,sBY,sFY,overCodes,pairSet,blYTD,factYTD,blMonth,factMonth,fcMonth};
+    // ── БАЗА ИСПОЛНЕНИЯ ВЫПИСКИ - ТЕКУЩИЙ ПЛАН (решение Олега 06.09.2026), как у сводной и свода ЦФО с 03.09 ──
+    // ⚠ План пересмотрели - выписку печатают заново с текущим, для этого он и текущий. Утверждённый
+    //   остаётся СПРАВОЧНОЙ колонкой «Утв.» (baseline, только замороженные месяцы) и припиской о
+    //   пересмотре (_pfPlanRevNote) в строке; вердикт и цвет - общий statusOf через _pfStatusBase,
+    //   своей копии светофора в выписке больше нет.
+    // ⚠ YTD ТЕКУЩЕГО плана и YTD ФАКТА - по ВСЕМ месяцам 1..M, без выбора по заморозке: базой стал
+    //   план, который есть у каждого месяца. По заморозке остаётся ТОЛЬКО утверждённое (blYTD).
+    //   Контроль 06.09.2026 (заморожены янв-сен, M=9): ИТОГО РАСХОДЫ по всем ЦФО - месяц 4 450 589,54 ·
+    //   YTD 230 147 289,70 - факт не меняется ни в месяце, ни в YTD, меняются план и вердикт.
+    const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;}; // утв. YTD - только замороженные месяцы ≤ M
+    const fcYTD=code=>{let s=null;for(let m=1;m<=M;m++){const v=fcMonth(code,m);if(v!=null)s=(s||0)+v;}return s;}; // тек. YTD - все месяцы 1..M
+    const factYTD=code=>{let s=0;for(let m=1;m<=M;m++)s+=factMonth(code,m);return s;}; // факт YTD - все месяцы 1..M
+    let sBP=null,sPP=null,sFP=0,sBY=null,sPY=null,sFY=0;
+    codes.forEach(code=>{const bP=blMonth(code,M),pP=fcMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),pY=fcYTD(code),fY=factYTD(code);
+      if(bP!=null)sBP=(sBP||0)+bP; if(pP!=null)sPP=(sPP||0)+pP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; if(pY!=null)sPY=(sPY||0)+pY; sFY+=fY;});
+    // вердикт строки - ОБЩИЙ statusOf от базы _pfStatusBase(утв, тек) → текущий план; у дохода зеркало (revenue=true)
+    const stMonth=code=>statusOf(_pfStatusBase(blMonth(code,M),fcMonth(code,M)),factMonth(code,M),isInc);
+    const stYTD=code=>statusOf(_pfStatusBase(blYTD(code),fcYTD(code)),factYTD(code),isInc);
+    // подстатьи с превышением YTD (блок операций) - тоже от текущего плана
+    const overCodes=codes.filter(code=>{const pY=fcYTD(code);return pY!=null&&(factYTD(code)-pY)>0;});
+    return {kind:isInc?'inc':'exp',codes,sBP,sPP,sFP,sBY,sPY,sFY,overCodes,pairSet,blYTD,fcYTD,factYTD,blMonth,factMonth,fcMonth,stMonth,stYTD};
   };
   // состав выписки: свои + прямые подчинённые (один уровень, защита от цикла в _cfoSubsOf)
   const subs=isNoOwn?[]:_cfoSubsOf(fio);const wantSubs=!!P.withSubs&&subs.length>0;
