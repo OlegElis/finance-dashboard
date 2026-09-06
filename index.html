@@ -10158,6 +10158,14 @@ function pfRunTests(){
   ok('печать плана зовёт общий предикат',/if\(_slPlanSide\(code\)\)sidesOf\(/.test(pp));
   ok('печать плана не разбирает код подстатьи сама',!/111|223/.test(pp),(pp.match(/111|223/g)||[]).join());
   ok('это ПЛАНИРОВАНИЕ по стороне, а не факт',pp.indexOf('_slFactSide')<0);
+  // ⚠ Расчёт секции выписки живёт ОДИН раз - в _cfoStmtData. Внутри cfoStatementGen после выноса
+  //   расчёта (04.08.2026) оставалась МЁРТВАЯ копия buildSection - не вызывалась ниоткуда, но повторяла
+  //   сборку строк и суммы; снесена 06.09.2026. Проверка в ПОЛОЖИТЕЛЬНОЙ форме: объявление есть в
+  //   _cfoStmtData, и на весь файл оно одно. Иголка склеивается из двух половин, чтобы регулярка не
+  //   нашла собственный текст теста.
+  const _bsNeedle='const buildSec'+'tion=(person,noOwn,kind)=>';
+  ok('расчёт секции выписки объявлен в _cfoStmtData',cd.indexOf(_bsNeedle)>=0);
+  ok('и это единственное объявление на файл',_pfSrcTop.split(_bsNeedle).length-1===1,_pfSrcTop.split(_bsNeedle).length-1);
 
   // 11. У 223 третьего уровня НЕТ НИГДЕ (05.09.2026): в коде третьего уровня нет ни одного места,
   //     где код аренды узнаётся ЛИТЕРАЛОМ. Узнавать его вправе только _slRent - и его в предикатах нет.
@@ -15635,28 +15643,6 @@ window.cfoStatementGen=function(O){
   const dCell=(dv,bold)=>dv==null?'<td class="r'+(bold?' b':'')+'">-</td>':'<td class="r'+(bold?' b':'')+'" style="color:'+(dv>0?'#c0392b':dv<0?'#1e8a54':'#23272f')+';font-weight:700">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
   // Δ-ячейка ДОХОДОВ и ЧП: цвет ОБРАТНЫЙ - перевыполнение (факт>план, dv>0) зелёное, недобор красный
   const dCellInc=(dv,bold)=>dv==null?'<td class="r'+(bold?' b':'')+'">-</td>':'<td class="r'+(bold?' b':'')+'" style="color:'+(dv>0?'#1e8a54':dv<0?'#c0392b':'#23272f')+';font-weight:700">'+(dv>0?'+':dv<0?'−':'')+f(Math.abs(dv))+'</td>';
-  // одна секция (один человек): подстатьи + суммы + список подстатей с перерасходом YTD. Жёсткий фильтр по владельцу сохранён - подчинённый не видит чужих подстатей.
-  // kind: 'exp' (расходы, factIdx/level=subarticle - по умолчанию) | 'inc' (доходы, factIncIdx/level=income). При 'exp' поведение байт-в-байт прежнее.
-  const buildSection=(person,noOwn,kind)=>{
-    const isInc=kind==='inc';const FI=isInc?factIncIdx:factIdx;const lvl=isInc?'income':'subarticle';const blPlanF=isInc?blPlanIncMD:blPlanMD;const fcPlanFF=isInc?fcPlanIncMD:fcPlanMD;const dc=isInc?dCellInc:dCell;
-    const pairSet={}; // code → Set направлений (только совпавшие по владельцу)
-    blRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
-    fcRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);}); // прогнозные-только подстатьи тоже показываем
-    Object.keys(FI).forEach(key=>{const i=key.indexOf('||'),d=key.slice(0,i),code=key.slice(i+2);if(!ownMatchP(d,code,person,noOwn))return;(pairSet[code]=pairSet[code]||new Set()).add(d);});
-    const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
-    const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
-    const fcMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=fcPlanFF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
-    const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=FI[d+'||'+code];if(a)s+=a[m]||0;});return s;};
-    const blYTD=code=>{let s=null;frozen.forEach(m=>{if(m>M)return;const v=blMonth(code,m);if(v!=null)s=(s||0)+v;});return s;}; // YTD - только замороженные месяцы ≤ M
-    const factYTD=code=>{let s=0;frozen.forEach(m=>{if(m>M)return;s+=factMonth(code,m);});return s;};
-    let rows='',sBP=null,sFP=0,sBY=null,sFY=0;
-    codes.forEach(code=>{const bP=blMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),fY=factYTD(code);
-      if(bP!=null)sBP=(sBP||0)+bP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; sFY+=fY;
-      const dP=bP!=null?fP-bP:null,dY=bY!=null?fY-bY:null;
-      rows+='<tr><td class="nm">'+esc(code)+'</td><td class="r">'+(bP!=null?f(bP):'-')+'</td><td class="r">'+f(fP)+'</td>'+dc(dP)+'<td class="r">'+(bY!=null?f(bY):'-')+'</td><td class="r">'+f(fY)+'</td>'+dc(dY)+'</tr>'+(isInc?'':secSubRows(pairSet[code],code));});
-    const overCodes=codes.filter(code=>{const bY=blYTD(code);return bY!=null&&(factYTD(code)-bY)>0;});
-    return {kind:isInc?'inc':'exp',codes,rows,sBP,sFP,sBY,sFY,overCodes,pairSet,blYTD,factYTD,blMonth,factMonth,fcMonth};
-  };
   // ── режим «конкретный месяц» (как раньше): 7 колонок ──
   const COLG='<colgroup><col style="width:22%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>';
   const THEAD='<thead><tr><th>Подстатья</th><th class="r">Утв. мес.</th><th class="r">Факт мес.</th><th class="r">Δ мес.</th><th class="r">Утв. YTD</th><th class="r">Факт YTD</th><th class="r">Δ YTD</th></tr></thead>';
