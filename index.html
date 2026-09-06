@@ -10190,6 +10190,16 @@ function pfRunTests(){
    ok('в renderPlanFact нет esc( внутри title=/value=',!/(title|value)="[^"\n]*\$\{esc\(/.test(src),(src.match(/(title|value)="[^"\n]*\$\{esc\(/g)||[]).join(' | '));
    ok('своей копии эскейпа атрибутов в renderPlanFact нет',src.indexOf('_pfEsc')<0);}
 
+  // 13. Заморозка из редактора ждёт РЕЗУЛЬТАТА записи плана в облако
+  // ⚠ Было planSave();planApproveMonthOpen(...) - при отказе облака baseline запекал несохранённый план.
+  {const _sp=String(showPlansPanel),_sta=String(planSaveThenApprove),_ps=String(planSave);
+   ok('кнопка «Утвердить месяц» зовёт planSaveThenApprove',/onclick="planSaveThenApprove\(this\)"/.test(_sp));
+   ok('в разметке редактора нет заморозки без ожидания сохранения',!/planSave\(\);planApproveMonthOpen/.test(_sp)&&_sp.indexOf('planApproveMonthOpen(')<0);
+   ok('заморозка открывается ТОЛЬКО после await planSave и только по true',
+      /ok=await planSave\(\);[\s\S]*if\(ok\)planApproveMonthOpen\(/.test(_sta)&&(_sta.match(/planApproveMonthOpen\(/g)||[]).length===1);
+   ok('planSave возвращает результат облака',/return allOk;/.test(_ps));
+   ok('planSave не зовётся с кнопкой заморозки (подпись не переименовывается)',/ok=await planSave\(\)/.test(_sta)&&!/planSave\(btn\)/.test(_sta));}
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -14944,7 +14954,7 @@ window.planAddEmp=function(dir,code,key){
 };
 window.planSave=async function(btn){
   _planStage();
-  window._planDirty=false; try{window._planSnapshot=JSON.stringify(_planRecords||[]);}catch(e){} // ставим dirty=false СРАЗУ (синхронно, до await): «✓ Утвердить месяц» = planSave();planApproveMonthOpen() - freeze не должен споткнуться о dirty-гейт
+  window._planDirty=false; try{window._planSnapshot=JSON.stringify(_planRecords||[]);}catch(e){} // dirty=false СРАЗУ (синхронно, до await) - редактор считает правку переданной на запись; РЕЗУЛЬТАТ записи возвращается (allOk), и заморозка (planSaveThenApprove) его ждёт
   if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
   const nP=(_planRecords||[]).length,nO=Object.keys(_planOwners||{}).length,nN=Object.keys(_planNotes||{}).length;
   // сами записи стартуют сразу (localStorage + облако); ждём результат облака, чтобы подтверждение отражало реальность
@@ -14952,10 +14962,28 @@ window.planSave=async function(btn){
   if(activeTab==='planfact')try{renderActiveTab();}catch(e){}
   const [okP,okO,okN]=await Promise.all(proms);
   // окно НЕ закрываем - даём продолжить редактирование; подтверждение на кнопке отражает реальность (сколько и записалось ли в облако)
-  if(btn){const allOk=okP&&okO&&okN;
+  const allOk=okP&&okO&&okN;
+  if(btn){
     if(allOk){btn.textContent='✓ '+nP+' планов · '+nO+' влад. · '+nN+' прим.';btn.style.background='var(--income)';}
     else{btn.textContent='⚠ НЕ сохранено - правка будет потеряна';btn.style.background='var(--outcome)';} // «(локально сохранено)» убрано: зеркало пишется только при подтверждённой записи, локально её тоже нет
     setTimeout(function(){try{btn.disabled=false;btn.textContent='Сохранить';btn.style.background='var(--accent)';}catch(e){}},allOk?2800:5000);}
+  return allOk; // ⚠ Возвращается РЕЗУЛЬТАТ ОБЛАКА, а не факт отправки: заморозка (planSaveThenApprove) открывается только по true
+};
+// «✓ Утвердить месяц» из редактора: СНАЧАЛА дождаться записи плана в облако, и только по успеху
+// открывать заморозку.
+// ⚠ Раньше стояло planSave();planApproveMonthOpen(...) - planSave снимала dirty синхронно, а
+//   результат записи никто не ждал. При отказе облака (правила, офлайн) окно заморозки открывалось
+//   как ни в чём не бывало и baseline запекал план, которого в облаке НЕТ: утверждённые величины
+//   считались бы от несохранённой правки, и «Отклонение к утв.» врало бы у всех, кроме автора.
+// ⚠ При отказе НИЧЕГО не открывается: алерт с причиной уже показал _fbSetSafe, второй не нужен.
+// ⚠ planSave зовётся БЕЗ кнопки: её подтверждение («✓ N планов…» → «Сохранить») переименовало бы
+//   кнопку заморозки. Занятость показываем сами и возвращаем подпись как была.
+window.planSaveThenApprove=async function(btn){
+  const t=btn?btn.textContent:'';if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
+  let ok=false;
+  try{ok=await planSave();}
+  finally{if(btn){btn.disabled=false;btn.textContent=t;}}
+  if(ok)planApproveMonthOpen(document.getElementById('plan-year').value);
 };
 // Закрытие редактора планов с защитой от потери несохранённых правок (крестик / клик мимо / «Отмена»)
 window.planPanelClose=function(){
@@ -15950,7 +15978,7 @@ window.showPlansPanel=async function(){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
         <span style="font-size:10px;color:var(--text3)">${isAdmin?'Хранится в облаке (Firebase), запись только админу':'Только просмотр. Изменять планы может администратор.'}</span>
         <div style="display:flex;gap:8px">
-          ${isAdmin?`<button onclick="planSave();planApproveMonthOpen(document.getElementById('plan-year').value)" title="Сохранить текущий план и заморозить план выбранного месяца (baseline). Замороженный месяц изменить нельзя." style="font-size:12px;font-weight:600;padding:7px 14px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить месяц</button>`:''}
+          ${isAdmin?`<button onclick="planSaveThenApprove(this)" title="Сохранить текущий план и, если облако подтвердило запись, заморозить план выбранного месяца (baseline). Замороженный месяц изменить нельзя." style="font-size:12px;font-weight:600;padding:7px 14px;border:1px solid var(--income);border-radius:6px;background:transparent;color:var(--income);cursor:pointer;font-family:var(--sans)">✓ Утвердить месяц</button>`:''}
           <button onclick="planPrintOwners()" title="Печать: план по месяцам (как в редакторе), свод по направлениям, с учётом фильтров" style="font-size:12px;padding:7px 14px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">🖨 Печать (план по месяцам)</button>
           <button onclick="planPanelClose()" style="font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">${isAdmin?'Отмена':'Закрыть'}</button>
           ${isAdmin?`<button onclick="planSave(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>`:''}
