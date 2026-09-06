@@ -10200,13 +10200,21 @@ function pfRunTests(){
    ok('planSave возвращает результат облака',/return allOk;/.test(_ps));
    ok('planSave не зовётся с кнопкой заморозки (подпись не переименовывается)',/ok=await planSave\(\)/.test(_sta)&&!/planSave\(btn\)/.test(_sta));}
 
-  // 14. ЖИВОЙ ПРОГОН на данных вкладки: разрез «по направлениям» под контрагентом
+  // ⚠ График ЧП под фильтром «Контрагент»: вывод (127) для линии «Остаётся в компании» - по компании
+  ok('вывод для графика копится без флага sp',/if\(c\)vyvodAllM\[m\]\+=av;/.test(src)&&!/sp&&[^\n]*vyvodAllM/.test(src));
+  ok('линия графика берёт vyvodAllM, а не сумму vyvodByCode',/const vyvodMonth=vyvodAllM;/.test(src)&&!/vyvodMonth\[m\]\+=a\[m\]/.test(src));
+
+  // 14. ЖИВОЙ ПРОГОН на данных вкладки: разрез «по направлениям» под контрагентом и график ЧП
   // ⚠ Перерисовывает вкладку с подменённым фильтром и возвращает состояние; запускать С ВКЛАДКИ БДР
   //   (рендерер выходит первой строкой, если контейнера нет - см. правило про снимки для консоли).
   if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
   else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
     try{
       const yr=+F0.year||new Date().getFullYear();
+      // график ЧП: «выведено N» в строке-выводе обязано не зависеть от фильтра по стороне
+      const concl=()=>{const el=document.getElementById('pfNpConcl');const m=el&&el.textContent.match(/выведено\s+([^,]+,\d{2})/);return m?m[1].replace(/[\s\u00a0]/g,''):null;};
+      Object.assign(_tabFilters.planfact,{sides:[],rowDim:'article',period:'year',year:yr,_defPeriodDone:true});renderActiveTab();
+      const vyA=concl();
       // сторона с наибольшим числом списаний за год - чтобы разрез был непустым
       const cnt={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание'||!expOf(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;const sd=String(r[COL.SECOND_SIDE]||'').trim();if(!sd||!String(r[COL.ACTIVITY_DIR]||'').trim())return;cnt[sd]=(cnt[sd]||0)+1;});
       const side=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
@@ -10225,6 +10233,8 @@ function pfRunTests(){
           const shown=num(tr.children[4]&&tr.children[4].textContent);
           checked++;if(Math.abs(Math.abs(sum)-Math.abs(shown))>0.006)badRows.push(kind+'|'+dir+': строка '+shown+' ≠ модал '+sum.toFixed(2));});
         ok('сумма операций модала = факту строки направления ('+checked+' строк)',checked>0&&!badRows.length,badRows.join('; ')||checked);
+        const vyB=concl();
+        ok('график ЧП: «выведено» одинаково с фильтром по стороне и без',vyA!=null&&vyA===vyB,vyA+' vs '+vyB);
       }
     }catch(e){ok('живой прогон упал',false,String(e&&e.message||e));}
     finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
@@ -10306,6 +10316,7 @@ function renderPlanFact(f){
   // но без гейта sp. Нужен KPI-карточкам «Исполнение YTD» и «Прогноз года»: они по решению проекта
   // всегда по компании, а factByCode с 8786e50 режется по стороне, и факт там ехал бы против полного плана.
   const factExpAllM=new Array(13).fill(0);
+  const vyvodAllM=new Array(13).fill(0); // вывод прибыли (127) помесячно по КОМПАНИИ - без флага sp, как factExpAllM: на нём линия «Остаётся в компании» графика ЧП
   RAW.forEach(r=>{
     const rd=String(r[COL.ACTIVITY_DIR]||'').trim();
     if(!dirsToAgg.includes(rd))return;
@@ -10330,7 +10341,8 @@ function renderPlanFact(f){
     if(t==='списание'&&av){
       const c=level==='article'?gkey:an;
       const anl=nrm(r[COL.ANALYTICS]),isVyvod=anl.includes('вывод')&&anl.includes('прибыл'); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
-      if(isVyvod){if(sp&&c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
+      if(isVyvod){if(c)vyvodAllM[m]+=av; // ⚠ БЕЗ sp: график ЧП идёт под бейджем «по компании», и вывод для него обязан быть по компании (см. vyvodMonth)
+        if(sp&&c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
         if(sp&&level==='article'&&sn){(vyvodSubN[sn]=vyvodSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+sn]=pfTxn['vyv|'+sn]||[]).push(r);const K=rd+'||'+sn;(_pdVyv[K]=_pdVyv[K]||new Array(13).fill(0))[m]+=av;}}
       else{
         if(c)factExpAllM[m]+=av; // ⚠ БЕЗ sp: на этом стоят KPI «по компании» (YTD-исполнение и прогноз года) - см. factExpArrY
@@ -11700,8 +11712,11 @@ function renderPlanFact(f){
   const uIncPlan=hasUInc?planSeries(Object.keys(uIncCodes),(c,m)=>planIncM(c,m),c=>planInc(c)):planSeries(['__rev__'],(c,m)=>planMonth('revenue','__rev__',m),c=>planYear('revenue','__rev__'));
   const uExpBase=hasBaseline?planSeries(Object.keys(uExpCodes),(c,m)=>bPlanExpM(c,m),c=>bPlanExp(c)):new Array(13).fill(0);
   const uIncBase=hasBaseline?(hasUInc?planSeries(Object.keys(uIncCodes),(c,m)=>bPlanIncM(c,m),c=>bPlanInc(c)):planSeries(['__rev__'],(c,m)=>PB.planMonth('revenue','__rev__',m),c=>PB.planYear('revenue','__rev__'))):new Array(13).fill(0);
-  // факт вывода прибыли (127) помесячно, весь направление
-  const vyvodMonth=new Array(13).fill(0);Object.keys(vyvodByCode).forEach(c=>{const a=vyvodByCode[c];for(let m=1;m<=12;m++)vyvodMonth[m]+=a[m]||0;});
+  // факт вывода прибыли (127) помесячно - ПО КОМПАНИИ.
+  // ⚠ Берём vyvodAllM (без фильтра по стороне), а НЕ сумму vyvodByCode: тот копится под флагом sp,
+  //   и под фильтром «Контрагент» линия «Остаётся в компании» и строка «выведено N» считались бы от
+  //   вывода одной стороны при бейдже «KPI по компании» рядом - та же ловушка, что у factExpArrY.
+  const vyvodMonth=vyvodAllM;
   const netFactM=m=>(revByMonth[m]||0)-(npExpMonth[m]||0);
   // накопительные серии (index 1..12; null = линия обрывается)
   const factCum=[null],baseCum=[null],remCum=[null],fcArr=new Array(13).fill(null);
