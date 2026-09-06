@@ -10363,6 +10363,35 @@ function pfRunTests(){
    ok('печать: шапка называет базу',/Исполнение - от текущего плана; утверждённый план - в колонке «Утв\.»/.test(cg));
    ok('печать: в бейдже сумма, а не процент',/'перерасход \+'\+f\(d\)/.test(cg)&&/'остаток '\+f\(-d\)/.test(cg)&&!/fmtPct\(/.test(cg));}
 
+  // 22. ЖИВОЙ ПРОГОН: вердикт выписки = вердикту сводной по той же подстатье 111 за текущий месяц
+  // ⚠ Выписка судит по направлению (как экран) теми же примитивами _cfoStmtData; сводная - строка
+  //   подстатьи под фильтром «направление + подстатья + месяц». База у обеих - текущий план.
+  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон выписки: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
+  else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
+    try{
+      const yr=+F0.year||new Date().getFullYear(),M=new Date().getMonth()+1;
+      const cand={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;const v=expOf(r);if(!v||isVyvodRow(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr||d.getMonth()+1!==M)return;
+        const an=String(r[COL.ARTICLE_NAME]||'').trim(),dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(!an||!dir||!_slFot(an))return;const own=String((_planOwners||{})[dir+'||'+an]||'').trim();if(!own)return;const k=dir+'||'+an;(cand[k]=cand[k]||{dir,an,own,n:0}).n++;});
+      const pick=Object.values(cand).sort((a,b)=>b.n-a.n)[0];
+      ok('живой прогон: есть подстатья 111 с фактом и владельцем за '+M+'.'+yr,!!pick,pick&&(pick.dir+' / '+pick.an+' / '+pick.own));
+      if(pick){
+        const D=_cfoStmtData({fio:pick.own,isNoOwn:false,withSubs:false,withDetail:false,year:yr,month:M,allMonths:false});
+        const fW=((D.factIdx[pick.dir+'||'+pick.an]||[])[M])||0,pW=D.fcPlanMD(pick.dir,pick.an,M),bW=D.blPlanMD(pick.dir,pick.an,M);
+        const stW=statusOf(_pfStatusBase(bW,pW),fW,false);
+        const P=D.people.find(p=>p.own);ok('выписка: подстатья в секции владельца и у неё есть stMonth',!!(P&&P.exp.codes.includes(pick.an)&&P.exp.stMonth(pick.an).k),pick.an);
+        Object.assign(_tabFilters.planfact,{dir:'',dirs:[pick.dir],level:'subarticle',period:String(M),year:yr,articles:[],subarticles:[pick.an],owners:[],sides:[],rowDim:'article',_defPeriodDone:true});
+        renderActiveTab();
+        const tr=[...document.querySelectorAll('#tabPlanfact tr')].find(t=>t.children[0]&&t.children[0].textContent.trim()===pick.an);
+        const badge=tr?tr.children[7].textContent.trim():'';
+        const kOf=t=>/перерасход/.test(t)?'bad':/лимит на исходе/.test(t)?'warn':/в рамках плана/.test(t)?'ok':/не задан|нет плана|плана нет/.test(t)?'none':'?';
+        ok('вердикт выписки = бейджу сводной ('+pick.an+' · '+pick.dir+')',!!tr&&kOf(badge)===stW.k,'сводная: «'+badge+'» / выписка: '+stW.k);
+        const numT=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
+        ok('факт строки сводной = факту выписки по направлению',!!tr&&Math.abs(Math.abs(numT(tr.children[4].textContent))-Math.abs(fW))<0.006,(tr&&tr.children[4].textContent.trim())+' vs '+fW.toFixed(2));
+      }
+    }catch(e){ok('живой прогон выписки упал',false,String(e&&e.message||e));}
+    finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
+  }
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
