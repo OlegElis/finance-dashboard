@@ -1550,7 +1550,7 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 //   вернул бы прежнее направление через этот откат - поэтому dir стоит здесь рядом с dirs.
 // ⚠ Функция, а не константа-объект: каждому вызывающему нужна СВОЯ копия массивов, иначе сброс
 //   раздал бы всем один и тот же [] и правка фильтра меняла бы умолчание.
-function _pfBlankState(){return {dir:'',dirs:[],year:0,level:'article',period:'',articles:[],subarticles:[],owners:[],sides:[],rowDim:'article'};}
+function _pfBlankState(){return {dir:'',dirs:[],year:0,level:'article',period:'',articles:[],subarticles:[],owners:[],sides:[],rowDim:'article',showHidden:false};}
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],articles:[],subarticles:[],finOps:[],fns:'',includeFuture:true},
@@ -2596,7 +2596,7 @@ function _presetApplyRel(tab,rel){
 // ⚠ ГОД хранится флагом «текущий», а не числом: пресет, сделанный в 2026, в январе 2027 молча
 //   показывал бы прошлый год, и человек читал бы чужие числа, не заметив подмены. Кому нужен
 //   конкретный год - он виден в снимке пресета («Год: 2026»), но при применении берётся текущий.
-const PF_PRESET_KEYS=['dirs','articles','subarticles','owners','sides','rowDim','period','year','level'];
+const PF_PRESET_KEYS=['dirs','articles','subarticles','owners','sides','rowDim','period','year','level','showHidden'];
 // _pfBlankState объявлена рядом с _tabFilters - она же задаёт умолчания вкладки (см. комментарий там).
 function _pfStateSnapshot(){const F=_tabFilters.planfact||{},o={};
   PF_PRESET_KEYS.forEach(k=>{if(k in F)o[k]=F[k];});
@@ -6445,6 +6445,8 @@ window.pfActionLocked=function(key){
   document.body.appendChild(ov);
 };
 window.pfMultiChange=function(ddId,btnId,field,labelAll){const dd=document.getElementById(ddId),btn=document.getElementById(btnId);if(!dd||!btn)return;const checked=[...dd.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.textContent=(checked.length?checked.length+' выбрано':labelAll)+' ▾';_tabFilters.planfact[field]=checked;};
+// Личный показ скрытых направлений в своде: обычный фильтр вкладки, не общая настройка
+window.pfShowHiddenToggle=function(v){const f=_tabFilters.planfact||{};f.showHidden=!!v;renderPlanFact(getFilters());};
 window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getElementById(ddId);if(!dd)return;dd.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=s);window.pfMultiChange(ddId,btnId,field,labelAll);};
 // ══ БДР: СБРОС ФИЛЬТРОВ ВКЛАДКИ ═══════════════════════════════════════════════
 // ⚠ Кнопка называется «Сбросить», значит сбрасывает ВСЁ, включая год и период: останься год - подпись
@@ -6483,7 +6485,7 @@ window.pfResetFilters=function(){_pfResetState();renderPlanFact(getFilters());};
 // ⚠ Подписи - только для подсказки; поле без подписи всё равно СЧИТАЕТСЯ и показывается ключом:
 //   забытая подпись обязана выглядеть небрежностью, а не отсутствием фильтра.
 const PF_COUNT_SKIP=['year','period','rowDim'];
-const PF_FILTER_LABELS={dirs:'Направление',articles:'Статья',subarticles:'Подстатья',owners:'ЦФО',sides:'Контрагент',rowDim:'Разрез',level:'Уровень'};
+const PF_FILTER_LABELS={dirs:'Направление',articles:'Статья',subarticles:'Подстатья',owners:'ЦФО',sides:'Контрагент',rowDim:'Разрез',level:'Уровень',showHidden:'Скрытые направления'};
 function _pfActiveFilters(f){
   f=f||_tabFilters.planfact||{};
   const D=_pfBlankState(),out=[];
@@ -10739,9 +10741,24 @@ function renderPlanFact(f){
   // ── мультивыбор направлений: f.dirs = массив; пусто → все (свод). Если f.dirs не задан - оставляем пустым (НЕ мигрируем из f.dir, чтобы при первом входе был свод, а не одиночное направление) ──
   let selDirs=Array.isArray(f.dirs)?f.dirs.filter(d=>dirs.includes(d)):[];
   f.dirs=selDirs.slice();
-  const dirsToAgg=selDirs.length?selDirs:dirs; // выбранные направления; пусто → все (свод)
-  const allSel=selDirs.length===0||selDirs.length>=dirs.length;
-  const dirLabel=allSel?'Свод (все направления)':(selDirs.length<=3?selDirs.join(', '):selDirs.length+' направлений');
+  // ── СКРЫТЫЕ НАПРАВЛЕНИЯ: исключение ЖИВЁТ ЗДЕСЬ И БОЛЬШЕ НИГДЕ ───────────────
+  // ⚠ Всё, что считает вкладка - факт, планы, baseline, KPI по компании, графики, «Факт без
+  //   плана», свод ЦФО, третий и четвёртый уровни, разрез по направлениям, - гейтится по
+  //   dirsToAgg. Поэтому исключение делается ОДНОЙ строкой здесь; заводить вторую точку (фильтр
+  //   в проходе по RAW, отдельный список у графиков) НЕЛЬЗЯ: две точки исключения разойдутся
+  //   молча, и одна цифра на вкладке станет считаться по другому составу направлений, чем соседняя.
+  // ⚠ Скрытие работает ТОЛЬКО В СВОДЕ. Выбранное ЯВНО направление показывается как любое другое,
+  //   даже если оно скрыто: настройка отвечает на вопрос «что входит в свод по умолчанию», а не
+  //   «какие данные существуют». Из RAW строки не удаляются никогда.
+  const hiddenDirs=(_pfHiddenDirs||[]).filter(d=>dirs.includes(d)); // только реально существующие
+  const showHidden=!!f.showHidden;
+  const dirsVisible=(showHidden||!hiddenDirs.length)?dirs:dirs.filter(d=>hiddenDirs.indexOf(d)<0);
+  const dirsToAgg=selDirs.length?selDirs:dirsVisible; // выбранные направления; пусто → свод (без скрытых, если галочка не стоит)
+  // ⚠ «Все» считается от ВИДИМОГО набора: свод без скрытых - это и есть «все», и подпись обязана
+  //   говорить это словами, иначе человек читает «Свод (все направления)» и не знает, что двух в нём нет.
+  const allSel=selDirs.length===0||selDirs.length>=dirsVisible.length;
+  const _hidNote=(selDirs.length===0&&!showHidden&&hiddenDirs.length)?(' (без: '+hiddenDirs.join(', ')+')'):'';
+  const dirLabel=allSel?('Свод'+(_hidNote||' (все направления)')):(selDirs.length<=3?selDirs.join(', '):selDirs.length+' направлений');
   const isAll=allSel; // алиас-совместимость (используется только в метках/лейблах)
   const isMonthly=period==='monthly'; // матрица «все месяцы (план/факт)»
   const isYear=period==='year'||isMonthly; // для KPI и колонки «Год» считаем год целиком
@@ -11197,7 +11214,17 @@ function renderPlanFact(f){
     +`<div id="pf-side-list"></div>`;
   const pfSideBtn=(selSide.size?selSide.size+' выбрано':'Все контрагенты')+' ▾';
   // мультивыбор направлений (без поиска - направлений мало); пусто = все
-  const pfDirDD=pfAllBtns("pfMultiAll('pf-dir-dd','pf-dir-btn','dirs','Все направления',%s)")+pfOptList(dirs,new Set(selDirs),"pfMultiChange('pf-dir-dd','pf-dir-btn','dirs','Все направления')");
+  // ── Список направлений: скрытые ПОМЕЧЕНЫ, а не спрятаны ─────────────────────
+  // ⚠ Прятать их из списка нельзя: тогда выбрать «Иную деятельность» стало бы невозможно, а
+  //   настройка отвечает на вопрос «что входит в свод», а не «какие направления существуют».
+  // ⚠ Галочка «показать скрытые в своде» стоит ВНИЗУ, под списком, и это ФИЛЬТР: она меняет состав
+  //   данных свода, поэтому живёт в _tabFilters (f.showHidden), считается кнопкой «Сбросить (N)»
+  //   и входит в пресет. Пункт меню «🙈 Скрытые направления» - настройка ОБЩАЯ и админская, а эта
+  //   галочка - личный разовый показ; путать их нельзя.
+  const _hidSet=new Set(hiddenDirs);
+  const pfDirOpts=dirs.map(v=>'<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="'+_pesc(v)+'" '+(selDirs.includes(v)?'checked':'')+' onchange="pfMultiChange(\'pf-dir-dd\',\'pf-dir-btn\',\'dirs\',\'Все направления\')"> <span>'+_pesc(v)+(_hidSet.has(v)?'<span style="color:var(--text3);font-size:10px"> · скрыто из свода</span>':'')+'</span></label>').join('');
+  const pfHidToggle=hiddenDirs.length?('<div style="border-top:1px solid var(--divider);margin-top:3px;padding-top:3px"><label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;color:var(--text2)" title="Скрытые направления не входят в свод «Все направления». Галочка возвращает их в свод - на этой вкладке и только для вас."><input type="checkbox" '+(showHidden?'checked':'')+' onchange="pfShowHiddenToggle(this.checked)"> <span>показать скрытые в своде</span></label></div>'):'';
+  const pfDirDD=pfAllBtns("pfMultiAll('pf-dir-dd','pf-dir-btn','dirs','Все направления',%s)")+pfDirOpts+pfHidToggle;
   const pfDirBtn=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
   // статус заморозки по месяцам + кнопка «Утвердить месяц» (админу)
   const frozenLbl=hasBaseline?_frozenMonthsLabel(year):'';
