@@ -9853,11 +9853,23 @@ function _pfPlanRevNote(base,plan){
 //   живут замыканиями внутри неё и снаружи не зовутся. Числовое совпадение доказало бы лишь, что
 //   сегодня две ветки согласованы, - ровно то состояние, из которого расхождения и вырастают;
 //   «обе стороны читают ОДНУ базу» проверяется счётом вхождений, и это утверждение сильнее.
+// ── ОБЩАЯ ДЕЛЯНКА ДВУХ НАБОРОВ ────────────────────────────────────────────────
+// ⚠ Копий `ok`/`R` быть не должно: два набора, считающих результат по-разному, - это два
+//   разных понятия «провал», и однажды они разойдутся молча.
+function _pfTestBed(){const R=[],ok=(n,c,got)=>R.push({n,pass:!!c,got});return{R,ok};}
+// ── ДВА НАБОРА, И ПРИЗНАК ДЕЛЕНИЯ ОДИН: НУЖНЫ ЛИ ПРОВЕРКЕ ДАННЫЕ ИЛИ ОТРИСОВАННАЯ ВКЛАДКА ──
+// `pfRunTests()` - структура и арифметика: идёт С ЛЮБОЙ ВКЛАДКИ И БЕЗ ДАННЫХ, ничего не
+// перерисовывает и ни на что в DOM не смотрит. `pfRunLiveTests()` - всё, что читает RAW либо
+// отрисованную таблицу БДР: оно перерисовывает вкладку и подменяет фильтры, поэтому с чужой
+// вкладки падало бы не по существу (тот же класс, что преамбула снимка в правилах проекта).
+// ⚠ Признак именно такой, а НЕ «список имён»: список разъедется с первой же новой проверкой.
+//   «Трогает состояние вкладки» само по себе не критерий - блок сброса фильтров тоже трогает
+//   `_tabFilters`, но работает без данных и без DOM, и потому остаётся в чистом наборе.
 function pfRunTests(){
   // исходник ВЕРХНЕГО уровня (объявления предикатов - не функции, String() их не отдаст): читаем из
   // единственного инлайн-скрипта документа; на стенде и в бою он один и тот же
   const _pfSrcTop=(()=>{try{const sc=[...document.scripts].find(x=>!x.src&&/const _slPlanSide=/.test(x.textContent));return sc?sc.textContent:'';}catch(e){return '';}})();
-  const R=[],ok=(n,c,got)=>R.push({n,pass:!!c,got});
+  const {R,ok}=_pfTestBed();
   const src=String(renderPlanFact);
   const cnt=re=>(src.match(re)||[]).length;
 
@@ -10307,42 +10319,6 @@ function pfRunTests(){
   ok('вывод для графика копится без флага sp',/if\(c\)vyvodAllM\[m\]\+=av;/.test(src)&&!/sp&&[^\n]*vyvodAllM/.test(src));
   ok('линия графика берёт vyvodAllM, а не сумму vyvodByCode',/const vyvodMonth=vyvodAllM;/.test(src)&&!/vyvodMonth\[m\]\+=a\[m\]/.test(src));
 
-  // 14. ЖИВОЙ ПРОГОН на данных вкладки: разрез «по направлениям» под контрагентом и график ЧП
-  // ⚠ Перерисовывает вкладку с подменённым фильтром и возвращает состояние; запускать С ВКЛАДКИ БДР
-  //   (рендерер выходит первой строкой, если контейнера нет - см. правило про снимки для консоли).
-  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
-  else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
-    try{
-      const yr=+F0.year||new Date().getFullYear();
-      // график ЧП: «выведено N» в строке-выводе обязано не зависеть от фильтра по стороне
-      const concl=()=>{const el=document.getElementById('pfNpConcl');const m=el&&el.textContent.match(/выведено\s+([^,]+,\d{2})/);return m?m[1].replace(/[\s\u00a0]/g,''):null;};
-      Object.assign(_tabFilters.planfact,{sides:[],rowDim:'article',period:'year',year:yr,_defPeriodDone:true});renderActiveTab();
-      const vyA=concl();
-      // сторона с наибольшим числом списаний за год - чтобы разрез был непустым
-      const cnt={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание'||!expOf(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;const sd=String(r[COL.SECOND_SIDE]||'').trim();if(!sd||!String(r[COL.ACTIVITY_DIR]||'').trim())return;cnt[sd]=(cnt[sd]||0)+1;});
-      const side=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
-      ok('живой прогон: есть сторона со списаниями за '+yr,!!side,side);
-      if(side){
-        Object.assign(_tabFilters.planfact,{sides:[side],rowDim:'dir',period:'year',year:yr,_defPeriodDone:true});
-        renderActiveTab();
-        const num=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
-        const trs=[...document.querySelectorAll('#tabPlanfact tr[onclick*="__side:"]')];
-        ok('строки направлений под контрагентом кликабельны (ключ __side:)',trs.length>0,trs.length);
-        let checked=0,badRows=[];
-        trs.forEach(tr=>{const m=tr.getAttribute('onclick').match(/pfShowTxn\('(\w+)','__side:([^']*)'/);if(!m)return;
-          const kind=m[1],dir=m[2].replace(/\\'/g,"'");const own=(window._pfOwnSubs||{})[kind+'|__side:'+dir]||[];
-          const rows=own.reduce((a,e)=>a.concat(((window._pfTxn||{})[kind+'|'+e.sub]||[]).filter(r=>e.dirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()))),[]);
-          const sum=rows.reduce((s,r)=>s+(kind==='inc'?(parseNum(r[COL.INCOME])||0):expOf(r)),0);
-          const shown=num(tr.children[4]&&tr.children[4].textContent);
-          checked++;if(Math.abs(Math.abs(sum)-Math.abs(shown))>0.006)badRows.push(kind+'|'+dir+': строка '+shown+' ≠ модал '+sum.toFixed(2));});
-        ok('сумма операций модала = факту строки направления ('+checked+' строк)',checked>0&&!badRows.length,badRows.join('; ')||checked);
-        const vyB=concl();
-        ok('график ЧП: «выведено» одинаково с фильтром по стороне и без',vyA!=null&&vyA===vyB,vyA+' vs '+vyB);
-      }
-    }catch(e){ok('живой прогон упал',false,String(e&&e.message||e));}
-    finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
-  }
-
   // 16. Тексты про базу статуса - под правило 03.09.2026 (статус и «К тек.» от текущего плана)
   // ⚠ Три места говорили прежнее: шапка «Статус», алерт после заморозки, подсказка окна заморозки.
   {const _am=String(planApproveMonth),_ao=String(planApproveMonthOpen);
@@ -10409,38 +10385,6 @@ function pfRunTests(){
    ok('печать: шапка называет базу',/Исполнение - от текущего плана; утверждённый план - в колонке «Утв\.»/.test(cg));
    ok('печать: в бейдже сумма, а не процент',/'перерасход \+'\+f\(d\)/.test(cg)&&/'остаток '\+f\(-d\)/.test(cg)&&!/fmtPct\(/.test(cg));}
 
-  // 22. ЖИВОЙ ПРОГОН: вердикт выписки = вердикту сводной по той же подстатье 111 за текущий месяц
-  // ⚠ Выписка судит по направлению (как экран) теми же примитивами _cfoStmtData; сводная - строка
-  //   подстатьи под фильтром «направление + подстатья + месяц». База у обеих - текущий план.
-  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон выписки: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
-  else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
-    try{
-      const yr=+F0.year||new Date().getFullYear(),M=new Date().getMonth()+1;
-      const cand={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;const v=expOf(r);if(!v||isVyvodRow(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr||d.getMonth()+1!==M)return;
-        const an=String(r[COL.ARTICLE_NAME]||'').trim(),dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(!an||!dir||!_slFot(an))return;const own=String((_planOwners||{})[dir+'||'+an]||'').trim();if(!own)return;const k=dir+'||'+an;(cand[k]=cand[k]||{dir,an,own,n:0}).n++;});
-      const pick=Object.values(cand).sort((a,b)=>b.n-a.n)[0];
-      ok('живой прогон: есть подстатья 111 с фактом и владельцем за '+M+'.'+yr,!!pick,pick&&(pick.dir+' / '+pick.an+' / '+pick.own));
-      if(pick){
-        const D=_cfoStmtData({fio:pick.own,isNoOwn:false,withSubs:false,withDetail:false,year:yr,month:M,allMonths:false});
-        const fW=((D.factIdx[pick.dir+'||'+pick.an]||[])[M])||0,pW=D.fcPlanMD(pick.dir,pick.an,M),bW=D.blPlanMD(pick.dir,pick.an,M);
-        const stW=statusOf(_pfStatusBase(bW,pW),fW,false);
-        const P=D.people.find(p=>p.own);ok('выписка: подстатья в секции владельца и у неё есть stMonth',!!(P&&P.exp.codes.includes(pick.an)&&P.exp.stMonth(pick.an).k),pick.an);
-        // ⚠ level в сводной задан жёстко (article), строка подстатьи без раскрытия статьи в DOM не
-        //   появляется. Берём разрез «по направлениям» под одной подстатьёй: строка = направление,
-        //   колонки те же (факт children[4], статус children[7]).
-        Object.assign(_tabFilters.planfact,{dir:'',dirs:[pick.dir],period:String(M),year:yr,articles:[],subarticles:[pick.an],owners:[],sides:[],rowDim:'dir',_defPeriodDone:true});
-        renderActiveTab();
-        const tr=[...document.querySelectorAll('#tabPlanfact tr')].find(t=>t.children[0]&&t.children[0].textContent.trim()===pick.dir);
-        const badge=tr?tr.children[7].textContent.trim():'';
-        const kOf=t=>/перерасход/.test(t)?'bad':/лимит на исходе/.test(t)?'warn':/в рамках плана/.test(t)?'ok':/не задан|нет плана|плана нет/.test(t)?'none':'?';
-        ok('вердикт выписки = бейджу сводной ('+pick.an+' · '+pick.dir+')',!!tr&&kOf(badge)===stW.k,'сводная: «'+badge+'» / выписка: '+stW.k);
-        const numT=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
-        ok('факт строки сводной = факту выписки по направлению',!!tr&&Math.abs(Math.abs(numT(tr.children[4].textContent))-Math.abs(fW))<0.006,(tr&&tr.children[4].textContent.trim())+' vs '+fW.toFixed(2));
-      }
-    }catch(e){ok('живой прогон выписки упал',false,String(e&&e.message||e));}
-    finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
-  }
-
   // 21. Экран выписки ЦФО - от текущего плана, цвет общим statusOf
   {const cs=String(cfoScreenRender);
    ok('экран: план направления - только текущий (fc), выбора по заморозке нет',/const planDir=\(d,code\)=>\{const fc=rev\?D\.fcPlanIncMD:D\.fcPlanMD;/.test(cs)&&cs.indexOf('frozenSet.has(m)?bl')<0);
@@ -10496,9 +10440,116 @@ function pfRunTests(){
    ok('ключ строки - тот же, что у разворотов',/pfkey:key\}/.test(src)&&/pfkey:kind\+'\|'\+sub\}/.test(src)&&/pfkey:kind\+'\|'\+sub\+'\|'\+side\}/.test(src));
    ok('атрибут ключа идёт через _pesc',/data-pfkey="\$\{_pesc\(opts\.pfkey\)\}"/.test(src));}
 
+  // 23. ВЫВОД ПРИБЫЛИ (127) В ВЫПИСКЕ - ОТДЕЛЬНАЯ СЕКЦИЯ, А НЕ СТРОКА РАСХОДА (07.09.2026)
+  // ⚠ Повод - боевой случай 05.09.2026: план 127 попадал в секцию расходов из плановых записей, а
+  //   факт вывода в факт выписки не попадал вовсе (строки отбрасывались) - выписка печатала
+  //   ЭКОНОМИЮ на весь план вывода. Проверяем ровно ЭТО: код вывода не может стоять в расходах,
+  //   а его факт обязан находиться.
+  {const cd=String(_cfoStmtData),cg=String(cfoStatementGen),cs=String(cfoScreenRender);
+   ok('признак кода вывода - общее правило _vyvodCodeF, а не копия',
+      /const isVyvodCode=_vyvodCodeF\(vyvSeen\)/.test(cd)&&cd.indexOf("includes('вывод')")<0&&cd.indexOf("includes('прибыл')")<0);
+   ok('сводная зовёт то же правило',/const isVyvodCode=_vyvodCodeF\(vyvodCodes\)/.test(String(renderPlanFact)));
+   ok('правило: c3=127 ∪ увиденные коды',_vyvodCodeF({})('127_Вывод чистой прибыли')===true
+      &&_vyvodCodeF({})('111_ФОТ')===false&&_vyvodCodeF({'888_Странное':1})('888_Странное')===true);
+   ok('факт вывода не отбрасывается, а уходит в свой индекс',/const isV=isVyvodRow\(r\),FI=isV\?vyvIdx:factIdx,OI=isV\?vyvOpsIdx:opsIdx;/.test(cd));
+   ok('план: расход и вывод разведены признаком кода',/const planPass=code=>isInc\?true:\(isVyv\?isVyvodCode\(code\):!isVyvodCode\(code\)\);/.test(cd)
+      &&(cd.match(/if\(!planPass\(p\.code\)\)return;/g)||[]).length===2);
+   ok('у вывода вердикта нет - только величина (statusFlatOf)',/const stMonth=code=>isVyv\?statusFlatOf\(fcMonth\(code,M\)\)/.test(cd)&&/const stYTD=code=>isVyv\?statusFlatOf\(fcYTD\(code\)\)/.test(cd));
+   ok('statusFlatOf: план есть - нейтрально, плана нет - прочерк',statusFlatOf(100).k==='flat'&&statusFlatOf(null).k==='none'&&statusFlatOf(0).k==='flat');
+   ok('печать: секция вывода ниже финансового результата и только при непустой',/hasVyv\?'<h2>'\+pfx\+'Распределение прибыли \(вывод\)<\/h2>'/.test(cg)&&/const hasVyv=vyvSec\.codes\.length>0;/.test(cg));
+   ok('печать: в ИТОГО секции вывода тот же нейтральный статус',/secTable\(vyvSec,'ИТОГО ВЫВОД'\+sfx,true\)/.test(cg));
+   ok('печать: в бейдже вывода только остаток, без слов оценки',/if\(st\.k==='flat'\)t='остаток '\+f\(-d\);/.test(cg));
+   ok('экран: третья вкладка и свой индекс факта',/const sel=rev\?'inc':vyv\?'vyv':'exp';/.test(cs)&&/FI=rev\?D\.factIncIdx:vyv\?D\.vyvIdx:D\.factIdx/.test(cs));
+   ok('экран: вкладка вывода только там, где вывод есть',/const hasVyvTab=D\.people\.some\(p=>p\.vyv&&p\.vyv\.codes\.length\);/.test(cs)&&/if\(vyv&&!hasVyvTab\)/.test(cs));
+   ok('«последний месяц с данными» учитывает вывод',/for\(const sel of \['exp','inc','vyv'\]\)/.test(String(_cfoLastMonthWithData)));}
+
+
+  const bad=R.filter(r=>!r.pass);
+  console.log('[БДР] pfRunTests (без данных, с любой вкладки): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли')+'. Живые проверки - отдельно: pfRunLiveTests() с вкладки БДР.');
+  bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
+  return{total:R.length,failed:bad.length,tests:R};
+}
+window.pfRunTests=pfRunTests;
+// ── ЖИВЫЕ ПРОВЕРКИ: нужны загруженные данные и отрисованная вкладка БДР ───────
+// ⚠ Отказ ЧЕСТНЫЙ и с подсказкой: набор, который «зеленеет» на пустой вкладке, хуже
+//   отсутствующего - он говорит «проверено» про то, что не проверялось.
+function pfRunLiveTests(){
+  const {R,ok}=_pfTestBed();
+  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){
+    const why=activeTab!=='planfact'?('открыта вкладка «'+activeTab+'», нужна БДР'):'данные не загружены';
+    console.log('[БДР] pfRunLiveTests: проверять не на чем - '+why+'. Перейдите на вкладку БДР, дождитесь загрузки данных и повторите. Структурные проверки идут отдельно: pfRunTests().');
+    return{total:0,failed:0,tests:[],skipped:true,why};
+  }
+  // 14. ЖИВОЙ ПРОГОН на данных вкладки: разрез «по направлениям» под контрагентом и график ЧП
+  // ⚠ Перерисовывает вкладку с подменённым фильтром и возвращает состояние; запускать С ВКЛАДКИ БДР
+  //   (рендерер выходит первой строкой, если контейнера нет - см. правило про снимки для консоли).
+  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
+    try{
+      const yr=+F0.year||new Date().getFullYear();
+      // график ЧП: «выведено N» в строке-выводе обязано не зависеть от фильтра по стороне
+      const concl=()=>{const el=document.getElementById('pfNpConcl');const m=el&&el.textContent.match(/выведено\s+([^,]+,\d{2})/);return m?m[1].replace(/[\s\u00a0]/g,''):null;};
+      Object.assign(_tabFilters.planfact,{sides:[],rowDim:'article',period:'year',year:yr,_defPeriodDone:true});renderActiveTab();
+      const vyA=concl();
+      // сторона с наибольшим числом списаний за год - чтобы разрез был непустым
+      const cnt={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание'||!expOf(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;const sd=String(r[COL.SECOND_SIDE]||'').trim();if(!sd||!String(r[COL.ACTIVITY_DIR]||'').trim())return;cnt[sd]=(cnt[sd]||0)+1;});
+      const side=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
+      ok('живой прогон: есть сторона со списаниями за '+yr,!!side,side);
+      if(side){
+        Object.assign(_tabFilters.planfact,{sides:[side],rowDim:'dir',period:'year',year:yr,_defPeriodDone:true});
+        renderActiveTab();
+        const num=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
+        const trs=[...document.querySelectorAll('#tabPlanfact tr[onclick*="__side:"]')];
+        ok('строки направлений под контрагентом кликабельны (ключ __side:)',trs.length>0,trs.length);
+        let checked=0,badRows=[];
+        trs.forEach(tr=>{const m=tr.getAttribute('onclick').match(/pfShowTxn\('(\w+)','__side:([^']*)'/);if(!m)return;
+          const kind=m[1],dir=m[2].replace(/\\'/g,"'");const own=(window._pfOwnSubs||{})[kind+'|__side:'+dir]||[];
+          const rows=own.reduce((a,e)=>a.concat(((window._pfTxn||{})[kind+'|'+e.sub]||[]).filter(r=>e.dirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim()))),[]);
+          const sum=rows.reduce((s,r)=>s+(kind==='inc'?(parseNum(r[COL.INCOME])||0):expOf(r)),0);
+          const shown=num(tr.children[4]&&tr.children[4].textContent);
+          checked++;if(Math.abs(Math.abs(sum)-Math.abs(shown))>0.006)badRows.push(kind+'|'+dir+': строка '+shown+' ≠ модал '+sum.toFixed(2));});
+        ok('сумма операций модала = факту строки направления ('+checked+' строк)',checked>0&&!badRows.length,badRows.join('; ')||checked);
+        const vyB=concl();
+        ok('график ЧП: «выведено» одинаково с фильтром по стороне и без',vyA!=null&&vyA===vyB,vyA+' vs '+vyB);
+      }
+    }catch(e){ok('живой прогон упал',false,String(e&&e.message||e));}
+    finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
+  }
+
+
+  // 22. ЖИВОЙ ПРОГОН: вердикт выписки = вердикту сводной по той же подстатье 111 за текущий месяц
+  // ⚠ Выписка судит по направлению (как экран) теми же примитивами _cfoStmtData; сводная - строка
+  //   подстатьи под фильтром «направление + подстатья + месяц». База у обеих - текущий план.
+  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
+    try{
+      const yr=+F0.year||new Date().getFullYear(),M=new Date().getMonth()+1;
+      const cand={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;const v=expOf(r);if(!v||isVyvodRow(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr||d.getMonth()+1!==M)return;
+        const an=String(r[COL.ARTICLE_NAME]||'').trim(),dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(!an||!dir||!_slFot(an))return;const own=String((_planOwners||{})[dir+'||'+an]||'').trim();if(!own)return;const k=dir+'||'+an;(cand[k]=cand[k]||{dir,an,own,n:0}).n++;});
+      const pick=Object.values(cand).sort((a,b)=>b.n-a.n)[0];
+      ok('живой прогон: есть подстатья 111 с фактом и владельцем за '+M+'.'+yr,!!pick,pick&&(pick.dir+' / '+pick.an+' / '+pick.own));
+      if(pick){
+        const D=_cfoStmtData({fio:pick.own,isNoOwn:false,withSubs:false,withDetail:false,year:yr,month:M,allMonths:false});
+        const fW=((D.factIdx[pick.dir+'||'+pick.an]||[])[M])||0,pW=D.fcPlanMD(pick.dir,pick.an,M),bW=D.blPlanMD(pick.dir,pick.an,M);
+        const stW=statusOf(_pfStatusBase(bW,pW),fW,false);
+        const P=D.people.find(p=>p.own);ok('выписка: подстатья в секции владельца и у неё есть stMonth',!!(P&&P.exp.codes.includes(pick.an)&&P.exp.stMonth(pick.an).k),pick.an);
+        // ⚠ level в сводной задан жёстко (article), строка подстатьи без раскрытия статьи в DOM не
+        //   появляется. Берём разрез «по направлениям» под одной подстатьёй: строка = направление,
+        //   колонки те же (факт children[4], статус children[7]).
+        Object.assign(_tabFilters.planfact,{dir:'',dirs:[pick.dir],period:String(M),year:yr,articles:[],subarticles:[pick.an],owners:[],sides:[],rowDim:'dir',_defPeriodDone:true});
+        renderActiveTab();
+        const tr=[...document.querySelectorAll('#tabPlanfact tr')].find(t=>t.children[0]&&t.children[0].textContent.trim()===pick.dir);
+        const badge=tr?tr.children[7].textContent.trim():'';
+        const kOf=t=>/перерасход/.test(t)?'bad':/лимит на исходе/.test(t)?'warn':/в рамках плана/.test(t)?'ok':/не задан|нет плана|плана нет/.test(t)?'none':'?';
+        ok('вердикт выписки = бейджу сводной ('+pick.an+' · '+pick.dir+')',!!tr&&kOf(badge)===stW.k,'сводная: «'+badge+'» / выписка: '+stW.k);
+        const numT=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
+        ok('факт строки сводной = факту выписки по направлению',!!tr&&Math.abs(Math.abs(numT(tr.children[4].textContent))-Math.abs(fW))<0.006,(tr&&tr.children[4].textContent.trim())+' vs '+fW.toFixed(2));
+      }
+    }catch(e){ok('живой прогон выписки упал',false,String(e&&e.message||e));}
+    finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
+  }
+
+
   // 28. ЖИВОЙ ПРОГОН: после разворота статьи прокрутка контейнера осталась на месте
-  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон прокрутки: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
-  else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
+  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
     try{
       Object.assign(_tabFilters.planfact,{dir:'',dirs:[],articles:[],subarticles:[],owners:[],sides:[],rowDim:'art',level:'article',period:'year',_defPeriodDone:true});
       window._pfArtExp=new Set();window._pfSubExp=new Set();window._pfDirExp=new Set();
@@ -10530,12 +10581,12 @@ function pfRunTests(){
     finally{_tabFilters.planfact=F0;window._pfArtExp=E0;window._pfSubExp=S0;window._pfDirExp=D0;window._pfKeepScroll=null;try{renderActiveTab();}catch(e){}}
   }
 
+
   // 26. ЖИВОЙ ПРОГОН 4-го уровня: разрез раскладывает факт нацело
   // ⚠ Идёт по ДАННЫМ, а не по DOM: подстатья с максимумом направлений ищется в RAW, а суммы
   //   сверяются с теми же примитивами, которыми рисуются строки. Нужна вкладка БДР (примитивы
   //   живут в замыкании renderPlanFact) - поэтому проверка идёт через отрисованную таблицу.
-  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон 4-го уровня: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
-  else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
+  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
     try{
       const yr=+F0.year||new Date().getFullYear();
       // подстатья с наибольшим числом направлений за год (по факту расхода)
@@ -10588,35 +10639,12 @@ function pfRunTests(){
     finally{_tabFilters.planfact=F0;window._pfArtExp=E0;window._pfSubExp=S0;window._pfDirExp=D0;try{renderActiveTab();}catch(e){}}
   }
 
-  // 23. ВЫВОД ПРИБЫЛИ (127) В ВЫПИСКЕ - ОТДЕЛЬНАЯ СЕКЦИЯ, А НЕ СТРОКА РАСХОДА (07.09.2026)
-  // ⚠ Повод - боевой случай 05.09.2026: план 127 попадал в секцию расходов из плановых записей, а
-  //   факт вывода в факт выписки не попадал вовсе (строки отбрасывались) - выписка печатала
-  //   ЭКОНОМИЮ на весь план вывода. Проверяем ровно ЭТО: код вывода не может стоять в расходах,
-  //   а его факт обязан находиться.
-  {const cd=String(_cfoStmtData),cg=String(cfoStatementGen),cs=String(cfoScreenRender);
-   ok('признак кода вывода - общее правило _vyvodCodeF, а не копия',
-      /const isVyvodCode=_vyvodCodeF\(vyvSeen\)/.test(cd)&&cd.indexOf("includes('вывод')")<0&&cd.indexOf("includes('прибыл')")<0);
-   ok('сводная зовёт то же правило',/const isVyvodCode=_vyvodCodeF\(vyvodCodes\)/.test(String(renderPlanFact)));
-   ok('правило: c3=127 ∪ увиденные коды',_vyvodCodeF({})('127_Вывод чистой прибыли')===true
-      &&_vyvodCodeF({})('111_ФОТ')===false&&_vyvodCodeF({'888_Странное':1})('888_Странное')===true);
-   ok('факт вывода не отбрасывается, а уходит в свой индекс',/const isV=isVyvodRow\(r\),FI=isV\?vyvIdx:factIdx,OI=isV\?vyvOpsIdx:opsIdx;/.test(cd));
-   ok('план: расход и вывод разведены признаком кода',/const planPass=code=>isInc\?true:\(isVyv\?isVyvodCode\(code\):!isVyvodCode\(code\)\);/.test(cd)
-      &&(cd.match(/if\(!planPass\(p\.code\)\)return;/g)||[]).length===2);
-   ok('у вывода вердикта нет - только величина (statusFlatOf)',/const stMonth=code=>isVyv\?statusFlatOf\(fcMonth\(code,M\)\)/.test(cd)&&/const stYTD=code=>isVyv\?statusFlatOf\(fcYTD\(code\)\)/.test(cd));
-   ok('statusFlatOf: план есть - нейтрально, плана нет - прочерк',statusFlatOf(100).k==='flat'&&statusFlatOf(null).k==='none'&&statusFlatOf(0).k==='flat');
-   ok('печать: секция вывода ниже финансового результата и только при непустой',/hasVyv\?'<h2>'\+pfx\+'Распределение прибыли \(вывод\)<\/h2>'/.test(cg)&&/const hasVyv=vyvSec\.codes\.length>0;/.test(cg));
-   ok('печать: в ИТОГО секции вывода тот же нейтральный статус',/secTable\(vyvSec,'ИТОГО ВЫВОД'\+sfx,true\)/.test(cg));
-   ok('печать: в бейдже вывода только остаток, без слов оценки',/if\(st\.k==='flat'\)t='остаток '\+f\(-d\);/.test(cg));
-   ok('экран: третья вкладка и свой индекс факта',/const sel=rev\?'inc':vyv\?'vyv':'exp';/.test(cs)&&/FI=rev\?D\.factIncIdx:vyv\?D\.vyvIdx:D\.factIdx/.test(cs));
-   ok('экран: вкладка вывода только там, где вывод есть',/const hasVyvTab=D\.people\.some\(p=>p\.vyv&&p\.vyv\.codes\.length\);/.test(cs)&&/if\(vyv&&!hasVyvTab\)/.test(cs));
-   ok('«последний месяц с данными» учитывает вывод',/for\(const sel of \['exp','inc','vyv'\]\)/.test(String(_cfoLastMonthWithData)));}
 
   // 24. ЖИВОЙ ПРОГОН: у владельца плана 127 код вывода стоит в СВОЕЙ секции, а не в расходах
   // ⚠ Числовой ответ («экономии больше нет») тут дать нечем: у кого именно заведён план 127 -
   //   свойство данных, а не кода. Поэтому владелец ИЩЕТСЯ в _planOwners по коду вывода, и если
   //   его нет, проверка честно говорит «проверять не на чем», а не молча зеленеет.
-  if(typeof RAW==='undefined'||!RAW.length){ok('живой прогон вывода: нужны загруженные данные',false,'RAW пуст');}
-  else{try{
+  {try{
     const yr=+((_tabFilters.planfact||{}).year)||new Date().getFullYear(),M=new Date().getMonth()+1;
     const vc=_vyvodCodeF({});
     let vOwn=null,vCode=null;
@@ -10650,11 +10678,11 @@ function pfRunTests(){
   }catch(e){ok('живой прогон вывода упал',false,String(e&&e.message||e));}}
 
   const bad=R.filter(r=>!r.pass);
-  console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
+  console.log('[БДР] pfRunLiveTests (на данных, с вкладки БДР): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
   return{total:R.length,failed:bad.length,tests:R};
 }
-window.pfRunTests=pfRunTests;
+window.pfRunLiveTests=pfRunLiveTests;
 function renderPlanFact(f){
   const el=document.getElementById('tabPlanfact');
   if(!RAW||!RAW.length){el.innerHTML=emptyState('Нет данных','Подключите таблицу (шестерёнка → Подключение)');return;}
