@@ -2355,6 +2355,14 @@ function switchTab(name){
   ['bank','dds','opiu','fot','marketing','expenses','dupes','incomplete','osv','debtbfl','loans','anomaly','depau','planfact','target','bflmodel','registry'].forEach(t=>{document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1)).classList.toggle('hidden',t!==name);});
   if(window.innerWidth<=820)toggleSidebar(false); // на мобильном закрываем меню после выбора
   renderActiveTab();
+  // ⚠ Пресет по умолчанию применяется ПОСЛЕ первого рендера, и это не небрежность. Применённый ДО
+  //   него, он терял отметку «активен»: presetApply снимает подпись фильтров сразу после СВОЕГО
+  //   рендера, а следом шёл рендер самого switchTab - и _presetActive, который зовут селект и
+  //   заголовок, сравнивал состояние с подписью, снятой на кадр раньше, находил расхождение и гасил
+  //   только что применённый пресет. На экране это выглядело так: отбор применился, а в селекте
+  //   «- не выбран -» и суффикса в заголовке нет. Цена решения - один лишний рендер, и только при
+  //   первом входе на вкладку, где пресет по умолчанию вообще задан.
+  try{_presetApplyDefault(name);}catch(e){}
 }
 
 function renderActiveTab(){const f=getFilters();
@@ -2803,8 +2811,20 @@ window.presetApply=function(tab,id){
     const inp=document.getElementById('regSearch'); if(inp&&('q'in(p.f||{})))inp.value=F.q||'';}
   if(tab==='bank'&&p.f&&p.f.preset)setPreset('bank',p.f.preset); // банк: пресет дат всегда относителен (setPreset считает от now)
   if(tab!=='bank'&&p.f&&p.f.rel)_presetApplyRel(tab,p.f.rel);   // прочие: авто-период от сегодня
-  _activePreset[tab]=id; _activePresetSig[tab]=_filterSig(tab); // запомнить снимок - для авто-снятия при ручном изменении фильтров
+  // ⚠ ПОДПИСЬ СНИМАЕТСЯ ПОСЛЕ РЕНДЕРА, а не до. Рендер вкладки сам дописывает состояние - у БДР это
+  //   умолчание периода («текущий месяц») у пресета без периода. Снятая ДО подпись тут же
+  //   расходилась с фактической, и только что применённый пресет мгновенно считался снятым:
+  //   в селекте «- не выбран -», в заголовке суффикса нет. Поймано на стенде на пресете
+  //   умолчания. Подпись обязана описывать то, что НА ЭКРАНЕ, - иначе она не про экран.
+  // ⚠ Подпись ставится ДВАЖДЫ, и оба раза нужны. ДО рендера - иначе _presetActive, который зовут
+  //   селект и заголовок ПРЯМО ВНУТРИ рендера, сравнит новое состояние со СТАРОЙ подписью, найдёт
+  //   расхождение и снимет только что применённый пресет (поймано на стенде: dirs применились,
+  //   а активным пресет не стал). ПОСЛЕ рендера - потому что рендер дописывает состояние сам
+  //   (у БДР умолчание периода), и подпись обязана описывать то, что НА ЭКРАНЕ.
+  _activePreset[tab]=id; _activePresetSig[tab]=_filterSig(tab);
   renderActiveTab();
+  _activePresetSig[tab]=_filterSig(tab);
+  try{_presetBarRefresh();_presetTitleMark();}catch(e){} // селект и заголовок читают уже верную подпись
 };
 // ── Панель управления пресетами (в Настройках) ──
 window.showPresetsPanel=function(initTab){
@@ -2843,6 +2863,8 @@ function _presetRenderBody(tab){
       <span onclick="_presetUse('${tab}','${p.id}')" title="Открыть отчёт с этим пресетом" style="flex:1;min-width:0;cursor:pointer">
         <span style="font-size:13px;font-weight:600;color:var(--accent);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">${_pesc(p.name)}</span>
         <span style="display:block;font-size:10.5px;color:var(--text3);margin-top:2px;line-height:1.45">${(()=>{const q=_presetSummary(tab,p.f);return q.length?_pesc(q.join(' · ')):'ничего не задано - пресет ничего не меняет';})()}</span></span>
+      <label title="Открывать вкладку с этим пресетом, пока фильтры не тронуты руками" style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text2);cursor:pointer;white-space:nowrap">
+        <input type="checkbox" ${p.isDefault?'checked':''} onchange="_presetSetDefault('${tab}','${p.id}',this.checked)"> по умолчанию</label>
       <button onclick="_presetEdit('${tab}','${p.id}')" style="font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Изменить</button>
       <button onclick="_presetDelete('${tab}','${p.id}')" style="font-size:11px;padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--outcome);cursor:pointer;font-family:var(--sans)">Удалить</button>
     </div>`).join(''):'<div style="font-size:12px;color:var(--text3);margin-bottom:8px">Пресетов пока нет - создайте ниже.</div>';
@@ -2970,6 +2992,36 @@ window._presetFillFromTab=function(tab){
   const fm=document.getElementById('presetForm');
   if(fm)fm.innerHTML=_presetFormHtml(tab,{id:keep.id,name:keep.name,f});
 };
+// ── ПРЕСЕТ ПО УМОЛЧАНИЮ ─────────────────────────────────────────────────────
+// ⚠ ОДИН на вкладку: снимаем признак со всех остальных той же вкладки. Два «умолчания» - это
+//   вопрос «какое из них применится», на который человек не может ответить, глядя на список.
+window._presetSetDefault=function(tab,id,on){
+  (_presets[tab]||[]).forEach(p=>{ if(p.id===id)p.isDefault=!!on; else delete p.isDefault; });
+  _presetsSave(); _presetRenderBody(tab);
+};
+// ⚠ Применяется ТОЛЬКО на чистой вкладке: человек, уже выбравший фильтры руками, ждёт СВОЙ отбор,
+//   и подмена его пресетом читалась бы как потеря выбора. Признак «чисто» - тот же счётчик
+//   активных фильтров, что стоит на кнопке «Сбросить (N)»: второго определения «чистого» не заводим.
+// ⚠ Один раз за сессию на вкладку: иначе возврат на вкладку после ручного сброса снова навязывал бы
+//   пресет, и снять его было бы нельзя - кнопка «Сбросить» переставала бы работать по смыслу.
+const _presetDefDone={};
+// ⚠ Сброс - ТОЛЬКО для тестов: в бою «один раз за сессию» и означает один раз.
+window._presetDefDoneReset=function(){Object.keys(_presetDefDone).forEach(k=>delete _presetDefDone[k]);};
+function _presetApplyDefault(tab){
+  if(!PRESET_TABS.some(([k])=>k===tab))return;
+  if(_presetDefDone[tab])return;
+  const p=(_presets[tab]||[]).find(x=>x.isDefault); if(!p)return;
+  if(_activePreset[tab])return;                       // пресет уже выбран - не перебиваем
+  if(typeof _pfActiveFilters==='function'&&tab==='planfact'&&_pfActiveFilters().length)return; // БДР: фильтры тронуты руками
+  if(tab!=='planfact'&&_presetTabDirty(tab))return;
+  _presetDefDone[tab]=1;
+  presetApply(tab,p.id);
+}
+// «Вкладку трогали руками» для прочих вкладок: сравниваем состояние с умолчаниями вкладки
+function _presetTabDirty(tab){
+  const F=_tabFilters[tab]||{},D=_presetTabDefaults(tab);
+  return Object.keys(D).some(k=>!_presetSame(F[k],D[k]));
+}
 window._presetEdit=function(tab,id){
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
   const t=document.getElementById('presetFormTitle'); if(t)t.textContent='Изменение пресета';
