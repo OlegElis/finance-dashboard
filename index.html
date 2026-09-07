@@ -3081,13 +3081,23 @@ function _presetMigCore(all){
         let v=f0[fd.k];
         // год БДР: старый снимок хранил число + признак yearIsCurrent
         if(tab==='planfact'&&fd.k==='year'&&f0.yearIsCurrent)v='cur';
-        if(v===undefined){dropped.push(fd.k+' (нет в старой записи)');return;}
+        // ⚠ Поля, которых в записи НЕ БЫЛО, в «уйдёт» не печатаем: уходить нечему, а у пресета,
+        //   уже лежащего в новой форме, этот список занимал бы весь вывод и прятал настоящие правки.
+        if(v===undefined)return;
         if(_presetSame(v,D[fd.k])){dropped.push(fd.k+' (= умолчание)');return;}
         f[fd.k]=v; kept.push(fd.k);
       });
       const unknown=Object.keys(f0).filter(k=>k!=='yearIsCurrent'&&!(PRESET_FIELDS[tab]||[]).some(fd=>fd.k===k));
-      rep.push({tab,id:p.id,name:p.name,kept,dropped,unknown,summary:_presetSummary(tab,f)});
-      return {id:p.id,name:p.name,f};
+      // ⚠ «Было в снимке» печатаем ЗНАЧЕНИЯМИ, а не только именами полей: сверять «до и после»
+      //   по списку ключей нельзя - у снимка ключи есть ВСЕ, и разница именно в значениях.
+      const wasKeys=Object.keys(f0).filter(k=>k!=='yearIsCurrent');
+      const was=wasKeys.map(k=>{const t=_presetFieldText(tab,k,f0[k]);return k+'='+(t||JSON.stringify(f0[k]));});
+      // ⚠ «Меняется» считаем сравнением ЗАПИСЕЙ, а не наличием отброшенных полей: пресет, уже
+      //   лежащий в новой форме (заведён после правки), обязан числиться «остаётся как есть»,
+      //   иначе итог сухого прогона завышает объём правки и по нему нельзя принять решение.
+      const changed=JSON.stringify(f0)!==JSON.stringify(f);
+      rep.push({tab,id:p.id,name:p.name,was,kept,dropped,unknown,changed,summary:_presetSummary(tab,f)});
+      return Object.assign({id:p.id,name:p.name,f},(p.isDefault?{isDefault:true}:{}));
     });
   });
   return {out,rep};
@@ -3097,16 +3107,26 @@ window.presetsMigrateFields=async function(opts){
   const {out,rep}=_presetMigCore(_presets);
   console.log('%c[пресеты] миграция «снимок → набор полей» · '+(dry?'СУХОЙ ПРОГОН':'ЗАПИСЬ'),'font-weight:700');
   rep.forEach(r=>{
-    console.log('  ['+r.tab+'] «'+r.name+'»');
-    console.log('     задано:   '+(r.kept.length?r.kept.join(', '):'НИЧЕГО - пресет станет пустым (это валидно)'));
-    console.log('     не задано: '+(r.dropped.length?r.dropped.join(', '):'-'));
+    console.log('  ['+r.tab+'] «'+r.name+'»'+(r.changed?'':'  - БЕЗ ИЗМЕНЕНИЙ (уже в новой форме)'));
+    console.log('     было в снимке: '+(r.was.length?r.was.join(' · '):'пусто'));
+    console.log('     станет задано: '+(r.kept.length?r.kept.join(', '):'НИЧЕГО - пресет станет пустым (это валидно: «ничего не меняет»)'));
+    console.log('     уйдёт в «не задано»: '+(r.dropped.length?r.dropped.join(', '):'-')+(r.changed?'':' (в записи их и не было)'));
     if(r.unknown.length)console.log('     ⚠ поля вне описания вкладки (не переносятся): '+r.unknown.join(', '));
     console.log('     состав после: '+(r.summary.length?r.summary.join(' · '):'ничего не задано'));
   });
-  const n=rep.length,nEmpty=rep.filter(r=>!r.kept.length).length;
-  console.log('  ИТОГО пресетов: '+n+(nEmpty?(' · из них станут пустыми: '+nEmpty):''));
+  const n=rep.length,nEmpty=rep.filter(r=>!r.kept.length).length,nChg=rep.filter(r=>r.changed).length;
+  console.log('  ИТОГО пресетов: '+n+' · меняется: '+nChg+' · остаётся как есть: '+(n-nChg)+(nEmpty?(' · станут пустыми: '+nEmpty):''));
+  // ⚠ Откуда взят список - обязательная строка: миграция ПЕРЕЗАПИСЫВАЕТ config/presets целиком,
+  //   и запуск на локальном зеркале, не дождавшемся облака, затёр бы облачные пресеты старыми.
+  const cloud=!!(window.firebase&&FIREBASE_CONFIG.databaseURL);
+  console.log('  Источник списка: '+(cloud?(_presetsSynced?'облако (подписка config/presets активна)':'⚠ ЗЕРКАЛО localStorage - подписка не поднята, ЗАПИСЬ ОПАСНА'):'⚠ облака нет - только localStorage, записывать нельзя'));
   if(dry){console.log('  Это сухой прогон. Запись: presetsMigrateFields({dry:false}) - ТОЛЬКО после архива настроек.');return{rep,n};}
   if(!_isAdmin()){alert('Запись пресетов - только администратору.');return{rep,n,written:false};}
+  // ⚠ Отказ, а не предупреждение: запись перезаписывает ветку ЦЕЛИКОМ, и локальное зеркало,
+  //   не дождавшееся облака, затёрло бы чужие пресеты своей старой копией.
+  if(!(window.firebase&&FIREBASE_CONFIG.databaseURL&&_presetsSynced)){
+    alert('Список пресетов не из облака (подписка config/presets не поднята). Запись отменена - иначе облачные пресеты были бы затёрты локальной копией.');
+    return{rep,n,written:false};}
   _presets=_presetsNormalize(out);
   const ok=await _presetsSave();
   console.log(ok===false?'  ⚠ ЗАПИСЬ НЕ ПРОШЛА - пресеты остались прежними в облаке.':'  Записано.');
