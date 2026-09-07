@@ -2646,28 +2646,19 @@ function _presetBarInject(){
   // ⚠ Габариты - по эталону .reg-searchbar (11px, padding 2px/8px, радиус 5, line-height ЯВНЫЙ):
   //   без явного line-height контрол выходит 19px и ломает высоту бара - это уже ловили.
   const st='font-size:11px;line-height:15px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);cursor:pointer';
+  // ⚠ В БАРЕ ТОЛЬКО СЕЛЕКТ (решение Олега 07.09.2026). Ни строки-действия «сохранить», ни кнопки
+  //   ⚙ рядом: бар - место ВЫБОРА отбора, а не управления им. Управление (состав, правка,
+  //   удаление, «Подставить текущий отбор») живёт в окне пресетов, и вход в окно один - шестерёнка.
+  //   Пункт списка, который не пресет, а действие, к тому же ломает само понятие списка: человек
+  //   выбирает «что показать», а получает диалог.
   wrap.innerHTML='<select title="Пресет отбора" onchange="_presetPick(this.value)" style="'+st+';max-width:190px">'
     +'<option value="">Пресет: - не выбран -</option>'
     +list.map(p=>'<option value="'+_pesc(p.id)+'"'+(av===p.id?' selected':'')+'>'+_pesc(p.name)+'</option>').join('')
-    // ⚠ Последняя строка - ДЕЙСТВИЕ, а не пресет: отдельной кнопки 💾 в баре нет (место), а путь
-    //   «настроил на вкладке → сохранил» обязан быть виден там же, где выбирают пресет.
-    +'<option value="__save__">💾 Сохранить текущий отбор…</option></select>'
-    +'<button title="Пресеты отчётов: состав, правка, удаление" onclick="showPresetsPanel(\''+tab+'\')" style="'+st+';background:var(--surface2);color:var(--text2)">⚙</button>';
+    +'</select>';
   bar.appendChild(wrap);
 }
-// Выбор в селекте: пресет применяется, служебная строка открывает форму с текущим отбором
-window._presetPick=function(v){
-  const tab=activeTab;
-  if(v==='__save__'){
-    showPresetsPanel(tab);
-    // ⚠ Форма открывается ПРЕДЗАПОЛНЕННОЙ текущим отбором - иначе «сохранить текущий отбор»
-    //   означало бы «набери его заново руками», то есть не то, что написано в пункте.
-    try{_presetFillFromTab(tab);}catch(e){}
-    try{const t=document.getElementById('presetFormTitle');if(t)t.textContent='Сохранить текущий отбор как пресет';}catch(e){}
-    _presetBarRefresh(); return;
-  }
-  presetApply(tab,v||'');
-};
+// Выбор в селекте: пресет применяется, пустое значение - снимает. Ничего, кроме выбора, тут нет.
+window._presetPick=function(v){ presetApply(activeTab,v||''); };
 // Селект показывает активный пресет и гаснет вместе с суффиксом заголовка - ОДИН источник (_presetActive)
 function _presetBarRefresh(){
   const bar=_presetBarTarget(); if(!bar)return;
@@ -10504,8 +10495,17 @@ function pfRunTests(){
      {const src=String(_presetBarInject);
       ok('селект ставится последним элементом бара',/bar\.appendChild\(wrap\)/.test(src));
       ok('вставка идёт только если контрола ещё нет',/if\(bar\.querySelector\(':scope > \.preset-pick'\)\)return;/.test(src));
-      ok('последняя строка селекта - сохранение текущего отбора',/__save__/.test(src)&&/__save__/.test(String(_presetPick)));
+      // ⚠ В БАРЕ ТОЛЬКО СЕЛЕКТ: ни строки-действия, ни кнопки настройки. Пункт списка, который не
+      //   пресет, а действие, ломает понятие списка; окно пресетов открывается из шестерёнки.
+      ok('в баре нет строки-действия и кнопки окна',src.indexOf('__save'+'__')<0&&src.indexOf('showPresetsPanel')<0);
+      ok('выбор в селекте только применяет пресет',/window\._presetPick=function\(v\)\{ presetApply\(activeTab,v\|\|''\); \};/.test(String(_presetPick).replace(/\s+/g,' ')||'')||/presetApply\(activeTab,v\|\|''\)/.test(String(_presetPick)));
       ok('селект только на вкладках с пресетами',/PRESET_TABS\.some\(\(\[k\]\)=>k===activeTab\)/.test(src));}
+     // (4б) в баре РОВНО ОДИН контрол пресетов, и это select
+     {const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1));
+      const picks=cont?cont.querySelectorAll('.preset-pick'):[];
+      const inner=picks.length?[...picks[0].children].map(x=>x.tagName):[];
+      ok('в баре один блок пресетов',picks.length<=1,picks.length);
+      if(picks.length)ok('и в нём ровно один контрол - select',inner.length===1&&inner[0]==='SELECT',inner.join(','));}
      // (5) пресет по умолчанию - один на вкладку и не перебивает руками выбранное
      {_presets.planfact=[{id:'v1',name:'x',f:{dirs:['Д1']},isDefault:true},{id:'v2',name:'y',f:{}}];
       _presetSetDefault('planfact','v2',true);
@@ -10573,7 +10573,10 @@ function pfRunTests(){
     ok('панель планов зовут только меню БДР (и она сама)',cnt(/showPlansPanel\(\)/g)<=2,cnt(/showPlansPanel\(\)/g));
     // ⚠ Вход в окно теперь ДВА и оба нужны: шестерёнка (управление) и ⚙ рядом с селектом на
     //   вкладке (07.09.2026 - без вкладочного входа механизм есть, а человеку его не видно).
-    ok('окно пресетов зовут шестерёнка, селект вкладки и само окно',cnt(/showPresetsPanel\(/g)<=5,cnt(/showPresetsPanel\(/g));
+    // ⚠ Вход в окно ОДИН - шестерёнка (плюс внутренние вызовы самого окна). Второй вход в баре
+    //   был заведён и убран 07.09.2026: бар - место выбора отбора, а не управления им.
+    ok('окно пресетов зовут только шестерёнка и само окно',cnt(/showPresetsPanel\(/g)<=4,cnt(/showPresetsPanel\(/g));
+    ok('вставка контрола в бар окно не открывает',String(_presetBarInject).indexOf('showPresetsPanel')<0);
     // ⚠ Иголки склеены из половин: набор тестов лежит в том же скрипте, и литерал целиком
     //   находил бы САМ СЕБЯ - та же ловушка, что с cnt по renderPlanFact.
     ok('полосы пресетов на вкладках нет',all.indexOf('_inject'+'PresetBar')<0&&all.indexOf('preset-'+'inline')<0);
