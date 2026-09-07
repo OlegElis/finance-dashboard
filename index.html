@@ -1278,6 +1278,15 @@ function _pfTrimNote(labels){
 //   верхний уровень СПЕЦИАЛЬНО - чтобы правило проверялось тестом, а не только глазами на живых данных.
 // ⚠ Округление до копеек ОБЯЗАТЕЛЬНО: сумма нескольких десятков float даёт хвост, и сторож без
 //   округления кричал бы на каждой второй подстатье, после чего его перестали бы читать.
+// ── МЁРТВАЯ СТРОКА: за выбранный период НЕТ НИЧЕГО - ни факта, ни текущего плана, ни
+//    утверждённого (все три по модулю меньше полкопейки). Нулевой план с живым фактом или план
+//    без факта МЁРТВЫМИ НЕ СЧИТАЮТСЯ: явный ноль - настоящий план (решение Олега 06.09.2026),
+//    и перерасход по нулевому лимиту обязан быть виден.
+// ⚠ Правило ОДНО на сводную БДР и выписку ЦФО (вынесено на верхний уровень 07.09.2026): два
+//    порога «когда строка пуста» разъехались бы, и один отчёт прятал бы то, что показывает другой.
+// ⚠ Фильтруем на РЕНДЕРЕ, а не в суммах: скрытая строка вносит нули, поэтому ИТОГО от скрытия
+//    не меняется - это и есть проверяемый инвариант, а не пожелание.
+const _pfRowDead=(fact,plan,base)=>Math.abs(fact||0)<0.005&&Math.abs(plan||0)<0.005&&Math.abs(base||0)<0.005;
 function _pfSplitOff(subFact,sideFacts){
   const s=(sideFacts||[]).reduce((a,v)=>a+(+v||0),0);
   const d=Math.round(((+subFact||0)-s)*100)/100;
@@ -10243,7 +10252,9 @@ function pfRunTests(){
      (_tn.prefix+', '+_tn.disp[0].slice(1))===ADDR[0],_tn.prefix+', '+_tn.disp[0].slice(1));
   const cg=String(cfoStatementGen);
   ok('подпись печатается только при состоявшемся срезе',/const trimNote=\(\)=>\{if\(!_trimPre\.length\)return '';/.test(cg));
-  ok('копилка сбрасывается перед сборкой строк секции',/trimReset\(\);\n\s*const inner=sec\.codes\.length/.test(cg)&&/trimReset\(\);\n\s*sec\.codes\.forEach/.test(cg));
+  // ⚠ Наборы строк стали отбором (_secAlive/_secAliveY - мёртвые строки секции вывода), но
+  //   проверяемое здесь - ПОРЯДОК: сброс копилки стоит перед сборкой строк, а не после.
+  ok('копилка сбрасывается перед сборкой строк секции',/trimReset\(\);\n\s*const inner=_secAlive\(sec\)\.length/.test(cg)&&/trimReset\(\);\n\s*const _mAlive=_secAliveY\(sec\);\n\s*_mAlive\.forEach/.test(cg));
   ok('подпись стоит под таблицей своей секции',/<\/tbody><\/table>'\+trimNote\(\)/.test(cg));
   // ⚠ Список сторон считается ОДИН раз: строки и префикс обязаны быть от одного списка.
   ok('стороны берутся один раз на подстатью',(cg.match(/sidesWithActivity\(dirsSet,code\)/g)||[]).length===2,
@@ -10456,12 +10467,27 @@ function pfRunTests(){
       &&(cd.match(/if\(!planPass\(p\.code\)\)return;/g)||[]).length===2);
    ok('у вывода вердикта нет - только величина (statusFlatOf)',/const stMonth=code=>isVyv\?statusFlatOf\(fcMonth\(code,M\)\)/.test(cd)&&/const stYTD=code=>isVyv\?statusFlatOf\(fcYTD\(code\)\)/.test(cd));
    ok('statusFlatOf: план есть - нейтрально, плана нет - прочерк',statusFlatOf(100).k==='flat'&&statusFlatOf(null).k==='none'&&statusFlatOf(0).k==='flat');
-   ok('печать: секция вывода ниже финансового результата и только при непустой',/hasVyv\?'<h2>'\+pfx\+'Распределение прибыли \(вывод\)<\/h2>'/.test(cg)&&/const hasVyv=vyvSec\.codes\.length>0;/.test(cg));
+   ok('печать: секция вывода ниже финансового результата и только при непустой',/hasVyv\?'<h2>'\+pfx\+'Распределение прибыли \(вывод\)<\/h2>'/.test(cg)&&/const hasVyv=\(allMonths\?_secAliveY\(vyvSec\):_secAlive\(vyvSec\)\)\.length>0;/.test(cg));
    ok('печать: в ИТОГО секции вывода тот же нейтральный статус',/secTable\(vyvSec,'ИТОГО ВЫВОД'\+sfx,true\)/.test(cg));
    ok('печать: в бейдже вывода только остаток, без слов оценки',/if\(st\.k==='flat'\)t='остаток '\+f\(-d\);/.test(cg));
    ok('экран: третья вкладка и свой индекс факта',/const sel=rev\?'inc':vyv\?'vyv':'exp';/.test(cs)&&/FI=rev\?D\.factIncIdx:vyv\?D\.vyvIdx:D\.factIdx/.test(cs));
    ok('экран: вкладка вывода только там, где вывод есть',/const hasVyvTab=D\.people\.some\(p=>p\.vyv&&p\.vyv\.codes\.length\);/.test(cs)&&/if\(vyv&&!hasVyvTab\)/.test(cs));
    ok('«последний месяц с данными» учитывает вывод',/for\(const sel of \['exp','inc','vyv'\]\)/.test(String(_cfoLastMonthWithData)));}
+
+  // 29. МЁРТВЫЕ СТРОКИ СЕКЦИИ ВЫВОДА не печатаются и не показываются (07.09.2026)
+  {const cg=String(cfoStatementGen),cs=String(cfoScreenRender),src=String(renderPlanFact);
+   ok('правило мёртвой строки - одно на файл (_pfRowDead)',
+      typeof _pfRowDead==='function'&&/const _rowDead=_pfRowDead;/.test(src)&&cg.indexOf('_pfRowDead')>=0&&cs.indexOf('_pfRowDead')>=0);
+   ok('_pfRowDead: нули везде - мёртвая',_pfRowDead(0,0,0)===true&&_pfRowDead(0,null,null)===true);
+   ok('_pfRowDead: живой факт при нулевом плане - НЕ мёртвая',_pfRowDead(100,0,0)===false);
+   ok('_pfRowDead: план без факта - НЕ мёртвая',_pfRowDead(0,100,0)===false&&_pfRowDead(0,0,100)===false);
+   ok('_pfRowDead: полкопейки не считается',_pfRowDead(0.004,0.004,0.004)===true&&_pfRowDead(0.01,0,0)===false);
+   // ⚠ Отборов ДВА и они не взаимозаменяемы: месяц+YTD для листа месяца, год - для матрицы ×12.
+   ok('печать: два отбора, оба только для kind=vyv',/const _secAlive=sec=>\{if\(sec\.kind!=='vyv'\)return sec\.codes;/.test(cg)&&/const _secAliveY=sec=>\{if\(sec\.kind!=='vyv'\)return sec\.codes;/.test(cg));
+   ok('печать: строки и пустое состояние идут по отбору, а не по составу кодов',/_secAlive\(sec\)\.forEach\(code=>\{/.test(cg)&&/const inner=_secAlive\(sec\)\.length\?/.test(cg)&&/const inner=_mAlive\.length\?/.test(cg));
+   ok('экран: у вывода правило строже и общее',/if\(vyv&&_pfRowDead\(fa,p,baseDirScr\(d,code\)\)\)return;/.test(cs));
+   ok('экран: у расходов и доходов отбор НЕ изменился',/if\(p==null&&Math\.abs\(fa\)<0\.005\)return;/.test(cs));
+   ok('экран: утверждённое участвует в правиле, хотя и не показывается',/const baseDirScr=\(d,code\)=>\{const bl=rev\?D\.blPlanIncMD:D\.blPlanMD;/.test(cs));}
 
 
   const bad=R.filter(r=>!r.pass);
@@ -11603,7 +11629,7 @@ function renderPlanFact(f){
   const sideRemBy=(sub,side,baseM,factM)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=baseM(sub,side,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factM?factM(m):sideFactM(sub,side,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind:'exp',src:_remSrc(su,sp)};};
   const sideRemFor=(sub,side)=>({u:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,true)),t:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,false))});
   // мёртвая строка: за ВЫБРАННЫЙ период НЕТ ничего (|факт|=|утв|=|прог|=0, по модулю). Нулевой план+живой факт или план без факта - НЕ мёртвые. Фильтруем на РЕНДЕРЕ; суммы берутся из полных массивов (скрытые дают 0) → ИТОГО не меняется. Как sideHasActivity в выписке.
-  const _rowDead=(fact,plan,base)=>Math.abs(fact||0)<0.005&&Math.abs(plan||0)<0.005&&Math.abs(base||0)<0.005;
+  const _rowDead=_pfRowDead; // общее правило верхнего уровня; своей копии у сводной больше нет
   const _subAlive=(kind,sub)=>!_rowDead(childFact(kind,sub),childPlan(kind,sub),childBase(kind,sub)); // подстатья с движением за период (childFact/Plan/Base - period-aware, в матрице = год)
   // ── ЧЕТВЁРТЫЙ УРОВЕНЬ: РАЗРЕЗ ПО НАПРАВЛЕНИЯМ под подстатьёй и под стороной (решение Олега 07.09.2026) ──
   // ⚠ Уровень существует ТОЛЬКО В СВОДЕ (`dirsToAgg.length>1`). При одном выбранном направлении
@@ -15964,6 +15990,11 @@ function cfoScreenRender(){
   //   написано «плана нет».
   const planDir=(d,code)=>{const fc=rev?D.fcPlanIncMD:D.fcPlanMD;
     let s=null;MS.forEach(m=>{const v=fc(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
+  // ⚠ Утверждённое на экране НЕ показывается (оно в колонке «Утв.» печатного листа), но в правиле
+  //   мёртвой строки участвует: строка, где утверждённое ЕСТЬ, а текущего плана и факта нет, - это
+  //   не пустота, а неисполнение утверждённого, и прятать её нельзя.
+  const baseDirScr=(d,code)=>{const bl=rev?D.blPlanIncMD:D.blPlanMD;if(!bl)return null;
+    let s=null;MS.forEach(m=>{const v=bl(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
   const factDir=(d,code)=>{const FI=rev?D.factIncIdx:vyv?D.vyvIdx:D.factIdx,a=FI[d+'||'+code];if(!a)return 0;
     let s=0;MS.forEach(m=>{s+=a[m]||0;});return s;};
   const opsDir=(d,code)=>{let o=[];MS.forEach(m=>{o=o.concat(D.opsOf(d,code,m,vyv?'vyv':'exp')||[]);});
@@ -15974,6 +16005,13 @@ function cfoScreenRender(){
     S.codes.forEach(code=>{S.pairSet[code].forEach(d=>{
       const p=planDir(d,code),fa=factDir(d,code);
       if(p==null&&Math.abs(fa)<0.005)return; // пара «направление × подстатья» без плана и факта - строки нет
+      // ⚠ В СЕКЦИИ ВЫВОДА правило строже и ОБЩЕЕ со сводной и печатью (_pfRowDead): строка уходит,
+      //   когда пусто ВО ВСЕХ ТРЁХ величинах, включая ЯВНЫЙ НОЛЬ плана. Прежнее условие выше
+      //   ловило только «плана нет вовсе» (p==null), и девять направлений с планом 0,00 и
+      //   выведенным 0,00 печатались на экране как содержательные строки.
+      // ⚠ У расходов и доходов правило НЕ меняется: там нулевой план - это лимит или цель,
+      //   и строка с ним сообщает о решении даже без факта. У вывода лимита нет.
+      if(vyv&&_pfRowDead(fa,p,baseDirScr(d,code)))return;
       const DD=(dirs[d]=dirs[d]||{dir:d,people:{},p:null,f:0});
       if(p!=null)DD.p=(DD.p||0)+p; DD.f+=fa; // ⚠ сумма планов тоже через null: направление без единого плана остаётся «плана нет»
       const PP=(DD.people[pi]=DD.people[pi]||{fio:P.fio,own:P.own,pi:pi,subs:[]});
@@ -16350,14 +16388,31 @@ window.cfoStatementGen=function(O){
   // Строки таблицы секции. Раньше собирались внутри buildSection в одном цикле с суммами; после
   // выноса расчёта суммы считает _cfoStmtData, а строки - здесь. ⚠ Порядок обхода codes ОБЯЗАН
   // совпадать с тем, в котором сложены суммы, иначе ИТОГО перестанет быть суммой видимых строк.
+  // ⚠ МЁРТВЫЕ СТРОКИ ПРЯЧЕМ ТОЛЬКО В СЕКЦИИ ВЫВОДА, и это не половинчатость. У расхода и дохода
+  //   нулевой план - это ЛИМИТ или ЦЕЛЬ («запланировали ноль»), и строка с ним сообщает о решении,
+  //   даже когда факта нет. У вывода прибыли лимита нет: ноль там значит «не планировали», и строка,
+  //   где нули во всех трёх величинах, не сообщает ничего - на бумаге это просто мусор, который
+  //   человек вынужден прочитать. Правило то же самое (_pfRowDead), применение - разное.
+  // ⚠ Фильтр стоит на РЕНДЕРЕ: суммы секции считает _cfoStmtData по полному набору кодов, скрытая
+  //   строка вносит нули, и ИТОГО от скрытия не двигается ни на копейку.
+  const _secAlive=sec=>{if(sec.kind!=='vyv')return sec.codes;
+    return sec.codes.filter(code=>!(_pfRowDead(sec.factMonth(code,M),sec.fcMonth(code,M),sec.blMonth(code,M))
+                                  &&_pfRowDead(sec.factYTD(code),sec.fcYTD(code),sec.blYTD(code))));};
+  // ⚠ ГОДОВОЙ отбор - для матрицы ×12: она показывает все 12 месяцев, и строка, мёртвая в
+  //   янв-M, но живая в декабре, на матрице обязана быть. Поэтому отборов ДВА и они не
+  //   взаимозаменяемы; правило внутри одно и то же (_pfRowDead).
+  const _secAliveY=sec=>{if(sec.kind!=='vyv')return sec.codes;
+    return sec.codes.filter(code=>{let yf=0,yp=null,yb=null;
+      for(let m=1;m<=12;m++){yf+=sec.factMonth(code,m);const c=sec.fcMonth(code,m);if(c!=null)yp=(yp||0)+c;const b=sec.blMonth(code,m);if(b!=null)yb=(yb||0)+b;}
+      return !_pfRowDead(yf,yp,yb);});};
   const secRows=sec=>{const isInc=sec.kind==='inc';let rows='';
-    sec.codes.forEach(code=>{const bP=sec.blMonth(code,M),pP=sec.fcMonth(code,M),fP=sec.factMonth(code,M),bY=sec.blYTD(code),pY=sec.fcYTD(code),fY=sec.factYTD(code);
+    _secAlive(sec).forEach(code=>{const bP=sec.blMonth(code,M),pP=sec.fcMonth(code,M),fP=sec.factMonth(code,M),bY=sec.blYTD(code),pY=sec.fcYTD(code),fY=sec.factYTD(code);
       rows+='<tr><td class="nm">'+esc(code)+'</td>'+num(bP)+num(pP)+'<td class="r">'+f(fP)+'</td>'+stCell(sec.stMonth(code),pP,fP,isInc,_pfPlanRevNote(bP,pP))+num(bY)+num(pY)+'<td class="r">'+f(fY)+'</td>'+stCell(sec.stYTD(code),pY,fY,isInc,'')+'</tr>'+(isInc?'':secSubRows(sec.pairSet[code],code));});
     return rows;};
   const secTable=(sec,totLabel,flat)=>{const isInc=sec.kind==='inc';
-    const totRow=sec.codes.length?secTotRow(totLabel||'ИТОГО',sec.sBP,sec.sPP,sec.sFP,sec.sBY,sec.sPY,sec.sFY,isInc,false,flat):'';
+    const totRow=_secAlive(sec).length?secTotRow(totLabel||'ИТОГО',sec.sBP,sec.sPP,sec.sFP,sec.sBY,sec.sPY,sec.sFY,isInc,false,flat):'';
     trimReset();
-    const inner=sec.codes.length?(secRows(sec)+totRow):'<tr><td colspan="9" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
+    const inner=_secAlive(sec).length?(secRows(sec)+totRow):'<tr><td colspan="9" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
     return '<table>'+COLG+THEAD+'<tbody>'+inner+'</tbody></table>'+trimNote();};
   // строка ИТОГО в 7-колоночном режиме (месяц) - для блок-итогов и ЧП; inc=true → обратный цвет Δ
   // строка ИТОГО (секция, блок, результат ЦФО): вердикт от суммарного ТЕКУЩЕГО плана тем же statusOf; sign → цвет факта по знаку (результат)
@@ -16388,14 +16443,15 @@ window.cfoStatementGen=function(O){
     const inc=sec.kind==='inc',flat=sec.kind==='vyv';
     const totF=new Array(13).fill(0),totP=new Array(13).fill(null),totFC=new Array(13).fill(null);let yfT=0,ypfT=null,yfcT=null,rows='';
     trimReset();
-    sec.codes.forEach(code=>{let yf=0,ypf=null,yfc=null,cells='';
+    const _mAlive=_secAliveY(sec);
+    _mAlive.forEach(code=>{let yf=0,ypf=null,yfc=null,cells='';
       for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const fv=sec.factMonth(code,m);const pv=fr?sec.blMonth(code,m):null;const fcv=sec.fcMonth(code,m); // прогноз считаем для всех 12 мес (год = прогноз 12 мес); в ячейке показываем только для незамороженных
         yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;if(fcv!=null)yfc=(yfc||0)+fcv;
         totF[m]+=fv;if(pv!=null)totP[m]=(totP[m]||0)+pv;if(fcv!=null)totFC[m]=(totFC[m]||0)+fcv;
         cells+=mCellK(fv,pv,fr,inc,fcv,flat);}
       yfT+=yf;if(ypf!=null)ypfT=(ypfT||0)+ypf;if(yfc!=null)yfcT=(yfcT||0)+yfc;
       rows+='<tr><td class="nm">'+esc(code)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>'+mSubRows(sec,code);});
-    const inner=sec.codes.length?(rows+mTotRow(totLabel||'ИТОГО',totF,totP,yfT,ypfT,inc,totFC,yfcT,flat)):'<tr><td colspan="14" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
+    const inner=_mAlive.length?(rows+mTotRow(totLabel||'ИТОГО',totF,totP,yfT,ypfT,inc,totFC,yfcT,flat)):'<tr><td colspan="14" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
     return {html:'<table class="mtx">'+mColg+mHead+'<tbody>'+inner+'</tbody></table>'+trimNote(),totF,totP,totFC,yf:yfT,ypf:ypfT,yfc:yfcT};
   };
   // строка ЧП/net в матрице из двух секций (доходы − расходы), по месяцам + ГОД. inc-семантика цвета (выше плана = зелёный)
@@ -16427,7 +16483,10 @@ window.cfoStatementGen=function(O){
     // ⚠ Место секции - НИЖЕ финансового результата, как в ОПиУ и в сводной БДР: вывод прибыли не
     //   расход и в результат ЦФО не входит. Попади он выше - результат перестал бы быть разностью
     //   доходов и расходов, стоящих над ним.
-    const hasVyv=vyvSec.codes.length>0;
+    // ⚠ Считаем по ВИДИМЫМ строкам, а не по составу кодов: у ЦФО, где все выводные строки мёртвые,
+    //   иначе печатался бы заголовок секции с одной строкой ИТОГО и нулями - ровно тот пустой
+    //   разворот, ради которого секцию и гейтят. Отбор берётся по режиму листа.
+    const hasVyv=(allMonths?_secAliveY(vyvSec):_secAlive(vyvSec)).length>0;
     let html='',agg;
     if(allMonths){
       const im=matrixTable(incSec,'ИТОГО ДОХОДЫ'+sfx),em=matrixTable(expSec,'ИТОГО РАСХОДЫ'+sfx);
