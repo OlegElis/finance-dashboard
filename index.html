@@ -8931,10 +8931,14 @@ function _planIncBaseMonth(dir,year,m){
   return s;
 }
 // Расшифровка строки БДР: операции кода за период (kind: inc/exp/vyv; m - месяц или 0 = весь период отчёта)
-window.pfShowTxn=function(kind,code,m,dir){
+window.pfShowTxn=function(kind,code,m,dir,side){
   const _own=(window._pfOwnSubs||{})[kind+'|'+code]; // при фильтре ЦФО: [{sub,dirs}] - операции прошедших подстатей ТОЛЬКО по owner-passing направлениям (совпадает с per-dir числом строки); иначе - как раньше
   let all=(_own&&_own.length)?_own.reduce((a,e)=>{const rows=(window._pfTxn||{})[kind+'|'+e.sub]||[];return a.concat(e.dirs?rows.filter(r=>e.dirs.includes(String(r[COL.ACTIVITY_DIR]||'').trim())):rows);},[]):((window._pfTxn||{})[kind+'|'+code]||[]);
   if(dir)all=all.filter(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===dir); // режим «по направлениям»: тот же _pfTxn, фильтр по направлению (второй ключ не заводим)
+  // ⚠ Сторона (сотрудник/контрагент) - ТОТ ЖЕ ключ _pfTxn и ещё один фильтр, а не второй индекс:
+  //   4-й уровень под стороной открывает операции ровно этой пары «сторона × направление».
+  //   Отдельный ключ по стороне означал бы вторую выборку тех же строк - она разошлась бы с первой.
+  if(side!=null)all=all.filter(r=>String(r[COL.SECOND_SIDE]||'').trim()===side);
   const MONS=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   let rows=all,plbl='';
   const mset=Array.isArray(m)?m.filter(x=>x).map(Number):(m?[+m]:null); // m: число (месяц), массив месяцев (напр. бар отклонений = планируемые месяцы), или 0/null (весь год)
@@ -8942,7 +8946,7 @@ window.pfShowTxn=function(kind,code,m,dir){
   if(!rows.length)return;
   const meta=window._pfTxnMeta||{};
   window._opiuTxnMap=window._opiuTxnMap||{};
-  window._opiuTxnMap['__pfcell']={label:String(code).startsWith('__side:')?code.slice(7):code,artLabel:kind==='inc'?'Доходы':kind==='vyv'?'Распределение прибыли':'Расходы',secLabel:'БДР · '+(dir||meta.dirLabel||'')+' · '+(meta.year||'')+plbl,rows,pks:[]};
+  window._opiuTxnMap['__pfcell']={label:String(code).startsWith('__side:')?code.slice(7):code,artLabel:kind==='inc'?'Доходы':kind==='vyv'?'Распределение прибыли':'Расходы',secLabel:'БДР · '+(dir||meta.dirLabel||'')+(side?' · '+side:'')+' · '+(meta.year||'')+plbl,rows,pks:[]};
   if(window.opiuShowTxnModal)opiuShowTxnModal('__pfcell');
 };
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
@@ -11284,7 +11288,7 @@ function renderPlanFact(f){
     // и потерять сигнал; плюс зелёное число в проекте уже значит «приход».
     // Классификация остаётся ЕДИНОЙ (тот же statusOf, тот же PF_WARN) - расходится только объём краски.
     const factCol=(st&&st.col&&st.k!=='ok')?';color:'+st.col:'';
-    return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
+    return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:(opts.side!=null?',null':'')}${opts.side!=null?`,'${jesc2(opts.side)}'`:''})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${(opts.grand||opts.ggrand)?` title="${_pesc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${(opts.grand||opts.ggrand)?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr(planNoteTip,null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):planDash,'')}</td>
@@ -11512,8 +11516,12 @@ function renderPlanFact(f){
           const _dirRowsSide=(_multiDir&&dirExp)?_dirsOfSide(sub,side):[];
           const _dirOpenSide=_dirRowsSide.length>0&&dirExp.has(kind+'|'+sub+'|'+side);
           h+=dRow(_ic+(_sideDisp[_i]||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote,fullLabel:_ic+(side||_SL_UNALLOC),dirExpandable:_dirRowsSide.length>0,dirExpanded:_dirOpenSide,dirKind:kind,dirCode:sub,dirSide:side});
+          // ⚠ У строки направления ПОД СТОРОНОЙ kind и code уже есть (в отличие от самой строки
+          //   стороны): по ним работают и ответственный - _planOwners[направление||подстатья], тот же
+          //   ключ, что уровнем выше, - и клик по операциям. Владелец задаётся парой «направление +
+          //   подстатья», стороны в ключе нет и быть не может.
           if(_dirOpenSide)_dirRowsSide.forEach(d=>{
-            h+=dRow(d,_dSideBaseP(sub,side,d),_dSidePlanP(sub,side,d),_dSideFactP(sub,side,d),false,false,null,null,{ggrand:true,dir:d,planNote:_sideNote,rem:_dSideRemFor(sub,side,d)});});});
+            h+=dRow(d,_dSideBaseP(sub,side,d),_dSidePlanP(sub,side,d),_dSideFactP(sub,side,d),false,false,kind,sub,{ggrand:true,dir:d,side:side,planNote:_sideNote,rem:_dSideRemFor(sub,side,d)});});});
         // ⚠ СТОРОЖ: третий уровень обязан раскладывать факт НАЦЕЛО - сумма фактов показанных сторон
         //   равна факту подстатьи. Расшифровка, не сходящаяся со строкой, которую человек раскрыл,
         //   заставляет искать потерянные деньги там, где их нет. Молчит, пока сходится.
