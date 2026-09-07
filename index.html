@@ -517,8 +517,19 @@
      ⚠ Отдельный блок с `screen`, а НЕ внутри общего @media (min-width:821px): лист A4 в пикселях шире 821, и правило поехало бы в печать.
         Весь общий блок на `screen` переводить нельзя - там раскладка Банка и БДР (флекс-стек, sticky-шапки, паддинги таблиц), печать её использует. */
   @media screen and (min-width:821px){
-    .content:has(#tabBank:not(.hidden)){padding:12px;}
-    .content:has(#tabRegistry:not(.hidden)){padding:12px;} /* Реестр по тому же эталону; screen обязателен - A4 шире 821px */
+    /* ⚠ ОДИН ИСТОЧНИК ПЕРИМЕТРА ДЛЯ ВСЕХ СЕМИ ВКЛАДОК С ПРЕСЕТАМИ (07.09.2026): эталон - Банк и
+       Реестр, остальные пять приведены к ним ЭТИМ ЖЕ правилом, а не подгонкой чисел у каждой.
+       Даёт разом четыре величины: отступ сверху до бара (12), слева и справа (12 + собственный
+       `--secpx` бара) и одинаковую ширину содержимого под баром.
+       ⚠ Общий `.content{padding:24px}` НЕ трогаем - он на восемнадцати вкладках, и правка увела бы
+       раскладку тех, кого задача не касается. */
+    .content:has(#tabBank:not(.hidden)),
+    .content:has(#tabRegistry:not(.hidden)),
+    .content:has(#tabPlanfact:not(.hidden)),
+    .content:has(#tabOpiu:not(.hidden)),
+    .content:has(#tabDds:not(.hidden)),
+    .content:has(#tabOsv:not(.hidden)),
+    .content:has(#tabFot:not(.hidden)){padding:12px;} /* screen обязателен - лист A4 шире 821px */
   }
   @media (min-width:821px){
     /* ⚠ overflow:hidden НЕ ставим - как и у #tabRegistry (см. ниже): выпадающие меню
@@ -526,7 +537,7 @@
        за границы вкладки. hidden срезал их наполовину («⚙ Действия» - видна только
        правая часть пунктов). Высоту держит тело таблицы (flex:1 1 auto + min-height:0),
        а не контейнер, поэтому страница не скроллится и без hidden. */
-    #tabPlanfact{display:flex;flex-direction:column;height:calc(100vh - 104px);min-height:420px;} /* 104px = топбар 56 + вертикальные паддинги .content 24+24 */
+    #tabPlanfact{display:flex;flex-direction:column;height:calc(100vh - 80px);min-height:420px;} /* 80px = топбар 56 + вертикальные паддинги .content 12+12 (было 104 при паддинге 24) */
     #tabPlanfact>*{flex-shrink:0;}
     #tabPlanfact>.table-wrap{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
     #tabPlanfact>.table-wrap>.table-scroll{flex:1 1 auto;min-height:0;max-height:none!important;} /* инлайн max-height остаётся как fallback вне этого layout */
@@ -547,6 +558,9 @@
     #tabBank>*{flex-shrink:0;}
     /* блок двух колонок забирает остаток высоты; прокрутка - внутри тел карточек, страница не скроллит */
     #tabBank>.kpi-grid{margin:8px 0 0;} /* низ гасим: в флекс-колонке margin не схлопываются, 6 снизу + 6 сверху давали зазор 12 */
+    /* ⚠ Тот же зазор «бар → содержимое», что у Банка (8px), для остальных вкладок с пресетами:
+       общий `.kpi-grid{margin-top:6px}` не трогаем - он на восемнадцати вкладках. */
+    #tabOpiu>.kpi-grid,#tabDds>.kpi-grid,#tabOsv>.kpi-grid,#tabFot>.kpi-grid{margin-top:8px;}
     #tabBank>.bank-cols{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:stretch;margin-top:8px;}
     #tabBank .bank-col-left{display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0;}
     #tabBank .bank-col-right{display:flex;flex-direction:column;min-height:0;min-width:0;}
@@ -10733,7 +10747,10 @@ function pfRunTests(){
    //   (ровно поэтому полосу когда-то и завели).
    {const fb=(src.match(/const filterBar=`[\s\S]*?`;/)||[''])[0];
     ok('второй полосы у БДР нет',src.indexOf('actions'+'Bar')<0);
-    ok('статус, архив и «Действия» - в самом фильтр-баре',/\$\{pfResetBtn\}\$\{baselineStatus\}\$\{backupBadge\}\$\{actionsWrap\}/.test(fb));
+    // ⚠ Троица идёт ОДНОЙ группой с margin-left:auto - иначе правый край бара БДР кончался бы
+    //   на 113px раньше, чем у остальных шести (там вправо тянет сводка фильтров).
+    ok('статус, архив и «Действия» - в самом фильтр-баре, одной прижатой группой',
+       /\$\{pfResetBtn\}<span style="[^"]*margin-left:auto">\$\{baselineStatus\}\$\{backupBadge\}\$\{actionsWrap\}<\/span>/.test(fb));
     ok('текстовых подписей в баре БДР не осталось',fb.indexOf('text-transform:uppercase')<0,fb.length);
     ok('категория переехала внутрь контролов',/_barBtnLabel\('Направления'/.test(src)&&/_barBtnLabel\('Статьи'/.test(src)
        &&/_barBtnLabel\('Подстатьи'/.test(src)&&/_barBtnLabel\('ЦФО'/.test(src)&&/_barBtnLabel\('Контрагенты'/.test(src)
@@ -11703,7 +11720,7 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" class="bar-ctl" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${pfSides.length?`
     <div style="position:relative;display:inline-block"><button id="pf-side-btn" onclick="pfMultiToggle('pf-side-dd');pfSideRender('')" title="Сторона операции (ID_SecondSide): сотрудник, объект аренды, подрядчик" class="bar-ctl" style="${pfBtnStyle}">${pfSideBtn}</button><div id="pf-side-dd" style="${pfDDstyle};min-width:300px">${pfSideDD}</div></div>`:''}
-    ${pfResetBtn}${baselineStatus}${backupBadge}${actionsWrap}
+    ${pfResetBtn}<span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto">${baselineStatus}${backupBadge}${actionsWrap}</span>
   </div>`;
   // ── Статус заморозки + архив + «⚙ Действия» - В САМОМ ФИЛЬТР-БАРЕ (07.09.2026) ───────────
   // ⚠ До этого троица жила ОТДЕЛЬНОЙ полосой под фильтрами, и заведена та полоса была не от
@@ -11714,6 +11731,12 @@ function renderPlanFact(f){
   //   тут нет ни у кого, троица просто идёт последними элементами ряда. Заводя ей «авто» снова,
   //   вернёте и прыжки.
   // ⚠ Обёртка меню (position:relative) едет ВМЕСТЕ с кнопкой - `pf-actions-dd` якорится на ней.
+  // ⚠ ТРОИЦА СТОИТ ОДНОЙ ГРУППОЙ С `margin-left:auto` - и это НЕ возврат к тому, что чинили: тогда
+  //   это были ТРИ отдельных элемента ряда, и «авто» на первом из них при переносе оставляло
+  //   остальных где придётся. Группа переезжает целиком и прижимается вправо на СВОЕЙ строке.
+  //   Нужна она затем, чтобы правый край бара совпадал с правым краем содержимого: без прижатия
+  //   ряд БДР кончался на 113px раньше, чем у Банка и прочих (у них вправо тянет сводка фильтров).
+  //   ⚠ Селект пресета добавляется ПОСЛЕ группы, поэтому у правого края оказывается именно он.
 
   if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
 
