@@ -9319,8 +9319,7 @@ function _pfAllocYearCtx(year){
     const m=d.getMonth()+1,inc=parseNum(r[COL.INCOME]),out=expOf(r);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[dir][m]+=inc;
-    if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');
-      if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[dir][m]+=out;}
+    if(t==='списание'&&out&&!isVyvodRow(r))npExp[dir][m]+=out;
   });
   const recs=(_planRecords||[]).filter(p=>p&&p.year===year);
   const revBaseM=(d,m)=>{const r=recs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;
@@ -10357,7 +10356,11 @@ function pfRunTests(){
   ok('isVyvodRow: просто прибыль - не вывод',isVyvodRow({[COL.ANALYTICS]:'Прибыль'})===false&&isVyvodRow({})===false);
   // ⚠ _cfoStmtData в списке с 07.09.2026: до правки про вывод прибыли она держала ДВЕ инлайн-копии
   //   правила (проход контекста и проход факта), и обе ушли вместе с разделением индексов.
-  [['renderPlanFact',renderPlanFact],['_buildSideFactIdx',_buildSideFactIdx],['_baselineBakeMonth',_baselineBakeMonth],['_baselineFactMonth',_baselineFactMonth],['_cfoStmtData',_cfoStmtData]]
+  // ⚠ Список полон на 07.09.2026: из БДР инлайн-копий предиката не осталось ни одной. Копии в
+  //   renderFOT и renderExpenses - ЧУЖИЕ вкладки, их сюда не добавлять (правило изоляции вкладок:
+  //   правку туда надо делать отдельной задачей со своей проверкой, а не заодно).
+  [['renderPlanFact',renderPlanFact],['_buildSideFactIdx',_buildSideFactIdx],['_baselineBakeMonth',_baselineBakeMonth],['_baselineFactMonth',_baselineFactMonth],['_cfoStmtData',_cfoStmtData],
+   ['_pfAllocYearCtx',_pfAllocYearCtx],['planPrintOwners',planPrintOwners],['_planRenderMatrix',_planRenderMatrix]]
     .forEach(([n,fn])=>{const t=String(fn);ok('предикат вывода не скопирован: '+n,t.indexOf('isVyvodRow(')>=0&&t.indexOf("includes('вывод')")<0);});
   ok('в renderPlanFact три вызова (главный проход, факт без плана, разрез)',(String(renderPlanFact).match(/isVyvodRow\(r\)/g)||[]).length===3,(String(renderPlanFact).match(/isVyvodRow\(r\)/g)||[]).length);
   {const recs=[{level:'subarticle',dir:'Д',code:'111_ФОТ',side:'Иванов',month:1,mode:'money',value:100},
@@ -15097,7 +15100,6 @@ function _planRenderMatrix(){
   const jesc=s=>String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   // ── ФАКТ по НАПРАВЛЕНИЯМ/подстатьям/месяцам (для «план = факт» и заполнения в разрезе направлений) - по дате ОПиУ, перемещения исключены ──
   const FAD={}; const fad=d=>FAD[d]||(FAD[d]={inc:{},exp:{},rev:new Array(13).fill(0),npExp:new Array(13).fill(0)});
-  const nrmA=s=>String(s||'').toLowerCase().replace(/[^а-яёa-z0-9]/gi,'');
   (RAW||[]).forEach(r=>{
     const rd=String(r[COL.ACTIVITY_DIR]||'').trim(); if(!rd)return;
     const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return;
@@ -15106,7 +15108,7 @@ function _planRenderMatrix(){
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(),key=level==='article'?ac:an;
     const F=fad(rd);
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){F.rev[m]+=inc;if(key)(F.inc[key]=F.inc[key]||new Array(13).fill(0))[m]+=inc;}
-    if(t==='списание'&&out){const av=out;if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&isSubLevel(key)){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}const al=nrmA(r[COL.ANALYTICS]);if(!(al.includes('вывод')&&al.includes('прибыл')))F.npExp[m]+=av;}
+    if(t==='списание'&&out){const av=out;if(key)(F.exp[key]=F.exp[key]||new Array(13).fill(0))[m]+=av;if(key&&isSubLevel(key)){const sd=String(r[COL.SECOND_SIDE]||'').trim();const SS=(F.sideExp=F.sideExp||{});const SK=(SS[key]=SS[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=av;}if(!isVyvodRow(r))F.npExp[m]+=av;}
   });
   const factOf=(rdir,rl,code,m)=>{const F=FAD[rdir];if(!F)return 0;if(rl==='revenue')return F.rev[m]||0;const a=(rl==='income'?F.inc:F.exp)[code];return a?(a[m]||0):0;};
   const factYr=(rdir,rl,code)=>{let s=0;for(let m=1;m<=12;m++)s+=factOf(rdir,rl,code,m);return s;};
@@ -15564,7 +15566,7 @@ window.planPrintOwners=function(){
       const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r);
       const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim();
       if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc;
-      if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=out;}
+      if(t==='списание'&&out&&!isVyvodRow(r))npExp[m]+=out;
     });
     ctx[dir]={rev,npExp};});
   // база %выручки - каскад как в отчёте/редакторе: план «Выручка» → Σ планов доходов → факт; %ЧП - по факту
