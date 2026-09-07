@@ -1158,6 +1158,16 @@ const expOf=r=>-(parseNum(r[COL.OUTCOME])||0);
 //   стороне, запекание baseline, факт месяца для заморозки) - разойдись они, строка 127 ушла бы в
 //   расход в одном месте и в распределение в другом, и итоги перестали бы сходиться с ОПиУ.
 const isVyvodRow=r=>{const a=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,'');return a.includes('вывод')&&a.includes('прибыл');};
+// ⚠ И ВТОРОЕ ПРАВИЛО РЯДОМ - «КОД относится к выводу прибыли». СТРОКА узнаётся по аналитике
+//   (isVyvodRow выше), КОД - по двум признакам сразу: c3 = 127 ЛИБО под этим кодом реально прошли
+//   строки вывода. Одной половины мало ни там, ни там: план 127 бывает без единой проводки (тогда
+//   фактового признака нет вовсе), а выводная проводка бывает под кодом с другим номером (тогда
+//   нет признака по номеру). Набор увиденных кодов у каждого потребителя СВОЙ - он собирается его
+//   же проходом по RAW, - поэтому правило отдано фабрикой, а не готовой функцией.
+// ⚠ Потребителей два: сводная БДР (renderPlanFact) и выписка ЦФО (_cfoStmtData, с 07.09.2026).
+//   До этого правило жило копией в сводной, а выписка кода вывода не различала вовсе - и печатала
+//   план 127 строкой РАСХОДА против нулевого факта, то есть экономию на весь план вывода.
+const _vyvodCodeF=seen=>code=>!!(seen&&seen[code])||_slC3(code)==='127';
 let RAW=[];
 let activeTab='bank';
 // ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи по стороне (ФОТ→сотрудник 👤, аренда→объект 🏢, консалтинг→контрагент 👤). ЕДИНЫЙ источник для Выписки ЦФО, редактора планов и сводной БДР - иначе две копии классификации разъедутся (как было бы с OPIU_CATS). Матрицу «все месяцы» это не касается.
@@ -9771,6 +9781,15 @@ const statusOf=(plan,fact,revenue)=>{
   return{k:left<=PF_WARN?'warn':'bad',col:left<=PF_WARN?PF_WRN:PF_BAD,txt:'недобор −'+fmt(p-f)+' · собрано '+fmtPct(done)};
 };
 
+// ⚠ ВЫВОД ПРИБЫЛИ (127) СВЕТОФОРОМ НЕ СУДИТСЯ - у него нет «хорошо» и «плохо». Это РАСПРЕДЕЛЕНИЕ
+//   уже заработанного, а не трата лимита: вывести больше плана не перерасход, вывести меньше не
+//   экономия. Поэтому статус у него нейтральный - величина остатка серым, без цвета состояния;
+//   ровно так же ведёт себя колонка «Остаток» в сводной БДР при kind='vyv'.
+// ⚠ Прочерк при отсутствующем плане остаётся общим (k:'none'): «плана нет» и «план есть, оценки
+//   нет» - разные вещи, и вторая не имеет права выглядеть как первая.
+const PF_FLAT='#5b626e';
+const statusFlatOf=plan=>plan==null?{k:'none'}:{k:'flat',col:PF_FLAT};
+
 // ── БДР: база «Статуса» и след пересмотра плана ──────────────────────────────────────────────
 // ⚠ БАЗА СТАТУСА - ТЕКУЩИЙ ПЛАН (config/plans), и живёт она РОВНО ЗДЕСЬ. Решение Олега 03.09.2026:
 //   условия по ходу месяца меняются, план правится осознанно, и мерить надо от того плана, по
@@ -10316,7 +10335,9 @@ function pfRunTests(){
   ok('isVyvodRow: «Вывод чистой прибыли»',isVyvodRow({[COL.ANALYTICS]:'Вывод чистой прибыли'})===true);
   ok('isVyvodRow: регистр и пунктуация не мешают',isVyvodRow({[COL.ANALYTICS]:'ВЫВОД ПРИБЫЛИ (дивиденды)'})===true);
   ok('isVyvodRow: просто прибыль - не вывод',isVyvodRow({[COL.ANALYTICS]:'Прибыль'})===false&&isVyvodRow({})===false);
-  [['renderPlanFact',renderPlanFact],['_buildSideFactIdx',_buildSideFactIdx],['_baselineBakeMonth',_baselineBakeMonth],['_baselineFactMonth',_baselineFactMonth]]
+  // ⚠ _cfoStmtData в списке с 07.09.2026: до правки про вывод прибыли она держала ДВЕ инлайн-копии
+  //   правила (проход контекста и проход факта), и обе ушли вместе с разделением индексов.
+  [['renderPlanFact',renderPlanFact],['_buildSideFactIdx',_buildSideFactIdx],['_baselineBakeMonth',_baselineBakeMonth],['_baselineFactMonth',_baselineFactMonth],['_cfoStmtData',_cfoStmtData]]
     .forEach(([n,fn])=>{const t=String(fn);ok('предикат вывода не скопирован: '+n,t.indexOf('isVyvodRow(')>=0&&t.indexOf("includes('вывод')")<0);});
   ok('в renderPlanFact три вызова (главный проход, факт без плана, разрез)',(String(renderPlanFact).match(/isVyvodRow\(r\)/g)||[]).length===3,(String(renderPlanFact).match(/isVyvodRow\(r\)/g)||[]).length);
   {const recs=[{level:'subarticle',dir:'Д',code:'111_ФОТ',side:'Иванов',month:1,mode:'money',value:100},
@@ -10343,12 +10364,14 @@ function pfRunTests(){
 
   // 19. Выписка ЦФО - от ТЕКУЩЕГО плана (06.09.2026): база рождается в _cfoStmtData через общие примитивы
   {const cd=String(_cfoStmtData);
+   // ⚠ У расхода и дохода вердикт прежний; ветка isVyv перед ним - вывод прибыли, у которого
+   //   оценки нет вовсе (см. блок 23). Проверяем ИМЕННО связку «не вывод → statusOf от _pfStatusBase».
    ok('выписка: вердикт строки - общий statusOf через _pfStatusBase(утв, тек)',
-      /const stMonth=code=>statusOf\(_pfStatusBase\(blMonth\(code,M\),fcMonth\(code,M\)\),factMonth\(code,M\),isInc\);/.test(cd)
-      &&/const stYTD=code=>statusOf\(_pfStatusBase\(blYTD\(code\),fcYTD\(code\)\),factYTD\(code\),isInc\);/.test(cd));
+      /const stMonth=code=>isVyv\?statusFlatOf\(fcMonth\(code,M\)\):statusOf\(_pfStatusBase\(blMonth\(code,M\),fcMonth\(code,M\)\),factMonth\(code,M\),isInc\);/.test(cd)
+      &&/const stYTD=code=>isVyv\?statusFlatOf\(fcYTD\(code\)\):statusOf\(_pfStatusBase\(blYTD\(code\),fcYTD\(code\)\),factYTD\(code\),isInc\);/.test(cd));
    ok('выписка: YTD плана и факта - по всем месяцам 1..M',/const fcYTD=code=>\{let s=null;for\(let m=1;m<=M;m\+\+\)/.test(cd)&&/const factYTD=code=>\{let s=0;for\(let m=1;m<=M;m\+\+\)s\+=factMonth/.test(cd));
    ok('выписка: по заморозке остаётся только утверждённое (blYTD)',/const blYTD=code=>\{let s=null;frozen\.forEach/.test(cd)&&cd.indexOf('frozenSet.has(M)?')<0);
-   ok('выписка: превышение YTD - от текущего плана',/const overCodes=codes\.filter\(code=>\{const pY=fcYTD\(code\);/.test(cd));}
+   ok('выписка: превышение YTD - от текущего плана',/const overCodes=isVyv\?\[\]:codes\.filter\(code=>\{const pY=fcYTD\(code\);/.test(cd));}
 
   // 20. Печать выписки ЦФО - от текущего плана: 8 колонок, статус бейджем с суммой, Δ-колонок нет
   {const cg=String(cfoStatementGen);
@@ -10357,7 +10380,7 @@ function pfRunTests(){
    ok('печать: приписка о пересмотре плана в статусе месяца',/_pfPlanRevNote\(bP,pP\)/.test(cg));
    ok('печать: третий уровень - та же база (sideFcMonth)',/pP=sideFcMonth\(dirsSet,code,side,M\)/.test(cg)&&/stP=statusOf\(_pfStatusBase\(bP,pP\),fP,false\)/.test(cg));
    ok('матрица: текущий план в ячейке у всех месяцев, утв. - подстрокой у замороженных',!/fr\?null:fcv/.test(cg)&&!/fr\?null:\(totFC/.test(cg)&&/if\(fcv!=null\)sub\+='<span class="mpf">/.test(cg));
-   ok('матрица: цвет факта - общий statusOf от текущего плана',/const mCellK=\(fv,pv,fr,inc,fcv\)=>\{const st=statusOf\(_pfStatusBase\(pv,fcv\),fv,!!inc\)/.test(cg));
+   ok('матрица: цвет факта - общий statusOf от текущего плана',/const mCellK=\(fv,pv,fr,inc,fcv,flat\)=>\{const st=flat\?\{k:'flat'\}:statusOf\(_pfStatusBase\(pv,fcv\),fv,!!inc\)/.test(cg));
    ok('печать: своих Δ-ячеек (dCell/dCellInc/dcSub) больше нет',!/\bdCell\b|\bdCellInc\b|\bdcSub\b/.test(cg));
    ok('печать: превышение YTD в блоке операций - к текущему плану',/sec\.fcYTD\(code\)\)\+' \(к текущему плану\)/.test(cg));
    ok('печать: шапка называет базу',/Исполнение - от текущего плана; утверждённый план - в колонке «Утв\.»/.test(cg));
@@ -10398,8 +10421,69 @@ function pfRunTests(){
   // 21. Экран выписки ЦФО - от текущего плана, цвет общим statusOf
   {const cs=String(cfoScreenRender);
    ok('экран: план направления - только текущий (fc), выбора по заморозке нет',/const planDir=\(d,code\)=>\{const fc=rev\?D\.fcPlanIncMD:D\.fcPlanMD;/.test(cs)&&cs.indexOf('frozenSet.has(m)?bl')<0);
-   ok('экран: цвет - общий statusOf',/const col=\(fa,p\)=>\{const st=statusOf\(p,fa,rev\);/.test(cs));
+   ok('экран: цвет - общий statusOf',/const col=\(fa,p\)=>\{const st=vyv\?statusFlatOf\(p\):statusOf\(p,fa,rev\);/.test(cs));
    ok('экран: своей копии светофора нет (порог литералом)',cs.indexOf('<=0.2')<0);}
+
+  // 23. ВЫВОД ПРИБЫЛИ (127) В ВЫПИСКЕ - ОТДЕЛЬНАЯ СЕКЦИЯ, А НЕ СТРОКА РАСХОДА (07.09.2026)
+  // ⚠ Повод - боевой случай 05.09.2026: план 127 попадал в секцию расходов из плановых записей, а
+  //   факт вывода в факт выписки не попадал вовсе (строки отбрасывались) - выписка печатала
+  //   ЭКОНОМИЮ на весь план вывода. Проверяем ровно ЭТО: код вывода не может стоять в расходах,
+  //   а его факт обязан находиться.
+  {const cd=String(_cfoStmtData),cg=String(cfoStatementGen),cs=String(cfoScreenRender);
+   ok('признак кода вывода - общее правило _vyvodCodeF, а не копия',
+      /const isVyvodCode=_vyvodCodeF\(vyvSeen\)/.test(cd)&&cd.indexOf("includes('вывод')")<0&&cd.indexOf("includes('прибыл')")<0);
+   ok('сводная зовёт то же правило',/const isVyvodCode=_vyvodCodeF\(vyvodCodes\)/.test(String(renderPlanFact)));
+   ok('правило: c3=127 ∪ увиденные коды',_vyvodCodeF({})('127_Вывод чистой прибыли')===true
+      &&_vyvodCodeF({})('111_ФОТ')===false&&_vyvodCodeF({'888_Странное':1})('888_Странное')===true);
+   ok('факт вывода не отбрасывается, а уходит в свой индекс',/const isV=isVyvodRow\(r\),FI=isV\?vyvIdx:factIdx,OI=isV\?vyvOpsIdx:opsIdx;/.test(cd));
+   ok('план: расход и вывод разведены признаком кода',/const planPass=code=>isInc\?true:\(isVyv\?isVyvodCode\(code\):!isVyvodCode\(code\)\);/.test(cd)
+      &&(cd.match(/if\(!planPass\(p\.code\)\)return;/g)||[]).length===2);
+   ok('у вывода вердикта нет - только величина (statusFlatOf)',/const stMonth=code=>isVyv\?statusFlatOf\(fcMonth\(code,M\)\)/.test(cd)&&/const stYTD=code=>isVyv\?statusFlatOf\(fcYTD\(code\)\)/.test(cd));
+   ok('statusFlatOf: план есть - нейтрально, плана нет - прочерк',statusFlatOf(100).k==='flat'&&statusFlatOf(null).k==='none'&&statusFlatOf(0).k==='flat');
+   ok('печать: секция вывода ниже финансового результата и только при непустой',/hasVyv\?'<h2>'\+pfx\+'Распределение прибыли \(вывод\)<\/h2>'/.test(cg)&&/const hasVyv=vyvSec\.codes\.length>0;/.test(cg));
+   ok('печать: в ИТОГО секции вывода тот же нейтральный статус',/secTable\(vyvSec,'ИТОГО ВЫВОД'\+sfx,true\)/.test(cg));
+   ok('печать: в бейдже вывода только остаток, без слов оценки',/if\(st\.k==='flat'\)t='остаток '\+f\(-d\);/.test(cg));
+   ok('экран: третья вкладка и свой индекс факта',/const sel=rev\?'inc':vyv\?'vyv':'exp';/.test(cs)&&/FI=rev\?D\.factIncIdx:vyv\?D\.vyvIdx:D\.factIdx/.test(cs));
+   ok('экран: вкладка вывода только там, где вывод есть',/const hasVyvTab=D\.people\.some\(p=>p\.vyv&&p\.vyv\.codes\.length\);/.test(cs)&&/if\(vyv&&!hasVyvTab\)/.test(cs));
+   ok('«последний месяц с данными» учитывает вывод',/for\(const sel of \['exp','inc','vyv'\]\)/.test(String(_cfoLastMonthWithData)));}
+
+  // 24. ЖИВОЙ ПРОГОН: у владельца плана 127 код вывода стоит в СВОЕЙ секции, а не в расходах
+  // ⚠ Числовой ответ («экономии больше нет») тут дать нечем: у кого именно заведён план 127 -
+  //   свойство данных, а не кода. Поэтому владелец ИЩЕТСЯ в _planOwners по коду вывода, и если
+  //   его нет, проверка честно говорит «проверять не на чем», а не молча зеленеет.
+  if(typeof RAW==='undefined'||!RAW.length){ok('живой прогон вывода: нужны загруженные данные',false,'RAW пуст');}
+  else{try{
+    const yr=+((_tabFilters.planfact||{}).year)||new Date().getFullYear(),M=new Date().getMonth()+1;
+    const vc=_vyvodCodeF({});
+    let vOwn=null,vCode=null;
+    Object.keys(_planOwners||{}).forEach(k=>{const i=k.indexOf('||');if(i<0)return;const code=k.slice(i+2),own=String(_planOwners[k]||'').trim();
+      if(!vOwn&&own&&vc(code)){vOwn=own;vCode=code;}});
+    ok('живой прогон: найден владелец подстатьи вывода',!!vOwn,vOwn?(vOwn+' / '+vCode):'плана 127 с владельцем в config/planOwners нет - проверять не на чем');
+    if(vOwn){
+      const D=_cfoStmtData({fio:vOwn,isNoOwn:false,withSubs:false,withDetail:false,year:yr,month:M,allMonths:false});
+      const P=D.people.find(p=>p.own);
+      ok('код вывода НЕ в секции расходов',!!P&&!P.exp.codes.some(c=>D.isVyvodCode(c)),P&&P.exp.codes.filter(c=>D.isVyvodCode(c)).join(', '));
+      ok('код вывода в секции «Распределение прибыли»',!!P&&P.vyv.codes.includes(vCode),P&&P.vyv.codes.join(', '));
+      ok('в секции вывода только выводные коды',!!P&&P.vyv.codes.every(c=>D.isVyvodCode(c)),P&&P.vyv.codes.join(', '));
+      ok('у секции вывода вердикта нет - нейтрально либо прочерк',!!P&&P.vyv.codes.every(c=>['flat','none'].includes(P.vyv.stMonth(c).k)));
+      // ⚠ Главное следствие правки: факт вывода теперь ЕСТЬ. Сверяем с прямым проходом по RAW -
+      //   не с самим индексом, из которого он и взят.
+      const dirsOfCode=[...(P.vyv.pairSet[vCode]||new Set())];
+      let want=0;(RAW||[]).forEach(r=>{if(!isVyvodRow(r))return;if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;
+        const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;
+        if(String(r[COL.ARTICLE_NAME]||'').trim()!==vCode)return;if(dirsOfCode.indexOf(String(r[COL.ACTIVITY_DIR]||'').trim())<0)return;want+=expOf(r);});
+      let got=0;for(let m=1;m<=12;m++)got+=P.vyv.factMonth(vCode,m);
+      ok('факт вывода за год = прямому проходу по RAW',Math.abs(got-want)<0.006,got.toFixed(2)+' vs '+want.toFixed(2));
+      // у ЦФО без вывода секции быть не должно вовсе
+      const other=Object.keys(_planOwners||{}).map(k=>String(_planOwners[k]||'').trim())
+        .filter(o=>o&&o!==vOwn).filter((o,i,a)=>a.indexOf(o)===i)
+        .find(o=>!Object.keys(_planOwners).some(k=>String(_planOwners[k]||'').trim()===o&&vc(k.slice(k.indexOf('||')+2))));
+      if(other){const D2=_cfoStmtData({fio:other,isNoOwn:false,withSubs:false,withDetail:false,year:yr,month:M,allMonths:false});
+        const P2=D2.people.find(p=>p.own);
+        ok('у ЦФО без вывода секция пустая ('+other+')',!!P2&&P2.vyv.codes.length===0,P2&&P2.vyv.codes.join(', '));}
+      else ok('ЦФО без вывода для контроля не нашлось',true,'все владельцы имеют коды вывода - проверка пропущена');
+    }
+  }catch(e){ok('живой прогон вывода упал',false,String(e&&e.message||e));}}
 
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] тесты статуса: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
@@ -10818,7 +10902,7 @@ function renderPlanFact(f){
   const bPlanRev=()=>PB?PB.planOf('revenue','__rev__'):null;
 
   // ── строки ──
-  const isVyvodCode=code=>!!vyvodCodes[code]||c3(code)==='127'; // распределение прибыли (вывод) - отдельно от расходов
+  const isVyvodCode=_vyvodCodeF(vyvodCodes); // распределение прибыли (вывод) - отдельно от расходов; правило общее с выпиской ЦФО, см. _vyvodCodeF
   const codeSet={};Object.keys(factByCode).forEach(c=>codeSet[c]=1);if(level==='subarticle')plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});else plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code)){const t=c3(p.code);if(t)codeSet[t]=1;}}); // режим «Статья»: план-only c3-группы (нет факта) тоже дают строку-статью
   if(PB){if(level==='subarticle')PB.R.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))codeSet[p.code]=1;});else PB.R.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code)){const t=c3(p.code);if(t)codeSet[t]=1;}});} // baseline ВСЕГДА порождает строку - иначе неисполнение утв. плана по убранной из прогноза статье было бы невидимо
   const _codeAll=Object.keys(codeSet); // полный набор расходных кодов ДО фильтра статьи/подстатьи/ЦФО - для KPI «по компании» (Часть A)
@@ -15394,7 +15478,10 @@ window.cfoOpenStatement=function(fio){
 function _cfoLastMonthWithData(D){
   for(let m=12;m>=1;m--){
     for(const P of D.people){
-      for(const sel of ['exp','inc']){
+      // ⚠ 'vyv' в списке обязателен: у ответственного за вывод прибыли расходных и доходных
+      //   подстатей может не быть вовсе, и без него экран сказал бы «за год нет ни факта, ни плана»
+      //   при полной вкладке вывода рядом - сообщение о данных, опровергаемое соседней вкладкой.
+      for(const sel of ['exp','inc','vyv']){
         const S=P[sel];
         for(const code of S.codes){
           if(Math.abs(S.factMonth(code,m)||0)>0.005)return m;
@@ -15495,7 +15582,7 @@ window.cfoScrExpandAll=function(){
 // ⚠ Вкладка «Расходы / Доходы» тоже сбрасывает раскрытия: ключи раскрытых строк содержат номер
 //   направления и подстатьи, а наборы у доходов и расходов разные - после переключения раскрылось
 //   бы не то, что человек открывал.
-window.cfoScrKind=function(k){if(!_cfoScr)return;_cfoScr.kind=(k==='inc')?'inc':'exp';_cfoScr.open.clear();cfoScreenRender();};
+window.cfoScrKind=function(k){if(!_cfoScr)return;_cfoScr.kind=(k==='inc'||k==='vyv')?k:'exp';_cfoScr.open.clear();cfoScreenRender();};
 // Период: «m<месяц>» - один месяц, «y<месяц>» - нарастающим с января по этот месяц.
 // ⚠ Смена месяца ПЕРЕСЧИТЫВАЕТ данные (_cfoStmtData), а не фильтрует готовые: YTD-величины и выбор
 //   базы (утверждённое против текущего плана) считаются от месяца, подсунуть другой месяц в готовый
@@ -15515,7 +15602,9 @@ function _cfoDate(r){const d=parseDate(r[COL.DATE_OPIU])||parseDate(r[COL.DATE_D
   return d?String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0'):'';}
 function cfoScreenRender(){
   const el=document.getElementById('cfoScreen'); if(!el||!_cfoScr)return;
-  const D=_cfoScr.data,M=_cfoScr.month,blk=_cfoScr.scope==='blk',rev=_cfoScr.kind==='inc',ytd=_cfoScr.mode==='ytd';
+  // ⚠ ТРИ вида, а не два: расходы, доходы и распределение прибыли (вывод, 127). Третий заведён
+  //   07.09.2026 вместе с секцией вывода в печати - экран и лист обязаны показывать одно и то же.
+  const D=_cfoScr.data,M=_cfoScr.month,blk=_cfoScr.scope==='blk',rev=_cfoScr.kind==='inc',vyv=_cfoScr.kind==='vyv',ytd=_cfoScr.mode==='ytd';
   const esc=_htmlEsc,f2=v=>(typeof v==='number'&&!isNaN(v))?v.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
   const pc=v=>(v*100).toLocaleString('ru-RU',{maximumFractionDigits:0})+'%';
   const ppl=blk?D.people:D.people.filter(p=>p.own);
@@ -15526,7 +15615,11 @@ function cfoScreenRender(){
   //   из _cfoStmtData отдельным полем fioLabel - имя PDF-файла (_cfoPrintName) берёт его же.
   //   Раньше экран и заголовок листа показывали __none__ прямо человеку.
   const nameOf=p=>(D.isNoOwn&&p&&p.own)?D.fioLabel:(p?p.fio:'');
-  const sel=rev?'inc':'exp';
+  const hasVyvTab=D.people.some(p=>p.vyv&&p.vyv.codes.length);
+  // ⚠ Вкладка могла быть выбрана, а потом исчезнуть (сменили год или направление, и вывода не
+  //   стало): оставить kind='vyv' значило бы показать пустой экран без единой кнопки, ведущей назад.
+  if(vyv&&!hasVyvTab){_cfoScr.kind='exp';return cfoScreenRender();}
+  const sel=rev?'inc':vyv?'vyv':'exp';
   // ── ПЛАН и ФАКТ по КОНКРЕТНОМУ НАПРАВЛЕНИЮ (не сумма по всем, как в секциях выписки) ──
   // ⚠ Своей арифметики тут нет: те же blPlanMD/fcPlanMD/factIdx из _cfoStmtData, просто без
   //   сложения направлений. База исполнения - ТЕКУЩИЙ план (решение Олега 06.09.2026, как в
@@ -15541,9 +15634,9 @@ function cfoScreenRender(){
   //   написано «плана нет».
   const planDir=(d,code)=>{const fc=rev?D.fcPlanIncMD:D.fcPlanMD;
     let s=null;MS.forEach(m=>{const v=fc(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
-  const factDir=(d,code)=>{const FI=rev?D.factIncIdx:D.factIdx,a=FI[d+'||'+code];if(!a)return 0;
+  const factDir=(d,code)=>{const FI=rev?D.factIncIdx:vyv?D.vyvIdx:D.factIdx,a=FI[d+'||'+code];if(!a)return 0;
     let s=0;MS.forEach(m=>{s+=a[m]||0;});return s;};
-  const opsDir=(d,code)=>{let o=[];MS.forEach(m=>{o=o.concat(D.opsOf(d,code,m)||[]);});
+  const opsDir=(d,code)=>{let o=[];MS.forEach(m=>{o=o.concat(D.opsOf(d,code,m,vyv?'vyv':'exp')||[]);});
     return o.sort((x,y)=>{const a=parseDate(x[COL.DATE_OPIU]),b=parseDate(y[COL.DATE_OPIU]);return (a?a.getTime():0)-(b?b.getTime():0);});};
   // ── сборка: направление → человек → подстатья ──
   const dirs={};
@@ -15560,11 +15653,19 @@ function cfoScreenRender(){
   // ⚠ Цвет = состояние исполнения. У РАСХОДОВ плохо перерасходовать (факт>план - красный, остаток
   //   ≤20% - оранжевый), у ДОХОДОВ - недобрать (факт≥плана зелёный, иначе оранжевый). Правило то же,
   //   что в БДР; второй копии не заводим.
+  // ⚠ Подписи трёх видов - ОДНО место на весь экран: строка направления, шапка таблицы, итог и
+  //   пустое состояние берут их отсюда. Раньше «Потрачено/Осталось» стояли пятью тернарниками
+  //   подряд, и третий вид пришлось бы дописывать в каждый.
+  const VF=vyv?'Выведено':rev?'Получено':'Потрачено'; // колонка факта
+  const VR=vyv?'Остаток':rev?'Недобор':'Осталось';    // колонка остатка
+  const VB=vyv?'выведено':rev?'получено':'потрачено'; // та же величина строчными - в подписи шкалы
   const hasP=p=>p!=null&&Math.abs(p)>0.005; // есть ЧЕМ мерить исполнение (у нулевого плана процента нет по арифметике)
   // ⚠ Цвет - ОБЩИЙ statusOf (порог PF_WARN, копейка в копейку, база ровно ноль, доходное зеркало).
   //   Здесь жила своя копия светофора: порог литералом 0.2, без округления, без ветки нулевой базы -
   //   вердикт на экране мог разойтись со сводной по той же подстатье. Снята 06.09.2026.
-  const col=(fa,p)=>{const st=statusOf(p,fa,rev);return st.k==='none'?'var(--text3)':st.col;};
+  // ⚠ У ВЫВОДА ПРИБЫЛИ цвета состояния нет вовсе (statusFlatOf): вывести больше плана не перерасход,
+  //   меньше - не экономия. Здесь это ровно та же развилка, что в печати и в колонке «Остаток» сводной.
+  const col=(fa,p)=>{const st=vyv?statusFlatOf(p):statusOf(p,fa,rev);return (st.k==='none')?'var(--text3)':st.col;};
   const w=(fa,p)=>Math.min(100,Math.round(hasP(p)?fa/p*100:(fa?100:0)));
   // ⚠ null - это «нет величины», и в ячейке стоит ПРОЧЕРК, а не 0,00: минус-факт в колонке «Осталось»
   //   читается как перерасход, хотя перерасходовать нечего - плана нет.
@@ -15588,10 +15689,10 @@ function cfoScreenRender(){
       // ⚠ При НУЛЕВОМ плане подпись «получено 0% от плана» врёт - процент не ноль, плана нет вовсе.
       //   Говорим это прямо, а шкалу оставляем пустой: делить не на что.
       +'<div><div class="cfo-bar">'+(hasP(DD.p)?'<i style="width:'+w(DD.f,DD.p)+'%;background:'+c+'"></i>':'')+'</div>'
-      +'<div class="cfo-barlbl">'+(hasP(DD.p)?((rev?'получено ':'потрачено ')+pc(DD.f/DD.p)+' от плана'):(DD.p==null?'плана нет · ':'план 0,00 · ')+(rev?'получено ':'потрачено ')+f2(DD.f))+'</div></div>'
+      +'<div class="cfo-barlbl">'+(hasP(DD.p)?(VB+' '+pc(DD.f/DD.p)+' от плана'):(DD.p==null?'плана нет · ':'план 0,00 · ')+VB+' '+f2(DD.f))+'</div></div>'
       +cell('План',DD.p)
-      +cell(rev?'Получено':'Потрачено',DD.f,'color:'+(rev?'var(--income)':'var(--outcome)'))
-      +cell(rev?'Недобор':'Осталось',DD.p==null?null:DD.p-DD.f,'color:'+((DD.p!=null&&(DD.p-DD.f)<0)?'var(--outcome)':'var(--orange)'),true)
+      +cell(VF,DD.f,'color:'+(vyv?'var(--text2)':rev?'var(--income)':'var(--outcome)'))
+      +cell(VR,DD.p==null?null:DD.p-DD.f,'color:'+(vyv?'var(--text2)':(DD.p!=null&&(DD.p-DD.f)<0)?'var(--outcome)':'var(--orange)'),true)
       +'</div>';
     if(ex){
       let rows='';
@@ -15603,8 +15704,8 @@ function cfoScreenRender(){
           const sk=k+'s'+per.pi+'_'+si,sx=_cfoScr.open.has(sk),sc=col(s.f,s.p);
           rows+='<tr class="'+(s.ops.length?'cl':'')+'"'+(s.ops.length?' onclick="cfoScrTog(\''+sk+'\')"':'')+'>'
             +'<td>'+(s.ops.length?(sx?'▾ ':'▸ '):'&nbsp;&nbsp;&nbsp;')+esc(s.n)+'</td>'
-            +'<td>'+(s.p==null?'-':f2(s.p))+'</td><td style="color:'+(rev?'var(--income)':'var(--outcome)')+'">'+(s.f?f2(s.f):'-')+'</td>'
-            +'<td style="color:'+((s.p!=null&&(s.p-s.f)<0)?'var(--outcome)':'var(--orange)')+';font-weight:600">'+(s.p==null?'-':f2(s.p-s.f))+'</td>'
+            +'<td>'+(s.p==null?'-':f2(s.p))+'</td><td style="color:'+(vyv?'var(--text2)':rev?'var(--income)':'var(--outcome)')+'">'+(s.f?f2(s.f):'-')+'</td>'
+            +'<td style="color:'+(vyv?'var(--text2)':(s.p!=null&&(s.p-s.f)<0)?'var(--outcome)':'var(--orange)')+';font-weight:600">'+(s.p==null?'-':f2(s.p-s.f))+'</td>'
             +'<td>'+(hasP(s.p)?('<span class="cfo-mini"><i style="width:'+w(s.f,s.p)+'%;background:'+sc+'"></i></span> '+pc(s.f/s.p)):'<span style="color:var(--text3)">'+(s.p==null?'плана нет':'план 0,00')+'</span>')+'</td></tr>';
           // ⚠ Раскладка строки операции ОБЯЗАНА совпадать с шапкой: дата·контрагент | назначение |
           //   сумма под колонкой факта | пусто | пусто. Раньше назначение шло с colspan="2" и съедало
@@ -15614,13 +15715,13 @@ function cfoScreenRender(){
             +'<td class="pp">'+esc(r[COL.PURPOSE]||'')+'</td>'
             +'<td class="'+(rev?'pos':'neg')+'">'+f2(Math.abs(parseNum(r[COL.OUTCOME])||0))+'</td><td></td><td></td></tr>';});
         });});
-      h+='<table class="cfo-t"><thead><tr><th>Подстатья</th><th>План</th><th>'+(rev?'Получено':'Потрачено')+'</th><th>'+(rev?'Недобор':'Осталось')+'</th><th>Исполнение</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      h+='<table class="cfo-t"><thead><tr><th>Подстатья</th><th>План</th><th>'+VF+'</th><th>'+VR+'</th><th>Исполнение</th></tr></thead><tbody>'+rows+'</tbody></table>';
     }
     h+='</div>';});
-  if(!list.length)h='<div class="cfo-dir"><div style="padding:18px 16px;color:var(--text3);font-size:12px">Нет '+(rev?'доходных':'расходных')+' подстатей, назначенных этому ответственному, за выбранный период.</div></div>';
+  if(!list.length)h='<div class="cfo-dir"><div style="padding:18px 16px;color:var(--text3);font-size:12px">Нет '+(vyv?'подстатей вывода прибыли':(rev?'доходных':'расходных')+' подстатей')+', назначенных этому ответственному, за выбранный период.</div></div>';
   h+='<div class="cfo-tot cfo-grid"><div class="cfo-dirn">Всего</div>'
     +'<div><div class="cfo-bar">'+(hasP(TP)?'<i style="width:'+w(TF,TP)+'%;background:#7f93b8"></i>':'')+'</div></div>'
-    +cell('План',TP)+cell(rev?'Получено':'Потрачено',TF)+cell(rev?'Недобор':'Осталось',TP==null?null:TP-TF,'',true)+'</div>';
+    +cell('План',TP)+cell(VF,TF)+cell(VR,TP==null?null:TP-TF,'',true)+'</div>';
   _cfoScr.keys=keys; // состав раскрываемых строк этой вкладки - его читает кнопка «Развернуть всё»
   // ⚠ Было «Блок Старкова И. В.» - после «Блок» нужен родительный падеж, а склонять фамилии кодом
   //   надёжно нельзя (и не надо пытаться). Обходим формулировкой: «Выписка по блоку: <ФИО>» -
@@ -15647,12 +15748,18 @@ function cfoScreenRender(){
   // ⚠ Заголовок листа собирается отдельно от плашки, а не из готового who: подстановка «Выписка
   //   по блоку: …» в шаблон «Выписка ЦФО - …» дала бы «Выписка ЦФО - Выписка по блоку: …».
   //   Слова про блок при этом ТЕ ЖЕ, что на экране - лист и экран обязаны читаться одинаково.
-  +'<div class="cfo-prthead"><h1>'+(blk?('Выписка по блоку: '+esc(blkLine)):('Выписка ЦФО - '+esc(whoName)))+' · '+esc(rev?'доходы':'расходы')+'</h1>'
+  +'<div class="cfo-prthead"><h1>'+(blk?('Выписка по блоку: '+esc(blkLine)):('Выписка ЦФО - '+esc(whoName)))+' · '+esc(vyv?'распределение прибыли (вывод)':rev?'доходы':'расходы')+'</h1>'
   +'<div class="s">ГК ОПОРА · управленческий учёт · '+esc(perLbl)+' · '+esc(D.dirLabel||'все направления')+' · сформировано '+new Date().toLocaleString('ru-RU')
   // ⚠ Пустой экран обязан объяснить себя словами: иначе его читают как поломку, а не как «данных нет».
   +(_cfoScr.emptyYear?' · <b>за '+D.year+' год нет ни факта, ни плана по этому ответственному</b>':'')+'</div></div>'
-  +'<div class="cfo-tabs"><button class="'+(rev?'':'on')+'" onclick="cfoScrKind(\'exp\')">Расходы</button>'
+  +'<div class="cfo-tabs"><button class="'+((rev||vyv)?'':'on')+'" onclick="cfoScrKind(\'exp\')">Расходы</button>'
   +'<button class="'+(rev?'on':'')+'" onclick="cfoScrKind(\'inc\')">Доходы</button>'
+  // ⚠ Вкладка вывода показывается ТОЛЬКО тому, у кого вывод прибыли есть - у подавляющего
+  //   большинства ЦФО его нет ни в плане, ни в факте, и вечно пустая третья вкладка была бы
+  //   приглашением искать там несуществующие деньги. То же правило, что у секции на листе.
+  //   Смотрим ВСЕХ людей выписки, а не только видимых: иначе вкладка мигала бы при
+  //   переключении «свои / блок целиком».
+  +(hasVyvTab?'<button class="'+(vyv?'on':'')+'" onclick="cfoScrKind(\'vyv\')" title="Распределение прибыли (вывод, код 127) - показывается отдельно от расходов, светофора у него нет">Вывод прибыли</button>':'')
   // Печать берёт то, что на экране (активную вкладку и раскрытые направления), и это правило
   // менять нельзя - человек показывал расходы, а внезапные доходы на втором листе это ровно тот
   // риск, ради которого экран делался конфиденциальным. Кнопка даёт «выписку целиком» в два
@@ -15692,7 +15799,7 @@ function _cfoStmtData(P){
   // контекст факта (выручка/непрофильный расход по месяцам) - для %-планов
   const ctx={};
   dirsScope.forEach(dir=>{const rev=new Array(13).fill(0),npExp=new Array(13).fill(0);
-    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc; if(t==='списание'&&out){const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(!(anl.includes('вывод')&&anl.includes('прибыл')))npExp[m]+=out;} });
+    (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc; if(t==='списание'&&out&&!isVyvodRow(r))npExp[m]+=out; });
     ctx[dir]={rev,npExp};});
   // baseline-конвертер %-планов от СНИМКОВОЙ базы выручки (income/revenue из blRecs); pct_profit - от факта
   const blIncBaseM=(d,m)=>{const rc=blRecs.filter(p=>p.dir===d&&p.level==='income');let v=0;if(rc.length){const byc={};rc.forEach(p=>{const k=p.code+'|'+(p.side||'');(byc[k]=byc[k]||[]).push(p);});Object.values(byc).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)v+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)v+=yr.value/12;}});}return v;};
@@ -15713,9 +15820,24 @@ function _cfoStmtData(P){
   const fcCvt=(d,r,m)=>r.mode==='pct'?r.value*(m?fcRevBaseM(d,m):fcRevBaseY(d)):r.mode==='pct_profit'?r.value*(m?fcNetM(d,m):fcNetY(d)):r.value;
   const fcPlanF=lvl=>(d,code,m)=>{const recs=fcRecs.filter(p=>p.dir===d&&p.level===lvl&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+fcCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+fcCvt(d,yr,0)/12;}});return tot;};
   const fcPlanMD=fcPlanF('subarticle'),fcPlanIncMD=fcPlanF('income');
-  // факт + операции: dir||ARTICLE_NAME → [13] месяцев и список строк (вывод прибыли исключён, как в отчёте)
-  const factIdx={},opsIdx={};
-  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=expOf(r); if(!out)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const anl=String(r[COL.ANALYTICS]||'').toLowerCase().replace(/[^а-яё]/g,''); if(anl.includes('вывод')&&anl.includes('прибыл'))return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIdx[key]=factIdx[key]||new Array(13).fill(0))[m]+=out; (opsIdx[key]=opsIdx[key]||[]).push(r); });
+  // ── ФАКТ РАСХОДА и ФАКТ ВЫВОДА ПРИБЫЛИ - ДВА индекса из ОДНОГО прохода ──
+  // ⚠ Вывод прибыли (127) здесь РАНЬШЕ ПРОСТО ОТБРАСЫВАЛСЯ, а план 127 в секцию расходов попадал:
+  //   коды набирались из blRecs/fcRecs по уровню subarticle без всякого признака вывода. Выходила
+  //   строка с полным планом против НУЛЕВОГО факта, то есть выписка печатала ЭКОНОМИЮ на весь план
+  //   вывода и зелёный вердикт там, где не было ни одной операции (боевой случай 05.09.2026:
+  //   утверждённый план 127 по 11 направлениям против факта 0 при реально выведенных деньгах).
+  // ⚠ Молчаливость была полная: и план, и факт по отдельности валидны, сторожу зацепиться не за что.
+  //   Сводная БДР ведёт 127 ОТДЕЛЬНОЙ секцией «Распределение прибыли (вывод)» - выписка теперь тоже.
+  // ⚠ Признак СТРОКИ - общий isVyvodRow, признак КОДА - общий _vyvodCodeF; своих копий правила
+  //   в этой функции больше нет (до 07.09.2026 их было две).
+  // ⚠ Один проход, а не два: второй проход по 60 тыс. строк ради того же разбора - это вторая
+  //   выборка, которая однажды разойдётся с первой условиями отбора.
+  const factIdx={},opsIdx={},vyvIdx={},vyvOpsIdx={},vyvSeen={};
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=expOf(r); if(!out)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an;
+    const isV=isVyvodRow(r),FI=isV?vyvIdx:factIdx,OI=isV?vyvOpsIdx:opsIdx; if(isV)vyvSeen[an]=1;
+    (FI[key]=FI[key]||new Array(13).fill(0))[m]+=out; (OI[key]=OI[key]||[]).push(r); });
+  // код вывода = c3 127 ∪ коды, под которыми реально прошли строки вывода (общее правило, см. _vyvodCodeF)
+  const isVyvodCode=_vyvodCodeF(vyvSeen);
   // факт ДОХОДОВ: dir||ARTICLE_NAME → [13] месяцев (поступления, тот же критерий что в ОПиУ/БДР; перемещения и начальный остаток исключены). Отдельный проход - расходный factIdx не трогаем
   const factIncIdx={};
   (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; if(!an)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
@@ -15756,10 +15878,16 @@ function _cfoStmtData(P){
   //   в генератор (secRows), суммы остались здесь - обе стороны обязаны обходить codes в одном
   //   порядке, иначе итог разойдётся со строками, из которых он якобы сложен.
   const buildSection=(person,noOwn,kind)=>{
-    const isInc=kind==='inc';const FI=isInc?factIncIdx:factIdx;const lvl=isInc?'income':'subarticle';const blPlanF=isInc?blPlanIncMD:blPlanMD;const fcPlanFF=isInc?fcPlanIncMD:fcPlanMD;
+    const isInc=kind==='inc',isVyv=kind==='vyv';
+    const FI=isInc?factIncIdx:isVyv?vyvIdx:factIdx;const lvl=isInc?'income':'subarticle';const blPlanF=isInc?blPlanIncMD:blPlanMD;const fcPlanFF=isInc?fcPlanIncMD:fcPlanMD;
+    // ⚠ РАСХОД И ВЫВОД БЕРУТ ОДИН УРОВЕНЬ ЗАПИСЕЙ (subarticle) и разводятся признаком КОДА, а факт
+    //   разведён признаком СТРОКИ ещё в проходе выше. Ровно так же устроена сводная БДР: codeSet
+    //   набирается из фактовых карт без фильтра (там уже нет выводных строк), а плановые записи
+    //   фильтруются isVyvodCode. Уравняй мы это «для единообразия» - разошлись бы два отчёта.
+    const planPass=code=>isInc?true:(isVyv?isVyvodCode(code):!isVyvodCode(code));
     const pairSet={}; // code → Set направлений (только совпавшие по владельцу)
-    blRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
-    fcRecs.forEach(p=>{if(p.level!==lvl)return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);}); // прогнозные-только подстатьи тоже показываем
+    blRecs.forEach(p=>{if(p.level!==lvl)return;if(!planPass(p.code))return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);});
+    fcRecs.forEach(p=>{if(p.level!==lvl)return;if(!planPass(p.code))return;if(dirsScope.indexOf(p.dir)<0)return;if(!ownMatchP(p.dir,p.code,person,noOwn))return;(pairSet[p.code]=pairSet[p.code]||new Set()).add(p.dir);}); // прогнозные-только подстатьи тоже показываем
     Object.keys(FI).forEach(key=>{const i=key.indexOf('||'),d=key.slice(0,i),code=key.slice(i+2);if(!ownMatchP(d,code,person,noOwn))return;(pairSet[code]=pairSet[code]||new Set()).add(d);});
     const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
     const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
@@ -15781,11 +15909,15 @@ function _cfoStmtData(P){
     codes.forEach(code=>{const bP=blMonth(code,M),pP=fcMonth(code,M),fP=factMonth(code,M),bY=blYTD(code),pY=fcYTD(code),fY=factYTD(code);
       if(bP!=null)sBP=(sBP||0)+bP; if(pP!=null)sPP=(sPP||0)+pP; sFP+=fP; if(bY!=null)sBY=(sBY||0)+bY; if(pY!=null)sPY=(sPY||0)+pY; sFY+=fY;});
     // вердикт строки - ОБЩИЙ statusOf от базы _pfStatusBase(утв, тек) → текущий план; у дохода зеркало (revenue=true)
-    const stMonth=code=>statusOf(_pfStatusBase(blMonth(code,M),fcMonth(code,M)),factMonth(code,M),isInc);
-    const stYTD=code=>statusOf(_pfStatusBase(blYTD(code),fcYTD(code)),factYTD(code),isInc);
-    // подстатьи с превышением YTD (блок операций) - тоже от текущего плана
-    const overCodes=codes.filter(code=>{const pY=fcYTD(code);return pY!=null&&(factYTD(code)-pY)>0;});
-    return {kind:isInc?'inc':'exp',codes,sBP,sPP,sFP,sBY,sPY,sFY,overCodes,pairSet,blYTD,fcYTD,factYTD,blMonth,factMonth,fcMonth,stMonth,stYTD};
+    // ⚠ У ВЫВОДА ПРИБЫЛИ вердикта нет вовсе - только величина остатка серым (statusFlatOf): вывести
+    //   больше плана не перерасход, меньше не экономия. Оценку к распределению прибыли не применяем
+    //   ни здесь, ни в сводной - там та же развилка стоит в колонке «Остаток» (kind='vyv').
+    const stMonth=code=>isVyv?statusFlatOf(fcMonth(code,M)):statusOf(_pfStatusBase(blMonth(code,M),fcMonth(code,M)),factMonth(code,M),isInc);
+    const stYTD=code=>isVyv?statusFlatOf(fcYTD(code)):statusOf(_pfStatusBase(blYTD(code),fcYTD(code)),factYTD(code),isInc);
+    // подстатьи с превышением YTD (блок операций) - тоже от текущего плана. ⚠ У вывода блока
+    //   «на что ушло сверх плана» нет: превышение вывода не нарушение, объяснять нечего.
+    const overCodes=isVyv?[]:codes.filter(code=>{const pY=fcYTD(code);return pY!=null&&(factYTD(code)-pY)>0;});
+    return {kind:isInc?'inc':isVyv?'vyv':'exp',codes,sBP,sPP,sFP,sBY,sPY,sFY,overCodes,pairSet,blYTD,fcYTD,factYTD,blMonth,factMonth,fcMonth,stMonth,stYTD};
   };
   // состав выписки: свои + прямые подчинённые (один уровень, защита от цикла в _cfoSubsOf)
   const subs=isNoOwn?[]:_cfoSubsOf(fio);const wantSubs=!!P.withSubs&&subs.length>0;
@@ -15793,12 +15925,13 @@ function _cfoStmtData(P){
   //   отличает «свои подстатьи» от подчинённых, а печать - подписи секций.
   const people=(wantSubs?[{fio,own:true,label:'Свои подстатьи'}].concat(subs.map(s=>({fio:s,own:false,label:s})))
                        :[{fio,own:true,label:''}])
-    .map(p=>Object.assign(p,{exp:buildSection(p.fio,p.own?isNoOwn:false,'exp'),inc:buildSection(p.fio,p.own?isNoOwn:false,'inc')}));
+    .map(p=>Object.assign(p,{exp:buildSection(p.fio,p.own?isNoOwn:false,'exp'),inc:buildSection(p.fio,p.own?isNoOwn:false,'inc'),vyv:buildSection(p.fio,p.own?isNoOwn:false,'vyv')}));
   // ⚠ Операции ЗА КОНКРЕТНЫЙ МЕСЯЦ - обёртка над уже построенным opsIdx, своего прохода по RAW нет.
-  const opsOf=(dir,code,m)=>{const a=opsIdx[dir+'||'+code];if(!a)return [];
+  // ⚠ kind по умолчанию - расход: все прежние вызовы трёхаргументные и обязаны вести себя как прежде.
+  const opsOf=(dir,code,m,kind)=>{const a=(kind==='vyv'?vyvOpsIdx:opsIdx)[dir+'||'+code];if(!a)return [];
     return a.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&(d.getMonth()+1)===m;});};
   return {year,month:M,allMonths,dirsScope,dirLabel,isAll,fio,fioLabel,isNoOwn,wantDetail,
-    people,subs,wantSubs,opsOf,opsIdx,factIdx,factIncIdx,
+    people,subs,wantSubs,opsOf,opsIdx,factIdx,factIncIdx,vyvIdx,vyvOpsIdx,isVyvodCode,
     frozen,frozenSet,blMap,blRecs,hasBl,ctx,
     blPlanMD,blPlanIncMD,fcPlanMD,fcPlanIncMD,fcRecs,
     sidesWithActivity,sideFactMonth,sideBlMonth,sideFcMonth,ownerOf,ownMatchP};
@@ -15871,7 +16004,11 @@ window.cfoStatementGen=function(O){
   //    отклонение - это и есть сумма в бейдже. note - приписка о пересмотре плана (_pfPlanRevNote).
   const stCell=(st,plan,fact,isInc,note,sub)=>{const cls='st'+(sub?' sub':'');if(!st||st.k==='none')return '<td class="'+cls+'">-</td>';
     const d=kop(fact)-kop(plan);let t;
-    if(isInc)t=d>0?'сверх цели +'+f(d):d<0?'недобор −'+f(-d):'план выполнен';else t=d>0?'перерасход +'+f(d):'остаток '+f(-d);
+    // ⚠ ВЫВОД ПРИБЫЛИ: только величина остатка и серый цвет. Слова «перерасход» и «экономия» здесь
+    //   были бы оценкой распределения прибыли, которой в отчёте нет; вывели больше плана - остаток
+    //   уходит в минус, и это ровно то, что произошло, без вердикта.
+    if(st.k==='flat')t='остаток '+f(-d);
+    else if(isInc)t=d>0?'сверх цели +'+f(d):d<0?'недобор −'+f(-d):'план выполнен';else t=d>0?'перерасход +'+f(d):'остаток '+f(-d);
     return '<td class="'+cls+'"><span class="bdg" style="color:'+st.col+'">'+t+'</span>'+(note?'<span class="rev">'+esc(note)+'</span>':'')+'</td>';};
   const num=v=>'<td class="r">'+(v!=null?f(v):'-')+'</td>',numS=v=>'<td class="r sub">'+(v!=null?f(v):'-')+'</td>';
   // ── режим «конкретный месяц» (как раньше): 7 колонок ──
@@ -15887,16 +16024,18 @@ window.cfoStatementGen=function(O){
     sec.codes.forEach(code=>{const bP=sec.blMonth(code,M),pP=sec.fcMonth(code,M),fP=sec.factMonth(code,M),bY=sec.blYTD(code),pY=sec.fcYTD(code),fY=sec.factYTD(code);
       rows+='<tr><td class="nm">'+esc(code)+'</td>'+num(bP)+num(pP)+'<td class="r">'+f(fP)+'</td>'+stCell(sec.stMonth(code),pP,fP,isInc,_pfPlanRevNote(bP,pP))+num(bY)+num(pY)+'<td class="r">'+f(fY)+'</td>'+stCell(sec.stYTD(code),pY,fY,isInc,'')+'</tr>'+(isInc?'':secSubRows(sec.pairSet[code],code));});
     return rows;};
-  const secTable=(sec,totLabel)=>{const isInc=sec.kind==='inc';
-    const totRow=sec.codes.length?secTotRow(totLabel||'ИТОГО',sec.sBP,sec.sPP,sec.sFP,sec.sBY,sec.sPY,sec.sFY,isInc):'';
+  const secTable=(sec,totLabel,flat)=>{const isInc=sec.kind==='inc';
+    const totRow=sec.codes.length?secTotRow(totLabel||'ИТОГО',sec.sBP,sec.sPP,sec.sFP,sec.sBY,sec.sPY,sec.sFY,isInc,false,flat):'';
     trimReset();
     const inner=sec.codes.length?(secRows(sec)+totRow):'<tr><td colspan="9" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
     return '<table>'+COLG+THEAD+'<tbody>'+inner+'</tbody></table>'+trimNote();};
   // строка ИТОГО в 7-колоночном режиме (месяц) - для блок-итогов и ЧП; inc=true → обратный цвет Δ
   // строка ИТОГО (секция, блок, результат ЦФО): вердикт от суммарного ТЕКУЩЕГО плана тем же statusOf; sign → цвет факта по знаку (результат)
-  const secTotRow=(label,sBP,sPP,sFP,sBY,sPY,sFY,inc,sign)=>{const vc=v=>sign?' style="color:'+(v>=-0.0001?'#1e8a54':'#c0392b')+'"':'';
+  // flat=true → ИТОГО секции вывода прибыли: тот же нейтральный статус, что и у её строк
+  const secTotRow=(label,sBP,sPP,sFP,sBY,sPY,sFY,inc,sign,flat)=>{const vc=v=>sign?' style="color:'+(v>=-0.0001?'#1e8a54':'#c0392b')+'"':'';
     const nb=v=>'<td class="r b">'+(v!=null?f(v):'-')+'</td>';
-    return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+nb(sBP)+nb(sPP)+'<td class="r b"'+vc(sFP)+'>'+f(sFP)+'</td>'+stCell(statusOf(_pfStatusBase(sBP,sPP),sFP,!!inc),sPP,sFP,!!inc,'')+nb(sBY)+nb(sPY)+'<td class="r b"'+vc(sFY)+'>'+f(sFY)+'</td>'+stCell(statusOf(_pfStatusBase(sBY,sPY),sFY,!!inc),sPY,sFY,!!inc,'')+'</tr>';};
+    const stP=flat?statusFlatOf(sPP):statusOf(_pfStatusBase(sBP,sPP),sFP,!!inc),stY=flat?statusFlatOf(sPY):statusOf(_pfStatusBase(sBY,sPY),sFY,!!inc);
+    return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+nb(sBP)+nb(sPP)+'<td class="r b"'+vc(sFP)+'>'+f(sFP)+'</td>'+stCell(stP,sPP,sFP,!!inc,'')+nb(sBY)+nb(sPY)+'<td class="r b"'+vc(sFY)+'>'+f(sFY)+'</td>'+stCell(stY,sPY,sFY,!!inc,'')+'</tr>';};
   const secTotTable=rowsHtml=>'<table>'+COLG+THEAD+'<tbody>'+rowsHtml+'</tbody></table>';
   // ── режим «все месяцы» (матрица подстатья × 12 + Год) ──
   const MONS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
@@ -15905,27 +16044,28 @@ window.cfoStatementGen=function(O){
   // ячейка: факт крупно (цвет от утв. только для замороженного месяца) + под ним: утв. (замороженный месяц, серым) ИЛИ прогноз (незамороженный, курсивом приглушённо). inc=true → обратный цвет (перевыполнение зелёное)
   // ⚠ Цвет факта - от ТЕКУЩЕГО плана (fcv) общим statusOf, у всех месяцев одинаково; утв. (pv) - только
   //   подстрокой у замороженного месяца. Раньше цвет мерился от утв. и только в замороженных.
-  const mCellK=(fv,pv,fr,inc,fcv)=>{const st=statusOf(_pfStatusBase(pv,fcv),fv,!!inc);const col=(st.k&&st.k!=='none'&&st.k!=='ok')?st.col:'#23272f';
+  // flat=true → вывод прибыли: факт нейтральным цветом, светофора нет (см. statusFlatOf)
+  const mCellK=(fv,pv,fr,inc,fcv,flat)=>{const st=flat?{k:'flat'}:statusOf(_pfStatusBase(pv,fcv),fv,!!inc);const col=(st.k&&st.k!=='none'&&st.k!=='ok'&&st.k!=='flat')?st.col:'#23272f';
     let sub='';if(fcv!=null)sub+='<span class="mpf">'+fM(fcv)+'</span>';if(fr&&pv!=null)sub+='<span class="mp">'+fM(pv)+'</span>';
     return '<td class="mx"><span class="mf" style="color:'+col+'">'+fM(fv)+'</span>'+sub+'</td>';};
   const mCell=(fv,pv,fr)=>mCellK(fv,pv,fr,false); // расходная (обратная совместимость)
   const mYearCell=(yf,ypf,yfc)=>'<td class="mx"><span class="mf">'+fM(yf)+'</span>'+(ypf!=null?'<span class="mp">'+fM(ypf)+'</span>':'')+(yfc!=null?'<span class="mpf">'+fM(yfc)+'</span>':'')+'</td>'; // ГОД: факт нейтрально · утв Σ (замороженные, серым) · тек Σ (текущий план, 12 мес, курсивом)
   // строка ИТОГО матрицы (для секции, блока, ЧП); inc → обратный цвет. totFC - помесячный прогноз, yfc - прогноз года
-  const mTotRow=(label,totF,totP,yf,ypf,inc,totFC,yfc)=>{let cells='';for(let m=1;m<=12;m++){const fr=frozenSet.has(m);cells+=mCellK(totF[m],fr?totP[m]:null,fr,!!inc,totFC?totFC[m]:null);}return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>';};
+  const mTotRow=(label,totF,totP,yf,ypf,inc,totFC,yfc,flat)=>{let cells='';for(let m=1;m<=12;m++){const fr=frozenSet.has(m);cells+=mCellK(totF[m],fr?totP[m]:null,fr,!!inc,totFC?totFC[m]:null,flat);}return '<tr class="tot"><td class="nm b">'+esc(label)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>';};
   const mTotTable=rowsHtml=>'<table class="mtx">'+mColg+mHead+'<tbody>'+rowsHtml+'</tbody></table>'; // отдельная матрица только с итоговыми строками (блок/ЧП)
   // матрица одной секции; возвращает html + помесячные итоги (для агрегирования блока). sec.kind → цвет ячеек
   const matrixTable=(sec,totLabel)=>{
-    const inc=sec.kind==='inc';
+    const inc=sec.kind==='inc',flat=sec.kind==='vyv';
     const totF=new Array(13).fill(0),totP=new Array(13).fill(null),totFC=new Array(13).fill(null);let yfT=0,ypfT=null,yfcT=null,rows='';
     trimReset();
     sec.codes.forEach(code=>{let yf=0,ypf=null,yfc=null,cells='';
       for(let m=1;m<=12;m++){const fr=frozenSet.has(m);const fv=sec.factMonth(code,m);const pv=fr?sec.blMonth(code,m):null;const fcv=sec.fcMonth(code,m); // прогноз считаем для всех 12 мес (год = прогноз 12 мес); в ячейке показываем только для незамороженных
         yf+=fv;if(pv!=null)ypf=(ypf||0)+pv;if(fcv!=null)yfc=(yfc||0)+fcv;
         totF[m]+=fv;if(pv!=null)totP[m]=(totP[m]||0)+pv;if(fcv!=null)totFC[m]=(totFC[m]||0)+fcv;
-        cells+=mCellK(fv,pv,fr,inc,fcv);}
+        cells+=mCellK(fv,pv,fr,inc,fcv,flat);}
       yfT+=yf;if(ypf!=null)ypfT=(ypfT||0)+ypf;if(yfc!=null)yfcT=(yfcT||0)+yfc;
       rows+='<tr><td class="nm">'+esc(code)+'</td>'+cells+mYearCell(yf,ypf,yfc)+'</tr>'+mSubRows(sec,code);});
-    const inner=sec.codes.length?(rows+mTotRow(totLabel||'ИТОГО',totF,totP,yfT,ypfT,inc,totFC,yfcT)):'<tr><td colspan="14" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
+    const inner=sec.codes.length?(rows+mTotRow(totLabel||'ИТОГО',totF,totP,yfT,ypfT,inc,totFC,yfcT,flat)):'<tr><td colspan="14" style="padding:14px;color:#8b919d;border:none">Нет подстатей, назначенных этому ответственному (за выбранное направление/год).</td></tr>';
     return {html:'<table class="mtx">'+mColg+mHead+'<tbody>'+inner+'</tbody></table>'+trimNote(),totF,totP,totFC,yf:yfT,ypf:ypfT,yfc:yfcT};
   };
   // строка ЧП/net в матрице из двух секций (доходы − расходы), по месяцам + ГОД. inc-семантика цвета (выше плана = зелёный)
@@ -15949,20 +16089,31 @@ window.cfoStatementGen=function(O){
   // ⚠ Секции больше не считаются здесь - приходят из _cfoStmtData вместе с человеком (PD.inc/PD.exp).
   const renderPerson=(PD,label)=>{
     const pfx=label?esc(label)+' · ':'';const sfx=label?' · '+label:'';
-    const incSec=PD.inc,expSec=PD.exp;
+    const incSec=PD.inc,expSec=PD.exp,vyvSec=PD.vyv;
+    // ⚠ СЕКЦИЯ ВЫВОДА ПЕЧАТАЕТСЯ ТОЛЬКО У ТОГО, У КОГО ОНА ЕСТЬ. У подавляющего большинства ЦФО
+    //   вывода прибыли нет ни в плане, ни в факте, и пустая секция с прочерками читалась бы как
+    //   «тут что-то потеряли». Пустая секция расходов при этом ОСТАЁТСЯ со своей подписью - её
+    //   отсутствие у ответственного за расходы само по себе новость.
+    // ⚠ Место секции - НИЖЕ финансового результата, как в ОПиУ и в сводной БДР: вывод прибыли не
+    //   расход и в результат ЦФО не входит. Попади он выше - результат перестал бы быть разностью
+    //   доходов и расходов, стоящих над ним.
+    const hasVyv=vyvSec.codes.length>0;
     let html='',agg;
     if(allMonths){
       const im=matrixTable(incSec,'ИТОГО ДОХОДЫ'+sfx),em=matrixTable(expSec,'ИТОГО РАСХОДЫ'+sfx);
+      const vm=hasVyv?matrixTable(vyvSec,'ИТОГО ВЫВОД'+sfx):null;
       const netRow=mNetRow('ФИНАНСОВЫЙ РЕЗУЛЬТАТ ЦФО'+sfx,im.totF,im.totP,im.yf,im.ypf,em.totF,em.totP,em.yf,em.ypf,im.totFC,em.totFC,im.yfc,em.yfc);
-      html='<h2>'+pfx+'Доходы</h2>'+(incSec.codes.length?im.html:noIncNote)+'<h2>'+pfx+'Расходы</h2>'+em.html+'<h2>'+pfx+'Финансовый результат ЦФО</h2>'+mTotTable(netRow);
-      agg={inc:im,exp:em};
+      html='<h2>'+pfx+'Доходы</h2>'+(incSec.codes.length?im.html:noIncNote)+'<h2>'+pfx+'Расходы</h2>'+em.html+'<h2>'+pfx+'Финансовый результат ЦФО</h2>'+mTotTable(netRow)
+        +(vm?'<h2>'+pfx+'Распределение прибыли (вывод)</h2>'+vm.html:'');
+      agg={inc:im,exp:em,vyv:vm};
     }else{
       const incHtml=incSec.codes.length?secTable(incSec,'ИТОГО ДОХОДЫ'+sfx):noIncNote;
       const nn=(a,b)=>(a!=null||b!=null)?((a||0)-(b||0)):null;
       const netRow=secTotRow('ФИНАНСОВЫЙ РЕЗУЛЬТАТ ЦФО'+sfx,nn(incSec.sBP,expSec.sBP),nn(incSec.sPP,expSec.sPP),incSec.sFP-expSec.sFP,nn(incSec.sBY,expSec.sBY),nn(incSec.sPY,expSec.sPY),incSec.sFY-expSec.sFY,true,true);
-      html='<h2>'+pfx+'Доходы</h2>'+incHtml+'<h2>'+pfx+'Расходы</h2>'+secTable(expSec,'ИТОГО РАСХОДЫ'+sfx)+'<h2>'+pfx+'Финансовый результат ЦФО</h2>'+secTotTable(netRow);
+      html='<h2>'+pfx+'Доходы</h2>'+incHtml+'<h2>'+pfx+'Расходы</h2>'+secTable(expSec,'ИТОГО РАСХОДЫ'+sfx)+'<h2>'+pfx+'Финансовый результат ЦФО</h2>'+secTotTable(netRow)
+        +(hasVyv?'<h2>'+pfx+'Распределение прибыли (вывод)</h2>'+secTable(vyvSec,'ИТОГО ВЫВОД'+sfx,true):'');
       const pick=s=>({sBP:s.sBP,sPP:s.sPP,sFP:s.sFP,sBY:s.sBY,sPY:s.sPY,sFY:s.sFY});
-      agg={inc:pick(incSec),exp:pick(expSec)};
+      agg={inc:pick(incSec),exp:pick(expSec),vyv:hasVyv?pick(vyvSec):null};
     }
     return {html,agg,expSec};
   };
@@ -15973,19 +16124,27 @@ window.cfoStatementGen=function(O){
       // блок-режим, матрица: помесячные итоги доходов/расходов блока агрегируем из посекционных totF/totP
       const bIF=new Array(13).fill(0),bIP=new Array(13).fill(null),bIFC=new Array(13).fill(null);let bIYf=0,bIYpf=null,bIYfc=null;
       const bEF=new Array(13).fill(0),bEP=new Array(13).fill(null),bEFC=new Array(13).fill(null);let bEYf=0,bEYpf=null,bEYfc=null;
-      people.forEach(pe=>{const r=renderPerson(pe,pe.label);bodyHtml+=r.html;const im=r.agg.inc,em=r.agg.exp;
-        for(let m=1;m<=12;m++){bIF[m]+=im.totF[m]||0;if(im.totP[m]!=null)bIP[m]=(bIP[m]||0)+im.totP[m];if(im.totFC[m]!=null)bIFC[m]=(bIFC[m]||0)+im.totFC[m];bEF[m]+=em.totF[m]||0;if(em.totP[m]!=null)bEP[m]=(bEP[m]||0)+em.totP[m];if(em.totFC[m]!=null)bEFC[m]=(bEFC[m]||0)+em.totFC[m];}
+      // ⚠ Вывод по блоку копится ОТДЕЛЬНО и в результат ЦФО не входит - как и у каждого человека.
+      const bVF=new Array(13).fill(0),bVP=new Array(13).fill(null),bVFC=new Array(13).fill(null);let bVYf=0,bVYpf=null,bVYfc=null,anyV=false;
+      people.forEach(pe=>{const r=renderPerson(pe,pe.label);bodyHtml+=r.html;const im=r.agg.inc,em=r.agg.exp,vm=r.agg.vyv;
+        for(let m=1;m<=12;m++){bIF[m]+=im.totF[m]||0;if(im.totP[m]!=null)bIP[m]=(bIP[m]||0)+im.totP[m];if(im.totFC[m]!=null)bIFC[m]=(bIFC[m]||0)+im.totFC[m];bEF[m]+=em.totF[m]||0;if(em.totP[m]!=null)bEP[m]=(bEP[m]||0)+em.totP[m];if(em.totFC[m]!=null)bEFC[m]=(bEFC[m]||0)+em.totFC[m];
+          if(vm){bVF[m]+=vm.totF[m]||0;if(vm.totP[m]!=null)bVP[m]=(bVP[m]||0)+vm.totP[m];if(vm.totFC[m]!=null)bVFC[m]=(bVFC[m]||0)+vm.totFC[m];}}
         bIYf+=im.yf||0;if(im.ypf!=null)bIYpf=(bIYpf||0)+im.ypf;if(im.yfc!=null)bIYfc=(bIYfc||0)+im.yfc;bEYf+=em.yf||0;if(em.ypf!=null)bEYpf=(bEYpf||0)+em.ypf;if(em.yfc!=null)bEYfc=(bEYfc||0)+em.yfc;
+        if(vm){anyV=true;bVYf+=vm.yf||0;if(vm.ypf!=null)bVYpf=(bVYpf||0)+vm.ypf;if(vm.yfc!=null)bVYfc=(bVYfc||0)+vm.yfc;}
         opsList.push({label:pe.label,sec:r.expSec});});
-      const blkRows=mTotRow('ИТОГО ДОХОДЫ ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,true,bIFC,bIYfc)+mTotRow('ИТОГО РАСХОДЫ ПО БЛОКУ',bEF,bEP,bEYf,bEYpf,false,bEFC,bEYfc)+mNetRow('ФИНАНСОВЫЙ РЕЗУЛЬТАТ ЦФО ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,bEF,bEP,bEYf,bEYpf,bIFC,bEFC,bIYfc,bEYfc);
+      const blkRows=mTotRow('ИТОГО ДОХОДЫ ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,true,bIFC,bIYfc)+mTotRow('ИТОГО РАСХОДЫ ПО БЛОКУ',bEF,bEP,bEYf,bEYpf,false,bEFC,bEYfc)+mNetRow('ФИНАНСОВЫЙ РЕЗУЛЬТАТ ЦФО ПО БЛОКУ',bIF,bIP,bIYf,bIYpf,bEF,bEP,bEYf,bEYpf,bIFC,bEFC,bIYfc,bEYfc)
+        +(anyV?mTotRow('ИТОГО ВЫВОД ПО БЛОКУ',bVF,bVP,bVYf,bVYpf,false,bVFC,bVYfc,true):'');
       bodyHtml+='<h2>Итого по блоку · '+esc(fioLabel)+'</h2>'+mTotTable(blkRows);
     }else{
-      const bi={sBP:null,sPP:null,sFP:0,sBY:null,sPY:null,sFY:0},be={sBP:null,sPP:null,sFP:0,sBY:null,sPY:null,sFY:0};
+      const bi={sBP:null,sPP:null,sFP:0,sBY:null,sPY:null,sFY:0},be={sBP:null,sPP:null,sFP:0,sBY:null,sPY:null,sFY:0},bv={sBP:null,sPP:null,sFP:0,sBY:null,sPY:null,sFY:0};
+      let anyV=false;
       const addTo=(T,s)=>{['sBP','sPP','sBY','sPY'].forEach(k=>{if(s[k]!=null)T[k]=(T[k]||0)+s[k];});T.sFP+=s.sFP;T.sFY+=s.sFY;}; // план через null - блок без единого плана остаётся «плана нет»
       people.forEach(pe=>{const r=renderPerson(pe,pe.label);bodyHtml+=r.html;addTo(bi,r.agg.inc);addTo(be,r.agg.exp);
+        if(r.agg.vyv){anyV=true;addTo(bv,r.agg.vyv);}
         opsList.push({label:pe.label,sec:r.expSec});});
       const nn=(a,b)=>(a!=null||b!=null)?((a||0)-(b||0)):null;
-      const blkRows=secTotRow('ИТОГО ДОХОДЫ ПО БЛОКУ',bi.sBP,bi.sPP,bi.sFP,bi.sBY,bi.sPY,bi.sFY,true)+secTotRow('ИТОГО РАСХОДЫ ПО БЛОКУ',be.sBP,be.sPP,be.sFP,be.sBY,be.sPY,be.sFY,false)+secTotRow('ФИНАНСОВЫЙ РЕЗУЛЬТАТ ЦФО ПО БЛОКУ',nn(bi.sBP,be.sBP),nn(bi.sPP,be.sPP),bi.sFP-be.sFP,nn(bi.sBY,be.sBY),nn(bi.sPY,be.sPY),bi.sFY-be.sFY,true,true);
+      const blkRows=secTotRow('ИТОГО ДОХОДЫ ПО БЛОКУ',bi.sBP,bi.sPP,bi.sFP,bi.sBY,bi.sPY,bi.sFY,true)+secTotRow('ИТОГО РАСХОДЫ ПО БЛОКУ',be.sBP,be.sPP,be.sFP,be.sBY,be.sPY,be.sFY,false)+secTotRow('ФИНАНСОВЫЙ РЕЗУЛЬТАТ ЦФО ПО БЛОКУ',nn(bi.sBP,be.sBP),nn(bi.sPP,be.sPP),bi.sFP-be.sFP,nn(bi.sBY,be.sBY),nn(bi.sPY,be.sPY),bi.sFY-be.sFY,true,true)
+        +(anyV?secTotRow('ИТОГО ВЫВОД ПО БЛОКУ',bv.sBP,bv.sPP,bv.sFP,bv.sBY,bv.sPY,bv.sFY,false,false,true):'');
       bodyHtml+='<h2>Итого по блоку · '+esc(fioLabel)+'</h2>'+secTotTable(blkRows);
     }
   }else{
