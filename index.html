@@ -2536,6 +2536,12 @@ function startPresetsSync(){
       try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){_lsWarn('reportPresets',e)}
       const ov=document.getElementById('presetsOverlay'),body=document.getElementById('presetBody');
       if(ov&&body&&body.dataset.tab)_presetRenderBody(body.dataset.tab);
+      // ⚠ ВТОРАЯ ПРИЧИНА, ПО КОТОРОЙ ПРЕСЕТ ПО УМОЛЧАНИЮ НЕ СРАБАТЫВАЛ: список приходит из облака
+      //   ПОЗЖЕ первого показа вкладки. На момент switchTab пресетов ещё нет, применять нечего, а
+      //   второго захода на вкладку человек не делает - он уже смотрит отчёт. Поэтому пробуем и
+      //   здесь: все проверки («первый заход», «пресет не выбран») внутри, повторно не применится.
+      try{_presetApplyDefault(activeTab);}catch(e){}
+      try{_presetBarInject();_presetBarRefresh();}catch(e){} // список в селекте тоже приехал только сейчас
     });
   }catch(e){}
 }
@@ -3022,11 +3028,17 @@ window._presetSetDefault=function(tab,id,on){
   (_presets[tab]||[]).forEach(p=>{ if(p.id===id)p.isDefault=!!on; else delete p.isDefault; });
   _presetsSave(); _presetRenderBody(tab);
 };
-// ⚠ Применяется ТОЛЬКО на чистой вкладке: человек, уже выбравший фильтры руками, ждёт СВОЙ отбор,
-//   и подмена его пресетом читалась бы как потеря выбора. Признак «чисто» - тот же счётчик
-//   активных фильтров, что стоит на кнопке «Сбросить (N)»: второго определения «чистого» не заводим.
-// ⚠ Один раз за сессию на вкладку: иначе возврат на вкладку после ручного сброса снова навязывал бы
-//   пресет, и снять его было бы нельзя - кнопка «Сбросить» переставала бы работать по смыслу.
+// ⚠ ПРИЗНАК «ЧЕЛОВЕК НЕ ВЫБИРАЛ РУКАМИ» - ЭТО ПЕРВЫЙ ЗАХОД НА ВКЛАДКУ В ЭТОЙ СЕССИИ, и ничто другое.
+//   Прежняя проверка сравнивала состояние вкладки с умолчаниями и потому НЕ РАБОТАЛА ВОВСЕ: к моменту
+//   первого показа вкладка уже несёт ВЫЧИСЛЕННЫЕ умолчания - Банк ставит период «текущий год»,
+//   ОПиУ/ДДС/ОСВ/ФОТ - разрез и границы дат, БДР - «текущий месяц». Всё это отличается от чистого
+//   состояния, проверка считала вкладку «тронутой» и пресет по умолчанию не применялся никогда.
+//   Вычисленное умолчание - не выбор человека, и мешать применению оно не должно.
+// ⚠ Первый заход - признак ТОЧНЫЙ, а не приблизительный: до него человек на вкладке не был и трогать
+//   там ничего не мог. Он же даёт и второе требуемое поведение - «после ручной смены фильтра
+//   повторный заход пресет НЕ навязывает»: второй заход уже не первый.
+// ⚠ Один раз за сессию на вкладку ещё и потому, что иначе снять пресет было бы нельзя: возврат на
+//   вкладку навязывал бы его снова, и кнопка «Сбросить» переставала бы работать по смыслу.
 const _presetDefDone={};
 // ⚠ Сброс - ТОЛЬКО для тестов: в бою «один раз за сессию» и означает один раз.
 window._presetDefDoneReset=function(){Object.keys(_presetDefDone).forEach(k=>delete _presetDefDone[k]);};
@@ -3035,15 +3047,8 @@ function _presetApplyDefault(tab){
   if(_presetDefDone[tab])return;
   const p=(_presets[tab]||[]).find(x=>x.isDefault); if(!p)return;
   if(_activePreset[tab])return;                       // пресет уже выбран - не перебиваем
-  if(typeof _pfActiveFilters==='function'&&tab==='planfact'&&_pfActiveFilters().length)return; // БДР: фильтры тронуты руками
-  if(tab!=='planfact'&&_presetTabDirty(tab))return;
   _presetDefDone[tab]=1;
   presetApply(tab,p.id);
-}
-// «Вкладку трогали руками» для прочих вкладок: сравниваем состояние с умолчаниями вкладки
-function _presetTabDirty(tab){
-  const F=_tabFilters[tab]||{},D=_presetTabDefaults(tab);
-  return Object.keys(D).some(k=>!_presetSame(F[k],D[k]));
 }
 window._presetEdit=function(tab,id){
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
@@ -10528,7 +10533,11 @@ function pfRunTests(){
      {_presets.planfact=[{id:'v1',name:'x',f:{dirs:['Д1']},isDefault:true},{id:'v2',name:'y',f:{}}];
       _presetSetDefault('planfact','v2',true);
       ok('«по умолчанию» ОДИН на вкладку',!(_presets.planfact[0].isDefault)&&_presets.planfact[1].isDefault===true);
-      ok('умолчание не применяется к тронутой руками вкладке',/_pfActiveFilters\(\)\.length\)return;/.test(String(_presetApplyDefault)));
+      // ⚠ Прежняя проверка «состояние отличается от умолчаний» удалена как НЕРАБОТАВШАЯ: к первому
+      //   показу вкладка уже несёт вычисленные умолчания, и пресет не применялся никогда.
+      ok('умолчание применяется только на ПЕРВОМ заходе, состояние вкладки не сравнивается',
+         String(_presetApplyDefault).indexOf('_presetTabDirty')<0&&String(_presetApplyDefault).indexOf('_pfActiveFilters')<0);
+      ok('пресет по умолчанию пробуется и при приходе пресетов из облака',/_presetApplyDefault\(activeTab\)/.test(String(startPresetsSync)));
       ok('умолчание применяется один раз за сессию',/if\(_presetDefDone\[tab\]\)return;/.test(String(_presetApplyDefault)));
       ok('умолчание ставится ПОСЛЕ первого рендера',/renderActiveTab\(\);\n(?:\s*\/\/[^\n]*\n)+\s*try\{_presetApplyDefault\(name\);\}catch\(e\)\{\}/.test(String(switchTab)));}
      // (6) подпись фильтров снимается ДО и ПОСЛЕ рендера - иначе пресет гаснет сам
