@@ -9071,6 +9071,51 @@ window.pfNoPlanShowTxn=function(kind,idx){
 // ── ⚠ Аналитика вне ОПиУ (сторож сверки БДР==ОПиУ): списания, которые БДР посчитал, а ОПиУ отбросит из-за аналитики
 // вне точного списка OPIU_CATS (опечатка/регистр/пустое поле). Расчёты НЕ трогает - только показывает брак данных,
 // из-за которого «ИТОГО РАСХОДЫ факт» БДР > «РАСХОДЫ» ОПиУ ровно на эту сумму. Чинить в источнике (колонка «Аналитика»). ──
+// ── ⚠ ПРОВЕРКА ДАННЫХ: ОДИН ВХОД В ТРИ СТОРОЖА ───────────────────────────────
+// Три пункта меню («факт без плана», «аналитика вне ОПиУ», «поступление вне 120_») сведены в
+// один (решение Олега 07.09.2026). Они об одном и том же - о БРАКЕ ВВОДА, - и человек, увидевший
+// красную точку, шёл открывать их по очереди, чтобы понять, какой именно сработал.
+// ⚠ СПИСКИ ЗДЕСЬ НЕ ПОВТОРЯЮТСЯ: каждая секция называет находку, её объём и покрытие, а список
+//   открывает ПРЕЖНИЙ модал - со своими фильтрами, выгрузкой и пояснениями. Скопируй мы сюда
+//   таблицы, в проекте появилось бы три вторых экземпляра рендера, которые разойдутся с первыми.
+// ⚠ ПУСТАЯ СЕКЦИЯ ОСТАЁТСЯ И ГОВОРИТ «нет»: исчезни она - человек не отличит «сторож молчит» от
+//   «сторожа больше нет», а это ровно тот вопрос, ради которого экран и открывают.
+window.pfDataCheckOpen=function(){
+  if(document.getElementById('pfCheckOverlay'))return;
+  const NP=window._pfNoPlan||{N:0},AB=window._pfAnBad||{N:0},IB=window._pfIncBad||{N:0};
+  const money=v=>fmt(Math.abs(+v||0));
+  const sec=(icon,title,n,what,cov,open)=>{
+    const has=n>0;
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:11px 13px;margin-bottom:10px;background:'+(has?'rgba(192,57,47,.05)':'var(--surface2)')+'">'
+      +'<div style="display:flex;align-items:center;gap:8px;justify-content:space-between">'
+        +'<div style="font-size:13px;font-weight:700;color:'+(has?'var(--outcome)':'var(--text2)')+'">'+icon+' '+_htmlEsc(title)+'</div>'
+        +'<div style="font-size:12px;font-weight:700;color:'+(has?'var(--outcome)':'var(--text3)')+'">'+(has?n:'нет')+'</div></div>'
+      +'<div style="font-size:11px;color:var(--text2);margin-top:5px;line-height:1.55">'+what+'</div>'
+      +(cov?'<div style="font-size:11px;color:var(--text3);margin-top:4px">'+cov+'</div>':'')
+      +(has?'<button onclick="document.getElementById(\'pfCheckOverlay\').remove();'+open+'" style="margin-top:8px;font-size:11px;padding:3px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">Показать список</button>':'')
+      +'</div>';};
+  const covLine=(c)=>{const v=(typeof c==='number'&&isFinite(c))?Math.round(c*1000)/10:null;return v==null?'':('покрытие планом: '+String(v).replace('.',',')+'%');};
+  const html=sec('⚠','Факт без плана',NP.N||0,
+      'Подстатьи, по которым есть операции, но нет ни одной записи плана за год. Пока плана нет, отклонение по ним не считается ни в одной строке отчёта.',
+      [covLine(NP.coverage)&&('расходы: '+covLine(NP.coverage)),covLine(NP.coverageInc)&&('доходы: '+covLine(NP.coverageInc))].filter(Boolean).join(' · '),
+      'pfNoPlanOpen()')
+    +sec('⚠','Аналитика вне ОПиУ',AB.N||0,
+      'Списания, аналитика которых не совпала со списком ОПиУ. БДР их считает, ОПиУ отбрасывает - на эту сумму отчёты и разойдутся.',
+      (AB.N?('сумма: '+money(AB.sum)+' ₽'):''),'pfAnBadOpen()')
+    +sec('⚠','Поступление вне 120_',IB.N||0,
+      'Поступления с подстатьёй не из группы 120_. Такие строки попадают в доходы фантомно и завышают выручку.',
+      (IB.N?('сумма: '+money(IB.sum)+' ₽'):''),'pfIncBadOpen()');
+  const ov=document.createElement('div'); ov.className='txn-card-overlay'; ov.id='pfCheckOverlay';
+  ov.innerHTML='<div class="txn-card" style="max-width:620px">'
+    +'<div class="txn-card-head"><h3>⚠ Проверка данных'+((NP.N||0)+(AB.N||0)+(IB.N||0)?' · '+((NP.N||0)+(AB.N||0)+(IB.N||0)):'')+'</h3>'
+    +'<button class="txn-card-close" onclick="this.closest(\'.txn-card-overlay\').remove()">✕</button></div>'
+    +'<div style="padding:14px 18px 18px">'
+      +'<p style="font-size:12px;color:var(--text2);margin:0 0 10px;line-height:1.6">Три сторожа брака ввода за <b>'+_htmlEsc(String((NP.dirLabel||AB.dirLabel||IB.dirLabel)||''))+'</b>, '+_htmlEsc(String((NP.year||AB.year||IB.year)||''))+'. Расчёты они не правят - показывают строки, которые чинят в источнике.</p>'
+      +html
+    +'</div></div>';
+  ov.addEventListener('mousedown',e=>{if(e.target===ov)ov.remove();});
+  document.body.appendChild(ov);
+};
 window.pfAnBadOpen=function(){
   // ⚠ ГЕЙТА АДМИНА ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО (25.08.2026, вместе с открытием меню всем): это
   //   ЧТЕНИЕ, защитой гейт не был (данные читает любой вошедший), а нужен этот экран прежде
@@ -11330,6 +11375,9 @@ function renderPlanFact(f){
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
   const _abA=window._pfAnBad||{N:0},_abHasA=_abA.N>0; // сторож сверки БДР==ОПиУ (аналитика вне категорий)
   const _ibA=window._pfIncBad||{N:0},_ibHasA=_ibA.N>0; // сторож «поступление вне 120_» (фантомные доходы)
+  // ⚠ Счётчик пункта - СУММА трёх сторожей: пункт один, значит и число одно. Красная точка на
+  //   кнопке остаётся прежней и зажигается по тому же признаку «сработал хоть один».
+  const _chkN=(_npA.N||0)+(_abA.N||0)+(_ibA.N||0);
   // ⚠ Счётчик «Разнесение начислений» обязателен: экран, который надо ВСПОМНИТЬ открыть, задачу не
   //   решает - бухгалтер узнаёт о новой разбивке только если цифра сама попалась на глаза.
   //   Считаем ТОЛЬКО плановую часть (facts=false): проход по RAW за фактом на каждый рендер БДР не нужен.
@@ -11351,7 +11399,7 @@ function renderPlanFact(f){
   const lkBk=isAdmin?null:'backup';// «Скачать архив» - НАШЕ решение, а не права (правилами закрыта лишь отметка backupLog)
   const actionsWrap=`<div style="position:relative;display:inline-block">
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;line-height:15px;font-weight:600;padding:2px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
-      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('pfNoPlanOpen()','⚠ Факт без плана'+(_npHasA?' <b>('+_npA.N+')</b>':''),_npHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfAnBadOpen()','⚠ Аналитика вне ОПиУ'+(_abHasA?' <b>('+_abA.N+')</b>':''),_abHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfIncBadOpen()','⚠ Поступление вне 120_'+(_ibHasA?' <b>('+_ibA.N+')</b>':''),_ibHasA?'var(--outcome)':'var(--text2)',null)}${_actItem('pfHiddenDirsOpen()','🙈 Скрытые направления','var(--text2)',lk)}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)',null)}${_actItem('pfCfoOpen()','👥 ЦФО','var(--accent)',null)}${_actItem('showPlansPanel()',(isAdmin?'✏ Планы':'👁 Планы'),'var(--accent)',null)}${_actItem('pfPresetSaveOpen()','💾 Сохранить текущий отбор как пресет','var(--accent)',lk)}${_actItem("showPresetsPanel('planfact')",'⚙ Пресеты отчётов','var(--text2)',lk)}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)',lkBk)}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)',lk)}</div>
+      <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('pfDataCheckOpen()','⚠ Проверка данных'+(_chkN?' <b>('+_chkN+')</b>':''),_chkN?'var(--outcome)':'var(--text2)',null)}${_actItem('pfHiddenDirsOpen()','🙈 Скрытые направления','var(--text2)',lk)}${_actItem('pfAllocOpen()','🧮 Разнесение начислений'+(_alN?' <b>('+_alN+(_alC?' · '+_alC+' изм.':'')+')</b>':''),_alC?'var(--orange)':'var(--accent)',null)}${_actItem('pfCfoOpen()','👥 ЦФО','var(--accent)',null)}${_actItem('showPlansPanel()',(isAdmin?'✏ Планы':'👁 Планы'),'var(--accent)',null)}${_actItem('pfPresetSaveOpen()','💾 Сохранить текущий отбор как пресет','var(--accent)',lk)}${_actItem("showPresetsPanel('planfact')",'⚙ Пресеты отчётов','var(--text2)',lk)}${_actItem('pfBackupDownloadOpen()','💾 Скачать архив настроек','var(--text2)',lkBk)}${_actItem('pfBackupRestoreOpen()','📥 Восстановить из архива','var(--text2)',lk)}</div>
     </div>`;
   // ── «Сбросить (N)» - последним элементом фильтр-бара ─────────────────────────
   // ⚠ Стоит В КОНЦЕ РЯДА и БЕЗ margin-left:auto: при flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки,
