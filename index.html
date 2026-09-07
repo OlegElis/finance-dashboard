@@ -10474,6 +10474,50 @@ function pfRunTests(){
    ok('экран: вкладка вывода только там, где вывод есть',/const hasVyvTab=D\.people\.some\(p=>p\.vyv&&p\.vyv\.codes\.length\);/.test(cs)&&/if\(vyv&&!hasVyvTab\)/.test(cs));
    ok('«последний месяц с данными» учитывает вывод',/for\(const sel of \['exp','inc','vyv'\]\)/.test(String(_cfoLastMonthWithData)));}
 
+  // 32. ПРЕСЕТЫ: НАБОР ЗАДАННЫХ ПОЛЕЙ, ВЫБОР НА ВКЛАДКЕ, ПРЕСЕТ ПО УМОЛЧАНИЮ (07.09.2026)
+  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),P0=JSON.parse(JSON.stringify(_presets)),A0=_activePreset.planfact;
+   try{
+     // (1) применение: заданное перебивает, «не заданное» НЕ трогается
+     _tabFilters.planfact=Object.assign(_pfBlankState(),{sides:['ктото'],period:'year',year:new Date().getFullYear(),_defPeriodDone:1});
+     _presets.planfact=[{id:'u1',name:'т',f:{dirs:['Д1']}}];
+     Object.entries(_presets.planfact[0].f).forEach(([k,v])=>{_tabFilters.planfact[k]=v;}); // ядро применения без рендера
+     ok('заданное поле ставится',JSON.stringify(_tabFilters.planfact.dirs)==='["Д1"]');
+     ok('не заданное поле не трогается',JSON.stringify(_tabFilters.planfact.sides)==='["ктото"]');
+     // (2) состав строки собирается из ТЕХ ЖЕ полей, что применяются
+     const sum=_presetSummary('planfact',{dirs:['Д1'],period:'year'});
+     ok('состав - из описания полей, а не из второго списка',sum.length===2&&/^Направление: /.test(sum[0])&&/^Период: весь год$/.test(sum[1]),sum.join(' | '));
+     ok('пустой пресет - пустой состав',_presetSummary('planfact',{}).length===0);
+     ok('состав и форма читают одно описание',(PRESET_FIELDS.planfact||[]).length===8&&/PRESET_FIELDS\[tab\]/.test(String(_presetFormHtml)));
+     // (3) миграция на фикстуре из трёх старых пресетов
+     {const Y=new Date().getFullYear();
+      const r=_presetMigCore({planfact:[
+          {id:'m1',name:'a',f:{dirs:['Д1'],articles:[],subarticles:[],owners:[],sides:[],period:'year',year:Y,yearIsCurrent:true,level:'article',showHidden:false}},
+          {id:'m2',name:'b',f:{dirs:[],articles:[],subarticles:[],owners:[],sides:[],period:'',year:Y,yearIsCurrent:true,level:'article',showHidden:false}}],
+        bank:[{id:'m3',name:'c',f:{preset:'year',activityDirs:[],accounts:[],fns:'da',includeFuture:true}}]});
+      const g=n=>r.rep.find(x=>x.name===n);
+      ok('миграция: снимок → только отличия от умолчания',JSON.stringify(g('a').kept)==='["dirs","period"]',JSON.stringify(g('a').kept));
+      ok('миграция: снимок из одних умолчаний даёт пустой пресет',g('b').kept.length===0);
+      ok('миграция: банковский пресет - preset и fns',JSON.stringify(g('c').kept)==='["preset","fns"]',JSON.stringify(g('c').kept));
+      ok('миграция НИ ОДНОГО пресета не теряет',r.out.planfact.length===2&&r.out.bank.length===1);
+      ok('миграция: год «текущий» не становится числом',r.out.planfact[0].f.year===undefined||r.out.planfact[0].f.year==='cur');}
+     // (4) селект в баре - один на вкладку, последняя строка «сохранить»
+     {const src=String(_presetBarInject);
+      ok('селект ставится последним элементом бара',/bar\.appendChild\(wrap\)/.test(src));
+      ok('вставка идёт только если контрола ещё нет',/if\(bar\.querySelector\(':scope > \.preset-pick'\)\)return;/.test(src));
+      ok('последняя строка селекта - сохранение текущего отбора',/__save__/.test(src)&&/__save__/.test(String(_presetPick)));
+      ok('селект только на вкладках с пресетами',/PRESET_TABS\.some\(\(\[k\]\)=>k===activeTab\)/.test(src));}
+     // (5) пресет по умолчанию - один на вкладку и не перебивает руками выбранное
+     {_presets.planfact=[{id:'v1',name:'x',f:{dirs:['Д1']},isDefault:true},{id:'v2',name:'y',f:{}}];
+      _presetSetDefault('planfact','v2',true);
+      ok('«по умолчанию» ОДИН на вкладку',!(_presets.planfact[0].isDefault)&&_presets.planfact[1].isDefault===true);
+      ok('умолчание не применяется к тронутой руками вкладке',/_pfActiveFilters\(\)\.length\)return;/.test(String(_presetApplyDefault)));
+      ok('умолчание применяется один раз за сессию',/if\(_presetDefDone\[tab\]\)return;/.test(String(_presetApplyDefault)));
+      ok('умолчание ставится ПОСЛЕ первого рендера',/renderActiveTab\(\);\n(?:\s*\/\/[^\n]*\n)+\s*try\{_presetApplyDefault\(name\);\}catch\(e\)\{\}/.test(String(switchTab)));}
+     // (6) подпись фильтров снимается ДО и ПОСЛЕ рендера - иначе пресет гаснет сам
+     ok('подпись пресета снимается дважды',(String(presetApply).match(/_activePresetSig\[tab\]=_filterSig\(tab\)/g)||[]).length===2);
+   }catch(e){ok('блок пресетов упал',false,String(e&&e.message||e));}
+   finally{_tabFilters.planfact=F0;Object.keys(P0).forEach(k=>{_presets[k]=P0[k];});_activePreset.planfact=A0;}}
+
   // 31. МЕНЮ «⚙ ДЕЙСТВИЯ»: 13 ПУНКТОВ → 3 (07.09.2026)
   // ⚠ Проверяем СОСТАВ, а не «меню не пустое»: смысл правки в том, что в меню осталось ТОЛЬКО то,
   //   что делают на самой вкладке, а настройки уехали в шестерёнку. Вернись сюда пункт настройки -
