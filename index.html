@@ -10675,7 +10675,10 @@ function renderPlanFact(f){
   const _subFactP=(kind,sub)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];if(!a)return 0;if(isYear){let s=0;for(let mm=1;mm<=12;mm++)s+=a[mm];return s;}return a[+period]||0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[d+'||'+sub];if(a){if(isYear){for(let mm=1;mm<=12;mm++)s+=a[mm];}else s+=a[+period]||0;}});return s;};
   const _subFactM=(kind,sub,mo)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];return a?(a[mo]||0):0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[d+'||'+sub];if(a)s+=a[mo]||0;});return s;};
   const _subPlanP=(recsFn,cvt,planOfFn,lvl,sub)=>{if(!selOwn.size)return planOfFn(lvl,sub);let tot=null;ownDirsOf(sub).forEach(d=>{const v=isYear?_pdPlanYear(recsFn,cvt,lvl,d,sub):_pdPlanMonth(recsFn,cvt,lvl,d,sub,+period);if(v!=null)tot=(tot||0)+v;});return tot;};
-  const _subPlanM=(recsFn,cvt,planMonthFn,lvl,sub,mo)=>{if(!selOwn.size)return planMonthFn(lvl,sub,mo);let tot=null;ownDirsOf(sub).forEach(d=>{const v=_pdPlanMonth(recsFn,cvt,lvl,d,sub,mo);if(v!=null)tot=(tot||0)+v;});return tot;};
+  // dirs (необязательный) - считать ровно по этим направлениям (4-й уровень: строка одного направления).
+  // ⚠ Ранний выход по !selOwn.size при заданном dirs НЕ применяется: без фильтра ЦФО planMonthFn отдаёт
+  //   подстатью целиком по всем направлениям, то есть ровно не то, что просит строка направления.
+  const _subPlanM=(recsFn,cvt,planMonthFn,lvl,sub,mo,dirs)=>{if(!dirs&&!selOwn.size)return planMonthFn(lvl,sub,mo);let tot=null;(dirs||ownDirsOf(sub)).forEach(d=>{const v=_pdPlanMonth(recsFn,cvt,lvl,d,sub,mo);if(v!=null)tot=(tot||0)+v;});return tot;};
   function ownerPass(code){ // hoisted - используется в codePasses ниже
     if(!selOwn.size)return true;
     if(level==='subarticle')return subOwnerPass(code);
@@ -11323,7 +11326,11 @@ function renderPlanFact(f){
   // ── База ОДНОЙ стороны: 'utv' - только утверждённое, 'tek' - только текущий план. Без выбора по frozen и без фолбэка на другую сторону -
   //    в этом и смысл пары колонок: видно, что каждая база даёт сама по себе, и видно их расхождение. per-dir через _subPlanM → фильтр ЦФО режет обе пары одинаково.
   //    Внутри пары src зафиксирован колонкой, поэтому 'mix' здесь возникнуть не может (в отличие от devBase).
-  const _subOneBaseM=(lvl,sub,m,utv)=>{
+  // ⚠ dirs (необязательный) - считать базу ТОЛЬКО по этим направлениям. Ради 4-го уровня: строка
+  //   направления обязана мериться от плана СВОЕГО направления, а не от суммы по всем. Параметр,
+  //   а не вторая функция: правила «утв или тек, без фолбэка» и «под фильтром «Контрагент» база -
+  //   план по стороне» одни и те же на всех уровнях, и разъехаться им нельзя.
+  const _subOneBaseM=(lvl,sub,m,utv,dirs)=>{
     if(utv&&!PB)return{v:null,src:null};
     // ⚠ Под фильтром «Контрагент» база остатка И СТАТУСА - ТОТ ЖЕ план, что показан в строке.
     //   Без этой развилки в одной строке жили два разных плана: показанный (по стороне) и тот, от
@@ -11333,14 +11340,22 @@ function renderPlanFact(f){
     //   прочерк, а не ноль (ноль означал бы «запланировано ноль» и дал бы перерасход на весь факт).
     if(selSide.size){
       if(lvl!=='subarticle'||!_slPlanSide(sub))return{v:null,src:null};
-      const v=utv?_sidePlanSub(PB.recsOf,_blSideMD,'subarticle',sub,m):_sidePlanSub(recsOf,_fcSideMD,'subarticle',sub,m);
+      // ⚠ Строка направления под фильтром «Контрагент»: план по стороне ЭТОГО направления. Правило
+      //   то же, что уровнем выше (у подстатьи вне _slPlanSide плана по стороне нет - прочерк), но
+      //   суммируется по одному направлению вместо всех owner-passing.
+      const _sd=(recsFn,md)=>{if(!dirs)return _sidePlanSub(recsFn,md,'subarticle',sub,m);
+        let t=null;dirs.forEach(d=>{[...selSide].forEach(sv=>{const v=md(d,sub,sv,m);if(v!=null)t=(t||0)+v;});});return t;};
+      const v=utv?_sd(PB.recsOf,_blSideMD):_sd(recsOf,_fcSideMD);
       return{v,src:v==null?null:(utv?'utv':'prog')};
     }
-    const v=utv?_subPlanM(PB.recsOf,PB.cvtD,PB.planMonth,lvl,sub,m):_subPlanM(recsOf,cvtD,planMonth,lvl,sub,m);
+    const v=utv?_subPlanM(PB.recsOf,PB.cvtD,PB.planMonth,lvl,sub,m,dirs):_subPlanM(recsOf,cvtD,planMonth,lvl,sub,m,dirs);
     return{v,src:v==null?null:(utv?'utv':'prog')};};
   // остаток по произвольной помесячной базе; #1 (факт только за месяцы, где ЕСТЬ база) живёт внутри цикла и переносится на обе стороны сам
-  const remOfSubBy=(kind,sub,baseM)=>{const lvl=kind==='inc'?'income':'subarticle';let pM=null,fM=0,su=0,sp=0;
-    remMonths.forEach(m=>{const r=baseM(lvl,sub,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=_remFactSubM(kind,sub,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});
+  // factM (необязательный) - факт того же среза, что и база. Нужен 4-му уровню: у строки направления
+  // и база, и факт per-dir. ⚠ Правило #1 (факт берём ТОЛЬКО за месяцы, где ЕСТЬ база) живёт ВНУТРИ
+  // этого цикла и потому переносится на новый срез само - второй такой цикл заводить нельзя.
+  const remOfSubBy=(kind,sub,baseM,factM)=>{const lvl=kind==='inc'?'income':'subarticle';let pM=null,fM=0,su=0,sp=0;
+    remMonths.forEach(m=>{const r=baseM(lvl,sub,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factM?factM(m):_remFactSubM(kind,sub,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});
     return{pM,fM,kind,src:_remSrc(su,sp)};};
   const _bmUtv=(l,s,m)=>_subOneBaseM(l,s,m,true),_bmTek=(l,s,m)=>_subOneBaseM(l,s,m,false);
   // ⚠ ТРЕТЬЕЙ стороны у пары остатка НЕТ. Была «девбаза» (_pickDev/_bmDev: заморожен → утверждённое,
@@ -11393,7 +11408,8 @@ function renderPlanFact(f){
   // база стороны по ОДНОЙ стороне (пара колонок) - зеркало _subOneBaseM на уровне «сотрудник/объект/контрагент»; _blSideM/_fcSideM уже per-dir по ownDirsOf
   const _sideOneBaseM=(sub,side,m,utv)=>{if(_sideNoPlan(sub))return{v:null,src:null}; // нет плана по стороне → нет ни остатка, ни статуса: прочерк, а не ноль
     if(utv&&!_blSideMD)return{v:null,src:null};const v=utv?_blSideM(sub,side,m):_fcSideM(sub,side,m);return{v,src:v==null?null:(utv?'utv':'prog')};};
-  const sideRemBy=(sub,side,baseM)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=baseM(sub,side,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=sideFactM(sub,side,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind:'exp',src:_remSrc(su,sp)};};
+  // factM (необязательный) - факт того же среза, что и база (4-й уровень: одно направление). Правило #1 - внутри цикла, как в remOfSubBy.
+  const sideRemBy=(sub,side,baseM,factM)=>{let pM=null,fM=0,su=0,sp=0;remMonths.forEach(m=>{const r=baseM(sub,side,m);if(r.v==null)return;pM=(pM||0)+r.v;fM+=factM?factM(m):sideFactM(sub,side,m);if(r.src==='utv')su++;else if(r.src==='prog')sp++;else if(r.src==='mix'){su++;sp++;}});return{pM,fM,kind:'exp',src:_remSrc(su,sp)};};
   const sideRemFor=(sub,side)=>({u:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,true)),t:sideRemBy(sub,side,(s,d,m)=>_sideOneBaseM(s,d,m,false))});
   // мёртвая строка: за ВЫБРАННЫЙ период НЕТ ничего (|факт|=|утв|=|прог|=0, по модулю). Нулевой план+живой факт или план без факта - НЕ мёртвые. Фильтруем на РЕНДЕРЕ; суммы берутся из полных массивов (скрытые дают 0) → ИТОГО не меняется. Как sideHasActivity в выписке.
   const _rowDead=(fact,plan,base)=>Math.abs(fact||0)<0.005&&Math.abs(plan||0)<0.005&&Math.abs(base||0)<0.005;
@@ -11436,6 +11452,19 @@ function renderPlanFact(f){
   //   подстатьи другой владелец, в число строки родителя не входит - значит и строки его быть не может.
   const _dirsOfSub=(kind,sub)=>ownDirsOf(sub).filter(d=>!_rowDead(_dSubFactP(kind,sub,d),_dSubPlanP(kind,sub,d),_dSubBaseP(kind,sub,d)));
   const _dirsOfSide=(sub,side)=>ownDirsOf(sub).filter(d=>!_rowDead(_dSideFactP(sub,side,d),_dSidePlanP(sub,side,d),_dSideBaseP(sub,side,d)));
+  // ── ОСТАТОК строки направления - ТА ЖЕ ПАРА {u,t}, что у подстатьи и стороны ──
+  // ⚠ Считается тем же remOfSubBy / sideRemBy: у них внутри правило #1 (факт только за месяцы, где
+  //   ЕСТЬ база) и учёт источника - переписывать это на новом уровне значило бы завести третью
+  //   копию правила, которая разойдётся при первой правке. Отличие ровно одно: и база, и факт
+  //   берутся ПО ОДНОМУ направлению (параметры dirs / factM).
+  // ⚠ Статус приходит из того же opts.rem, что у всех строк, поэтому база вердикта у направления -
+  //   текущий план ЭТОГО направления (_pfStatusBase), и «Остаток к тек.» с бейджем сходятся сами.
+  const _dSubRemFor=(kind,sub,d)=>({
+    u:remOfSubBy(kind,sub,(l,sb,m)=>_subOneBaseM(l,sb,m,true,[d]),m=>_dSubFactM(kind,sub,d,m)),
+    t:remOfSubBy(kind,sub,(l,sb,m)=>_subOneBaseM(l,sb,m,false,[d]),m=>_dSubFactM(kind,sub,d,m))});
+  const _dSideRemFor=(sub,side,d)=>({
+    u:sideRemBy(sub,side,(sb,sd,m)=>({v:_dSideBaseM(sb,sd,d,m),src:_dSideBaseM(sb,sd,d,m)==null?null:'utv'}),m=>_dSideFactM(sub,side,d,m)),
+    t:sideRemBy(sub,side,(sb,sd,m)=>({v:_dSidePlanM(sb,sd,d,m),src:_dSidePlanM(sb,sd,d,m)==null?null:'prog'}),m=>_dSideFactM(sub,side,d,m))});
   // строка статьи + (если развёрнута) её подстатьи
   const artRow=(code,base,plan,fact,revenue,kind)=>{
     if(level!=='article')return dRow(code,base,plan,fact,revenue,false,kind,code,{rem:artRemFor(kind,code)});
@@ -11463,7 +11492,7 @@ function renderPlanFact(f){
       const _dirOpenSub=_dirRowsSub.length>0&&dirExp.has(kind+'|'+sub);
       h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_canOpen,subExpanded:_subOpen,dirExpandable:_dirRowsSub.length>0,dirExpanded:_dirOpenSub});
       if(_dirOpenSub)_dirRowsSub.forEach(d=>{
-        h+=dRow(d,_dSubBaseP(kind,sub,d),_dSubPlanP(kind,sub,d),_dSubFactP(kind,sub,d),revenue,false,kind,sub,{ggrand:true,dir:d});});
+        h+=dRow(d,_dSubBaseP(kind,sub,d),_dSubPlanP(kind,sub,d),_dSubFactP(kind,sub,d),revenue,false,kind,sub,{ggrand:true,dir:d,rem:_dSubRemFor(kind,sub,d)});});
       // ⚠ Подпись вместо прочерка - ровно у тех подстатей, которые по стороне НЕ ПЛАНИРУЮТСЯ
       //   (заведено на 223-аренде; с 05.09.2026 у 223 третьего уровня нет вовсе, и сегодня подпись не
       //   нужна ни одному коду - остаётся на случай, если предикаты снова разойдутся). Признак берём у
@@ -11484,7 +11513,7 @@ function renderPlanFact(f){
           const _dirOpenSide=_dirRowsSide.length>0&&dirExp.has(kind+'|'+sub+'|'+side);
           h+=dRow(_ic+(_sideDisp[_i]||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote,fullLabel:_ic+(side||_SL_UNALLOC),dirExpandable:_dirRowsSide.length>0,dirExpanded:_dirOpenSide,dirKind:kind,dirCode:sub,dirSide:side});
           if(_dirOpenSide)_dirRowsSide.forEach(d=>{
-            h+=dRow(d,_dSideBaseP(sub,side,d),_dSidePlanP(sub,side,d),_dSideFactP(sub,side,d),false,false,null,null,{ggrand:true,dir:d,planNote:_sideNote});});});
+            h+=dRow(d,_dSideBaseP(sub,side,d),_dSidePlanP(sub,side,d),_dSideFactP(sub,side,d),false,false,null,null,{ggrand:true,dir:d,planNote:_sideNote,rem:_dSideRemFor(sub,side,d)});});});
         // ⚠ СТОРОЖ: третий уровень обязан раскладывать факт НАЦЕЛО - сумма фактов показанных сторон
         //   равна факту подстатьи. Расшифровка, не сходящаяся со строкой, которую человек раскрыл,
         //   заставляет искать потерянные деньги там, где их нет. Молчит, пока сходится.
