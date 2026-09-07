@@ -2513,7 +2513,9 @@ function _fbSetSafe(path,val,label){ // возвращает Promise<bool> (true
 }
 function _presetsSave(){
   try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){_lsWarn('reportPresets',e)}
-  _fbSetSafe('config/presets',_presets,'Пресеты отчётов');
+  // ⚠ Результат ВОЗВРАЩАЕТСЯ (Promise<bool>): миграция обязана отличить «записано» от «отказано
+  //   правилами», иначе она напечатала бы «Записано» на настройке, которой в облаке нет.
+  return _fbSetSafe('config/presets',_presets,'Пресеты отчётов');
 }
 let _presetsSynced=false;
 function startPresetsSync(){
@@ -2910,6 +2912,59 @@ window._presetDelete=function(tab,id){
   if(!confirm('Удалить пресет?'))return;
   _presets[tab]=(_presets[tab]||[]).filter(x=>x.id!==id);
   _presetsSave(); _presetRenderBody(tab); if(activeTab===tab)renderActiveTab();
+};
+// ══ РАЗОВАЯ МИГРАЦИЯ ПРЕСЕТОВ: СНИМОК → НАБОР ЗАДАННЫХ ПОЛЕЙ ═════════════════
+// Старая запись хранила ВСЕ поля вкладки (снимок состояния). Новая - только заданные. Правило
+// перевода одно и то же с кнопкой «Подставить текущий отбор»: поле, отличающееся от умолчания
+// вкладки, становится ЗАДАННЫМ; совпавшее с умолчанием - «не задано».
+// ⚠ Ядро ЧИСТОЕ (_presetMigCore): ничего не печатает, ничего не пишет, работает на копии. Печать
+//   и запись - снаружи. Так же сделана pfFold223Sides, и по той же причине: сухой прогон обязан
+//   печатать РОВНО ТО, что запишется, иначе сверять «до и после» не с чем.
+// ⚠ Сухой прогон - УМОЛЧАНИЕ. Запись только {dry:false}, только админом и только после архива
+//   настроек: config/presets - единственная копия пресетов, датированные снимки RawData тут не помогают.
+// ⚠ ПРЕСЕТЫ НЕ ТЕРЯЕМ: id, имя и порядок сохраняются, меняется только состав поля f. Пресет, у
+//   которого после перевода не осталось ни одного заданного поля, ОСТАЁТСЯ (пустой пресет валиден).
+function _presetMigCore(all){
+  const out={},rep=[];
+  PRESET_TABS.forEach(([tab])=>{
+    const D=_presetTabDefaults(tab),list=(all&&all[tab])||[];
+    out[tab]=list.map(p=>{
+      const f0=p.f||{},f={},kept=[],dropped=[];
+      (PRESET_FIELDS[tab]||[]).forEach(fd=>{
+        let v=f0[fd.k];
+        // год БДР: старый снимок хранил число + признак yearIsCurrent
+        if(tab==='planfact'&&fd.k==='year'&&f0.yearIsCurrent)v='cur';
+        if(v===undefined){dropped.push(fd.k+' (нет в старой записи)');return;}
+        if(_presetSame(v,D[fd.k])){dropped.push(fd.k+' (= умолчание)');return;}
+        f[fd.k]=v; kept.push(fd.k);
+      });
+      const unknown=Object.keys(f0).filter(k=>k!=='yearIsCurrent'&&!(PRESET_FIELDS[tab]||[]).some(fd=>fd.k===k));
+      rep.push({tab,id:p.id,name:p.name,kept,dropped,unknown,summary:_presetSummary(tab,f)});
+      return {id:p.id,name:p.name,f};
+    });
+  });
+  return {out,rep};
+}
+window.presetsMigrateFields=async function(opts){
+  opts=opts||{}; const dry=opts.dry!==false;
+  const {out,rep}=_presetMigCore(_presets);
+  console.log('%c[пресеты] миграция «снимок → набор полей» · '+(dry?'СУХОЙ ПРОГОН':'ЗАПИСЬ'),'font-weight:700');
+  rep.forEach(r=>{
+    console.log('  ['+r.tab+'] «'+r.name+'»');
+    console.log('     задано:   '+(r.kept.length?r.kept.join(', '):'НИЧЕГО - пресет станет пустым (это валидно)'));
+    console.log('     не задано: '+(r.dropped.length?r.dropped.join(', '):'-'));
+    if(r.unknown.length)console.log('     ⚠ поля вне описания вкладки (не переносятся): '+r.unknown.join(', '));
+    console.log('     состав после: '+(r.summary.length?r.summary.join(' · '):'ничего не задано'));
+  });
+  const n=rep.length,nEmpty=rep.filter(r=>!r.kept.length).length;
+  console.log('  ИТОГО пресетов: '+n+(nEmpty?(' · из них станут пустыми: '+nEmpty):''));
+  if(dry){console.log('  Это сухой прогон. Запись: presetsMigrateFields({dry:false}) - ТОЛЬКО после архива настроек.');return{rep,n};}
+  if(!_isAdmin()){alert('Запись пресетов - только администратору.');return{rep,n,written:false};}
+  _presets=_presetsNormalize(out);
+  const ok=await _presetsSave();
+  console.log(ok===false?'  ⚠ ЗАПИСЬ НЕ ПРОШЛА - пресеты остались прежними в облаке.':'  Записано.');
+  try{if(document.getElementById('presetsOverlay'))_presetRenderBody(activeTab);}catch(e){}
+  return{rep,n,written:ok!==false};
 };
 window._presetSave=function(tab){
   const nameEl=document.getElementById('presetName'); const name=(nameEl?nameEl.value:'').trim();
