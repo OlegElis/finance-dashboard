@@ -1704,7 +1704,7 @@ window.showSettingsMenu=function(){
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showSetup()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><path d="M9 15l6-6"/><path d="M11.5 6.5l1-1a3.5 3.5 0 0 1 5 5l-1 1"/><path d="M12.5 17.5l-1 1a3.5 3.5 0 0 1-5-5l1-1"/></svg>Подключение к Google</button>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showAccessPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16.5 6.4a3 3 0 0 1 0 5.2M20.5 19c0-2.1-1.2-3.7-3-4.4"/></svg>Управление доступом</button>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showPresetsPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg>Пресеты отчётов</button>
-    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();pfHiddenDirsOpen()"><span style="${siIco};display:inline-flex;align-items:center;justify-content:center">🙈</span> Скрытые направления (БДР)</button>
+    
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();pfArchiveOpen()"><span style="${siIco};display:inline-flex;align-items:center;justify-content:center">💾</span> Архив</button>
     `;
   document.body.appendChild(menu);
@@ -2873,11 +2873,25 @@ function _presetRenderBody(tab){
   // ⚠ Правило объясняем ВИДИМОЙ строкой, а не подсказкой: его надо прочитать ДО первого сохранения,
   //   а подсказка показывается только тому, кто навёл, - то есть уже засомневался.
   const dirNote='<div style="font-size:12px;color:var(--text2);background:var(--surface2);border-radius:7px;padding:8px 11px;margin-bottom:12px">Пресет - <b>набор заданных полей</b>, а не слепок экрана. Поле со снятым флажком пресет <b>не трогает</b>: остаётся то, что стоит на вкладке. Чтобы вернуться к чистому виду, есть «Сбросить».</div>';
+  // ── СКРЫТЫЕ НАПРАВЛЕНИЯ - ЗДЕСЬ ЖЕ, НО ЭТО ДРУГАЯ СУЩНОСТЬ ──────────────────
+  // ⚠ Раздел показывается только в контексте БДР: это вкладочная настройка, и в шестерёнке она
+  //   читалась бы как исключение без основания (там общие настройки). Переезжает ВХОД, методология
+  //   прежняя и записана прямо в разделе:
+  //     • СПИСОК скрытых - настройка config/pfHiddenDirs: общая, одна на всех, пишет админ;
+  //     • ПОКАЗАТЬ ЛИ их сейчас - поле отбора (showHidden), оно и попадает в пресет.
+  // ⚠ Скрытость в пресет НЕ переносим: пресет переключают часто и им делятся, а скрытие - защита,
+  //   она обязана держаться независимо от выбранного вида.
+  const hidBlock=(tab!=='planfact')?'':`<div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--label);font-weight:600;margin-bottom:6px">Скрытые направления - не входят в свод БДР по умолчанию</div>
+      <div style="font-size:11.5px;color:var(--text2);line-height:1.55;margin-bottom:8px">Список общий для всех и меняется администратором. <b>Показывать ли их сейчас</b> - это фильтр вкладки («показать скрытые в своде»), он и попадает в пресет; сама скрытость в пресет не переносится.</div>
+      <button class="btn btn-secondary" onclick="pfHiddenDirsOpen()" style="font-size:11.5px">🙈 Настроить список</button>
+      <span style="font-size:11px;color:var(--text3);margin-left:8px">сейчас скрыто: ${(_pfHiddenDirs||[]).length?_pesc((_pfHiddenDirs||[]).join(', ')):'ничего'}</span>
+    </div>`;
   body.innerHTML=`${dirNote}<div style="margin-bottom:14px">${listHtml}</div>
     <div style="border-top:1px solid var(--border);padding-top:12px">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--label);font-weight:600;margin-bottom:10px" id="presetFormTitle">Новый пресет</div>
       <div id="presetForm">${_presetFormHtml(tab,null)}</div>
-    </div>`;
+    </div>${hidBlock}`;
 }
 function _presetFieldWrap(fd,on,ctrl,val){
   return `<div class="preset-row" data-k="${fd.k}" style="margin-bottom:10px;border:1px solid var(--border);border-radius:7px;padding:8px 10px;background:${on?'var(--surface)':'var(--surface2)'}">
@@ -10494,16 +10508,18 @@ function pfRunTests(){
       &&String(_presetSave).indexOf('_pfStateSnapshot()')<0&&String(_presetSave).indexOf('_regStateSnapshot()')<0);
    ok('у БДР и Реестра есть описание полей',(PRESET_FIELDS.planfact||[]).length>0&&(PRESET_FIELDS.registry||[]).length>0);
    {const sm=String(showSettingsMenu);
-    ok('в шестерёнке - скрытые направления и архив',/pfHiddenDirsOpen\(\)/.test(sm)&&/pfArchiveOpen\(\)/.test(sm));}
+    ok('в шестерёнке - архив',/pfArchiveOpen\(\)/.test(sm));
+   ok('скрытые направления настраиваются из окна пресетов',/pfHiddenDirsOpen\(\)/.test(String(_presetRenderBody)));}
 
    // ── ШЕСТЕРЁНКА: 8 ПУНКТОВ → 5 (07.09.2026) ──
    // ⚠ Проверяем СОСТАВ и ЕДИНСТВЕННОСТЬ входов: смысл правки в том, что у каждого окна один вход,
    //   а не два. Вернись второй - дубли поползут обратно по одному, как это уже было с меню БДР.
    {const sm=String(showSettingsMenu),n=(sm.match(/class="settings-item"/g)||[]).length;
-    ok('в шестерёнке ровно пять пунктов',n===5,n);
-    ok('это подключение, доступ, пресеты, скрытые направления и архив',
-       /showSetup\(\)/.test(sm)&&/showAccessPanel\(\)/.test(sm)&&/showPresetsPanel\(\)/.test(sm)
-       &&/pfHiddenDirsOpen\(\)/.test(sm)&&/pfArchiveOpen\(\)/.test(sm));
+    ok('в шестерёнке ровно четыре пункта',n===4,n);
+    ok('это подключение, доступ, пресеты и архив',
+       /showSetup\(\)/.test(sm)&&/showAccessPanel\(\)/.test(sm)&&/showPresetsPanel\(\)/.test(sm)&&/pfArchiveOpen\(\)/.test(sm));
+    // ⚠ Вкладочных настроек в шестерёнке быть не должно: скрытые направления уехали в окно пресетов.
+    ok('вкладочных настроек в шестерёнке нет',sm.indexOf('pfHiddenDirsOpen()')<0);
     ok('планов и двух прежних пунктов архива в шестерёнке нет',
        sm.indexOf('showPlansPanel()')<0&&sm.indexOf('downloadBackup(')<0&&sm.indexOf('pfBackupRestoreOpen()')<0);
     ok('подзаголовка раздела больше нет',sm.indexOf('Настройки БДР')<0);
@@ -14936,6 +14952,8 @@ window.pfHiddenDirToggle=async function(el){
   if(!okSave){_pfHiddenDirs=was; el.checked=was.indexOf(d)>=0; if(note)note.textContent='Не сохранилось - настройка осталась прежней.';}
   else if(note)note.textContent='Сохранено. Изменения сохраняются сразу.';
   if(activeTab==='planfact'){try{renderPlanFact(getFilters());}catch(e){}}
+  // раздел в окне пресетов показывает текущий список - обновляем, если окно открыто
+  try{if(document.getElementById('presetsOverlay')&&document.getElementById('presetBody'))_presetRenderBody('planfact');}catch(e){}
 };
 // ===== Иерархия ЦФО: руководитель блока → подчинённые - config/cfoHierarchy =====
 // Форма { "<ФИО подчинённого>":"<ФИО руководителя>" }. Один уровень вложенности; руководитель без записи = верхний уровень.
