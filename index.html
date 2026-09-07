@@ -102,7 +102,11 @@
 
   /* ── Пресеты: инлайн-контрол в строке фильтров + панель в настройках ── */
   .preset-cfg-btn{font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px;}
-  .tab-filter-summary{display:flex;align-items:center;gap:8px;padding:4px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;color:var(--text3);flex-wrap:wrap;}
+  /* ⚠ Сводка стоит ВНУТРИ фильтр-бара (как `.bank-summary` у Банка) - отсюда ни паддингов полосы,
+     ни рамки, ни своего фона: это элемент ряда, а не полоса. `margin-left:auto` прижимает её
+     вправо (у Банка так же), `min-width:160` + ellipsis дают ей сжиматься, а не переносить бар. */
+  .tab-filter-summary{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 1 auto;min-width:160px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--text3);}
+  .tab-filter-summary>span{overflow:hidden;text-overflow:ellipsis;}
   .preset-cfg-btn:hover{border-color:var(--accent);color:var(--accent);}
   .preset-rtab{font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);}
   .preset-fld-multi{display:flex;flex-wrap:wrap;gap:4px 12px;border:1px solid var(--border);border-radius:7px;padding:8px 10px;}
@@ -2650,15 +2654,45 @@ function _presetIsAdmin(){const b=document.getElementById('logoSetupBtn');return
 // ⚠ Полоса ПРЕСЕТОВ убрана со вкладок 07.09.2026 (пресеты живут только в шестерёнке), а сводка
 //   фильтров - нет: она про отбор, а не про пресеты, и рисовалась в той же функции лишь потому,
 //   что обе цеплялись за один узел. Вызывается из renderActiveTab, как и прежняя полоса.
+// ── «⋯» - РЕДКИЕ КОНТРОЛЫ БАРА (07.09.2026, сборка баров в одну строку) ─────────────────────
+// ⚠ Контролы НЕ удаляются и не меняют поведения: та же разметка, те же onchange, то же состояние,
+//   тот же счёт в сводке фильтров и в пресетах - меняется ТОЛЬКО место показа. Удалять редкий
+//   фильтр ради места нельзя: он редкий, а не ненужный.
+// ⚠ Кнопка помечается точкой, когда внутри что-то ЗАДАНО, и перечисляет это в подсказке:
+//   спрятанный фильтр, о котором ничего не сказано, - это тихо изменённые числа на экране.
+// ⚠ Реализация ОДНА на все вкладки (как _barBtnLabel): вторая копия разъедется с первой.
+window._barMoreToggle=function(id){const d=document.getElementById(id);if(!d)return;
+  const open=d.style.display==='block';
+  document.querySelectorAll('.bar-more-dd').forEach(x=>{x.style.display='none';});
+  d.style.display=open?'none':'block';};
+document.addEventListener('click',function(e){
+  document.querySelectorAll('.bar-more-dd').forEach(d=>{
+    if(d.style.display!=='block')return;
+    const btn=document.getElementById(d.id.replace('-dd','-btn'));
+    if(!d.contains(e.target)&&e.target!==btn&&!(btn&&btn.contains(e.target)))d.style.display='none';});
+});
+// id - без суффиксов: функция сама делает `<id>-btn` и `<id>-dd` (их же ищет обработчик выше)
+function _barMore(id,n,tip,rowsHtml){
+  return `<div style="position:relative;display:inline-block">
+    <button id="${id}-btn" class="bar-ctl" style="font-weight:600" title="${_pesc(tip)}" onclick="_barMoreToggle('${id}-dd')">⋯${n?' •':''}</button>
+    <div id="${id}-dd" class="bar-more-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:240px;margin-top:2px">
+      ${rowsHtml}
+    </div>
+  </div>`;
+}
+// строка внутри «⋯»: подпись слева, контрол справа (в баре подписи сняты, здесь они уместны)
+function _barMoreRow(label,ctl){
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 2px;font-size:11px;color:var(--text2)"><span>${label}</span>${ctl}</div>`;
+}
 function _tabFilterSummary(){
   if(!['dds','opiu','osv','fot'].includes(activeTab))return;
   const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1)); if(!cont)return;
   const bar=cont.querySelector('.tab-filters, .dds-extra-filters'); if(!bar)return;
-  let sum=bar.nextElementSibling;
-  if(!sum||!(sum.classList&&sum.classList.contains('tab-filter-summary'))){
-    sum=document.createElement('div'); sum.className='tab-filter-summary';
-    bar.parentNode.insertBefore(sum,bar.nextSibling);
-  }
+  // ⚠ Сводка живёт ВНУТРИ бара (как `.bank-summary` у Банка, эталон): своей полосой она стоила
+  //   22px высоты на каждой из четырёх вкладок. Ставится ПЕРЕД селектом пресета - порядок держится
+  //   сам, потому что _tabFilterSummary всегда зовётся раньше _presetBarInject (см. renderActiveTab).
+  let sum=bar.querySelector(':scope > .tab-filter-summary');
+  if(!sum){ sum=document.createElement('div'); sum.className='tab-filter-summary'; bar.appendChild(sum); }
   const nh=_filterSummaryInner(activeTab);
   // ⚠ Пишем ТОЛЬКО при реальном изменении: MutationObserver мобильных карточек слушает #mainContent,
   //   и безусловная запись зациклила бы его (правило проекта про ловушку observer).
@@ -5837,49 +5871,48 @@ function renderOPIU(f){
   const opiuMonthCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="multiSelAll('opiu','months','opiu-month-dd','opiu-month-btn',true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Все</button><button onclick="multiSelAll('opiu','months','opiu-month-dd','opiu-month-btn',false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять</button></div>`+allOpiuMonths.map(m=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${m}" ${opiuSelMonths.includes(m)?'checked':''} onchange="multiSelChange('opiu','months','opiu-month-dd','opiu-month-btn')"> <span>${MONTHS_SHORT_O[m-1]}</span></label>`).join('');
   const opiuMonthBtnLabel=(opiuSelMonths.length?opiuSelMonths.length+' выбрано':'Все')+' ▾';
   const ptOptsO=[{v:'day',l:'По дням'},{v:'week',l:'По неделям'},{v:'month',l:'По месяцам'},{v:'quarter',l:'По кварталам'},{v:'year',l:'По годам'}];
-  const ptOptsHtmlO=ptOptsO.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>${o.l}</option>`).join('');
+  // ⚠ «Период: по месяцам» - категория внутри вариантов: селект показывает голое значение, а рядом
+  //   стоит второй такой же (расходы), и без категории их не различить.
+  const ptOptsHtmlO=ptOptsO.map(o=>`<option value="${o.v}"${mode===o.v?'selected':''}>Период: ${o.l.replace(/^По /,'по ')}</option>`).join('');
 
   const opiuDirCheckboxes=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="opiuDirSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button onclick="opiuDirSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`+
     allOpiuDirs.map(d=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${d.replace(/"/g,'&quot;')}" ${selOpiuDirs.includes(d)?'checked':''} onchange="opiuDirChange()"> <span>${_htmlEsc(d)}</span></label>`).join('');
-  const opiuDirBtnLabel=(selOpiuDirs.length?selOpiuDirs.length+' выбрано':'Все направления')+' ▾';
+  const opiuDirBtnLabel=_barBtnLabel('Направления',selOpiuDirs.length);
 
-  const extraFiltersOPIU=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:8px;padding:5px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label>
-    <div style="position:relative;display:inline-block">
-      <button id="opiu-year-btn" onclick="multiSelToggle('opiu-year-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${opiuYearBtnLabel}</button>
-      <div id="opiu-year-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${opiuYearCheckboxes}</div>
-    </div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Месяц:</label>
-    <div style="position:relative;display:inline-block">
-      <button id="opiu-month-btn" onclick="multiSelToggle('opiu-month-dd')" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:80px;text-align:left">${opiuMonthBtnLabel}</button>
-      <div id="opiu-month-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${opiuMonthCheckboxes}</div>
-    </div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
-    <div style="position:relative;display:inline-block">
-      <button id="opiu-dir-btn" onclick="opiuDirToggle(this)" style="font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans);min-width:260px;text-align:left">${opiuDirBtnLabel}</button>
-      <div id="opiu-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:260px;margin-top:2px">${opiuDirCheckboxes}</div>
-    </div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>
-    <select style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)" onchange="_tabFilters['opiu'].periodType=this.value;renderOPIU(getFilters())">${ptOptsHtmlO}</select>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Динамика:</label>
-    <select title="Вторая строка под каждым числом: изменение к базовому периоду в рублях и процентах. База берётся из полных данных, даже если она отфильтрована по годам/месяцам; незакрытый период не сравнивается" onchange="_tabFilters['opiu'].dyn=this.value;renderOPIU(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">
+  // ⚠ Подписи-LABEL сняты (сборка бара в одну строку 07.09.2026): категория переехала ВНУТРЬ
+  //   контрола - в подпись кнопки (`_barBtnLabel`, общий источник) или в варианты селекта.
+  // ⚠ Редкие контролы («Динамика», «Корректировка EBITDA», транзит почты) убраны под «⋯» - НЕ
+  //   удалены: та же разметка, те же onchange, то же состояние и тот же счёт в сводке фильтров.
+  const _oMoreN=(dyn?1:0)+(inclBelow?1:0)+((postEligible&&postOn)?1:0);
+  const _oMoreTip='Дополнительно: динамика'+(dyn?' (вкл)':'')+', корректировка EBITDA'+(inclBelow?' (вкл)':'')+(postEligible?(', разделение БФЛ/САУ по почте'+(postOn?' (вкл)':'')):'');
+  const _oDynSel=`<select class="bar-ctl" title="Вторая строка под каждым числом: изменение к базовому периоду в рублях и процентах. База берётся из полных данных, даже если она отфильтрована по годам/месяцам; незакрытый период не сравнивается" onchange="_tabFilters['opiu'].dyn=this.value;renderOPIU(getFilters())">
       <option value=""${!dyn?' selected':''}>нет</option>
       <option value="prev"${dyn==='prev'?' selected':''}>к пред. периоду</option>
       <option value="yoy"${dyn==='yoy'?' selected':''}>к прошлому году</option>
+    </select>`;
+  const _oEbitda=`<label title="Включить «EBITDA-корректировки» в расчёт EBITDA (поднять выше линии)" class="bar-ctl" style="display:inline-flex;align-items:center;gap:6px;background:${inclBelow?'var(--accent)':'var(--surface)'};color:${inclBelow?'#fff':'var(--text2)'};font-weight:600">
+      <input type="checkbox" ${inclBelow?'checked':''} onchange="_tabFilters['opiu'].ebitdaInclBelow=this.checked;renderOPIU(getFilters())" style="cursor:pointer;margin:0">вкл</label>`;
+  const _oPost=postEligible?`<label title="Расчётный транзит почтовых расходов 20 000 ₽/ID между БФЛ и САУ (только этот контур; виртуальные строки)" class="bar-ctl" style="display:inline-flex;align-items:center;gap:6px;background:${postOn?'var(--accent)':'var(--surface)'};color:${postOn?'#fff':'var(--text2)'};font-weight:600">
+      <input type="checkbox" ${postOn?'checked':''} onchange="_tabFilters['opiu'].postSplit=this.checked;renderOPIU(getFilters())" style="cursor:pointer;margin:0">вкл</label>`:'';
+  const extraFiltersOPIU=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:6px;padding:3px var(--secpx);min-height:27px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;flex-wrap:wrap">
+    <div style="position:relative;display:inline-block">
+      <button id="opiu-year-btn" onclick="multiSelToggle('opiu-year-dd')" class="bar-ctl" style="min-width:96px;text-align:left" title="Год (мультивыбор; пусто = все)">${_barBtnLabel('Год',opiuSelYears.length)}</button>
+      <div id="opiu-year-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${opiuYearCheckboxes}</div>
+    </div>
+    <div style="position:relative;display:inline-block">
+      <button id="opiu-month-btn" onclick="multiSelToggle('opiu-month-dd')" class="bar-ctl" style="min-width:96px;text-align:left" title="Месяц (мультивыбор; пусто = все)">${_barBtnLabel('Месяц',opiuSelMonths.length)}</button>
+      <div id="opiu-month-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:120px;margin-top:2px">${opiuMonthCheckboxes}</div>
+    </div>
+    <div style="position:relative;display:inline-block">
+      <button id="opiu-dir-btn" onclick="opiuDirToggle(this)" class="bar-ctl" style="min-width:150px;text-align:left" title="Направление деятельности (мультивыбор; пусто = все)">${opiuDirBtnLabel}</button>
+      <div id="opiu-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:260px;margin-top:2px">${opiuDirCheckboxes}</div>
+    </div>
+    <select class="bar-ctl" title="Разрез периода" onchange="_tabFilters['opiu'].periodType=this.value;renderOPIU(getFilters())">${ptOptsHtmlO}</select>
+    <select class="bar-ctl" title="Представление расходов: по аналитике (категории) или плоским списком по статьям/подстатьям" onchange="_tabFilters['opiu'].expFlat=(this.value==='flat');renderOPIU(getFilters())">
+      <option value="cats"${!flat?' selected':''}>Расходы: по аналитике</option>
+      <option value="flat"${flat?' selected':''}>Расходы: по статьям</option>
     </select>
-    <label title="Включить «EBITDA-корректировки» в расчёт EBITDA (поднять выше линии)" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${inclBelow?'var(--accent)':'var(--surface)'};color:${inclBelow?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
-      <input type="checkbox" ${inclBelow?'checked':''} onchange="_tabFilters['opiu'].ebitdaInclBelow=this.checked;renderOPIU(getFilters())" style="cursor:pointer;margin:0">
-      Корректировка EBITDA
-    </label>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Расходы:</label>
-    <select title="Представление расходов: по аналитике (категории) или плоским списком по статьям/подстатьям" onchange="_tabFilters['opiu'].expFlat=(this.value==='flat');renderOPIU(getFilters())" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">
-      <option value="cats"${!flat?' selected':''}>По аналитике</option>
-      <option value="flat"${flat?' selected':''}>По статьям</option>
-    </select>
-    ${postEligible?`<label title="Расчётный транзит почтовых расходов 20 000 ₽/ID между БФЛ и САУ (только этот контур; виртуальные строки)" style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:${postOn?'var(--accent)':'var(--surface)'};color:${postOn?'#fff':'var(--text2)'};font-size:10px;font-weight:600;white-space:nowrap;user-select:none">
-      <input type="checkbox" ${postOn?'checked':''} onchange="_tabFilters['opiu'].postSplit=this.checked;renderOPIU(getFilters())" style="cursor:pointer;margin:0">
-      Разделение БФЛ / САУ (почта)
-    </label>`:''}
+    ${_barMore('opiu-more',_oMoreN,_oMoreTip,_barMoreRow('Динамика',_oDynSel)+_barMoreRow('Корректировка EBITDA',_oEbitda)+(postEligible?_barMoreRow('Разделение БФЛ / САУ (почта)',_oPost):''))}
   </div>`;
 
   // --- thead ---
