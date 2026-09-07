@@ -437,6 +437,24 @@
   .dds-extra-filters{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:11px;}
   .dds-extra-filters label{color:var(--text2);}
   .dds-extra-filters select{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:11px;outline:none;cursor:pointer;}
+  /* ── СЕЛЕКТ ПРЕСЕТА В ФИЛЬТР-БАРЕ ВКЛАДКИ ────────────────────────────────────
+     ⚠ Набор свойств - ТОТ ЖЕ, что у селекта «ФНС» на Банке (эталон бара): font-size, padding,
+       border, border-radius, background, color, font-family, cursor, outline. Инлайновых стилей
+       у селекта нет вовсе; тест сверяет состав свойств с эталоном, чтобы копия не разъехалась.
+     ⚠ Явный line-height: без него контрол при паддинге 2px выходит выше и растит высоту бара -
+       это в проекте уже ловили на габаритах шапки.
+     ⚠ margin -2px сверху и снизу - НЕ косметика и не «поджать»: собственная высота селекта 21px
+       (её задаёт сам контрол, line-height ниже 21 Chrome у select игнорирует), а в барах ФОТ и
+       ОПиУ последний ряд контролов 19px - селект поднимал бы строку, и бар рос бы на 2px на трёх
+       ширинах из трёх. Отрицательный margin делает МАРГИН-БОКС 19px: строка не растёт, сам контрол
+       остаётся ростом с соседние селекты (на Банке ряд сводки вовсе 18px - отсюда 2, а не 1).
+       Замер до/после - в сообщении коммита.
+     ⚠ Узкий по решению Олега: имя пресета обрезается многоточием, полное - в title.
+     ⚠ МЕСТО ПРАВИЛА В ФАЙЛЕ ЗНАЧИМО: у `.dds-extra-filters select` и `.filter-extra select` ТА ЖЕ
+       специфичность (0,1,1), поэтому спор решает порядок - правило обязано стоять ПОСЛЕ них.
+       Стояло раньше - и на ОПиУ, ОСВ, ФОТ и ДДС селект получал чужие padding 3px и line-height
+       normal, выходил 23px вместо 21 и растил бар на 2px. Ставить правило выше по файлу нельзя. */
+  select.preset-pick{font-size:11px;line-height:15px;padding:2px 8px;margin:-2px 0;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);cursor:pointer;outline:none;max-width:140px;text-overflow:ellipsis;}
 
   /* ── Кнопки в подвале сайдбара (единый стиль) ── */
   .foot-btn{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);transition:border-color .15s,color .15s;white-space:nowrap;}
@@ -552,6 +570,11 @@
     #tabBank>.bank-filters-1row>.bank-summary{margin-left:auto!important;flex-shrink:1;min-width:0;}
     #tabBank>.bank-filters-1row>.bank-extra-filters{flex-shrink:1;min-width:0;} /* селекты и кнопки внутри со своими min-width - в ноль не схлопнется */
     #tabBank>.bank-filters-1row>.bank-summary>span{flex:0 1 auto!important;min-width:0!important;overflow:hidden;text-overflow:ellipsis;max-width:320px;}
+    /* ⚠ Селект пресета - прямой ребёнок бара, и правило `>*` выше сняло бы с него рамку, фон и
+       паддинг (оно снимает оформление с суб-баров). Возвращаем точечно и тем же набором свойств,
+       что у селекта «ФНС», - иначе пресет стоял бы в ряду голым текстом. !important нужен, потому
+       что !important и стоит в правиле, которое мы перебиваем. */
+    #tabBank>.bank-filters-1row>select.preset-pick{background:var(--surface)!important;border:1px solid var(--border)!important;padding:2px 8px!important;margin:-2px 0!important;}
     #tabBank .bank-sort-th:hover{color:var(--accent);}
     /* ── Реестр: тот же флекс-стек фиксированной высоты, что у Банка ──
        ⚠ 80px = топбар 56 + паддинги .content 12+12. Правишь паддинг выше - правь и это число,
@@ -2644,51 +2667,47 @@ function _presetBarInject(){
   _presetBarSetup();
   if(!PRESET_TABS.some(([k])=>k===activeTab))return;
   const bar=_presetBarTarget(); if(!bar)return;
-  if(bar.querySelector(':scope > .preset-pick'))return; // уже стоит - выходим, иначе наблюдатель закольцуется
+  if(bar.querySelector(':scope > select.preset-pick'))return; // уже стоит - выходим, иначе наблюдатель закольцуется
   const tab=activeTab,list=_presets[tab]||[],av=_presetActive(tab);
-  // ── СЕЛЕКТ ВСЕГДА КРАЙНИЙ СПРАВА - ЧЕРЕЗ ДВЕ ГРУППЫ, А НЕ ЧЕРЕЗ margin-left:auto ──
-  // ⚠ `margin-left:auto` тут не годится и не годился никогда: при flex-wrap «авто» считается от
-  //   ПОСЛЕДНЕЙ строки, и на узком окне контрол прыгал бы справа налево в зависимости от того,
-  //   сколько фильтров уместилось выше (те же грабли уже описаны у полосы действий БДР).
-  // ⚠ Решение: у бара становится РОВНО ДВА ребёнка - обёртка фильтров (`flex:1 1 auto`, перенос
-  //   идёт ВНУТРИ неё) и селект (`flex:0 0 auto`). Пресет в поток переноса не попадает вовсе,
-  //   поэтому стоит справа при любой ширине, а высота бара растёт только за счёт фильтров.
-  // ⚠ Обёртка забирает НАСТОЯЩИЙ gap бара (computed), иначе на вкладках с разным gap (8 и 10px)
-  //   расстояния между фильтрами поехали бы после переноса детей внутрь.
-  if(!bar.querySelector(':scope > .preset-barwrap')){
-    const cs=getComputedStyle(bar);
-    const grp=document.createElement('span');
-    grp.className='preset-barwrap';
-    grp.style.cssText='display:flex;align-items:center;flex-wrap:wrap;flex:1 1 auto;min-width:0;gap:'+(cs.gap&&cs.gap!=='normal'?cs.gap:'8px');
-    while(bar.firstChild)grp.appendChild(bar.firstChild);
-    bar.appendChild(grp);
-    bar.style.flexWrap='nowrap'; // переносится группа фильтров, а не сам бар
-  }
-  const wrap=document.createElement('span');
-  wrap.className='preset-pick';
-  wrap.style.cssText='display:inline-flex;align-items:center;flex:0 0 auto;margin-left:8px';
-  // ⚠ Габариты - по эталону .reg-searchbar (11px, padding 2px/8px, радиус 5, line-height ЯВНЫЙ):
-  //   без явного line-height контрол выходит 19px и ломает высоту бара - это уже ловили.
-  const st='font-size:11px;line-height:15px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);cursor:pointer';
+  // ── В БАР ДОБАВЛЯЕТСЯ РОВНО ОДИН ЭЛЕМЕНТ - САМ СЕЛЕКТ ────────────────────────
+  // ⚠ Обёртки вокруг СУЩЕСТВУЮЩИХ детей бара тут не бывает, и заводить её нельзя. Пробовали
+  //   07.09.2026 («две группы»: фильтры внутрь обёртки, селект рядом) - бар Банка вырос на строку:
+  //   его правое выравнивание держит правило `#tabBank>.bank-filters-1row>.bank-summary
+  //   {margin-left:auto}`, а перенос детей внутрь обёртки увёл сводку из-под селектора `>` -
+  //   вместе с ней ушли и сбросы `>*{border:none;padding:0}`. Правка «для пресета» молча
+  //   переоформила чужой бар: сводка «Фильтры: … сбросить всё» уехала на вторую строку.
+  // ⚠ Правое прижатие делает САМ БАР, а не пресет: на Банке селект встаёт последним ПОСЛЕ сводки
+  //   с `margin-left:auto` и оказывается у правого края; на прочих вкладках он последний контрол
+  //   ряда. `margin-left:auto` селекту не задаём - при flex-wrap «авто» считается от ПОСЛЕДНЕЙ
+  //   строки, и на узком окне контрол прыгал бы справа налево (грабли полосы действий БДР).
+  // ⚠ Оформление - классом `.preset-pick` в общем `<style>`, инлайновых стилей у селекта НЕТ:
+  //   набор свойств тот же, что у селекта «ФНС» на Банке (эталон бара), и тест сверяет их состав,
+  //   чтобы копия не разъехалась с эталоном молча.
+  const sel=document.createElement('select');
+  sel.className='preset-pick';
+  sel.setAttribute('onchange','_presetPick(this.value)');
   // ⚠ В БАРЕ ТОЛЬКО СЕЛЕКТ (решение Олега 07.09.2026). Ни строки-действия «сохранить», ни кнопки
   //   ⚙ рядом: бар - место ВЫБОРА отбора, а не управления им. Управление (состав, правка,
   //   удаление, «Подставить текущий отбор») живёт в окне пресетов, и вход в окно один - шестерёнка.
-  //   Пункт списка, который не пресет, а действие, к тому же ломает само понятие списка: человек
-  //   выбирает «что показать», а получает диалог.
-  wrap.innerHTML='<select title="Пресет отбора" onchange="_presetPick(this.value)" style="'+st+';max-width:190px">'
-    +'<option value="">Пресет: - не выбран -</option>'
-    +list.map(p=>'<option value="'+_pesc(p.id)+'"'+(av===p.id?' selected':'')+'>'+_pesc(p.name)+'</option>').join('')
-    +'</select>';
-  bar.appendChild(wrap);
+  sel.innerHTML='<option value="">Пресет</option>'
+    +list.map(p=>'<option value="'+_pesc(p.id)+'"'+(av===p.id?' selected':'')+'>'+_pesc(p.name)+'</option>').join('');
+  bar.appendChild(sel);
+  _presetPickTitle(sel);
+}
+// Подпись селекта: пусто - короткое «Пресет», выбран - имя целиком в title (в поле оно обрезано).
+function _presetPickTitle(sel){
+  const o=sel.options[sel.selectedIndex];
+  sel.title=(sel.value&&o)?o.text:'Пресет отбора';
 }
 // Выбор в селекте: пресет применяется, пустое значение - снимает. Ничего, кроме выбора, тут нет.
 window._presetPick=function(v){ presetApply(activeTab,v||''); };
 // Селект показывает активный пресет и гаснет вместе с суффиксом заголовка - ОДИН источник (_presetActive)
 function _presetBarRefresh(){
   const bar=_presetBarTarget(); if(!bar)return;
-  const sel=bar.querySelector(':scope > .preset-pick select'); if(!sel)return;
+  const sel=bar.querySelector(':scope > select.preset-pick'); if(!sel)return;
   const av=(typeof _presetActive==='function')?_presetActive(activeTab):'';
   if(sel.value!==av)sel.value=av;
+  _presetPickTitle(sel);
 }
 // ── Имя активного пресета - В ЗАГОЛОВКЕ ОТЧЁТА вкладки ───────────────────────
 // ⚠ Полосы больше нет, а знать, каким пресетом смотришь отчёт, надо: суффикс идёт к первому
@@ -10553,8 +10572,30 @@ function pfRunTests(){
       ok('миграция: год «текущий» не становится числом',r.out.planfact[0].f.year==='cur');}
      // (4) селект в баре - один на вкладку, последняя строка «сохранить»
      {const src=String(_presetBarInject);
-      ok('селект ставится последним элементом бара',/bar\.appendChild\(wrap\)/.test(src));
-      ok('вставка идёт только если контрола ещё нет',/if\(bar\.querySelector\(':scope > \.preset-pick'\)\)return;/.test(src));
+      ok('селект ставится последним элементом бара',/bar\.appendChild\(sel\)/.test(src));
+      ok('вставка идёт только если контрола ещё нет',/if\(bar\.querySelector\(':scope > select\.preset-pick'\)\)return;/.test(src));
+      // ⚠ ОБЁРТКИ ВОКРУГ СУЩЕСТВУЮЩИХ ДЕТЕЙ БАРА НЕТ: она уводит их из-под селекторов `>` самого
+      //   бара (на Банке так потерялись `margin-left:auto` у сводки и сбросы оформления у суб-баров,
+      //   и бар вырос на строку). В бар добавляется РОВНО ОДИН элемент - сам селект.
+      ok('детей бара не переносим и не оборачиваем',src.indexOf('barw'+'rap')<0&&src.indexOf('bar.firstChild')<0&&src.indexOf('flexWrap')<0);
+      ok('селекту не задаётся margin-left:auto из кода',src.indexOf('marginLeft')<0&&src.indexOf('sel.style')<0);
+      ok('инлайновых стилей у селекта нет - только класс',src.indexOf('sel.style')<0&&!/style="/.test(src));
+      // ⚠ Оформление скопировано с эталона бара - селекта «ФНС» на Банке. Копия обязана совпадать
+      //   по КАЖДОМУ свойству эталона: разъехавшись, пресет молча встал бы в ряду иначе соседей.
+      {const dec=t=>{const m={};String(t).split(';').forEach(x=>{const i=x.indexOf(':');if(i>0)m[x.slice(0,i).trim()]=x.slice(i+1).trim();});return m;};
+       const fm=String(renderBank).match(/id="bank-fns-sel"[^>]*?style="([^"]+)"/);
+       const cm=[...document.querySelectorAll('style')].map(x=>x.textContent).join('\n').match(/select\.preset-pick\{([^}]+)\}/);
+       const A=fm?dec(fm[1]):null,B=cm?dec(cm[1]):null;
+       const bad=(A&&B)?Object.keys(A).filter(k=>B[k]!==A[k]):['не найден эталон или правило'];
+       ok('оформление селекта - тот же набор свойств, что у селекта «ФНС»',!!A&&!!B&&bad.length===0,bad.join(', '));
+       ok('селект узкий, имя обрезается',!!B&&B['max-width']==='140px'&&B['text-overflow']==='ellipsis');
+       // ⚠ Правое прижатие делает САМ БАР (у Банка и ОСВ это margin-left:auto на своём элементе).
+       //   Пресету auto-margin задавать нельзя: при flex-wrap он считается от ПОСЛЕДНЕЙ строки.
+       ok('в правиле пресета нет auto-margin',!!B&&!/auto/.test(B['margin']||'')&&!/auto/.test(B['margin-left']||''));
+       // ⚠ Отрицательный margin - чтобы маргин-бокс не был выше ряда контролов и не растил бар.
+       ok('маргин-бокс селекта ниже собственной высоты',!!B&&B['margin']==='-2px 0');}
+      ok('пустой выбор подписан коротким «Пресет», без «- не выбран -»',src.indexOf('<option value="">Пресет</option>')>=0&&src.indexOf('не выбран')<0);
+      ok('полное имя пресета уходит в title',/sel\.title=\(sel\.value&&o\)\?o\.text:/.test(String(_presetPickTitle)));
       // ⚠ В БАРЕ ТОЛЬКО СЕЛЕКТ: ни строки-действия, ни кнопки настройки. Пункт списка, который не
       //   пресет, а действие, ломает понятие списка; окно пресетов открывается из шестерёнки.
       ok('в баре нет строки-действия и кнопки окна',src.indexOf('__save'+'__')<0&&src.indexOf('showPresetsPanel')<0);
@@ -10563,9 +10604,8 @@ function pfRunTests(){
      // (4б) в баре РОВНО ОДИН контрол пресетов, и это select
      {const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1));
       const picks=cont?cont.querySelectorAll('.preset-pick'):[];
-      const inner=picks.length?[...picks[0].children].map(x=>x.tagName):[];
-      ok('в баре один блок пресетов',picks.length<=1,picks.length);
-      if(picks.length)ok('и в нём ровно один контрол - select',inner.length===1&&inner[0]==='SELECT',inner.join(','));}
+      ok('в баре один контрол пресетов',picks.length<=1,picks.length);
+      if(picks.length)ok('и это сам select, без обёртки',picks[0].tagName==='SELECT',picks[0].tagName);}
      // (5) пресет по умолчанию - один на вкладку и не перебивает руками выбранное
      {_presets.planfact=[{id:'v1',name:'x',f:{dirs:['Д1']},isDefault:true},{id:'v2',name:'y',f:{}}];
       _presetSetDefault('planfact','v2',true);
