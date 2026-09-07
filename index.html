@@ -2887,8 +2887,30 @@ function _regStateRestore(st){
   _tabFilters.registry.fOpen=fOpen; window._regDD={}; window._regLimit=500;
   const inp=document.getElementById('regSearch'); if(inp)inp.value=_tabFilters.registry.q||'';
 }
-window.presetApply=function(tab,id){
+// ── СБРОС ВКЛАДКИ К УМОЛЧАНИЯМ ПЕРЕД ПРИМЕНЕНИЕМ ПРЕСЕТА (решение Олега 07.09.2026) ──────────
+// ⚠ «Не задано» в пресете читается как УМОЛЧАНИЕ ВКЛАДКИ, а не «оставить как есть». Иначе один и
+//   тот же пресет даёт разный вид в зависимости от того, что стояло на экране до него: применил
+//   банковский «Сегодня» поверх выбранных карт - получил «Сегодня по этим картам», и число на
+//   экране объясняется не именем пресета, а тем, что человек нажимал пять минут назад.
+// ⚠ Это ВОЗВРАЩАЕТ поведение, которое было у БДР и Реестра до переделки пресетов (там состояние
+//   ставилось целиком поверх чистого), и распространяет его на все семь вкладок.
+// ⚠ Умолчание берётся у САМОЙ ВКЛАДКИ, а не «пусто»: у Банка это текущий год (`bankDefaultPeriod`,
+//   та же функция, что у «× сбросить всё»), у БДР - текущий месяц (отработает в рендере, если
+//   период в пресете не задан), у прочих - `_presetTabDefaults`, тот же источник, по которому
+//   форма пресета решает, что считать заданным.
+function _presetTabReset(tab){
   const F=_tabFilters[tab]; if(!F)return;
+  if(tab==='planfact'){_pfStateRestore(null); return;}
+  if(tab==='registry'){_regStateRestore(null); return;}
+  const D=_presetTabDefaults(tab);
+  Object.keys(D).forEach(k=>{F[k]=(D[k]&&typeof D[k]==='object')?JSON.parse(JSON.stringify(D[k])):D[k];});
+  if(tab==='bank'){ setPreset('bank','all'); if(!bankDefaultPeriod())F.preset='all'; }
+}
+window.presetApply=function(tab,id){
+  // ⚠ `let`, а не `const`: сброс к умолчаниям у БДР и Реестра ЗАМЕНЯЕТ объект состояния целиком
+  //   (_pfStateRestore/_regStateRestore пишут `_tabFilters[tab]=…`), и прежняя ссылка после него
+  //   указывала бы на выброшенный объект - поля пресета уехали бы в никуда.
+  let F=_tabFilters[tab]; if(!F)return;
   if(!id){ // снять пресет → вернуть период по умолчанию (всё время)
     _activePreset[tab]='';
     if(tab==='registry')_regStateRestore(null);
@@ -2897,15 +2919,17 @@ window.presetApply=function(tab,id){
     renderActiveTab(); return;
   }
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
-  // ── ПРЕСЕТ - НАБОР ЗАДАННЫХ ПОЛЕЙ (решение Олега 07.09.2026) ───────────────
-  // ⚠ Ставится ТОЛЬКО то, что в пресете ЕСТЬ; поля, которых в нём нет, не трогаются - остаётся то,
-  //   что стоит на вкладке. Пустой пресет не меняет ничего, и это осмысленное состояние.
-  // ⚠ Это ОТМЕНЯЕТ прежнее «ставим состояние целиком поверх чистого» (жило у БДР и Реестра).
-  //   Цена решения названа прямо: фильтр, выставленный ДО применения и не упомянутый в пресете,
-  //   останется - и числа будут уже, чем ожидает человек, читающий имя пресета. Лечится это
-  //   кнопкой «Сбросить (N)» рядом с селектом: её счётчик показывает, сколько фильтров стоит
-  //   СЕЙЧАС, включая пришедшие не из пресета. Второй механизм (авто-сброс чужих полей) завёл бы
-  //   ровно ту непрозрачность, ради ухода от которой пресет и стал набором полей.
+  // ── ПРЕСЕТ - НАБОР ЗАДАННЫХ ПОЛЕЙ ПОВЕРХ УМОЛЧАНИЙ ВКЛАДКИ ─────────────────
+  // ⚠ ДВА ШАГА, И ПОРЯДОК ВАЖЕН: сначала вкладка сбрасывается к своим умолчаниям, потом ставятся
+  //   ЗАДАННЫЕ поля пресета. Значит «не задано» = «умолчание вкладки», и пресет даёт ОДИН И ТОТ ЖЕ
+  //   вид независимо от того, что стояло на экране до него.
+  // ⚠ Прежнее «не заданное не трогаем» отменено 07.09.2026 по разбору Олега: пресет «Сегодня»
+  //   поверх выбранных карт давал «Сегодня по этим картам», и объяснить число на экране именем
+  //   пресета было нельзя. Ровно от этой ловушки у БДР и Реестра исходно стоял «слепок поверх
+  //   чистого» - теперь так работают все семь вкладок.
+  // ⚠ Пустой пресет при этом ЧИСТИТ вкладку (это его состав: ничего не задано - всё по умолчанию),
+  //   а не «ничего не делает».
+  _presetTabReset(tab); F=_tabFilters[tab];
   Object.entries(p.f||{}).forEach(([k,v])=>{
     if(k==='year'&&tab==='planfact'){F.year=(v==='cur')?new Date().getFullYear():(+v||0);return;}
     F[k]=(v&&typeof v==='object')?JSON.parse(JSON.stringify(v)):v;});
@@ -10617,6 +10641,34 @@ function pfRunTests(){
      Object.entries(_presets.planfact[0].f).forEach(([k,v])=>{_tabFilters.planfact[k]=v;}); // ядро применения без рендера
      ok('заданное поле ставится',JSON.stringify(_tabFilters.planfact.dirs)==='["Д1"]');
      ok('не заданное поле не трогается',JSON.stringify(_tabFilters.planfact.sides)==='["ктото"]');
+     // (1б) ПРИМЕНЕНИЕ = СБРОС К УМОЛЧАНИЯМ + ЗАДАННЫЕ ПОЛЯ (07.09.2026)
+     // ⚠ Пресет обязан давать ОДИН И ТОТ ЖЕ вид независимо от того, что стояло на экране до него:
+     //   иначе «Сегодня» поверх выбранных карт даёт «Сегодня по этим картам», и число на экране
+     //   объясняется не именем пресета, а тем, что человек нажимал пять минут назад.
+     {const RA=window.renderActiveTab; window.renderActiveTab=function(){};
+      const B0=JSON.parse(JSON.stringify(_tabFilters.bank));
+      try{
+        _presets.bank=[{id:'b1',name:'т',f:{fns:'da'}}];
+        Object.assign(_tabFilters.bank,{accounts:['Карта X'],activityDirs:['БФЛ'],includeFuture:false,fns:''});
+        presetApply('bank','b1'); const dirty=JSON.stringify(_presetTabState('bank'));
+        _presetTabReset('bank');
+        presetApply('bank','b1'); const clean=JSON.stringify(_presetTabState('bank'));
+        ok('пресет даёт один и тот же вид поверх любого отбора',dirty===clean,dirty+' ≠ '+clean);
+        ok('заданное поле перебивает умолчание',_tabFilters.bank.fns==='da');
+        ok('не заданное поле берёт УМОЛЧАНИЕ вкладки, а не прежнее значение',
+           JSON.stringify(_tabFilters.bank.accounts)==='[]'&&JSON.stringify(_tabFilters.bank.activityDirs)==='[]'&&_tabFilters.bank.includeFuture===true);
+        // БДР: пресет без периода не фиксирует период - умолчание «текущий месяц» обязано отработать
+        _presets.planfact=[{id:'p9',name:'т',f:{dirs:['БФЛ']}}];
+        Object.assign(_tabFilters.planfact,{period:'year',_defPeriodDone:1,sides:['ктото']});
+        presetApply('planfact','p9');
+        ok('БДР: пресет без периода не фиксирует период',!('_defPeriodDone'in _tabFilters.planfact)&&!_tabFilters.planfact.period);
+        ok('БДР: чужой фильтр снят сбросом',JSON.stringify(_tabFilters.planfact.sides)==='[]');
+        // пресет С периодом период фиксирует
+        _presets.planfact=[{id:'p10',name:'т2',f:{period:'year'}}];
+        presetApply('planfact','p10');
+        ok('БДР: пресет с периодом умолчание перебивает',_tabFilters.planfact._defPeriodDone===1&&_tabFilters.planfact.period==='year');
+        ok('сброс - одна функция на все семь вкладок',typeof _presetTabReset==='function'&&/_presetTabReset\(tab\); F=_tabFilters\[tab\];/.test(String(presetApply)));
+      } finally { window.renderActiveTab=RA; _tabFilters.bank=B0; }}
      // (2) состав строки собирается из ТЕХ ЖЕ полей, что применяются
      const sum=_presetSummary('planfact',{dirs:['Д1'],period:'year'});
      ok('состав - из описания полей, а не из второго списка',sum.length===2&&/^Направление: /.test(sum[0])&&/^Период: весь год$/.test(sum[1]),sum.join(' | '));
