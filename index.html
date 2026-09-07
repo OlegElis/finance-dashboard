@@ -775,10 +775,8 @@
     .tab-filters>.filter-extra{display:flex;flex-wrap:wrap;gap:6px;}
     .tab-filters .filter-extra select{flex:1;min-width:120px;}
     /* инлайн-выбор пресета: селект тянется, кнопка рядом */
-    .preset-inline{display:flex !important;width:100%;gap:6px;align-items:center;}
-    .preset-inline>select{flex:1;max-width:none !important;}
     /* вертикальные разделители в столбце не нужны */
-    .tab-filters .filter-sep,.dds-extra-filters .filter-sep,.bank-extra-filters .filter-sep,.preset-inline .filter-sep{display:none;}
+    .tab-filters .filter-sep,.dds-extra-filters .filter-sep,.bank-extra-filters .filter-sep{display:none;}
   }
   @media (max-width:480px){
     #authUserEmail{display:none;}
@@ -8835,13 +8833,9 @@ function registryRender(q){
   const cntNote=hlNames.length?(' · '+hlNames.join(', ')+' в поиске не участву'+(hlNames.length>1?'ют':'ет')+skipWhy)
     :(wordToks.length?(' · '+wordToks.join(', ')+(wordToks.length>1?' искались как отдельные слова':' искалось как отдельное слово')):'');
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=(anyFilter?('найдено '+total.toLocaleString('ru-RU')+' из '+RAW.length.toLocaleString('ru-RU')):('всего '+total.toLocaleString('ru-RU')))+cntNote;
-  // ⚠ Синхронизация выбранного пресета. Контрол встраивается один раз, а правка фильтра
-  // перерисовывает только таблицу - без этого список продолжал показывать имя пресета,
-  // от которого отбор уже ушёл, то есть врал.
-  // ⚠ Делается ЗДЕСЬ, а не в общей пост-обработке рендера: ту дёргает MutationObserver на #mainContent,
-  // и правка DOM внутри него закольцовывается (ловушка описана в CLAUDE.md).
-  try{const _ps=document.querySelector('#tabRegistry .reg-searchbar .preset-inline select');
-    if(_ps){const _av=_presetActive('registry'); if(_ps.value!==_av)_ps.value=_av;}}catch(e){}
+  // ⚠ Синхронизация селекта пресетов отсюда УБРАНА 07.09.2026 вместе с полосой: контрола на вкладке
+  //   больше нет, а имя активного пресета показывает заголовок отчёта (_presetTitleMark) и гасит
+  //   его тем же _presetActive. Осталась бы строка - искала бы узел, которого не бывает.
   const chips=document.getElementById('regChips'); if(chips)chips.innerHTML=_regChipsHtml(); // чипы обновляются здесь: сюда приходит КАЖДОЕ изменение фильтров
   // Итоги - по ВСЕМУ отфильтрованному набору (_regRows), а не по показанным 500: вопрос «сколько всего
   // заплатили» задают именно к найденному. Суммируем СЫРЫЕ значения колонок, поэтому «Итог» тождественно
@@ -10204,6 +10198,31 @@ function pfRunTests(){
    ok('сохранение пресета БДР живёт в окне пресетов (снимок отбора)',/tab==='planfact'\)\?_pfStateSnapshot\(\)/.test(String(_presetSave))&&/tab==='planfact'\)\?_pfPresetSnapshotHtml\(\)/.test(String(_presetFormHtml)));
    {const sm=String(showSettingsMenu);
     ok('в шестерёнке - скрытые направления и архив',/pfHiddenDirsOpen\(\)/.test(sm)&&/pfArchiveOpen\(\)/.test(sm));}
+
+   // ── ШЕСТЕРЁНКА: 8 ПУНКТОВ → 5 (07.09.2026) ──
+   // ⚠ Проверяем СОСТАВ и ЕДИНСТВЕННОСТЬ входов: смысл правки в том, что у каждого окна один вход,
+   //   а не два. Вернись второй - дубли поползут обратно по одному, как это уже было с меню БДР.
+   {const sm=String(showSettingsMenu),n=(sm.match(/class="settings-item"/g)||[]).length;
+    ok('в шестерёнке ровно пять пунктов',n===5,n);
+    ok('это подключение, доступ, пресеты, скрытые направления и архив',
+       /showSetup\(\)/.test(sm)&&/showAccessPanel\(\)/.test(sm)&&/showPresetsPanel\(\)/.test(sm)
+       &&/pfHiddenDirsOpen\(\)/.test(sm)&&/pfArchiveOpen\(\)/.test(sm));
+    ok('планов и двух прежних пунктов архива в шестерёнке нет',
+       sm.indexOf('showPlansPanel()')<0&&sm.indexOf('downloadBackup(')<0&&sm.indexOf('pfBackupRestoreOpen()')<0);
+    ok('подзаголовка раздела больше нет',sm.indexOf('Настройки БДР')<0);
+    // ⚠ Единственность входов - именно то, ради чего чистили оба меню.
+    const all=_pfSrcTop||'';
+    const cnt=(re)=>(all.match(re)||[]).length;
+    ok('панель планов зовут только меню БДР (и она сама)',cnt(/showPlansPanel\(\)/g)<=2,cnt(/showPlansPanel\(\)/g));
+    ok('окно пресетов зовут только шестерёнка и само окно',cnt(/showPresetsPanel\(/g)<=3,cnt(/showPresetsPanel\(/g));
+    // ⚠ Иголки склеены из половин: набор тестов лежит в том же скрипте, и литерал целиком
+    //   находил бы САМ СЕБЯ - та же ловушка, что с cnt по renderPlanFact.
+    ok('полосы пресетов на вкладках нет',all.indexOf('_inject'+'PresetBar')<0&&all.indexOf('preset-'+'inline')<0);
+    ok('имя активного пресета уходит в заголовок отчёта',/function _presetTitleMark\(\)/.test(all)&&/ · пресет: /.test(all));
+    ok('сводка фильтров пережила снятие полосы',/function _tabFilterSummary\(\)/.test(all));
+    ok('окно архива зовёт ПРЕЖНИЕ выгрузки, своих копий не заводит',
+       /pfBackupDownload\(\)\.then/.test(String(pfArchiveOpen))&&/downloadBackup\(\)/.test(String(pfArchiveOpen))
+       &&String(pfArchiveOpen).indexOf('URL.createObjectURL')<0);}
    ok('бейдж устаревания архива в шапке БДР остался и ведёт в окно архива',/backupBadge=\(isAdmin&&\(_bkStale===null\|\|_bkStale>30\)\)\?`<span onclick="pfArchiveOpen\(\)"/.test(src));
    ok('экран разнесения удалён целиком',typeof window.pfAllocOpen==='undefined'&&src.indexOf('_pfAllocBuild')<0&&src.indexOf('_alN')<0);}
 
