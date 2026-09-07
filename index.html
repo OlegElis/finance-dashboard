@@ -8949,13 +8949,25 @@ window.pfShowTxn=function(kind,code,m,dir,side){
   window._opiuTxnMap['__pfcell']={label:String(code).startsWith('__side:')?code.slice(7):code,artLabel:kind==='inc'?'Доходы':kind==='vyv'?'Распределение прибыли':'Расходы',secLabel:'БДР · '+(dir||meta.dirLabel||'')+(side?' · '+side:'')+' · '+(meta.year||'')+plbl,rows,pks:[]};
   if(window.opiuShowTxnModal)opiuShowTxnModal('__pfcell');
 };
+// ── ПРОКРУТКА ПРИ РАЗВОРОТЕ СТРОКИ: запоминаем ДО ре-рендера ───────────────────
+// ⚠ Разворот перерисовывает вкладку целиком (el.innerHTML), контейнер .table-scroll создаётся
+//   ЗАНОВО и приходит с scrollTop=0. Человек, раскрывший строку внизу длинной таблицы, каждый раз
+//   уезжал наверх и скроллил обратно - к строке, которую сам же только что открыл.
+// ⚠ Запоминают ТОЛЬКО развороты. Смена фильтров, периода и сброс положение НЕ сохраняют: там
+//   меняется СОСТАВ таблицы, прежний scrollTop указывал бы на другие строки, и верх - правильное
+//   место. Отсюда же и место записи: в трёх toggle-функциях, а не внутри renderPlanFact.
+// ⚠ Функция ОДНА на три разворота: три копии одного снимка разъехались бы при первой правке.
+window._pfScrollSave=function(key){
+  const sc=document.querySelector('#tabPlanfact .table-scroll');
+  window._pfKeepScroll={top:sc?sc.scrollTop:0,left:sc?sc.scrollLeft:0,y:window.scrollY,key:key||''};
+};
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
-window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
-window.pfToggleSub=function(kind,code){const S=window._pfSubExp||(window._pfSubExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());}; // разворот подстатьи → третий уровень (стороны)
+window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;_pfScrollSave(k);if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
+window.pfToggleSub=function(kind,code){const S=window._pfSubExp||(window._pfSubExp=new Set());const k=kind+'|'+code;_pfScrollSave(k);if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());}; // разворот подстатьи → третий уровень (стороны)
 // Разворот подстатьи (или стороны) → ЧЕТВЁРТЫЙ уровень: направления. Ключ - 'kind|подстатья'
 // либо 'kind|подстатья|сторона': одна и та же подстатья разворачивается по направлениям и сама,
 // и внутри каждого сотрудника, и это РАЗНЫЕ строки - общий ключ схлопнул бы их в одну.
-window.pfToggleDir=function(kind,code,side){const S=window._pfDirExp||(window._pfDirExp=new Set());const k=kind+'|'+code+(side?'|'+side:'');if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
+window.pfToggleDir=function(kind,code,side){const S=window._pfDirExp||(window._pfDirExp=new Set());const k=kind+'|'+code+(side?'|'+side:'');_pfScrollSave(k);if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
 // После разворота details «Графики» (БДР) чарты создавались при display:none (размер 0) - подтолкнуть ресайз.
 // Вызывается только из ontoggle самого details; глобальных слушателей/observer'ов не добавляет.
 // ── Печать Банка: графики ОБЯЗАНЫ попасть в PDF и влезть в ширину листа (скрывать их в @media print нельзя - это визуализация всего отчёта) ──
@@ -10463,6 +10475,58 @@ function pfRunTests(){
     ok('тело матрицы найдено',mb.length>200,mb.length);
     ok('матрица «все месяцы» 4-го уровня не знает',mb.indexOf('dirExp')<0&&mb.indexOf('_multiDir')<0&&mb.indexOf('ggrand')<0);}}
 
+  // 27. ПРОКРУТКА ПРИ РАЗВОРОТЕ СТРОКИ НЕ УЛЕТАЕТ НАВЕРХ (07.09.2026)
+  {const src=String(renderPlanFact);
+   ok('снимок положения делают ВСЕ ТРИ разворота',
+      /_pfScrollSave\(k\);/.test(String(pfToggleArt))&&/_pfScrollSave\(k\);/.test(String(pfToggleSub))&&/_pfScrollSave\(k\);/.test(String(pfToggleDir)));
+   ok('снимок - одна функция на три разворота',/window\._pfScrollSave=function\(key\)/.test(String(_pfScrollSave))||typeof _pfScrollSave==='function');
+   ok('снимок берёт top, left, y и ключ строки',/top:sc\?sc\.scrollTop:0,left:sc\?sc\.scrollLeft:0,y:window\.scrollY,key:key\|\|''/.test(String(_pfScrollSave)));
+   // ⚠ РОВНО ОДНО место чтения, и оно же обнуляет снимок: второе читало бы уже отработавшую
+   //   позицию и увозило бы человека на раскладку прошлого рендера.
+   ok('чтение снимка ровно одно',(src.match(/window\._pfKeepScroll(?!=)/g)||[]).length===1,(src.match(/window\._pfKeepScroll(?!=)/g)||[]).length);
+   ok('чтение обнуляет снимок сразу, до всякой проверки',/const KS=window\._pfKeepScroll; window\._pfKeepScroll=null;\s*\n\s*if\(KS\)\{/.test(src));
+   ok('возврат идёт в requestAnimationFrame',/requestAnimationFrame\(\(\)=>\{[\s\S]{0,200}sc\.scrollTop=KS\.top/.test(src));
+   ok('строка ищется перебором, а не селектором по ключу',/querySelectorAll\('tr\[data-pfkey\]'\)\]\.find\(t=>t\.getAttribute\('data-pfkey'\)===KS\.key\)/.test(src)&&src.indexOf('[data-pfkey="\'+')<0);
+   ok('доводка только когда строки не видно, block:nearest',/if\(rb\.bottom>cb\.bottom\|\|rb\.top<cb\.top\)tr\.scrollIntoView\(\{block:'nearest'\}\)/.test(src));
+   // ⚠ Смена фильтров, периода и сброс снимок НЕ делают: там меняется состав таблицы, и верх - правильное место.
+   ok('фильтры и сброс снимок не делают',String(_pfResetState).indexOf('_pfScrollSave')<0&&String(pfResetFilters).indexOf('_pfScrollSave')<0);
+   ok('ключ строки - тот же, что у разворотов',/pfkey:key\}/.test(src)&&/pfkey:kind\+'\|'\+sub\}/.test(src)&&/pfkey:kind\+'\|'\+sub\+'\|'\+side\}/.test(src));
+   ok('атрибут ключа идёт через _pesc',/data-pfkey="\$\{_pesc\(opts\.pfkey\)\}"/.test(src));}
+
+  // 28. ЖИВОЙ ПРОГОН: после разворота статьи прокрутка контейнера осталась на месте
+  if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){ok('живой прогон прокрутки: запусти с вкладки БДР при загруженных данных',false,'activeTab='+activeTab);}
+  else{const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
+    try{
+      Object.assign(_tabFilters.planfact,{dir:'',dirs:[],articles:[],subarticles:[],owners:[],sides:[],rowDim:'art',level:'article',period:'year',_defPeriodDone:true});
+      window._pfArtExp=new Set();window._pfSubExp=new Set();window._pfDirExp=new Set();
+      renderActiveTab();
+      const sc0=document.querySelector('#tabPlanfact .table-scroll');
+      ok('контейнер прокрутки найден',!!sc0);
+      if(sc0){
+        // ⚠ Таблица короче контейнера - прокручивать нечего, и это НЕ провал: проверка честно
+        //   говорит, что ей не на чем работать. На боевых данных запас есть всегда.
+        const maxTop=Math.max(0,sc0.scrollHeight-sc0.clientHeight);
+        const want=Math.min(300,maxTop);
+        if(!maxTop)ok('живой прогон прокрутки: таблица короче контейнера - проверять не на чем',true,'запас 0px');
+        sc0.scrollTop=want;
+        const tr=document.querySelector('#tabPlanfact tr[data-pfkey]');
+        ok('строка с ключом найдена',!!tr,tr&&tr.getAttribute('data-pfkey'));
+        if(tr&&maxTop>0){ // ниже - собственно проверка, она идёт только при реальном запасе прокрутки
+          const key=tr.getAttribute('data-pfkey'),i=key.indexOf('|');
+          pfToggleArt(key.slice(0,i),key.slice(i+1));
+          const sc1=document.querySelector('#tabPlanfact .table-scroll');
+          // ⚠ Возврат стоит в requestAnimationFrame, а тест синхронный: проверяем СНИМОК (его читает
+          //   и обнуляет рендер) - положение из него и вернётся. Иначе тест мерил бы кадр, которого ещё нет.
+          const kept=window._pfKeepScroll===null||window._pfKeepScroll===undefined;
+          ok('снимок прочитан и обнулён рендером',kept,String(window._pfKeepScroll));
+          ok('контейнер после разворота не улетел наверх',!!sc1&&(sc1.scrollTop===want||sc1.scrollTop===0&&Math.max(0,sc1.scrollHeight-sc1.clientHeight)===0),
+             sc1?('было '+want+', стало '+sc1.scrollTop+', запас '+Math.max(0,sc1.scrollHeight-sc1.clientHeight)):'контейнера нет');
+        }
+      }
+    }catch(e){ok('живой прогон прокрутки упал',false,String(e&&e.message||e));}
+    finally{_tabFilters.planfact=F0;window._pfArtExp=E0;window._pfSubExp=S0;window._pfDirExp=D0;window._pfKeepScroll=null;try{renderActiveTab();}catch(e){}}
+  }
+
   // 26. ЖИВОЙ ПРОГОН 4-го уровня: разрез раскладывает факт нацело
   // ⚠ Идёт по ДАННЫМ, а не по DOM: подстатья с максимумом направлений ищется в RAW, а суммы
   //   сверяются с теми же примитивами, которыми рисуются строки. Нужна вкладка БДР (примитивы
@@ -11377,7 +11441,10 @@ function renderPlanFact(f){
     // и потерять сигнал; плюс зелёное число в проекте уже значит «приход».
     // Классификация остаётся ЕДИНОЙ (тот же statusOf, тот же PF_WARN) - расходится только объём краски.
     const factCol=(st&&st.col&&st.k!=='ok')?';color:'+st.col:'';
-    return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:(opts.side!=null?',null':'')}${opts.side!=null?`,'${jesc2(opts.side)}'`:''})" title="Клик - операции по строке"`:''}>
+    // ⚠ data-pfkey - АДРЕС строки: по нему возврат прокрутки находит только что раскрытую строку,
+    //   а живой тест - строку без поиска по тексту (текст усекается общим префиксом и меняется).
+    //   Ключ ТОТ ЖЕ, что в _pfArtExp/_pfSubExp/_pfDirExp: разъедься они - строка не найдётся молча.
+    return`<tr${opts.pfkey?` data-pfkey="${_pesc(opts.pfkey)}"`:''}${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:(opts.side!=null?',null':'')}${opts.side!=null?`,'${jesc2(opts.side)}'`:''})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${(opts.grand||opts.ggrand)?` title="${_pesc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${(opts.grand||opts.ggrand)?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr(planNoteTip,null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):planDash,'')}</td>
@@ -11581,7 +11648,7 @@ function renderPlanFact(f){
     if(level!=='article')return dRow(code,base,plan,fact,revenue,false,kind,code,{rem:artRemFor(kind,code)});
     const subs=subsOfArt(kind,code).filter(subOwnerPass).filter(sub=>_subAlive(kind,sub)),has=subs.length>0,key=kind+'|'+code,open=has&&artExp.has(key); // ЦФО-фильтр + скрытие мёртвых подстатей (за период пусто со всех сторон)
     if(selOwn.size){const _ent=subs.map(sub=>({sub,dirs:ownDirsOf(sub)}));window._pfOwnSubs[kind+'|'+code]=_ent;_ent.forEach(e=>{window._pfOwnSubs[kind+'|'+e.sub]=[e];});} // модал статьи/подстатьи под ЦФО = операции прошедших подстатей ТОЛЬКО по owner-passing направлениям
-    let h=dRow(artLabel(code),base,plan,fact,revenue,false,kind,code,{expandable:has,expanded:open,rem:artRemFor(kind,code)});
+    let h=dRow(artLabel(code),base,plan,fact,revenue,false,kind,code,{expandable:has,expanded:open,rem:artRemFor(kind,code),pfkey:key});
     if(open)subs.forEach(sub=>{
       const _isSub=(kind==='exp')&&_slFactSide(sub); // третий уровень - только у расходных подстатей из _slFactSide (ФОТ, консалтинг)
       // ⚠ СТРОКИ СЧИТАЕМ ДО ТОГО, как решаем показывать ли стрелку: у подстатьи, где после гейта не
@@ -11601,7 +11668,7 @@ function renderPlanFact(f){
       //   разрез по направлениям - иначе стрелки не было бы вовсе, хотя разбирать есть что.
       const _dirRowsSub=(!_canOpen&&_multiDir&&dirExp)?_dirsOfSub(kind,sub):[];
       const _dirOpenSub=_dirRowsSub.length>0&&dirExp.has(kind+'|'+sub);
-      h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_canOpen,subExpanded:_subOpen,dirExpandable:_dirRowsSub.length>0,dirExpanded:_dirOpenSub});
+      h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_canOpen,subExpanded:_subOpen,dirExpandable:_dirRowsSub.length>0,dirExpanded:_dirOpenSub,pfkey:kind+'|'+sub});
       if(_dirOpenSub){const _dRows=_dirRowsSub.map(d=>({d,f:_dSubFactP(kind,sub,d),p:_dSubPlanP(kind,sub,d),b:_dSubBaseP(kind,sub,d)}));
         _dRows.forEach(r=>{h+=dRow(r.d,r.b,r.p,r.f,revenue,false,kind,sub,{ggrand:true,dir:r.d,rem:_dSubRemFor(kind,sub,r.d)});});
         _dirSplitWarn(sub,childFact(kind,sub),childPlan(kind,sub),childBase(kind,sub),_dRows);}
@@ -11623,7 +11690,7 @@ function renderPlanFact(f){
           //   свой - 'kind|подстатья|сторона'.
           const _dirRowsSide=(_multiDir&&dirExp)?_dirsOfSide(sub,side):[];
           const _dirOpenSide=_dirRowsSide.length>0&&dirExp.has(kind+'|'+sub+'|'+side);
-          h+=dRow(_ic+(_sideDisp[_i]||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote,fullLabel:_ic+(side||_SL_UNALLOC),dirExpandable:_dirRowsSide.length>0,dirExpanded:_dirOpenSide,dirKind:kind,dirCode:sub,dirSide:side});
+          h+=dRow(_ic+(_sideDisp[_i]||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote,fullLabel:_ic+(side||_SL_UNALLOC),dirExpandable:_dirRowsSide.length>0,dirExpanded:_dirOpenSide,dirKind:kind,dirCode:sub,dirSide:side,pfkey:kind+'|'+sub+'|'+side});
           // ⚠ У строки направления ПОД СТОРОНОЙ kind и code уже есть (в отличие от самой строки
           //   стороны): по ним работают и ответственный - _planOwners[направление||подстатья], тот же
           //   ключ, что уровнем выше, - и клик по операциям. Владелец задаётся парой «направление +
@@ -11835,7 +11902,7 @@ function renderPlanFact(f){
       const labPad=opts.child?'padding:4px 10px 4px 26px':'padding:5px 10px',labFont=opts.child?'font-size:10px;color:var(--text2)':'font-size:11px';
       // клик по лейблу статьи = разворот подстатей; расшифровка - только по ячейкам месяцев (cellHtml). У подстатей/итогов лейбл некликабелен
       const labClick=opts.expandable?` onclick="pfToggleArt('${tk}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:'';
-      return `<tr${bold?' style="background:var(--surface2)"':opts.child?' class="dds-sub"':''}><td style="position:sticky;left:0;vertical-align:top;background:${bold?'var(--total-bg)':'var(--surface)'};${labPad};${labFont};${bold?'font-weight:700;':''}white-space:nowrap;z-index:1${opts.expandable?';cursor:pointer':''}"${labClick}>${tog}${esc(label)}</td>${cells}${yc}</tr>`;
+      return `<tr${opts.pfkey?` data-pfkey="${_pesc(opts.pfkey)}"`:''}${bold?' style="background:var(--surface2)"':opts.child?' class="dds-sub"':''}><td style="position:sticky;left:0;vertical-align:top;background:${bold?'var(--total-bg)':'var(--surface)'};${labPad};${labFont};${bold?'font-weight:700;':''}white-space:nowrap;z-index:1${opts.expandable?';cursor:pointer':''}"${labClick}>${tog}${esc(label)}</td>${cells}${yc}</tr>`;
     };
     const secR=t=>`<tr><td colspan="${monthsOn.length+2}" style="position:sticky;left:0;padding:5px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text2);background:var(--section-bg)">${t}</td></tr>`;
     const sumP=(arr,getter,m)=>{let s=null;arr.forEach(r=>{const v=getter(r.code,m);if(v!=null)s=(s||0)+v;});return s;};
@@ -11847,7 +11914,7 @@ function renderPlanFact(f){
     const artMrow=(r,tk,ck,getBase,getPlan,getFact)=>{
       const subs=subsOfArt(tk,r.code).filter(subOwnerPass).filter(sub=>_subAlive(tk,sub)),open=subs.length&&artExp&&artExp.has(tk+'|'+r.code); // ЦФО-фильтр + скрытие мёртвых подстатей (за год пусто со всех сторон)
       if(selOwn.size){const _ent=subs.map(sub=>({sub,dirs:ownDirsOf(sub)}));window._pfOwnSubs[tk+'|'+r.code]=_ent;_ent.forEach(e=>{window._pfOwnSubs[tk+'|'+e.sub]=[e];});} // модал ячейки матрицы под ЦФО = per-dir операции
-      let h=mrow(artLabel(r.code),getBase,getPlan,getFact,ck,false,tk,r.code,{expandable:subs.length>0,expanded:!!open});
+      let h=mrow(artLabel(r.code),getBase,getPlan,getFact,ck,false,tk,r.code,{expandable:subs.length>0,expanded:!!open,pfkey:tk+'|'+r.code});
       if(open)subs.forEach(sub=>{h+=mrow(sub,m=>childBaseMon(tk,sub,m),m=>childPlanMon(tk,sub,m),m=>childFactMon(tk,sub,m),ck,false,tk,sub,{child:true});});
       return h;
     };
@@ -12089,6 +12156,35 @@ function renderPlanFact(f){
     ${_unnamedList.length?`<div style="margin-top:4px">⚠ План заведён на подстатью без фамилий, поэтому по стороне его нет: <b>${_unnamedList.map(esc).join('</b>, <b>')}</b>. Чтобы план делился по людям, его надо расписать пофамильно в редакторе планов.</div>`:''}
   </div>`:'';
   el.innerHTML=filterBar+actionsBar+banner+baselineBanner+sideNote+kpiHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
+
+  // ── ВОЗВРАТ ПРОКРУТКИ ПОСЛЕ РАЗВОРОТА СТРОКИ ──────────────────────────────────
+  // ⚠ ЕДИНСТВЕННОЕ место чтения _pfKeepScroll, и оно же его обнуляет - СРАЗУ, до отложенного
+  //   кадра: снимок относится к ОДНОМУ ре-рендеру, и любой следующий (смена фильтра, приход
+  //   облака, живое обновление данных) не имеет права им воспользоваться и увезти человека
+  //   на позицию из прошлой раскладки таблицы.
+  // ⚠ Восстанавливаем в requestAnimationFrame: до первого кадра sticky-шапка ещё не измерена,
+  //   высоты строк не разложены, и присвоенный scrollTop браузер обрезает по старой высоте.
+  // ⚠ Положение возвращается ТОЛЬКО контейнеру и окну. Двигать таблицу к строке безусловно нельзя:
+  //   при сворачивании строка обычно и так на месте, а «доводка» дёргала бы экран на каждый клик.
+  //   scrollIntoView зовётся, лишь когда раскрытой строки не видно (её нижний край ушёл за границу
+  //   контейнера) - block:'nearest', то есть минимальным движением.
+  // ⚠ Читаем ОДИН раз и гасим СРАЗУ - до всякой проверки: снимок, чей рендер по любой причине не
+  //   дошёл до дела, не имеет права пережить этот вызов и сработать на следующем.
+  const KS=window._pfKeepScroll; window._pfKeepScroll=null;
+  if(KS){
+    requestAnimationFrame(()=>{
+      const sc=el.querySelector('.table-scroll');
+      if(sc){sc.scrollTop=KS.top;sc.scrollLeft=KS.left;}
+      window.scrollTo(0,KS.y);
+      if(!sc||!KS.key)return;
+      // ⚠ Ищем перебором, а не селектором: в ключе лежат имена подстатей и контрагентов с кавычками
+      //   и слэшами, и любой [data-pfkey="…"] на них разваливается (тот же класс, что с _pesc в атрибутах).
+      const tr=[...el.querySelectorAll('tr[data-pfkey]')].find(t=>t.getAttribute('data-pfkey')===KS.key);
+      if(!tr)return;
+      const rb=tr.getBoundingClientRect(),cb=sc.getBoundingClientRect();
+      if(rb.bottom>cb.bottom||rb.top<cb.top)tr.scrollIntoView({block:'nearest'});
+    });
+  }
 
   // ══ ГРАФИК 1: Чистая прибыль - накопительно (по всему направлению, фильтр статьи игнорируется) ══
   ['_pfChart','_pfChartInc','_pfChartNP','_pfChartDev'].forEach(k=>{if(window[k]){try{window[k].destroy();}catch(e){}window[k]=null;}});
