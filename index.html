@@ -2602,7 +2602,7 @@ function _pfStateRestore(st){
   if(yearIsCur||!F.year)F.year=new Date().getFullYear();
   F._defPeriodDone=1; // период пришёл из пресета - умолчание его перебивать не должно
   if(!F.period)delete F._defPeriodDone; // пресет без периода → пусть отработает умолчание «текущий месяц»
-  _tabFilters.planfact=F; window._pfArtExp=new Set(); window._pfSubExp=new Set();
+  _tabFilters.planfact=F; window._pfArtExp=new Set(); window._pfSubExp=new Set(); window._pfDirExp=new Set();
 }
 function _pfStateIsEmpty(st){const o=st||_pfStateSnapshot();
   return !(o.dirs||[]).length&&!(o.articles||[]).length&&!(o.subarticles||[]).length&&!(o.owners||[]).length&&!(o.sides||[]).length;}
@@ -6450,7 +6450,7 @@ window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getEle
 //   «пресет выбран, а фильтров нет» не должно существовать даже один кадр.
 function _pfResetState(){
   _tabFilters.planfact=_pfBlankState();
-  window._pfArtExp=new Set(); window._pfSubExp=new Set();
+  window._pfArtExp=new Set(); window._pfSubExp=new Set(); window._pfDirExp=new Set();
   _activePreset.planfact=''; _activePresetSig.planfact='';
 }
 window.pfResetFilters=function(){_pfResetState();renderPlanFact(getFilters());};
@@ -8948,6 +8948,10 @@ window.pfShowTxn=function(kind,code,m,dir){
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
 window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
 window.pfToggleSub=function(kind,code){const S=window._pfSubExp||(window._pfSubExp=new Set());const k=kind+'|'+code;if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());}; // разворот подстатьи → третий уровень (стороны)
+// Разворот подстатьи (или стороны) → ЧЕТВЁРТЫЙ уровень: направления. Ключ - 'kind|подстатья'
+// либо 'kind|подстатья|сторона': одна и та же подстатья разворачивается по направлениям и сама,
+// и внутри каждого сотрудника, и это РАЗНЫЕ строки - общий ключ схлопнул бы их в одну.
+window.pfToggleDir=function(kind,code,side){const S=window._pfDirExp||(window._pfDirExp=new Set());const k=kind+'|'+code+(side?'|'+side:'');if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
 // После разворота details «Графики» (БДР) чарты создавались при display:none (размер 0) - подтолкнуть ресайз.
 // Вызывается только из ontoggle самого details; глобальных слушателей/observer'ов не добавляет.
 // ── Печать Банка: графики ОБЯЗАНЫ попасть в PDF и влезть в ширину листа (скрывать их в @media print нельзя - это визуализация всего отчёта) ──
@@ -10185,7 +10189,7 @@ function pfRunTests(){
      _pfTrimCommon(['ИП Смирнова А.В., договор 7/2026, ','ИП Смирнова А.В., договор 7/2026, акт 1'])[0].indexOf('…')<0);
   ok('нестроковые значения не роняют',_pfTrimCommon([null,undefined,'Альфа']).length===3);
   // полное значение обязано остаться в подсказке строки
-  ok('подсказка берёт ПОЛНОЕ значение, а не показанное',/opts\.grand\?` title="\$\{_pesc\(opts\.fullLabel\|\|label\)\}"`/.test(src)); // атрибут - через _pesc (8470381), проверяем именно fullLabel
+  ok('подсказка берёт ПОЛНОЕ значение, а не показанное',/\(opts\.grand\|\|opts\.ggrand\)\?` title="\$\{_pesc\(opts\.fullLabel\|\|label\)\}"`/.test(src)); // атрибут - через _pesc (8470381), проверяем именно fullLabel
   ok('третий уровень передаёт и показанное, и полное',/fullLabel:_ic\+\(side\|\|_SL_UNALLOC\)/.test(src)&&/_pfTrimCommon\(_sideRows\)/.test(src));
 
   // 10. Тот же срез на БУМАГЕ: выписка ЦФО и печать плана
@@ -10270,7 +10274,7 @@ function pfRunTests(){
    const _td=_tmp.querySelector('span');
    ok('атрибут после разбора равен исходной строке',_td&&_td.getAttribute('title')===_name,_td&&_td.getAttribute('title'));
    ok('лишних атрибутов от кавычек не появилось',_td&&_td.attributes.length===2,_td&&_td.attributes.length);
-   ok('title третьего уровня идёт через _pesc',/opts\.grand\?` title="\$\{_pesc\(opts\.fullLabel\|\|label\)\}"`/.test(src));
+   ok('title третьего уровня идёт через _pesc',/\(opts\.grand\|\|opts\.ggrand\)\?` title="\$\{_pesc\(opts\.fullLabel\|\|label\)\}"`/.test(src));
    ok('в renderPlanFact нет esc( внутри title=/value=',!/(title|value)="[^"\n]*\$\{esc\(/.test(src),(src.match(/(title|value)="[^"\n]*\$\{esc\(/g)||[]).join(' | '));
    ok('своей копии эскейпа атрибутов в renderPlanFact нет',src.indexOf('_pfEsc')<0);}
 
@@ -11221,10 +11225,10 @@ function renderPlanFact(f){
   const dRow=(label,base,plan,fact,revenue,bold,kind,code,opts)=>{
     opts=opts||{};
     const _sk=kind||opts.skind; // семантический kind для Δ/статуса: у итоговых строк kind=null (не кликабельны), но net/vyv-семантика - через opts.skind
-    const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:opts.subExpandable?`<span title="${opts.subExpanded?'Свернуть расшифровку':'Показать расшифровку (сотрудники / объекты / контрагенты)'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.subExpanded?'▾':'▸'}</span>`:(opts.child||opts.grand?'<span style="display:inline-block;width:15px"></span>':'');
-    const labStyle=`${td};text-align:left${(opts.expandable||opts.subExpandable)?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${opts.grand?'padding-left:46px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${bold?'font-weight:700':''};position:sticky;left:0;z-index:1;background:${bold?'var(--surface2)':'var(--surface)'}`;
+    const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:opts.subExpandable?`<span title="${opts.subExpanded?'Свернуть расшифровку':'Показать расшифровку (сотрудники / объекты / контрагенты)'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.subExpanded?'▾':'▸'}</span>`:opts.dirExpandable?`<span title="${opts.dirExpanded?'Свернуть направления':'Показать по направлениям'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.dirExpanded?'▾':'▸'}</span>`:(opts.child||opts.grand||opts.ggrand?'<span style="display:inline-block;width:15px"></span>':'');
+    const labStyle=`${td};text-align:left${(opts.expandable||opts.subExpandable||opts.dirExpandable)?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${opts.grand?'padding-left:46px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${opts.ggrand?'padding-left:62px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${bold?'font-weight:700':''};position:sticky;left:0;z-index:1;background:${bold?'var(--surface2)':'var(--surface)'}`;
     // клик по лейблу: у статьи - разворот подстатей; у подстатьи с 3-м уровнем - разворот сторон; у листа - гасим. Расшифровка операций - по клику на ячейки значений (строка сохраняет onclick)
-    const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:opts.subExpandable?` onclick="event.stopPropagation();pfToggleSub('${kind}','${jesc2(code)}')" title="Клик - расшифровка по сторонам"`:(kind?` onclick="event.stopPropagation()"`:'');
+    const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:opts.subExpandable?` onclick="event.stopPropagation();pfToggleSub('${kind}','${jesc2(code)}')" title="Клик - расшифровка по сторонам"`:opts.dirExpandable?` onclick="event.stopPropagation();pfToggleDir('${opts.dirKind||kind}','${jesc2(opts.dirCode||code)}'${opts.dirSide!=null?`,'${jesc2(opts.dirSide)}'`:''})" title="Клик - разрез по направлениям"`:(kind?` onclick="event.stopPropagation()"`:'');
     const dash='<span style=color:var(--text3)>-</span>';
     // ── Прочерк в плановых колонках обязан ОТВЕЧАТЬ на вопрос, а не задавать его ──
     // ⚠ После того как 223 убрали из планирования по стороне (04.09.2026), у строк третьего уровня
@@ -11271,14 +11275,14 @@ function renderPlanFact(f){
     // ВЕС ЧИСЛОВЫХ ячеек = уровень агрегации: итоги 700, статьи 600, подстатьи и третий уровень 400.
     // Инлайн обязателен: .report-table td задаёт font-weight:600 всем ячейкам, без явного значения подстатьи остались бы жирными.
     // Первую колонку (названия) НЕ трогаем - там иерархия уже показана отступом и треугольником.
-    const numW=bold?700:(opts.child||opts.grand)?400:600;
+    const numW=bold?700:(opts.child||opts.grand||opts.ggrand)?400:600;
     // цвет ЧИСЛА по той же классификации, что и бейдж, но только для warn/bad:
     // 'ok' - ожидаемое состояние большинства строк, красить его = залить столбец
     // и потерять сигнал; плюс зелёное число в проекте уже значит «приход».
     // Классификация остаётся ЕДИНОЙ (тот же statusOf, тот же PF_WARN) - расходится только объём краски.
     const factCol=(st&&st.col&&st.k!=='ok')?';color:'+st.col:'';
     return`<tr${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:''})" title="Клик - операции по строке"`:''}>
-      <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${opts.grand?` title="${_pesc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${opts.grand?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
+      <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${(opts.grand||opts.ggrand)?` title="${_pesc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${(opts.grand||opts.ggrand)?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
       ${ownerTd(kind,code,opts.child,opts.dir)}
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr(planNoteTip,null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):planDash,'')}</td>
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" ${(opts.planNote&&plan==null)?_tipAttr(planNoteTip,null,'Текущий план (рабочий, правится свободно)'):planMark.tip}>${planNum(plan!=null?fmt(revenue?plan:-plan):planDash,planMark.ar)}</td>
@@ -11394,6 +11398,44 @@ function renderPlanFact(f){
   // мёртвая строка: за ВЫБРАННЫЙ период НЕТ ничего (|факт|=|утв|=|прог|=0, по модулю). Нулевой план+живой факт или план без факта - НЕ мёртвые. Фильтруем на РЕНДЕРЕ; суммы берутся из полных массивов (скрытые дают 0) → ИТОГО не меняется. Как sideHasActivity в выписке.
   const _rowDead=(fact,plan,base)=>Math.abs(fact||0)<0.005&&Math.abs(plan||0)<0.005&&Math.abs(base||0)<0.005;
   const _subAlive=(kind,sub)=>!_rowDead(childFact(kind,sub),childPlan(kind,sub),childBase(kind,sub)); // подстатья с движением за период (childFact/Plan/Base - period-aware, в матрице = год)
+  // ── ЧЕТВЁРТЫЙ УРОВЕНЬ: РАЗРЕЗ ПО НАПРАВЛЕНИЯМ под подстатьёй и под стороной (решение Олега 07.09.2026) ──
+  // ⚠ Уровень существует ТОЛЬКО В СВОДЕ (`dirsToAgg.length>1`). При одном выбранном направлении
+  //   разворачивать нечего: строка направления дословно повторила бы родителя, а стрелка обещала бы
+  //   разбор там, где разбирать не на что.
+  // ⚠ НАПРАВЛЕНИЕ - ВСЕГДА СТРОКА, А НЕ ПОДПИСЬ; ОДНО НАПРАВЛЕНИЕ - ОДНА СТРОКА (решение Олега).
+  //   Вариант «подписать единственное направление суффиксом в лейбле» отвергнут: тогда одна и та же
+  //   величина читалась бы двумя разными способами в зависимости от числа направлений, и человек,
+  //   ищущий строку направления, не находил бы её именно там, где она единственная и потому важна.
+  // ⚠ СВОЕГО ПРОХОДА ПО RAW ЗДЕСЬ НЕТ И БЫТЬ НЕ ДОЛЖНО. Все числа берутся из тех же per-dir
+  //   примитивов, что кормят фильтр ЦФО (`_pd*`-карты, `_pdPlanMonth`/`_pdPlanYear`, `_sfIdx`,
+  //   `_fcSideMD`/`_blSideMD`). Вторая выборка по тем же строкам однажды разойдётся условиями
+  //   отбора с первой, и разойдётся МОЛЧА - в проекте это чинили трижды за неделю.
+  const _multiDir=dirsToAgg.length>1;
+  const dirExp=(level==='article')?(window._pfDirExp||(window._pfDirExp=new Set())):null;
+  // подстатья × направление
+  const _dSubFactM=(kind,sub,d,m)=>{const a=_pdFactMap(kind)[d+'||'+sub];return a?(a[m]||0):0;};
+  const _dSubFactP=(kind,sub,d)=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=_dSubFactM(kind,sub,d,m);return s;}return _dSubFactM(kind,sub,d,+period);};
+  const _dLvl=kind=>kind==='inc'?'income':'subarticle';
+  const _dSubPlanM=(kind,sub,d,m)=>_pdPlanMonth(recsOf,cvtD,_dLvl(kind),d,sub,m);
+  const _dSubBaseM=(kind,sub,d,m)=>PB?_pdPlanMonth(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub,m):null;
+  const _dSubPlanP=(kind,sub,d)=>isYear?_pdPlanYear(recsOf,cvtD,_dLvl(kind),d,sub):_pdPlanMonth(recsOf,cvtD,_dLvl(kind),d,sub,+period);
+  const _dSubBaseP=(kind,sub,d)=>!PB?null:(isYear?_pdPlanYear(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub):_pdPlanMonth(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub,+period));
+  // сторона × направление (третий уровень, разложенный по направлениям)
+  const _dSideFactM=(sub,side,d,m)=>{const SK=_sfIdx[d+'||'+sub];return (SK&&SK[side])?(SK[side][m]||0):0;};
+  const _dSideFactP=(sub,side,d)=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=_dSideFactM(sub,side,d,m);return s;}return _dSideFactM(sub,side,d,+period);};
+  const _dSidePlanM=(sub,side,d,m)=>_sideNoPlan(sub)?null:_fcSideMD(d,sub,side,m);
+  const _dSideBaseM=(sub,side,d,m)=>(_sideNoPlan(sub)||!_blSideMD)?null:_blSideMD(d,sub,side,m);
+  const _dPer=fn=>{if(isYear){let s=null;for(let m=1;m<=12;m++){const v=fn(m);if(v!=null)s=(s||0)+v;}return s;}return fn(+period);};
+  const _dSidePlanP=(sub,side,d)=>_dPer(m=>_dSidePlanM(sub,side,d,m));
+  const _dSideBaseP=(sub,side,d)=>_dPer(m=>_dSideBaseM(sub,side,d,m));
+  // ⚠ ЖИВЫЕ НАПРАВЛЕНИЯ - ТО ЖЕ ПРАВИЛО `_rowDead`, что у подстатей и сторон: пусто во всех трёх
+  //   величинах (факт, текущий план, утверждённый) - строки нет. Отдельного правила для этого уровня
+  //   не заводить: два порога «когда строка пуста» разъехались бы, и разрез перестал бы совпадать
+  //   с родителем по составу.
+  // ⚠ Отбор идёт по `ownDirsOf(sub)`, а не по `dirsToAgg`: под фильтром ЦФО направление, где у
+  //   подстатьи другой владелец, в число строки родителя не входит - значит и строки его быть не может.
+  const _dirsOfSub=(kind,sub)=>ownDirsOf(sub).filter(d=>!_rowDead(_dSubFactP(kind,sub,d),_dSubPlanP(kind,sub,d),_dSubBaseP(kind,sub,d)));
+  const _dirsOfSide=(sub,side)=>ownDirsOf(sub).filter(d=>!_rowDead(_dSideFactP(sub,side,d),_dSidePlanP(sub,side,d),_dSideBaseP(sub,side,d)));
   // строка статьи + (если развёрнута) её подстатьи
   const artRow=(code,base,plan,fact,revenue,kind)=>{
     if(level!=='article')return dRow(code,base,plan,fact,revenue,false,kind,code,{rem:artRemFor(kind,code)});
@@ -11412,7 +11454,16 @@ function renderPlanFact(f){
       const _sideRows=_isSub?sidesOfSub(sub):[];
       const _canOpen=_isSub&&_sideRows.length>0;
       const _subOpen=_canOpen&&subExp&&subExp.has(kind+'|'+sub);
-      h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_canOpen,subExpanded:_subOpen});
+      // ⚠ У СТРОКИ ОДНА СТРЕЛКА, И ЭТО НЕ УПРОЩЕНИЕ: иерархия у подстатьи ровно одна - либо
+      //   «подстатья → сторона → направление» (у _slFactSide), либо «подстатья → направление».
+      //   Две стрелки в одной строке означали бы два разных разбора одного и того же числа.
+      // ⚠ Подстатья _slFactSide, у которой сторон не осталось (гейт съел все строки), падает на
+      //   разрез по направлениям - иначе стрелки не было бы вовсе, хотя разбирать есть что.
+      const _dirRowsSub=(!_canOpen&&_multiDir&&dirExp)?_dirsOfSub(kind,sub):[];
+      const _dirOpenSub=_dirRowsSub.length>0&&dirExp.has(kind+'|'+sub);
+      h+=dRow(sub,childBase(kind,sub),childPlan(kind,sub),childFact(kind,sub),revenue,false,kind,sub,{child:true,rem:subRemFor(kind,sub),subExpandable:_canOpen,subExpanded:_subOpen,dirExpandable:_dirRowsSub.length>0,dirExpanded:_dirOpenSub});
+      if(_dirOpenSub)_dirRowsSub.forEach(d=>{
+        h+=dRow(d,_dSubBaseP(kind,sub,d),_dSubPlanP(kind,sub,d),_dSubFactP(kind,sub,d),revenue,false,kind,sub,{ggrand:true,dir:d});});
       // ⚠ Подпись вместо прочерка - ровно у тех подстатей, которые по стороне НЕ ПЛАНИРУЮТСЯ
       //   (заведено на 223-аренде; с 05.09.2026 у 223 третьего уровня нет вовсе, и сегодня подпись не
       //   нужна ни одному коду - остаётся на случай, если предикаты снова разойдутся). Признак берём у
@@ -11426,7 +11477,14 @@ function renderPlanFact(f){
         const _sideDisp=_pfTrimCommon(_sideRows);
         _sideRows.forEach((side,_i)=>{const _f=sideFactP(sub,side);_sideFacts.push(_f);
           const _ic=_slIcon(sub)+' ';
-          h+=dRow(_ic+(_sideDisp[_i]||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote,fullLabel:_ic+(side||_SL_UNALLOC)});});
+          // ⚠ Ключ разворота у строки СТОРОНЫ передаётся отдельными полями: сама строка зовётся с
+          //   kind=null и code=null (она не кликабельна и не имеет ответственного), а ключ ей нужен
+          //   свой - 'kind|подстатья|сторона'.
+          const _dirRowsSide=(_multiDir&&dirExp)?_dirsOfSide(sub,side):[];
+          const _dirOpenSide=_dirRowsSide.length>0&&dirExp.has(kind+'|'+sub+'|'+side);
+          h+=dRow(_ic+(_sideDisp[_i]||_SL_UNALLOC),sideBaseP(sub,side),sidePlanP(sub,side),_f,false,false,null,null,{grand:true,rem:sideRemFor(sub,side),planNote:_sideNote,fullLabel:_ic+(side||_SL_UNALLOC),dirExpandable:_dirRowsSide.length>0,dirExpanded:_dirOpenSide,dirKind:kind,dirCode:sub,dirSide:side});
+          if(_dirOpenSide)_dirRowsSide.forEach(d=>{
+            h+=dRow(d,_dSideBaseP(sub,side,d),_dSidePlanP(sub,side,d),_dSideFactP(sub,side,d),false,false,null,null,{ggrand:true,dir:d,planNote:_sideNote});});});
         // ⚠ СТОРОЖ: третий уровень обязан раскладывать факт НАЦЕЛО - сумма фактов показанных сторон
         //   равна факту подстатьи. Расшифровка, не сходящаяся со строкой, которую человек раскрыл,
         //   заставляет искать потерянные деньги там, где их нет. Молчит, пока сходится.
