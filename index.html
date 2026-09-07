@@ -10476,6 +10476,32 @@ function pfRunTests(){
    ok('экран: вкладка вывода только там, где вывод есть',/const hasVyvTab=D\.people\.some\(p=>p\.vyv&&p\.vyv\.codes\.length\);/.test(cs)&&/if\(vyv&&!hasVyvTab\)/.test(cs));
    ok('«последний месяц с данными» учитывает вывод',/for\(const sel of \['exp','inc','vyv'\]\)/.test(String(_cfoLastMonthWithData)));}
 
+  // 30. СКРЫТЫЕ НАПРАВЛЕНИЯ: ОДНА ТОЧКА ИСКЛЮЧЕНИЯ (07.09.2026)
+  // ⚠ Главная проверка тут СТРУКТУРНАЯ, и она про ЕДИНСТВЕННОСТЬ: исключение делается в сборке
+  //   dirsToAgg, а каждый проход по RAW внутри renderPlanFact обязан гейтиться по нему. Заведи
+  //   кто-нибудь второй фильтр (в проходе, у графиков, в KPI) - две точки разошлись бы молча,
+  //   и соседние цифры одной вкладки считались бы по разному составу направлений.
+  {const src=String(renderPlanFact);
+   ok('видимый набор считается один раз и от него же «все»',
+      /const dirsVisible=\(showHidden\|\|!hiddenDirs\.length\)\?dirs:dirs\.filter\(d=>hiddenDirs\.indexOf\(d\)<0\);/.test(src)
+      &&/const dirsToAgg=selDirs\.length\?selDirs:dirsVisible;/.test(src)
+      &&/const allSel=selDirs\.length===0\|\|selDirs\.length>=dirsVisible\.length;/.test(src));
+   ok('скрытые берутся из настройки, а не из литерала',/const hiddenDirs=\(_pfHiddenDirs\|\|\[\]\)\.filter\(d=>dirs\.includes\(d\)\);/.test(src)&&src.indexOf('Иная деятельность')<0);
+   ok('подпись называет исключённые словами',/const _hidNote=\(selDirs\.length===0&&!showHidden&&hiddenDirs\.length\)\?\(' \(без: '\+hiddenDirs\.join\(', '\)\+'\)'\):'';/.test(src));
+   // ⚠ Проходы по RAW: каждый обязан гейтиться dirsToAgg. Исключения ДВА и они названы поимённо -
+   //   набор направлений для списка фильтра и набор годов; оба по построению про ВСЕ данные.
+   {const B=src.split('\n');let total=0,bad=[];
+    B.forEach((l,i)=>{if(!/\bRAW(\|\|\[\])?\.(forEach|map|filter)\b/.test(l))return;total++;
+      const ctx=B.slice(Math.max(0,i-1),i+4).join('\n');
+      const named=/const dirs=|const dataYears=/.test(l);
+      if(!named&&ctx.indexOf('dirsToAgg')<0)bad.push('+'+i+': '+l.trim().slice(0,60));});
+    ok('проходов по RAW найдено',total>=5,total);
+    ok('второй точки исключения нет: все проходы по RAW гейтятся dirsToAgg',!bad.length,bad.join(' | '));}
+   ok('showHidden - фильтр: он в чистом состоянии, в пресете и в счёте',
+      ('showHidden' in _pfBlankState())&&PF_PRESET_KEYS.indexOf('showHidden')>=0&&PF_COUNT_SKIP.indexOf('showHidden')<0&&!!PF_FILTER_LABELS.showHidden);
+   ok('выписка ЦФО и редактор планов скрытых направлений не знают',
+      String(_cfoStmtData).indexOf('_pfHiddenDirs')<0&&String(_planRenderMatrix).indexOf('_pfHiddenDirs')<0);}
+
   // 29. МЁРТВЫЕ СТРОКИ СЕКЦИИ ВЫВОДА не печатаются и не показываются (07.09.2026)
   {const cg=String(cfoStatementGen),cs=String(cfoScreenRender),src=String(renderPlanFact);
    ok('правило мёртвой строки - одно на файл (_pfRowDead)',
