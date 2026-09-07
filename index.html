@@ -86,11 +86,19 @@
   .preset-chip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
   .filter-sep{width:1px;height:20px;background:var(--border);margin:0 4px;flex-shrink:0;}
   .date-range{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);}
-  .date-range input[type="date"]{width:110px;} /* габариты - .bar-ctl (эталон ниже по файлу), тут только ширина поля */
+  /* ⚠ Габариты полей даты в барах С ПРЕСЕТАМИ идут из общего `.bar-ctl`; правило ниже оставлено
+     ДЛЯ ОСТАЛЬНЫХ вкладок (Дубли, Незаполненные, Аномалии, Маркетинг и т.д.) - у них своих правок
+     не было, и снятие геометрии оставило бы их поля голыми. `:not(.bar-ctl)` разводит эти два
+     случая явно, а ширина 110px общая для всех. */
+  .date-range input[type="date"]{width:110px;}
+  .date-range input[type="date"]:not(.bar-ctl){background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 7px;color:var(--text);font-family:var(--sans);font-size:11px;outline:none;cursor:pointer;}
+  .date-range input[type="date"]:not(.bar-ctl):focus{border-color:var(--accent);}
   .date-range-sep{color:var(--text3);font-size:12px;padding:0 2px;}
   .filter-extra{display:flex;gap:6px;margin-left:4px;}
   .filter-extra select{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:11px;outline:none;cursor:pointer;}
-  /* .filter-extra-sel - только смысловой крючок; габариты идут из .bar-ctl (эталон ниже по файлу) */
+  /* ⚠ То же разделение, что у полей даты: на вкладках с приведённым баром селект несёт `.bar-ctl`
+     и берёт габариты оттуда, на прочих остаётся прежнее правило. */
+  .filter-extra-sel:not(.bar-ctl){background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--text);font-family:var(--sans);font-size:11px;outline:none;cursor:pointer;}
 
   /* ── Пресеты: инлайн-контрол в строке фильтров + панель в настройках ── */
   .preset-cfg-btn{font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px;}
@@ -10671,6 +10679,19 @@ function pfRunTests(){
       &&aw.indexOf('pfArchiveOpen()')<0&&aw.indexOf('pfBackupRestoreOpen()')<0
       &&aw.indexOf('pfHiddenDirsOpen()')<0);}
    ok('счётчик пункта - сумма трёх сторожей',/const _chkN=\(_npA\.N\|\|0\)\+\(_abA\.N\|\|0\)\+\(_ibA\.N\|\|0\);/.test(src));
+   // ── БАР БДР В ОДНУ СТРОКУ (07.09.2026) ────────────────────────────────────
+   // ⚠ Отдельной полосы действий больше нет: статус заморозки, бейдж архива и «⚙ Действия»
+   //   стоят последними элементами САМОГО фильтр-бара. Возвращать им `margin-left:auto` нельзя -
+   //   при flex-wrap «авто» считается от последней строки, и блок прыгал бы справа налево
+   //   (ровно поэтому полосу когда-то и завели).
+   {const fb=(src.match(/const filterBar=`[\s\S]*?`;/)||[''])[0];
+    ok('второй полосы у БДР нет',src.indexOf('actions'+'Bar')<0);
+    ok('статус, архив и «Действия» - в самом фильтр-баре',/\$\{pfResetBtn\}\$\{baselineStatus\}\$\{backupBadge\}\$\{actionsWrap\}/.test(fb));
+    ok('текстовых подписей в баре БДР не осталось',fb.indexOf('text-transform:uppercase')<0,fb.length);
+    ok('категория переехала внутрь контролов',/_barBtnLabel\('Направления'/.test(src)&&/_barBtnLabel\('Статьи'/.test(src)
+       &&/_barBtnLabel\('Подстатьи'/.test(src)&&/_barBtnLabel\('ЦФО'/.test(src)&&/_barBtnLabel\('Контрагенты'/.test(src)
+       &&/>Год: \$\{y\}</.test(src)&&/>Период: /.test(src));
+    ok('габариты контролов - из общего эталона, а не инлайном',/const pfBtnStyle='min-width:96px;text-align:left'/.test(src)&&(fb.match(/class="bar-ctl"/g)||[]).length>=3);}
    ok('красная точка зажигается по тем же трём',/\(_npHasA\|\|_abHasA\|\|_ibHasA\)\?'<span title="Есть проблемы данных/.test(src));
    // ⚠ Общий модал не повторяет списки: он ОТКРЫВАЕТ прежние - иначе в проекте появилось бы три
    //   вторых экземпляра рендера, которые разойдутся с первыми.
@@ -11520,30 +11541,35 @@ function renderPlanFact(f){
   const netBaseVFull=hasBaseline?((incTotalBaseFull!=null||sumBaseFull!=null)?((incTotalBaseFull||0)-(sumBaseFull||0)):null):null;
 
   // фильтр-бар
-  const sel=(id,opts)=>`<select onchange="_tabFilters.planfact.${id}=this.value;renderPlanFact(getFilters())" style="font-size:11px;line-height:15px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${opts}</select>`;
-  const yearOpts=years.map(y=>`<option value="${y}"${y===year?' selected':''}>${y}</option>`).join('');
-  const perOpts=`<option value="monthly"${isMonthly?' selected':''}>Все месяцы (план/факт)</option><option value="year"${period==='year'?' selected':''}>Весь год (итог)</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>${m}</option>`).join('');
+  const sel=(id,opts)=>`<select class="bar-ctl" onchange="_tabFilters.planfact.${id}=this.value;renderPlanFact(getFilters())">${opts}</select>`;
+  // ⚠ «Год: 2026» и «Период: …» - категория внутри вариантов: селект показывает ГОЛОЕ значение,
+  //   и без неё «2026» и «Сентябрь» рядом друг с другом не сказали бы, что есть что.
+  const yearOpts=years.map(y=>`<option value="${y}"${y===year?' selected':''}>Год: ${y}</option>`).join('');
+  const perOpts=`<option value="monthly"${isMonthly?' selected':''}>Период: все месяцы</option><option value="year"${period==='year'?' selected':''}>Период: весь год</option>`+MON.map((m,i)=>`<option value="${i+1}"${(+period===i+1)?' selected':''}>Период: ${m}</option>`).join('');
   // year/period select coerces to string; нормализуем в onchange через число для period - оставим строкой, обрабатываем +period
   // мультивыбор Статья/Подстатья (поиск + все/снять); применяется по клику на кнопку (закрытие дропдауна)
   const pfOptList=(items,sel2,change)=>items.map(v=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_pesc(v)}" ${sel2.has(v)?'checked':''} onchange="${change}"> <span>${_pesc(v)}</span></label>`).join('');
   const pfSearch=ddId=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="expFilterList('${ddId}',this.value)" placeholder="Поиск..." style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>`;
   const pfAllBtns=call=>`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button onclick="${call.replace('%s','true')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Все</button><button onclick="${call.replace('%s','false')}" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer">Снять</button></div>`;
   const pfDDstyle='display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:320px;overflow-y:auto;min-width:240px;margin-top:2px';
-  // Габариты по эталону (см. комментарий над .reg-searchbar): 11px, паддинг 2px/10px, радиус 5.
-  // ⚠ line-height ЯВНЫЙ - у Реестра уже ловилось: с паддингом 2px и без него кнопка выходит 19px при требуемых 20-24.
-  // ⚠ min-width:110px оставлен: он держит ширину при смене подписи («Все статьи» → «3 выбрано»), иначе бар дёргается.
-  const pfBtnStyle='font-size:11px;line-height:15px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;min-width:110px;text-align:left';
+  // ⚠ Габариты - ОБЩИЙ `.bar-ctl` (эталон в <style>), инлайном тут остаётся только то, чем кнопка
+  //   БДР отличается: min-width держит ширину при смене подписи («Статьи: все» → «Статьи: 3»),
+  //   иначе бар дёргается на каждый выбор. 110 → 96 при сборке бара в одну строку: запас ряда
+  //   нужен статусу заморозки и бейджу архива, которые в баре появляются не всегда.
+  const pfBtnStyle='min-width:96px;text-align:left';
   const pfArtDD=pfSearch('pf-art-dd')+pfAllBtns("pfMultiAll('pf-art-dd','pf-art-btn','articles','Все статьи',%s)")+pfOptList(pfArts,selArt,"pfMultiChange('pf-art-dd','pf-art-btn','articles','Все статьи')");
   const pfSubDD=pfSearch('pf-sub-dd')+pfAllBtns("pfMultiAll('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи',%s)")+pfOptList(pfSubs,selSub,"pfMultiChange('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи')");
   const pfOwnDD=pfSearch('pf-own-dd')+pfAllBtns("pfMultiAll('pf-own-dd','pf-own-btn','owners','Все ЦФО',%s)")+pfOptList([NOOWN,...pfOwners],selOwn,"pfMultiChange('pf-own-dd','pf-own-btn','owners','Все ЦФО')");
-  const pfArtBtn=(selArt.size?selArt.size+' выбрано':'Все статьи')+' ▾',pfSubBtn=(selSub.size?selSub.size+' выбрано':'Все подстатьи')+' ▾',pfOwnBtn=(selOwn.size?selOwn.size+' выбрано':'Все ЦФО')+' ▾';
+  // ⚠ Категория - ВНУТРИ подписи (текстовые подписи рядом с контролами сняты ради одной строки бара);
+  //   источник один - `_barBtnLabel`, он же зовётся при обновлении по клику (pfMultiChange/pfMultiAll).
+  const pfArtBtn=_barBtnLabel('Статьи',selArt.size),pfSubBtn=_barBtnLabel('Подстатьи',selSub.size),pfOwnBtn=_barBtnLabel('ЦФО',selOwn.size);
   // «Контрагент»: своя машинерия (список пересобирается из массива, в DOM не больше PF_SIDE_MAX) - см. pfSideRender.
   // ⚠ Кнопки «Все» здесь НЕТ: выбрать все три тысячи сторон = снять фильтр, для этого есть «Снять всё».
   const pfSideDD=`<div style="padding:6px 8px;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center">`
     +`<input id="pf-side-q" type="text" oninput="pfSideRender(this.value)" placeholder="Поиск контрагента..." style="flex:1;min-width:0;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">`
     +`<button onclick="pfSideClear()" style="font-size:10px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;white-space:nowrap">Снять всё</button></div>`
     +`<div id="pf-side-list"></div>`;
-  const pfSideBtn=(selSide.size?selSide.size+' выбрано':'Все контрагенты')+' ▾';
+  const pfSideBtn=_barBtnLabel('Контрагенты',selSide.size);
   // мультивыбор направлений (без поиска - направлений мало); пусто = все
   // ── Список направлений: скрытые ПОМЕЧЕНЫ, а не спрятаны ─────────────────────
   // ⚠ Прятать их из списка нельзя: тогда выбрать «Иную деятельность» стало бы невозможно, а
@@ -11556,16 +11582,26 @@ function renderPlanFact(f){
   const pfDirOpts=dirs.map(v=>'<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="'+_pesc(v)+'" '+(selDirs.includes(v)?'checked':'')+' onchange="pfMultiChange(\'pf-dir-dd\',\'pf-dir-btn\',\'dirs\',\'Все направления\')"> <span>'+_pesc(v)+(_hidSet.has(v)?'<span style="color:var(--text3);font-size:10px"> · скрыто из свода</span>':'')+'</span></label>').join('');
   const pfHidToggle=hiddenDirs.length?('<div style="border-top:1px solid var(--divider);margin-top:3px;padding-top:3px"><label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;color:var(--text2)" title="Скрытые направления не входят в свод «Все направления». Галочка возвращает их в свод - на этой вкладке и только для вас."><input type="checkbox" '+(showHidden?'checked':'')+' onchange="pfShowHiddenToggle(this.checked)"> <span>показать скрытые в своде</span></label></div>'):'';
   const pfDirDD=pfAllBtns("pfMultiAll('pf-dir-dd','pf-dir-btn','dirs','Все направления',%s)")+pfDirOpts+pfHidToggle;
-  const pfDirBtn=(selDirs.length?selDirs.length+' выбрано':'Все направления')+' ▾';
+  const pfDirBtn=_barBtnLabel('Направления',selDirs.length);
   // статус заморозки по месяцам + кнопка «Утвердить месяц» (админу)
   const frozenLbl=hasBaseline?_frozenMonthsLabel(year):'';
   const _planableFr=_frozen.filter(m=>!(_blMap[m]&&_blMap[m].retro)); // замороженные, которые реально планировались (без ретроспективы) - для метрики исполнения
   const planableLbl=hasBaseline?_monthsRangeLabel(_planableFr):'';
   const _retroN=_frozen.length-_planableFr.length;
-  const baselineStatus=`<span style="font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются по замороженным месяцам ('+frozenLbl+')'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'+(_retroN?(' · из них ретро: '+_retroN):'')):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
+  // ⚠ СТАТУС СЖАТ ДО ЗНАЧКА (07.09.2026): полоса действий слита с фильтр-баром ради ОДНОЙ строки,
+  //   а строкой «🔒 Утверждено месяцев: 7 из 12 (янв-июл)» на 203px бар в неё не влезал. Полный текст
+  //   никуда не делся - он в подсказке, вместе с ретроспективными; на значке остаётся ЧИСЛО «7/12»,
+  //   потому что счётчик - это то, ради чего на статус смотрят, а слова читают уже наведением.
+  //   ⚠ Число РЕТРОСПЕКТИВНЫХ месяцев на значок не выносится - только в подсказку: оно нужно при
+  //   разборе «почему YTD не считает этот месяц», а не при взгляде на бар, и стоило бы 50px ряда.
+  //   ⚠ Красный вид «не утверждено» сохранён: это сигнал, а не украшение.
+  const _blTip=hasBaseline?('Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+'). Отклонения считаются по ним'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются');
+  const baselineStatus=`<span class="bar-ctl" style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;font-weight:600;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome);border-color:var(--outcome)'}" title="${_pesc(_blTip)}">${hasBaseline?('🔒 '+_frozen.length+'/12'):'⚠ 0/12'}</span>`;
   // бейдж устаревания архива настроек (админу): архив не скачивали >30 дней или никогда
   const _bkStale=_backupStaleDays();
-  const backupBadge=(isAdmin&&(_bkStale===null||_bkStale>30))?`<span onclick="pfArchiveOpen()" title="Архив настроек давно не скачивался - config/* (планы, baseline, ЦФО и т.д.) не защищён. Кликните, чтобы скачать." style="cursor:pointer;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;color:#fff;background:var(--outcome)">💾 Архив настроек: ${_bkStale===null?'не скачивался':(_bkStale+' дн. назад')}</span>`:'';
+  // ⚠ Бейдж архива тоже сжат до значка: он редкий (загорается при >30 днях), а место в баре общее.
+  //   Текст с числом дней - в подсказке; клик по-прежнему открывает окно архива.
+  const backupBadge=(isAdmin&&(_bkStale===null||_bkStale>30))?`<span onclick="pfArchiveOpen()" class="bar-ctl" title="Архив настроек ${_bkStale===null?'не скачивался ни разу':('не скачивался '+_bkStale+' дн.')} - config/* (планы, baseline, ЦФО и т.д.) не защищён. Кликните, чтобы скачать." style="display:inline-flex;align-items:center;padding:2px 6px;font-weight:600;color:#fff;background:var(--outcome);border-color:var(--outcome)">💾</span>`:'';
   // действия БДР свёрнуты в одно меню «⚙ Действия» (админу); не-админ - одна кнопка просмотра планов
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
   const _abA=window._pfAnBad||{N:0},_abHasA=_abA.N>0; // сторож сверки БДР==ОПиУ (аналитика вне категорий)
@@ -11585,7 +11621,7 @@ function renderPlanFact(f){
   //   и лечится это снятием ограничения, а не формулировкой. Разбор - в CLAUDE.md.
   const lk=isAdmin?null:'rules';   // класс 1: запись в config/*, у не-админа неактивен
   const actionsWrap=`<div style="position:relative;display:inline-block">
-      <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" style="position:relative;font-size:11px;line-height:15px;font-weight:600;padding:2px 12px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;font-family:var(--sans)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
+      <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" class="bar-ctl" style="position:relative;font-weight:600;border-color:var(--accent);background:transparent;color:var(--accent)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
       <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('pfDataCheckOpen()','⚠ Проверка данных'+(_chkN?' <b>('+_chkN+')</b>':''),_chkN?'var(--outcome)':'var(--text2)',null)}${_actItem('pfCfoOpen()','👥 ЦФО','var(--accent)',null)}${_actItem('showPlansPanel()',(isAdmin?'✏ Планы':'👁 Планы'),'var(--accent)',null)}</div>
     </div>`;
   // ── «Сбросить (N)» - последним элементом фильтр-бара ─────────────────────────
@@ -11603,34 +11639,36 @@ function renderPlanFact(f){
   //   пояснение к контролу и перечисление заданных фильтров.
   const _pfActive=_pfActiveFilters(f),_pfActN=_pfActive.length;
   const _pfActLbl=_pfActive.map(k=>PF_FILTER_LABELS[k]||k).join(', ');
-  const pfResetBtn=`<button ${_pfActN?`onclick="pfResetFilters()"`:'disabled'} title="${_pfActN?_pesc('Сбросить все фильтры вкладки, включая год и период. Сейчас задано: '+_pfActLbl):'Фильтры не заданы - сбрасывать нечего (год и период выбраны всегда и в счёт не идут)'}" style="font-size:11px;line-height:15px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);font-family:var(--sans);${_pfActN?'color:var(--text2);cursor:pointer':'color:var(--text3);opacity:.55;cursor:not-allowed'}">Сбросить${_pfActN?' ('+_pfActN+')':''}</button>`;
-  const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:10px;padding:3px var(--secpx);min-height:31px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Направление:</label>
-    <div style="position:relative;display:inline-block"><button id="pf-dir-btn" onclick="pfMultiToggle('pf-dir-dd')" title="Направления (мультивыбор; пусто = все)" style="${pfBtnStyle}">${pfDirBtn}</button><div id="pf-dir-dd" style="${pfDDstyle}">${pfDirDD}</div></div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Год:</label><select onchange="_tabFilters.planfact.year=+this.value;renderPlanFact(getFilters())" style="font-size:11px;line-height:15px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)">${yearOpts}</select>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Период:</label>${sel('period',perOpts)}
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Статья:</label>
-    <div style="position:relative;display:inline-block"><button id="pf-art-btn" onclick="pfMultiToggle('pf-art-dd')" style="${pfBtnStyle}">${pfArtBtn}</button><div id="pf-art-dd" style="${pfDDstyle}">${pfArtDD}</div></div>
-    <label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Подстатья:</label>
-    <div style="position:relative;display:inline-block"><button id="pf-sub-btn" onclick="pfMultiToggle('pf-sub-dd')" style="${pfBtnStyle}">${pfSubBtn}</button><div id="pf-sub-dd" style="${pfDDstyle}">${pfSubDD}</div></div>
+  const pfResetBtn=`<button ${_pfActN?`onclick="pfResetFilters()"`:'disabled'} title="${_pfActN?_pesc('Сбросить все фильтры вкладки, включая год и период. Сейчас задано: '+_pfActLbl):'Фильтры не заданы - сбрасывать нечего (год и период выбраны всегда и в счёт не идут)'}" class="bar-ctl" style="background:var(--surface2);${_pfActN?'color:var(--text2);cursor:pointer':'color:var(--text3);opacity:.55;cursor:not-allowed'}">Сбросить${_pfActN?' ('+_pfActN+')':''}</button>`;
+  // ⚠ gap 6px - это КОНТРОЛЬНЫЙ зазор Банка, а не «уже, чем у Банка»: у Банка прямые дети бара это
+  //   ГРУППЫ (даты, доп-фильтры, сводка) и между ними 10px, а контролы ВНУТРИ групп стоят через
+  //   6px (`#tabBank>.bank-filters-1row .tab-filters,.bank-extra-filters{gap:6px}`). У БДР прямые
+  //   дети - сами контролы, поэтому им положен контрольный зазор; с 10px ряд шире на 40px и
+  //   переносится, как только загорается бейдж архива.
+  const filterBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;gap:6px;padding:3px var(--secpx);min-height:27px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
+    <div style="position:relative;display:inline-block"><button id="pf-dir-btn" onclick="pfMultiToggle('pf-dir-dd')" title="Направления (мультивыбор; пусто = все)" class="bar-ctl" style="${pfBtnStyle}">${pfDirBtn}</button><div id="pf-dir-dd" style="${pfDDstyle}">${pfDirDD}</div></div>
+    <select class="bar-ctl" onchange="_tabFilters.planfact.year=+this.value;renderPlanFact(getFilters())">${yearOpts}</select>
+    ${sel('period',perOpts)}
+    <div style="position:relative;display:inline-block"><button id="pf-art-btn" onclick="pfMultiToggle('pf-art-dd')" class="bar-ctl" style="${pfBtnStyle}">${pfArtBtn}</button><div id="pf-art-dd" style="${pfDDstyle}">${pfArtDD}</div></div>
+    <div style="position:relative;display:inline-block"><button id="pf-sub-btn" onclick="pfMultiToggle('pf-sub-dd')" class="bar-ctl" style="${pfBtnStyle}">${pfSubBtn}</button><div id="pf-sub-dd" style="${pfDDstyle}">${pfSubDD}</div></div>
     ${''/* Переключатель «По статьям / По направлениям» убран 07.09.2026: разрез по направлениям заменён ЧЕТВЁРТЫМ УРОВНЕМ (строки направлений под подстатьёй и стороной). Тот показывает то же самое, но БЕЗ перестройки таблицы - человек остаётся в своём отчёте и раскрывает нужную строку. */}
-    ${pfOwners.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">ЦФО:</label>
-    <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
-    ${pfSides.length?`<label style="color:var(--text3);font-size:10px;font-weight:600;text-transform:uppercase">Контрагент:</label>
-    <div style="position:relative;display:inline-block"><button id="pf-side-btn" onclick="pfMultiToggle('pf-side-dd');pfSideRender('')" title="Сторона операции (ID_SecondSide): сотрудник, объект аренды, подрядчик" style="${pfBtnStyle}">${pfSideBtn}</button><div id="pf-side-dd" style="${pfDDstyle};min-width:300px">${pfSideDD}</div></div>`:''}
-    ${pfResetBtn}
+    ${pfOwners.length?`
+    <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" class="bar-ctl" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
+    ${pfSides.length?`
+    <div style="position:relative;display:inline-block"><button id="pf-side-btn" onclick="pfMultiToggle('pf-side-dd');pfSideRender('')" title="Сторона операции (ID_SecondSide): сотрудник, объект аренды, подрядчик" class="bar-ctl" style="${pfBtnStyle}">${pfSideBtn}</button><div id="pf-side-dd" style="${pfDDstyle};min-width:300px">${pfSideDD}</div></div>`:''}
+    ${pfResetBtn}${baselineStatus}${backupBadge}${actionsWrap}
   </div>`;
-  // ── Статус заморозки + архив + «⚙ Действия» - СВОЯ полоса под фильтрами ───────────────
-  // ⚠ Раньше троица стояла последними элементами переносящегося фильтр-бара, а у статуса был
-  //   margin-left:auto. При flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки, поэтому блок оказывался
-  //   то справа, то слева - в зависимости от того, сколько фильтров уместилось выше. Собственная
-  //   полоса с justify-content:flex-end даёт ему постоянное место при любой ширине и любом наборе.
-  // ⚠ Габариты - тот же эталон, что у фильтр-бара (см. комментарий над .reg-searchbar).
-  // ⚠ Обёртка меню (position:relative) переехала ВМЕСТЕ с кнопкой - pf-actions-dd якорится на ней,
-  //   и разлучать их нельзя: меню оторвётся от кнопки.
-  const actionsBar=`<div class="dds-extra-filters" style="display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:3px var(--secpx);min-height:31px;box-sizing:border-box;background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">${baselineStatus}${backupBadge}${actionsWrap}</div>`;
+  // ── Статус заморозки + архив + «⚙ Действия» - В САМОМ ФИЛЬТР-БАРЕ (07.09.2026) ───────────
+  // ⚠ До этого троица жила ОТДЕЛЬНОЙ полосой под фильтрами, и заведена та полоса была не от
+  //   красоты: раньше троица стояла хвостом переносящегося бара, у статуса был `margin-left:auto`,
+  //   и при flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки - блок прыгал справа налево в
+  //   зависимости от того, сколько фильтров уместилось выше.
+  // ⚠ Возврат в бар безопасен ровно потому, что причина устранена, а не забыта: `margin-left:auto`
+  //   тут нет ни у кого, троица просто идёт последними элементами ряда. Заводя ей «авто» снова,
+  //   вернёте и прыжки.
+  // ⚠ Обёртка меню (position:relative) едет ВМЕСТЕ с кнопкой - `pf-actions-dd` якорится на ней.
 
-  if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+actionsBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
+  if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
 
   // ── YTD и прогноз года: истёкшие ПОЛНЫЕ месяцы (текущий не берём - факт неполный); годовые планы без помесячной разбивки распределяются равномерно /12 ──
   const nowD=new Date();
@@ -12482,7 +12520,7 @@ function renderPlanFact(f){
     <b>Фильтр по контрагенту:</b> план по контрагенту ведётся только у ФОТ, аренды и консалтинга - по остальным подстатьям показан факт, план - прочерк (не ноль: отклонение, процент исполнения и остаток по ним не считаются).
     ${_unnamedList.length?`<div style="margin-top:4px">⚠ План заведён на подстатью без фамилий, поэтому по стороне его нет: <b>${_unnamedList.map(esc).join('</b>, <b>')}</b>. Чтобы план делился по людям, его надо расписать пофамильно в редакторе планов.</div>`:''}
   </div>`:'';
-  el.innerHTML=filterBar+actionsBar+banner+baselineBanner+sideNote+kpiHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
+  el.innerHTML=filterBar+banner+baselineBanner+sideNote+kpiHtml+(isMonthly?monthlyHtml:tableHtml)+chartHtml;
 
   // ── ВОЗВРАТ ПРОКРУТКИ ПОСЛЕ РАЗВОРОТА СТРОКИ ──────────────────────────────────
   // ⚠ ЕДИНСТВЕННОЕ место чтения _pfKeepScroll, и оно же его обнуляет - СРАЗУ, до отложенного
