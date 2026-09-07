@@ -2365,7 +2365,7 @@ function renderActiveTab(){const f=getFilters();
     const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1));
     if(cont)cont.innerHTML=emptyState('Ошибка построения отчёта','«'+String(e&&e.message||e).replace(/</g,'&lt;')+'» - обновите данные (↻) или сообщите администратору');
   }
-  try{_tabFilterSummary();_presetTitleMark();}catch(e){}}
+  try{_tabFilterSummary();_presetBarInject();_presetBarRefresh();_presetTitleMark();}catch(e){}}
 
 // ───────────────────────── Пресеты отчётов (config/presets) ─────────────────────────
 // Пресет = именованный частичный снимок фильтров вкладки. Хранится в Firebase config/presets + localStorage-кэш.
@@ -2581,7 +2581,6 @@ function _presetFotCounterparties(){return _presetFotList(COL.SECOND_SIDE);}
 function _presetIsAdmin(){const b=document.getElementById('logoSetupBtn');return !!(b&&b.style.display&&b.style.display!=='none');}
 // Выбор пресета встраивается ИНЛАЙН в строку фильтров вкладки (не отдельной строкой).
 // Цель: .tab-filters (Банк) или .dds-extra-filters (ОПиУ/ДДС/ОСВ/ФОТ). Идемпотентно; MutationObserver переинжектит после любой перерисовки.
-let _presetObsOn=false;
 // ── Сводка выбранных фильтров под полосой (ДДС/ОПиУ/ОСВ/ФОТ) ─────────────────
 // ⚠ Полоса ПРЕСЕТОВ убрана со вкладок 07.09.2026 (пресеты живут только в шестерёнке), а сводка
 //   фильтров - нет: она про отбор, а не про пресеты, и рисовалась в той же функции лишь потому,
@@ -2599,6 +2598,74 @@ function _tabFilterSummary(){
   // ⚠ Пишем ТОЛЬКО при реальном изменении: MutationObserver мобильных карточек слушает #mainContent,
   //   и безусловная запись зациклила бы его (правило проекта про ловушку observer).
   if(sum.getAttribute('data-sig')!==nh){ sum.innerHTML=nh; sum.setAttribute('data-sig',nh); }
+}
+// ── СЕЛЕКТ ПРЕСЕТОВ - ПОСЛЕДНИМ ЭЛЕМЕНТОМ ФИЛЬТР-БАРА ВКЛАДКИ ────────────────
+// ⚠ ПОВОД, КОТОРЫЙ НЕЛЬЗЯ ПОТЕРЯТЬ: 07.09.2026 вход в пресеты оставили только в шестерёнке, и
+//   вышло, что механизм есть, а видимого способа выбрать пресет нет. Контрол обязан быть НА
+//   ВКЛАДКЕ. При этом ОТДЕЛЬНОЙ ПОЛОСЫ не заводим - её убирали за вертикальное место: селект
+//   встраивается ВНУТРЬ существующего бара последним элементом, рядом со «Сбросить».
+// ⚠ Вставка одна на семь вкладок и делается ПОСЛЕ рендера, а не правкой семи рендереров: бары
+//   собираются в разных функциях (у Банка свой, у ОПиУ/ДДС/ОСВ/ФОТ общий вид, у Реестра строка
+//   поиска, у БДР свой), и правка каждого нарушила бы изоляцию вкладок ради одного контрола.
+// ⚠ Наблюдатель НУЖЕН: БДР перерисовывает себя прямыми вызовами renderPlanFact мимо
+//   renderActiveTab (развороты строк, смена фильтра), и без него селект исчезал бы после первого
+//   же клика. Зациклиться он не может: вставка идёт ТОЛЬКО когда контрола в баре ещё нет.
+// ⚠ margin-left:auto НЕ ставим: при flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки, и контрол
+//   прыгал бы справа налево в зависимости от того, сколько фильтров уместилось выше (эти грабли
+//   уже описаны в коде у полосы действий БДР).
+let _presetObsOn=false;
+function _presetBarSetup(){
+  if(_presetObsOn)return; const mc=document.getElementById('mainContent'); if(!mc)return;
+  _presetObsOn=true;
+  try{ new MutationObserver(()=>{try{_presetBarInject();}catch(e){}}).observe(mc,{childList:true,subtree:true}); }catch(e){}
+}
+function _presetBarTarget(){
+  const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1)); if(!cont)return null;
+  // ⚠ У Реестра цель - строка ПОИСКА: панель фильтров свёрнута по умолчанию, и селект в ней был бы не виден.
+  if(activeTab==='registry')return cont.querySelector('.reg-searchbar');
+  if(activeTab==='bank')return cont.querySelector('.bank-filters-1row');
+  return cont.querySelector('.dds-extra-filters, .tab-filters');
+}
+function _presetBarInject(){
+  _presetBarSetup();
+  if(!PRESET_TABS.some(([k])=>k===activeTab))return;
+  const bar=_presetBarTarget(); if(!bar)return;
+  if(bar.querySelector(':scope > .preset-pick'))return; // уже стоит - выходим, иначе наблюдатель закольцуется
+  const tab=activeTab,list=_presets[tab]||[],av=_presetActive(tab);
+  const wrap=document.createElement('span');
+  wrap.className='preset-pick';
+  wrap.style.cssText='display:inline-flex;align-items:center;gap:6px;margin-left:8px';
+  // ⚠ Габариты - по эталону .reg-searchbar (11px, padding 2px/8px, радиус 5, line-height ЯВНЫЙ):
+  //   без явного line-height контрол выходит 19px и ломает высоту бара - это уже ловили.
+  const st='font-size:11px;line-height:15px;padding:2px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--sans);cursor:pointer';
+  wrap.innerHTML='<select title="Пресет отбора" onchange="_presetPick(this.value)" style="'+st+';max-width:190px">'
+    +'<option value="">Пресет: - не выбран -</option>'
+    +list.map(p=>'<option value="'+_pesc(p.id)+'"'+(av===p.id?' selected':'')+'>'+_pesc(p.name)+'</option>').join('')
+    // ⚠ Последняя строка - ДЕЙСТВИЕ, а не пресет: отдельной кнопки 💾 в баре нет (место), а путь
+    //   «настроил на вкладке → сохранил» обязан быть виден там же, где выбирают пресет.
+    +'<option value="__save__">💾 Сохранить текущий отбор…</option></select>'
+    +'<button title="Пресеты отчётов: состав, правка, удаление" onclick="showPresetsPanel(\''+tab+'\')" style="'+st+';background:var(--surface2);color:var(--text2)">⚙</button>';
+  bar.appendChild(wrap);
+}
+// Выбор в селекте: пресет применяется, служебная строка открывает форму с текущим отбором
+window._presetPick=function(v){
+  const tab=activeTab;
+  if(v==='__save__'){
+    showPresetsPanel(tab);
+    // ⚠ Форма открывается ПРЕДЗАПОЛНЕННОЙ текущим отбором - иначе «сохранить текущий отбор»
+    //   означало бы «набери его заново руками», то есть не то, что написано в пункте.
+    try{_presetFillFromTab(tab);}catch(e){}
+    try{const t=document.getElementById('presetFormTitle');if(t)t.textContent='Сохранить текущий отбор как пресет';}catch(e){}
+    _presetBarRefresh(); return;
+  }
+  presetApply(tab,v||'');
+};
+// Селект показывает активный пресет и гаснет вместе с суффиксом заголовка - ОДИН источник (_presetActive)
+function _presetBarRefresh(){
+  const bar=_presetBarTarget(); if(!bar)return;
+  const sel=bar.querySelector(':scope > .preset-pick select'); if(!sel)return;
+  const av=(typeof _presetActive==='function')?_presetActive(activeTab):'';
+  if(sel.value!==av)sel.value=av;
 }
 // ── Имя активного пресета - В ЗАГОЛОВКЕ ОТЧЁТА вкладки ───────────────────────
 // ⚠ Полосы больше нет, а знать, каким пресетом смотришь отчёт, надо: суффикс идёт к первому
@@ -10392,7 +10459,9 @@ function pfRunTests(){
     const all=_pfSrcTop||'';
     const cnt=(re)=>(all.match(re)||[]).length;
     ok('панель планов зовут только меню БДР (и она сама)',cnt(/showPlansPanel\(\)/g)<=2,cnt(/showPlansPanel\(\)/g));
-    ok('окно пресетов зовут только шестерёнка и само окно',cnt(/showPresetsPanel\(/g)<=3,cnt(/showPresetsPanel\(/g));
+    // ⚠ Вход в окно теперь ДВА и оба нужны: шестерёнка (управление) и ⚙ рядом с селектом на
+    //   вкладке (07.09.2026 - без вкладочного входа механизм есть, а человеку его не видно).
+    ok('окно пресетов зовут шестерёнка, селект вкладки и само окно',cnt(/showPresetsPanel\(/g)<=5,cnt(/showPresetsPanel\(/g));
     // ⚠ Иголки склеены из половин: набор тестов лежит в том же скрипте, и литерал целиком
     //   находил бы САМ СЕБЯ - та же ловушка, что с cnt по renderPlanFact.
     ok('полосы пресетов на вкладках нет',all.indexOf('_inject'+'PresetBar')<0&&all.indexOf('preset-'+'inline')<0);
