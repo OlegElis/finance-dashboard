@@ -1704,12 +1704,13 @@ window.showSettingsMenu=function(){
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showAccessPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16.5 6.4a3 3 0 0 1 0 5.2M20.5 19c0-2.1-1.2-3.7-3-4.4"/></svg>Управление доступом</button>
     
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();showPresetsPanel()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/></svg>Пресеты отчётов</button>
-    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();downloadBackup(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="${siIco}"><path d="M12 4v10M8 11l4 4 4-4"/><path d="M5 19h14"/></svg>Бэкап (данные + настройки)</button>
+    
     <div style="height:1px;background:var(--border);margin:5px 8px"></div>
     <div style="padding:5px 10px 4px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);font-weight:600">Настройки БДР</div>
     <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();pfHiddenDirsOpen()"><span style="${siIco};display:inline-flex;align-items:center;justify-content:center">🙈</span> Скрытые направления</button>
-    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();pfBackupDownloadOpen()"><span style="${siIco};display:inline-flex;align-items:center;justify-content:center">💾</span> Архив настроек БДР</button>
-    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();pfBackupRestoreOpen()"><span style="${siIco};display:inline-flex;align-items:center;justify-content:center">📥</span> Восстановить из архива</button>`;
+    <button class="settings-item" onclick="document.getElementById('settingsMenu').remove();pfArchiveOpen()"><span style="${siIco};display:inline-flex;align-items:center;justify-content:center">💾</span> Архив</button>
+    
+    `;
   document.body.appendChild(menu);
   const rc=btn.getBoundingClientRect();
   const mh=menu.offsetHeight;
@@ -9226,25 +9227,41 @@ window.pfBackupDownload=async function(reason){
     return true;
   }catch(e){alert('Не удалось сформировать архив настроек: '+((e&&e.message)||e));return false;}
 };
-// Модал скачивания (с предупреждением о персональных данных)
-window.pfBackupDownloadOpen=function(){
+// ── 💾 АРХИВ: ОДНО ОКНО НА ТРИ ДЕЙСТВИЯ (07.09.2026) ─────────────────────────
+// Было три пункта в разных меню, и различить их по названиям было нельзя: «Бэкап (данные +
+// настройки)» и «Архив настроек БДР» звучат как одно и то же. Разница РЕАЛЬНАЯ и теперь названа
+// в самом окне:
+//   • «Скачать настройки» - config/* без реквизитов подключения и служебных веток (BACKUP_EXCLUDE),
+//     с форматом, версией, числом планов и замороженных месяцев в имени файла. ЭТО единственный
+//     архив, из которого умеет восстанавливать дашборд, и только он ставит отметку backupLog
+//     (по ней считается бейдж «архив давно не скачивали» в шапке БДР).
+//   • «Скачать настройки + данные» - config ЦЕЛИКОМ (включая реквизиты) плюс сами строки RAW и
+//     сделки БФЛ. Файл на десятки мегабайт, отметки не ставит, восстановлению не подлежит -
+//     это снимок «на случай, если пропадёт таблица», а не рабочий откат.
+//   • «Восстановить из архива» - принимает ТОЛЬКО файл первого вида.
+// ⚠ Оба скачивания зовут ПРЕЖНИЕ функции (pfBackupDownload / downloadBackup) - вторых копий
+//   выгрузки не заводим; окно только объясняет разницу и даёт три кнопки.
+window.pfArchiveOpen=function(){
   if(!_isAdmin()){alert('Доступно только администратору.');return;}
-  if(document.getElementById('pfDlOv'))return;
-  const bt='font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)';
-  const ov=document.createElement('div');ov.id='pfDlOv';
+  if(document.getElementById('pfArcOv'))return;
+  const bt='font-size:12px;padding:7px 14px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)';
+  const row=(title,desc,btn,act,accent)=>'<div style="border:1px solid var(--border);border-radius:9px;padding:11px 13px;margin-bottom:9px">'
+    +'<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:3px">'+title+'</div>'
+    +'<div style="font-size:11.5px;color:var(--text2);line-height:1.55;margin-bottom:9px">'+desc+'</div>'
+    +'<button onclick="'+act+'" style="'+(accent?'font-size:12px;font-weight:700;padding:7px 15px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)':bt)+'">'+btn+'</button></div>';
+  const ov=document.createElement('div');ov.id='pfArcOv';
   ov.style.cssText='position:fixed;inset:0;z-index:9997;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center;padding:16px';
-  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:460px;max-width:94vw;padding:20px 22px;font-family:var(--sans)">
-    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">💾 Скачать архив настроек</div>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Все настройки (config/*, кроме реквизитов подключения и служебных веток) в JSON-файл с датой и версией формата. Транзакции (Google Sheets) в архив не входят.</div>
-    <div style="font-size:11.5px;color:var(--outcome);font-weight:600;background:color-mix(in srgb,var(--outcome) 8%,transparent);border:1px solid color-mix(in srgb,var(--outcome) 30%,transparent);border-radius:8px;padding:8px 11px;margin-bottom:16px">🔒 Файл содержит персональные данные (почты сотрудников из allowedEmails, ФИО ответственных). Храните его в приватном месте.</div>
-    <div style="display:flex;justify-content:flex-end;gap:10px">
-      <button onclick="document.getElementById('pfDlOv').remove()" style="${bt}">Отмена</button>
-      <button onclick="pfBackupDownload().then(()=>{var o=document.getElementById('pfDlOv');if(o)o.remove();})" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">💾 Скачать</button>
-    </div></div>`;
+  ov.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:520px;max-width:94vw;max-height:88vh;overflow:auto;padding:20px 22px;font-family:var(--sans)">'
+    +'<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">💾 Архив</div>'
+    +'<div style="font-size:11.5px;color:var(--outcome);font-weight:600;margin-bottom:12px;line-height:1.5">В файлах - персональные данные (ФИО, доступы, планы). Хранить как бухгалтерский документ.</div>'
+    +row('Скачать настройки','Планы, утверждённые месяцы, ЦФО, доступы, пресеты и прочие настройки. <b>Только из этого файла можно восстановиться.</b> Ставит отметку о скачивании - по ней считается напоминание в шапке БДР.','Скачать настройки',"pfBackupDownload().then(function(){var o=document.getElementById('pfArcOv');if(o)o.remove();})",true)
+    +row('Скачать настройки + данные','То же плюс сами операции (RAW) и сделки БФЛ - файл на десятки мегабайт. Снимок на случай потери таблицы; восстановлению в дашборде <b>не подлежит</b> и отметку не ставит.','Скачать всё',"downloadBackup();var o=document.getElementById('pfArcOv');if(o)o.remove();",false)
+    +row('Восстановить из архива','Принимает файл настроек (первый вариант). Покажет, что изменится, потребует слово ВОССТАНОВИТЬ и сам скачает страховку перед записью.','Восстановить',"var o=document.getElementById('pfArcOv');if(o)o.remove();pfBackupRestoreOpen();",false)
+    +'<div style="display:flex;justify-content:flex-end;margin-top:4px"><button onclick="document.getElementById(\'pfArcOv\').remove()" style="'+bt+'">Закрыть</button></div>'
+    +'</div>';
   ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   document.body.appendChild(ov);
 };
-// Диалог «скачать архив перед необратимой операцией?» - НЕ блокирует; next() при «продолжить»
 window.pfBackupPrompt=function(next,reason){
   if(!_isAdmin()){next&&next();return;}
   if(document.getElementById('pfBkPromptOv'))return;
@@ -10171,14 +10188,14 @@ function pfRunTests(){
       /_actItem\('pfDataCheckOpen\(\)','⚠ Проверка данных'/.test(src)
       &&/_actItem\('pfCfoOpen\(\)','👥 ЦФО'/.test(src)
       &&/_actItem\('showPlansPanel\(\)',\(isAdmin\?'✏ Планы':'👁 Планы'\)/.test(src));
-   // ⚠ Смотрим РАЗМЕТКУ МЕНЮ, а не всю функцию: pfBackupDownloadOpen остаётся в renderPlanFact
+   // ⚠ Смотрим РАЗМЕТКУ МЕНЮ, а не всю функцию: pfArchiveOpen остаётся в renderPlanFact
    //   законно - его зовёт бейдж устаревания архива в шапке, и он никуда не уезжал.
    {const aw=(src.match(/const actionsWrap=`[\s\S]*?`;/)||[''])[0];
     ok('разметка меню найдена',aw.length>200,aw.length);
     ok('утверждение месяца, выписка, пресеты и архив из МЕНЮ ушли',
       aw.indexOf('planApproveMonthOpen(')<0&&aw.indexOf('cfoStatementOpen()')<0
       &&aw.indexOf('pfPresetSaveOpen()')<0&&aw.indexOf("showPresetsPanel('planfact')")<0
-      &&aw.indexOf('pfBackupDownloadOpen()')<0&&aw.indexOf('pfBackupRestoreOpen()')<0
+      &&aw.indexOf('pfArchiveOpen()')<0&&aw.indexOf('pfBackupRestoreOpen()')<0
       &&aw.indexOf('pfHiddenDirsOpen()')<0);}
    ok('счётчик пункта - сумма трёх сторожей',/const _chkN=\(_npA\.N\|\|0\)\+\(_abA\.N\|\|0\)\+\(_ibA\.N\|\|0\);/.test(src));
    ok('красная точка зажигается по тем же трём',/\(_npHasA\|\|_abHasA\|\|_ibHasA\)\?'<span title="Есть проблемы данных/.test(src));
@@ -10191,8 +10208,8 @@ function pfRunTests(){
    ok('выписка ЦФО достижима из свода - и это НАЗВАНО',/Клик по имени - выписка ЦФО/.test(String(pfCfoOpen)));
    ok('сохранение пресета БДР живёт в окне пресетов (снимок отбора)',/tab==='planfact'\)\?_pfStateSnapshot\(\)/.test(String(_presetSave))&&/tab==='planfact'\)\?_pfPresetSnapshotHtml\(\)/.test(String(_presetFormHtml)));
    {const sm=String(showSettingsMenu);
-    ok('в шестерёнке три перенесённых пункта',/pfHiddenDirsOpen\(\)/.test(sm)&&/pfBackupDownloadOpen\(\)/.test(sm)&&/pfBackupRestoreOpen\(\)/.test(sm));}
-   ok('бейдж устаревания архива в шапке БДР остался и ведёт туда же',/backupBadge=\(isAdmin&&\(_bkStale===null\|\|_bkStale>30\)\)\?`<span onclick="pfBackupDownloadOpen\(\)"/.test(src));
+    ok('в шестерёнке - скрытые направления и архив',/pfHiddenDirsOpen\(\)/.test(sm)&&/pfArchiveOpen\(\)/.test(sm));}
+   ok('бейдж устаревания архива в шапке БДР остался и ведёт в окно архива',/backupBadge=\(isAdmin&&\(_bkStale===null\|\|_bkStale>30\)\)\?`<span onclick="pfArchiveOpen\(\)"/.test(src));
    ok('экран разнесения удалён целиком',typeof window.pfAllocOpen==='undefined'&&src.indexOf('_pfAllocBuild')<0&&src.indexOf('_alN')<0);}
 
   // 30. СКРЫТЫЕ НАПРАВЛЕНИЯ: ОДНА ТОЧКА ИСКЛЮЧЕНИЯ (07.09.2026)
@@ -11026,7 +11043,7 @@ function renderPlanFact(f){
   const baselineStatus=`<span style="font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;${hasBaseline?'color:var(--text2);background:var(--surface2)':'color:#fff;background:var(--outcome)'}" title="${hasBaseline?('Отклонения считаются по замороженным месяцам ('+frozenLbl+')'+(_retroN?('; из них ретроспективных: '+_retroN+' (в «Исполнение YTD» не входят)'):'')):('Ни один месяц '+year+' не утверждён - отклонения не рассчитываются')}">${hasBaseline?('🔒 Утверждено месяцев: '+_frozen.length+' из 12 ('+frozenLbl+')'+(_retroN?(' · из них ретро: '+_retroN):'')):'⚠ Месяцы не утверждены (0 из 12)'}</span>`;
   // бейдж устаревания архива настроек (админу): архив не скачивали >30 дней или никогда
   const _bkStale=_backupStaleDays();
-  const backupBadge=(isAdmin&&(_bkStale===null||_bkStale>30))?`<span onclick="pfBackupDownloadOpen()" title="Архив настроек давно не скачивался - config/* (планы, baseline, ЦФО и т.д.) не защищён. Кликните, чтобы скачать." style="cursor:pointer;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;color:#fff;background:var(--outcome)">💾 Архив настроек: ${_bkStale===null?'не скачивался':(_bkStale+' дн. назад')}</span>`:'';
+  const backupBadge=(isAdmin&&(_bkStale===null||_bkStale>30))?`<span onclick="pfArchiveOpen()" title="Архив настроек давно не скачивался - config/* (планы, baseline, ЦФО и т.д.) не защищён. Кликните, чтобы скачать." style="cursor:pointer;font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;color:#fff;background:var(--outcome)">💾 Архив настроек: ${_bkStale===null?'не скачивался':(_bkStale+' дн. назад')}</span>`:'';
   // действия БДР свёрнуты в одно меню «⚙ Действия» (админу); не-админ - одна кнопка просмотра планов
   const _npA=window._pfNoPlan||{N:0},_npHasA=_npA.N>0;
   const _abA=window._pfAnBad||{N:0},_abHasA=_abA.N>0; // сторож сверки БДР==ОПиУ (аналитика вне категорий)
