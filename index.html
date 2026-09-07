@@ -1286,6 +1286,19 @@ function _pfTrimNote(labels){
 //    порога «когда строка пуста» разъехались бы, и один отчёт прятал бы то, что показывает другой.
 // ⚠ Фильтруем на РЕНДЕРЕ, а не в суммах: скрытая строка вносит нули, поэтому ИТОГО от скрытия
 //    не меняется - это и есть проверяемый инвариант, а не пожелание.
+// ── Отбор направлений свода: ЧИСТОЕ правило, отдельно от рендера ──────────────
+// ⚠ Вынесено ради проверяемости: внутри renderPlanFact это одна строка в замыкании, и снаружи её
+//   не позвать - тест мог бы проверять только текст исходника. Здесь же правило проверяется
+//   ЧИСЛАМИ на подставном наборе, а рендер зовёт ровно эту функцию (стережёт структурный тест).
+// ⚠ Три случая, и они разные: свод без скрытых (умолчание), свод с галочкой (все) и ЯВНЫЙ выбор
+//   (что выбрано, то и показываем, даже если скрыто).
+const _pfDirsToAgg=(dirs,hidden,selected,showHidden)=>{
+  const all=Array.isArray(dirs)?dirs:[];
+  const sel=(Array.isArray(selected)?selected:[]).filter(d=>all.includes(d));
+  if(sel.length)return sel; // явный выбор сильнее любой настройки
+  const hid=(Array.isArray(hidden)?hidden:[]).filter(d=>all.includes(d));
+  return (showHidden||!hid.length)?all.slice():all.filter(d=>hid.indexOf(d)<0);
+};
 const _pfRowDead=(fact,plan,base)=>Math.abs(fact||0)<0.005&&Math.abs(plan||0)<0.005&&Math.abs(base||0)<0.005;
 function _pfSplitOff(subFact,sideFacts){
   const s=(sideFacts||[]).reduce((a,v)=>a+(+v||0),0);
@@ -10482,10 +10495,20 @@ function pfRunTests(){
   //   кто-нибудь второй фильтр (в проходе, у графиков, в KPI) - две точки разошлись бы молча,
   //   и соседние цифры одной вкладки считались бы по разному составу направлений.
   {const src=String(renderPlanFact);
-   ok('видимый набор считается один раз и от него же «все»',
-      /const dirsVisible=\(showHidden\|\|!hiddenDirs\.length\)\?dirs:dirs\.filter\(d=>hiddenDirs\.indexOf\(d\)<0\);/.test(src)
-      &&/const dirsToAgg=selDirs\.length\?selDirs:dirsVisible;/.test(src)
+   ok('отбор идёт общим _pfDirsToAgg, своей копии правила в рендере нет',
+      /const dirsVisible=_pfDirsToAgg\(dirs,hiddenDirs,\[\],showHidden\);/.test(src)
+      &&/const dirsToAgg=_pfDirsToAgg\(dirs,hiddenDirs,selDirs,showHidden\);/.test(src)
       &&/const allSel=selDirs\.length===0\|\|selDirs\.length>=dirsVisible\.length;/.test(src));
+   // ЮНИТ на подставном наборе: dirs=[A,B,H], скрыт H
+   {const D=['A','B','H'],H=['H'];
+    ok('свод → [A,B]',JSON.stringify(_pfDirsToAgg(D,H,[],false))==='["A","B"]',JSON.stringify(_pfDirsToAgg(D,H,[],false)));
+    ok('галочка «показать» → [A,B,H]',JSON.stringify(_pfDirsToAgg(D,H,[],true))==='["A","B","H"]',JSON.stringify(_pfDirsToAgg(D,H,[],true)));
+    ok('явно выбран скрытый → [H]',JSON.stringify(_pfDirsToAgg(D,H,['H'],false))==='["H"]',JSON.stringify(_pfDirsToAgg(D,H,['H'],false)));
+    ok('явный выбор сильнее галочки',JSON.stringify(_pfDirsToAgg(D,H,['B'],true))==='["B"]');
+    ok('скрытых нет - свод как был',JSON.stringify(_pfDirsToAgg(D,[],[],false))==='["A","B","H"]');
+    ok('скрыто несуществующее - игнорируем',JSON.stringify(_pfDirsToAgg(D,['X'],[],false))==='["A","B","H"]');
+    ok('выбрано несуществующее - не подмешиваем',JSON.stringify(_pfDirsToAgg(D,H,['X'],false))==='["A","B"]');
+    ok('скрыто ВСЁ - свод пуст, а не «все»',JSON.stringify(_pfDirsToAgg(D,D,[],false))==='[]');}
    ok('скрытые берутся из настройки, а не из литерала',/const hiddenDirs=\(_pfHiddenDirs\|\|\[\]\)\.filter\(d=>dirs\.includes\(d\)\);/.test(src)&&src.indexOf('Иная деятельность')<0);
    ok('подпись называет исключённые словами',/const _hidNote=\(selDirs\.length===0&&!showHidden&&hiddenDirs\.length\)\?\(' \(без: '\+hiddenDirs\.join\(', '\)\+'\)'\):'';/.test(src));
    // ⚠ Проходы по RAW: каждый обязан гейтиться dirsToAgg. Исключения ДВА и они названы поимённо -
@@ -10731,6 +10754,43 @@ function pfRunLiveTests(){
     }
   }catch(e){ok('живой прогон вывода упал',false,String(e&&e.message||e));}}
 
+  // ЖИВОЙ ПРОГОН: скрытые направления вычитаются ровно на свой факт
+  // ⚠ Проверка идёт по ОТРИСОВАННОМУ ИТОГО, а не по внутренним картам: она отвечает на вопрос
+  //   человека («свод стал меньше ровно на скрытое?»), а не на вопрос кода о самом себе.
+  // ⚠ Если скрытых направлений не настроено, проверка честно говорит, что ей не на чем работать,
+  //   а не зеленеет: настройка общая и в облаке её может не быть вовсе.
+  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
+   try{
+     const hid=(_pfHiddenDirs||[]).filter(d=>(RAW||[]).some(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===d));
+     ok('живой прогон скрытых: настроено хоть одно скрытое направление с данными',hid.length>0,hid.join(', ')||'config/pfHiddenDirs пуст - проверять не на чем');
+     if(hid.length){
+       const yr=+F0.year||new Date().getFullYear();
+       const num=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
+       const totExp=()=>{const tr=[...document.querySelectorAll('#tabPlanfact tbody tr')].find(t=>t.children[0]&&/^ИТОГО РАСХОДЫ/.test(t.children[0].textContent.trim()));
+         return tr?num(tr.children[4].textContent):null;};
+       const st=extra=>{Object.assign(_tabFilters.planfact,{dir:'',dirs:[],articles:[],subarticles:[],owners:[],sides:[],rowDim:'art',level:'article',period:'year',year:yr,_defPeriodDone:true},extra);renderActiveTab();};
+       st({showHidden:false});const svod=totExp();
+       st({showHidden:true}); const all=totExp();
+       ok('ИТОГО свода и ИТОГО с показанными скрытыми найдены',svod!=null&&all!=null,svod+' / '+all);
+       // факт скрытых направлений за год - прямым проходом по RAW, а не из карт вкладки
+       let want=0;(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;
+         const v=expOf(r);if(!v||isVyvodRow(r))return;
+         const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;
+         if(hid.indexOf(String(r[COL.ACTIVITY_DIR]||'').trim())<0)return;want+=v;});
+       if(svod!=null&&all!=null)ok('свод = «со скрытыми» минус факт скрытых ('+hid.join(', ')+')',
+         Math.abs(Math.abs(all-svod)-Math.abs(want))<0.006,'разница '+Math.abs(all-svod).toFixed(2)+' vs факт скрытых '+Math.abs(want).toFixed(2));
+       // явный выбор скрытого показывает его целиком
+       st({showHidden:false,dirs:[hid[0]]});const one=totExp();
+       let want1=0;(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;
+         const v=expOf(r);if(!v||isVyvodRow(r))return;
+         const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;
+         if(String(r[COL.ACTIVITY_DIR]||'').trim()!==hid[0])return;want1+=v;});
+       ok('явно выбранное скрытое направление показывается целиком ('+hid[0]+')',one!=null&&Math.abs(Math.abs(one)-Math.abs(want1))<0.006,
+          (one==null?'нет строки':Math.abs(one).toFixed(2))+' vs '+Math.abs(want1).toFixed(2));
+     }
+   }catch(e){ok('живой прогон скрытых упал',false,String(e&&e.message||e));}
+   finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}}
+
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] pfRunLiveTests (на данных, с вкладки БДР): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
@@ -10778,8 +10838,8 @@ function renderPlanFact(f){
   //   «какие данные существуют». Из RAW строки не удаляются никогда.
   const hiddenDirs=(_pfHiddenDirs||[]).filter(d=>dirs.includes(d)); // только реально существующие
   const showHidden=!!f.showHidden;
-  const dirsVisible=(showHidden||!hiddenDirs.length)?dirs:dirs.filter(d=>hiddenDirs.indexOf(d)<0);
-  const dirsToAgg=selDirs.length?selDirs:dirsVisible; // выбранные направления; пусто → свод (без скрытых, если галочка не стоит)
+  const dirsVisible=_pfDirsToAgg(dirs,hiddenDirs,[],showHidden); // состав свода: всё, кроме скрытых (или всё, если галочка стоит)
+  const dirsToAgg=_pfDirsToAgg(dirs,hiddenDirs,selDirs,showHidden); // выбранные направления; пусто → свод
   // ⚠ «Все» считается от ВИДИМОГО набора: свод без скрытых - это и есть «все», и подпись обязана
   //   говорить это словами, иначе человек читает «Свод (все направления)» и не знает, что двух в нём нет.
   const allSel=selDirs.length===0||selDirs.length>=dirsVisible.length;
