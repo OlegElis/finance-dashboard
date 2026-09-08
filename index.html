@@ -2413,6 +2413,7 @@ window.toggleSidebar=function(force){
 
 function switchTab(name){
   activeTab=name;
+  window._barMoreOpen=''; // «⋯» переживает ре-рендер СВОЕЙ вкладки, но не переход на другую: панель, открытая на входе, читается как чужое состояние
   document.querySelectorAll('.nav-item[id^="nav-"]').forEach(el=>el.classList.remove('active'));
   const navEl=document.getElementById('nav-'+name);
   if(navEl)navEl.classList.add('active');
@@ -2675,21 +2676,41 @@ function _presetIsAdmin(){const b=document.getElementById('logoSetupBtn');return
 // ⚠ Кнопка помечается точкой, когда внутри что-то ЗАДАНО, и перечисляет это в подсказке:
 //   спрятанный фильтр, о котором ничего не сказано, - это тихо изменённые числа на экране.
 // ⚠ Реализация ОДНА на все вкладки (как _barBtnLabel): вторая копия разъедется с первой.
+// ⚠ Какая выпадашка открыта - помним ОТДЕЛЬНО ОТ DOM: контрол внутри «⋯» перерисовывает вкладку
+//   целиком (`renderOPIU(getFilters())` и родня), бар пересобирается, и прежний узел выпадашки
+//   умирает вместе с открытым состоянием. Человек при этом меняет несколько настроек подряд, и
+//   закрывшаяся панель читается как «клик не сработал» - хотя значение применилось.
+window._barMoreOpen=''; // id открытой `.bar-more-dd` (пусто - закрыты все)
 window._barMoreToggle=function(id){const d=document.getElementById(id);if(!d)return;
   const open=d.style.display==='block';
   document.querySelectorAll('.bar-more-dd').forEach(x=>{x.style.display='none';});
-  d.style.display=open?'none':'block';};
-document.addEventListener('click',function(e){
+  d.style.display=open?'none':'block';
+  window._barMoreOpen=open?'':id;};
+// ⚠ ЗАКРЫТИЕ ПО КЛИКУ ВНЕ - НА `mousedown`, А НЕ НА `click`, И ЭТО НЕ КОСМЕТИКА. Выбор пункта в
+//   НАТИВНОМ `select` идёт в системном списке, которого в DOM нет: document-клик при этом приходит
+//   с чужой мишенью (в разных браузерах - body/document), выпадашка пряталась ВМЕСТЕ с самим
+//   select'ом, и системный список закрывался, не дав `change`, - клик по «Динамике» не давал
+//   результата. В системном списке `mousedown` не возникает вовсе, а по фону страницы приходит
+//   как обычно, поэтому он и различает эти два случая. Тот же приём уже стоит у меню шестерёнки
+//   (index.html, `off` на mousedown) и у фильтров Структуры расходов - это не новое исключение.
+const BAR_MORE_OUT_EVT='mousedown'; // держится тестом: `click` здесь ломает выбор в select
+function _barMoreOutside(e){
   document.querySelectorAll('.bar-more-dd').forEach(d=>{
     if(d.style.display!=='block')return;
     const btn=document.getElementById(d.id.replace('-dd','-btn'));
-    if(!d.contains(e.target)&&e.target!==btn&&!(btn&&btn.contains(e.target)))d.style.display='none';});
-});
+    if(!d.contains(e.target)&&e.target!==btn&&!(btn&&btn.contains(e.target))){
+      d.style.display='none'; if(window._barMoreOpen===d.id)window._barMoreOpen='';}});
+}
+document.addEventListener(BAR_MORE_OUT_EVT,_barMoreOutside);
 // id - без суффиксов: функция сама делает `<id>-btn` и `<id>-dd` (их же ищет обработчик выше)
 function _barMore(id,n,tip,rowsHtml){
+  // ⚠ ВОССТАНОВЛЕНИЕ ОТКРЫТОЙ ПАНЕЛИ ЖИВЁТ ЗДЕСЬ, И ЭТО ОДНА РЕАЛИЗАЦИЯ НА ВСЕ ВКЛАДКИ: панель
+  //   не «открывается заново» после рендера (это была бы гонка с ре-рендером и вторая копия
+  //   правила в каждом рендерере) - она СТРОИТСЯ сразу открытой, если была открыта до перерисовки.
+  const open=(window._barMoreOpen===id+'-dd');
   return `<div style="position:relative;display:inline-block">
     <button id="${id}-btn" class="bar-ctl" style="font-weight:600" title="${_pesc(tip)}" onclick="_barMoreToggle('${id}-dd')">⋯${n?' •':''}</button>
-    <div id="${id}-dd" class="bar-more-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:240px;margin-top:2px">
+    <div id="${id}-dd" class="bar-more-dd" style="display:${open?'block':'none'};position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:8px;min-width:240px;margin-top:2px">
       ${rowsHtml}
     </div>
   </div>`;
@@ -10735,7 +10756,23 @@ function pfRunTests(){
         // ⚠ Точка на кнопке - единственное, что говорит о заданном скрытом фильтре; без неё числа
         //   на экране менялись бы молча.
         ok('«⋯» помечается точкой, когда внутри что-то задано',/\$\{n\?' •':''\}/.test(String(_barMore)));
-        ok('реализация «⋯» одна на все вкладки',(String(_barMore).match(/bar-more-dd/g)||[]).length===1);}
+        ok('реализация «⋯» одна на все вкладки',(String(_barMore).match(/bar-more-dd/g)||[]).length===1);
+        // ── «⋯» ПЕРЕЖИВАЕТ РЕ-РЕНДЕР (08.09.2026) ────────────────────────────────────────────
+        // ⚠ Контрол внутри панели перерисовывает вкладку ЦЕЛИКОМ, и прежний узел панели умирает.
+        //   Панель обязана вернуться открытой - иначе смена одной настройки закрывает панель, и
+        //   это читается как «клик не сработал», хотя значение применилось.
+        ok('открытая «⋯» восстанавливается после ре-рендера',/_barMoreOpen===id\+'-dd'/.test(String(_barMore))
+           &&/display:\$\{open\?'block':'none'\}/.test(String(_barMore))&&/_barMoreOpen=open\?'':id/.test(String(_barMoreToggle)));
+        // ⚠ Восстановление ОДНО на все вкладки: рендереры про него не знают вовсе. Знай они -
+        //   правило разъехалось бы по семи барам, как разъехались габариты контролов до `.bar-ctl`.
+        {const R={'Банк':renderBank,'ОПиУ':renderOPIU,'ДДС':renderDDS,'ОСВ':renderOSV,'ФОТ':renderFOT,'БДР':renderPlanFact};
+         const own=Object.keys(R).filter(k=>String(R[k]).indexOf('_barMoreOpen')>=0);
+         ok('восстановление «⋯» - одна реализация, не копия в рендерерах',own.length===0,own.join(', '));}
+        // ⚠ Закрытие по клику ВНЕ - на mousedown: у нативного select выбор пункта идёт в системном
+        //   списке вне DOM, document-клик приходит с чужой мишенью, и на `click` панель пряталась
+        //   вместе с самим select'ом - выбор не доезжал до onchange (дефект «Динамики» 08.09.2026).
+        ok('«⋯» закрывается по mousedown, а не по click',BAR_MORE_OUT_EVT==='mousedown'
+           &&String(_barMoreOutside).indexOf('bar-more-dd')>=0);}
        // ⚠ Сводка «Фильтры: …» живёт ВНУТРИ бара (как у Банка), а не своей полосой в 22px.
        ok('сводка фильтров вставляется в бар',/bar\.appendChild\(sum\)/.test(String(_tabFilterSummary))
           &&String(_tabFilterSummary).indexOf('insertBefore')<0);
