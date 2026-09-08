@@ -10821,7 +10821,28 @@ function pfRunTests(){
    // ⚠ Подпись в селекте вида сотрудничества считается ТОЙ ЖЕ функцией: числом её писать нельзя -
    //   разойдётся с расчётом при первой правке ndfl/fss, и разойдётся молча.
    ok('жёсткой подписи «43%» в файле не осталось',_pfSrcTop.indexOf('(4'+'3%)')<0);
-   ok('подпись вида сотрудничества считается из ставки',/_nachPct=v=>Math\.round\(bflRoleNachRate\(\{emp:v\}\)\*100\)/.test(_pfSrcTop));}
+   // ⚠ ДВЕ СТАВКИ - РАЗНЫЕ ВОПРОСЫ (08.09.2026). Список видов сотрудничества - поле ВВОДА: выбор
+   //   сохраняется в модель насовсем, а галочка «убрать налоги на ФОТ» живёт до перезагрузки.
+   //   Подпись поля обязана описывать СВОЙСТВО ВИДА, а не текущий режим просмотра, - иначе все
+   //   три варианта читаются «(0%)» и вид сотрудничества выглядит бессмысленным полем.
+   ok('подпись вида считается ставкой ВИДА, а не ставкой расчёта',/_nachPct=v=>Math\.round\(bflEmpTypeRate\(v\)\*100\)/.test(_pfSrcTop));
+   {const _gS2=Object.assign({},_bflModel.global),_xS2=_tabFilters.bflmodel.exclPayrollTax;
+    try{
+      _bflModel.global.ndfl=0.13;_bflModel.global.fss=0.302;
+      const pct=()=>[ 'official','ip','none' ].map(v=>Math.round(bflEmpTypeRate(v)*100)+'%').join(' / ');
+      _tabFilters.bflmodel.exclPayrollTax=false;
+      const _pctOff=pct();
+      ok('галочка снята: подписи 50% / 7% / 0%',_pctOff==='50% / 7% / 0%',_pctOff);
+      _tabFilters.bflmodel.exclPayrollTax=true;
+      const _pctOn=pct();
+      ok('галочка стоит: подписи ТЕ ЖЕ',_pctOn===_pctOff,_pctOn);
+      ok('галочка стоит: начисления при этом ноль',bflRoleNachRate({emp:'official'})===0
+         &&bflRoleNachRate({emp:'ip'})===0&&bflRoleNachRate({emp:'none'})===0);
+    }finally{_bflModel.global=_gS2;_tabFilters.bflmodel.exclPayrollTax=_xS2;}}
+   // ⚠ Ставка расчёта ЗОВЁТ ставку вида, а не повторяет формулу: две копии одного правила в этом
+   //   проекте расходились уже трижды (предикаты третьего уровня, стадии воронки, разбор кода).
+   ok('формула разначисления живёт в одном месте',(_pfSrcTop.match(/\(1\+f\)\/\(1-n\)/g)||[]).length===1);
+   ok('ставка расчёта зовёт ставку вида',/function bflRoleNachRate\(r\)\{if\(_tabFilters\.bflmodel\.exclPayrollTax\)return 0;return bflEmpTypeRate\(r&&r\.emp\);\}/.test(_pfSrcTop));}
 
        // ⚠ Сводка «Фильтры: …» живёт ВНУТРИ бара (как у Банка), а не своей полосой в 22px.
        ok('сводка фильтров вставляется в бар',/bar\.appendChild\(sum\)/.test(String(_tabFilterSummary))
@@ -18528,6 +18549,11 @@ function bflOpDeals(){const op=_bflModel.departments.find(x=>x.dealStage);return
 function bflPreCourtOtval(){const os=_bflModel.departments.find(x=>x.id==='os');return (os&&os.preCourtOtval)||0;}
 // Дела, доходящие до суда/производства = сделки от ОП × (1 − отвал досудебный в ОКС)
 function bflCasesProd(){return bflOpDeals()*(1-bflPreCourtOtval());}
+// ⚠ ДВЕ СТАВКИ, И ЭТО РАЗНЫЕ ВОПРОСЫ: `bflEmpTypeRate` - свойство ВИДА сотрудничества (чистая
+//   функция от `global`), `bflRoleNachRate` - то, во что это обходится В РАСЧЁТЕ (галочка «убрать
+//   налоги на ФОТ» обнуляет всё). Первую показывают в поле ВВОДА вида: выбор сохраняется в модель
+//   насовсем, а галочка живёт до перезагрузки, и подпись поля обязана говорить про свойство вида,
+//   а не про текущий режим просмотра. Вторая ЗОВЁТ первую и формулу не повторяет.
 // ⚠ ОКЛАДЫ В МОДЕЛИ - СУММЫ НА РУКИ (решение Олега 08.09.2026), и у ОФИЦИАЛЬНОГО трудоустройства
 //   ставка начислений поэтому ВЫВОДИТСЯ РАЗНАЧИСЛЕНИЕМ, а не складыванием `ndfl` и `fss`:
 //   начисленный оклад = net/(1 − ndfl), взносы берутся С НЕГО, НДФЛ = начисленный − net. К сумме
@@ -18538,8 +18564,11 @@ function bflCasesProd(){return bflOpDeals()*(1-bflPreCourtOtval());}
 // ⚠ `ndfl >= 1` - деления не делаем, возвращаем прежнюю сумму ставок: величина бессмысленная, но
 //   КОНЕЧНАЯ, а уход в бесконечность разнёс бы весь отчёт (та же логика, что у guard'ов на ноль).
 // ⚠ ИП/Самозанятый 7% и «Без трудоустройства» 0% разначивать нечего - это и есть ставки к выплате.
-//   Галочка «убрать налоги на ФОТ» обнуляет всё.
-function bflRoleNachRate(r){if(_tabFilters.bflmodel.exclPayrollTax)return 0;const e=r&&r.emp;if(e==='ip')return 0.07;if(e==='none')return 0;const g=_bflModel.global,n=(g.ndfl||0),f=(g.fss||0);return n>=1?n+f:(1+f)/(1-n)-1;}
+// ⚠ ФОРМУЛА РАЗНАЧИСЛЕНИЯ ЖИВЁТ ЗДЕСЬ И БОЛЬШЕ НИГДЕ - это держит тест: вторая копия разошлась бы
+//   с первой при первой же правке, как уже расходились предикаты третьего уровня и стадии воронки.
+function bflEmpTypeRate(e){if(e==='ip')return 0.07;if(e==='none')return 0;const g=_bflModel.global,n=(g.ndfl||0),f=(g.fss||0);return n>=1?n+f:(1+f)/(1-n)-1;}
+// Ставка начислений В РАСЧЁТЕ: та же ставка вида, но галочка «убрать налоги на ФОТ» обнуляет её
+function bflRoleNachRate(r){if(_tabFilters.bflmodel.exclPayrollTax)return 0;return bflEmpTypeRate(r&&r.emp);}
 // Начисления на штат (per-role по виду сотрудничества)
 function bflRolesNach(roles){return (roles||[]).reduce((a,r)=>a+(r.fte||0)*(r.rate||0)*bflRoleNachRate(r),0);}
 // Категории дел по сроку: простые / сложные / затяжные. Доля сложных = остаток (1 − простые − затяжные)
@@ -19099,10 +19128,14 @@ function bflRenderDepts(host){
     const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=bflRolesNach(roles);
     const effPct=fot?Math.round(nach/fot*100):0;
     const th=t=>`<th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${t}</th>`;
-    // ⚠ Проценты в подписях СЧИТАЮТСЯ той же функцией, что и расход, - числом их писать нельзя:
-    //   до 08.09.2026 в подписи стояло жёсткое «43%», и при переходе официального на разначисление
-    //   она разошлась бы с расчётом молча. По той же причине счёт идёт и у ИП, и у «без оформления».
-    const _nachPct=v=>Math.round(bflRoleNachRate({emp:v})*100)+'%';
+    // ⚠ Проценты в подписях СЧИТАЮТСЯ, а не пишутся числом: до 08.09.2026 стояло жёсткое «43%»,
+    //   и при переходе официального на разначисление оно разошлось бы с расчётом молча.
+    // ⚠ Считает их СТАВКА ВИДА (`bflEmpTypeRate`), а НЕ ставка расчёта: список - поле ВВОДА, им
+    //   назначают человеку вид сотрудничества, и процент рядом описывает свойство вида. Через
+    //   `bflRoleNachRate` все три варианта читались бы «(0%)» при включённой галочке «убрать
+    //   налоги на ФОТ» - подпись поля ввода рассказывала бы про режим просмотра, который живёт
+    //   до перезагрузки, тогда как сам выбор сохраняется в модель насовсем.
+    const _nachPct=v=>Math.round(bflEmpTypeRate(v)*100)+'%';
     const empSel=(p,emp)=>{const e=emp||'official';const o=(v,lbl)=>`<option value="${v}"${e===v?' selected':''}>${lbl}</option>`;return `<select data-dept="${deptId}" data-path="${p}" data-text="1" onchange="bflDeptEdit(this)" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:#fffdf0;max-width:150px">${o('official','Официальное ('+_nachPct('official')+')')}${o('ip','ИП/Самозанятый ('+_nachPct('ip')+')')}${o('none','Без трудоустройства ('+_nachPct('none')+')')}</select>`;};
     // ⚠ ДУБЛИ РОЛЕЙ - ПОДСКАЗКА, А НЕ ЗАПРЕТ: ФОТ по двум строкам «Сотрудник ОМ» по 1 ед.
     //   считается ВЕРНО, ломается только чтение состава - выглядит как две разные роли.
