@@ -10797,6 +10797,32 @@ function pfRunTests(){
             &&String(renderOSV).indexOf('_barMoreCtlToggle(')>=0
             &&String(renderOPIU).indexOf('inline-flex;align-items:center;gap:6px;background')<0
             &&String(renderOSV).indexOf('inline-flex;align-items:center;gap:6px;background')<0);}}
+
+  // 31. НАЧИСЛЕНИЯ НА ФОТ: ОКЛАД - СУММА НА РУКИ, ОФИЦИАЛЬНОЕ СЧИТАЕТСЯ РАЗНАЧИСЛЕНИЕМ (08.09.2026)
+  // ⚠ Ставки берутся от РАЗНЫХ баз (взносы - от начисленного, НДФЛ - внутри него), поэтому их
+  //   сумма занижает расход правдоподобно и молча. Тест держит и величину, и то, что прочие виды
+  //   сотрудничества правило не задело.
+  {const _gS=Object.assign({},_bflModel.global),_xS=_tabFilters.bflmodel.exclPayrollTax;
+   try{
+     _tabFilters.bflmodel.exclPayrollTax=false;
+     _bflModel.global.ndfl=0.13;_bflModel.global.fss=0.302;
+     const off=bflRoleNachRate({emp:'official'});
+     ok('официальное: ставка к сумме на руки (1+fss)/(1-ndfl)-1',Math.abs(off-0.49655)<1e-4,off);
+     ok('на руки 500 000 - начисления 248 276',Math.abs(500000*off-248276)<1,(500000*off).toFixed(2));
+     // ⚠ Роль без заданного emp модель считает ОФИЦИАЛЬНОЙ - значит правка её удорожила. Сегодня
+     //   `emp` проставлен у всех ролей, и молча ничего не поедет; тест держит именно это условие.
+     ok('роль без emp идёт по официальной ставке',bflRoleNachRate({})===off&&bflRoleNachRate({emp:''})===off);
+     ok('ИП/Самозанятый не тронут',bflRoleNachRate({emp:'ip'})===0.07);
+     ok('без трудоустройства не тронут',bflRoleNachRate({emp:'none'})===0);
+     ok('НДФЛ 100% не даёт деления на ноль',(function(){_bflModel.global.ndfl=1;const v=bflRoleNachRate({emp:'official'});_bflModel.global.ndfl=0.13;return v===1.302;})());
+     _tabFilters.bflmodel.exclPayrollTax=true;
+     ok('галочка «убрать налоги на ФОТ» обнуляет всё',bflRoleNachRate({emp:'official'})===0&&bflRoleNachRate({emp:'ip'})===0);
+   }finally{_bflModel.global=_gS;_tabFilters.bflmodel.exclPayrollTax=_xS;}
+   // ⚠ Подпись в селекте вида сотрудничества считается ТОЙ ЖЕ функцией: числом её писать нельзя -
+   //   разойдётся с расчётом при первой правке ndfl/fss, и разойдётся молча.
+   ok('жёсткой подписи «43%» в файле не осталось',_pfSrcTop.indexOf('(4'+'3%)')<0);
+   ok('подпись вида сотрудничества считается из ставки',/_nachPct=v=>Math\.round\(bflRoleNachRate\(\{emp:v\}\)\*100\)/.test(_pfSrcTop));}
+
        // ⚠ Сводка «Фильтры: …» живёт ВНУТРИ бара (как у Банка), а не своей полосой в 22px.
        ok('сводка фильтров вставляется в бар',/bar\.appendChild\(sum\)/.test(String(_tabFilterSummary))
           &&String(_tabFilterSummary).indexOf('insertBefore')<0);
@@ -17753,7 +17779,8 @@ function bflEnsureModel(m){
   if(m.clientPath&&m.clientPath.heavyShare===undefined){m.clientPath.heavyShare=0;m.clientPath.heavyDuration=18;} // категория «затяжные» (дела сверх плана)
   // ОИ - вспомогательный отдел: только ФОТ + депозит суда (pass-through), без ЦКП-на-дело и базы/нормы
   {const oiD=(m.departments||[]).find(x=>x&&x.id==='oi');if(oiD&&!oiD.supportDept){oiD.supportDept=true;delete oiD.tskpBase;delete oiD.capacity;oiD.tskpLabel='вспомогательный отдел · ФОТ + депозит суда';}}
-  // вид сотрудничества по умолчанию - официальное трудоустройство (43%), для всех ролей и штата направлений
+  // вид сотрудничества по умолчанию - официальное трудоустройство, для всех ролей и штата направлений
+  // ⚠ ставку не называем числом: она считается `bflRoleNachRate` от `ndfl`/`fss` (оклад - сумма НА РУКИ)
   (m.departments||[]).forEach(dep=>{(dep.roles||[]).forEach(r=>{if(r&&r.emp===undefined)r.emp='official';});if(Array.isArray(dep.leadgen))dep.leadgen.forEach(L=>{(L.staff||[]).forEach(r=>{if(r&&r.emp===undefined)r.emp='official';});});});
   // депозит суда 25тр → ОИ (возвратный); почтовые 20тр → ОПАУ; отвал досудебный → ОКС; дела ОИ/ОПАУ = после отвала
   {const oiD=(m.departments||[]).find(x=>x&&x.id==='oi');
@@ -18501,9 +18528,18 @@ function bflOpDeals(){const op=_bflModel.departments.find(x=>x.dealStage);return
 function bflPreCourtOtval(){const os=_bflModel.departments.find(x=>x.id==='os');return (os&&os.preCourtOtval)||0;}
 // Дела, доходящие до суда/производства = сделки от ОП × (1 − отвал досудебный в ОКС)
 function bflCasesProd(){return bflOpDeals()*(1-bflPreCourtOtval());}
-// Ставка начислений на ФОТ (НДФЛ+ФСС); 0 если включена галочка «убрать налоги на ФОТ»
-// Ставка начислений на ФОТ по виду сотрудничества сотрудника: ИП/Самозанятый 7%, Без трудоустройства 0%, Официальное = ndfl+fss (43%); галочка «убрать налоги» обнуляет всё
-function bflRoleNachRate(r){if(_tabFilters.bflmodel.exclPayrollTax)return 0;const e=r&&r.emp;if(e==='ip')return 0.07;if(e==='none')return 0;const g=_bflModel.global;return (g.ndfl||0)+(g.fss||0);}
+// ⚠ ОКЛАДЫ В МОДЕЛИ - СУММЫ НА РУКИ (решение Олега 08.09.2026), и у ОФИЦИАЛЬНОГО трудоустройства
+//   ставка начислений поэтому ВЫВОДИТСЯ РАЗНАЧИСЛЕНИЕМ, а не складыванием `ndfl` и `fss`:
+//   начисленный оклад = net/(1 − ndfl), взносы берутся С НЕГО, НДФЛ = начисленный − net. К сумме
+//   на руки это (1 + fss)/(1 − ndfl) − 1; при ndfl=0.13 и fss=0.302 - 49,655%, а не 43,2%.
+// ⚠ Складывать ставки нельзя: они берутся от РАЗНЫХ баз - взносы от начисленного оклада, а НДФЛ
+//   сидит ВНУТРИ него. Сумма ставок занижает расход тем сильнее, чем выше НДФЛ, и делает это
+//   молча: величина правдоподобная, ошибку видно только пересчётом от начисленного.
+// ⚠ `ndfl >= 1` - деления не делаем, возвращаем прежнюю сумму ставок: величина бессмысленная, но
+//   КОНЕЧНАЯ, а уход в бесконечность разнёс бы весь отчёт (та же логика, что у guard'ов на ноль).
+// ⚠ ИП/Самозанятый 7% и «Без трудоустройства» 0% разначивать нечего - это и есть ставки к выплате.
+//   Галочка «убрать налоги на ФОТ» обнуляет всё.
+function bflRoleNachRate(r){if(_tabFilters.bflmodel.exclPayrollTax)return 0;const e=r&&r.emp;if(e==='ip')return 0.07;if(e==='none')return 0;const g=_bflModel.global,n=(g.ndfl||0),f=(g.fss||0);return n>=1?n+f:(1+f)/(1-n)-1;}
 // Начисления на штат (per-role по виду сотрудничества)
 function bflRolesNach(roles){return (roles||[]).reduce((a,r)=>a+(r.fte||0)*(r.rate||0)*bflRoleNachRate(r),0);}
 // Категории дел по сроку: простые / сложные / затяжные. Доля сложных = остаток (1 − простые − затяжные)
@@ -19063,7 +19099,11 @@ function bflRenderDepts(host){
     const fot=roles.reduce((a,r)=>a+(r.fte||0)*(r.rate||0),0),nach=bflRolesNach(roles);
     const effPct=fot?Math.round(nach/fot*100):0;
     const th=t=>`<th style="text-align:right;padding:3px 8px;font-size:10px;color:var(--label);font-weight:600">${t}</th>`;
-    const empSel=(p,emp)=>{const e=emp||'official';const o=(v,lbl)=>`<option value="${v}"${e===v?' selected':''}>${lbl}</option>`;return `<select data-dept="${deptId}" data-path="${p}" data-text="1" onchange="bflDeptEdit(this)" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:#fffdf0;max-width:150px">${o('official','Официальное (43%)')}${o('ip','ИП/Самозанятый (7%)')}${o('none','Без трудоустройства (0%)')}</select>`;};
+    // ⚠ Проценты в подписях СЧИТАЮТСЯ той же функцией, что и расход, - числом их писать нельзя:
+    //   до 08.09.2026 в подписи стояло жёсткое «43%», и при переходе официального на разначисление
+    //   она разошлась бы с расчётом молча. По той же причине счёт идёт и у ИП, и у «без оформления».
+    const _nachPct=v=>Math.round(bflRoleNachRate({emp:v})*100)+'%';
+    const empSel=(p,emp)=>{const e=emp||'official';const o=(v,lbl)=>`<option value="${v}"${e===v?' selected':''}>${lbl}</option>`;return `<select data-dept="${deptId}" data-path="${p}" data-text="1" onchange="bflDeptEdit(this)" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:#fffdf0;max-width:150px">${o('official','Официальное ('+_nachPct('official')+')')}${o('ip','ИП/Самозанятый ('+_nachPct('ip')+')')}${o('none','Без трудоустройства ('+_nachPct('none')+')')}</select>`;};
     // ⚠ ДУБЛИ РОЛЕЙ - ПОДСКАЗКА, А НЕ ЗАПРЕТ: ФОТ по двум строкам «Сотрудник ОМ» по 1 ед.
     //   считается ВЕРНО, ломается только чтение состава - выглядит как две разные роли.
     //   Поэтому подсвечиваем и объясняем, но не объединяем сами и ничего не блокируем:
