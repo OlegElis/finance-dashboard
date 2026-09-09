@@ -104,9 +104,16 @@
   .preset-cfg-btn{font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px;}
   /* ⚠ Сводка стоит ВНУТРИ фильтр-бара (как `.bank-summary` у Банка) - отсюда ни паддингов полосы,
      ни рамки, ни своего фона: это элемент ряда, а не полоса. `margin-left:auto` прижимает её
-     вправо (у Банка так же), `min-width:160` + ellipsis дают ей сжиматься, а не переносить бар. */
-  .tab-filter-summary{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 1 auto;min-width:160px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--text3);}
-  .tab-filter-summary>span{overflow:hidden;text-overflow:ellipsis;}
+     вправо (у Банка так же).
+     ⚠ СВОДКА - ЕДИНСТВЕННЫЙ РЕЗИНОВЫЙ ЭЛЕМЕНТ БАРА (принято 09.09.2026): `flex:1 1 0` + `min-width:0`.
+     Базис РОВНО НОЛЬ, а не auto: flexbox решает о переносе по базовой ширине элемента и сжимает уже
+     внутри строки - с базисом auto (= ширина текста) сводка уезжала на вторую строку раньше, чем
+     начинала сжиматься (при 1280 бар был 51-57px на всех пяти вкладках). С нулевым базисом она не
+     бывает причиной переноса и забирает остаток ряда; текст прижат вправо, при нехватке - многоточие,
+     полный текст в title. `flex-wrap:wrap` у бара ОСТАЁТСЯ страховкой на 900: там не влезают уже
+     сами контролы, и буквальный nowrap обрезал бы их. */
+  .tab-filter-summary{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-left:auto;flex:1 1 0;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--text3);}
+  .tab-filter-summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis;}
   .preset-cfg-btn:hover{border-color:var(--accent);color:var(--accent);}
   .preset-rtab{font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);}
   .preset-fld-multi{display:flex;flex-wrap:wrap;gap:4px 12px;border:1px solid var(--border);border-radius:7px;padding:8px 10px;}
@@ -613,7 +620,8 @@
        сводка на 653px, блок доп-фильтров на 377px. Обрезку прятал overflow:hidden на #tabBank, то есть
        пользователь не видел ни правой части бара, ни правой части свода и НЕ ВИДЕЛ, что там что-то есть.
        Поэтому двум блокам, у которых внутри есть чему ужиматься, shrink возвращён точечно. */
-    #tabBank>.bank-filters-1row>.bank-summary{margin-left:auto!important;flex-shrink:1;min-width:0;}
+    /* ⚠ СВОДКА - РЕЗИНОВЫЙ ЭЛЕМЕНТ (09.09.2026): базис ноль, см. .tab-filter-summary; свой inline flex-wrap:wrap у сводки перебит - иначе при сжатии она росла бы в высоту */
+    #tabBank>.bank-filters-1row>.bank-summary{margin-left:auto!important;flex:1 1 0;min-width:0;justify-content:flex-end;flex-wrap:nowrap!important;}
     #tabBank>.bank-filters-1row>.bank-extra-filters{flex-shrink:1;min-width:0;} /* селекты и кнопки внутри со своими min-width - в ноль не схлопнется */
     #tabBank>.bank-filters-1row>.bank-summary>span{flex:0 1 auto!important;min-width:0!important;overflow:hidden;text-overflow:ellipsis;max-width:320px;}
     /* ⚠ Селект пресета - прямой ребёнок бара, и правило `>*` выше сняло бы с него рамку, фон и
@@ -2761,7 +2769,7 @@ function _tabFilterSummary(){
   const nh=_filterSummaryInner(activeTab);
   // ⚠ Пишем ТОЛЬКО при реальном изменении: MutationObserver мобильных карточек слушает #mainContent,
   //   и безусловная запись зациклила бы его (правило проекта про ловушку observer).
-  if(sum.getAttribute('data-sig')!==nh){ sum.innerHTML=nh; sum.setAttribute('data-sig',nh); }
+  if(sum.getAttribute('data-sig')!==nh){ sum.innerHTML=nh; sum.setAttribute('data-sig',nh); sum.title=sum.textContent.replace(/\s+/g,' ').trim(); } // полный текст - в title: при нехватке ширины сводка обрезается многоточием
 }
 // ── СЕЛЕКТ ПРЕСЕТОВ - ПОСЛЕДНИМ ЭЛЕМЕНТОМ ФИЛЬТР-БАРА ВКЛАДКИ ────────────────
 // ⚠ ПОВОД, КОТОРЫЙ НЕЛЬЗЯ ПОТЕРЯТЬ: 07.09.2026 вход в пресеты оставили только в шестерёнке, и
@@ -4100,7 +4108,7 @@ function renderBank(f){
     const _bp=(typeof _presetActive==='function')?_presetActive('bank'):'';const pn=_bp?((_presets.bank||[]).find(x=>x.id===_bp)||{}).name:'';
     fSumm.unshift('<b style="color:var(--text2);font-weight:600">Период:</b> '+lbl+(pn?` <span style="color:var(--text3)">(пресет «${_pesc(pn)}»)</span>`:''));
   }
-  const summaryHtml=`<div class="bank-summary" style="display:flex;align-items:center;gap:8px;padding:4px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;color:var(--text3);flex-wrap:wrap">
+  const summaryHtml=`<div class="bank-summary" title="${_pesc(fSumm.map(x=>String(x).replace(/<[^>]+>/g,'')).join(' · '))}" style="display:flex;align-items:center;gap:8px;padding:4px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;color:var(--text3);flex-wrap:wrap">
     <b style="color:var(--text2);font-weight:600">Фильтры:</b> <span style="flex:1;min-width:160px">${fSumm.length?fSumm.join('&nbsp;·&nbsp;'):'не заданы'}</span>
     ${fSumm.length?`<button onclick="bankResetAllFilters()" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сбросить всё</button>`:''}
   </div>`;
@@ -11110,7 +11118,7 @@ function pfRunTests(){
     ok('категория переехала внутрь контролов',/_barBtnLabel\('Направления'/.test(src)&&/_barBtnLabel\('Статьи'/.test(src)
        &&/_barBtnLabel\('Подстатьи'/.test(src)&&/_barBtnLabel\('ЦФО'/.test(src)&&/_barBtnLabel\('Контрагенты'/.test(src)
        &&/>Год: \$\{y\}</.test(src)&&/>Период: /.test(src));
-    ok('габариты контролов - из общего эталона, а не инлайном',/const pfBtnStyle='min-width:96px;text-align:left'/.test(src)&&(fb.match(/class="bar-ctl"/g)||[]).length>=3);}
+    ok('габариты контролов - из общего эталона, а не инлайном',/const pfBtnStyle='min-width:84px;text-align:left'/.test(src)&&(fb.match(/class="bar-ctl"/g)||[]).length>=3);}
    ok('красная точка зажигается по тем же трём',/\(_npHasA\|\|_abHasA\|\|_ibHasA\)\?'<span title="Есть проблемы данных/.test(src));
    // ⚠ Общий модал не повторяет списки: он ОТКРЫВАЕТ прежние - иначе в проекте появилось бы три
    //   вторых экземпляра рендера, которые разойдутся с первыми.
@@ -11230,6 +11238,51 @@ window.pfRunTests=pfRunTests;
 // ── ЖИВЫЕ ПРОВЕРКИ: нужны загруженные данные и отрисованная вкладка БДР ───────
 // ⚠ Отказ ЧЕСТНЫЙ и с подсказкой: набор, который «зеленеет» на пустой вкладке, хуже
 //   отсутствующего - он говорит «проверено» про то, что не проверялось.
+// ══ БАР В ОДНУ СТРОКУ - ПОВЕДЕНЧЕСКИЙ ТЕСТ НА СЕМЬ ВКЛАДОК (09.09.2026) ═══════════════════════
+// ⚠ Проверяется ВЫСОТА, а не наличие css-свойств: правило «бар в одну строку при 1600» держится
+//   шириной контролов, и следующий добавленный контрол его съест молча - на БДР после сужения кнопок
+//   запас около 30px. Пусть это ловит тест, а не глаз на боевом экране.
+// ⚠ Ширина окна из скрипта не меняется - эмулируется шириной .content: хром (сайдбар + отступы)
+//   снимается с текущего окна, и контент ставится в (W − хром). Нужны ДАННЫЕ (бары строятся
+//   рендерерами по RAW), поэтому набор живой и без данных честно отказывается.
+// ⚠ 1280 - только пять вкладок со сводкой: у БДР и Реестра сводки нет, там перенос при 1280 -
+//   действующее правило (честнее невидимых «⚙ Действия» и «Пресет»).
+window.barRunTests=function(){
+  const {R,ok}=_pfTestBed();
+  if(typeof RAW==='undefined'||!RAW.length){console.log('[бар] barRunTests: данные не загружены - проверять не на чем.');return{total:0,failed:0,tests:[],skipped:true};}
+  const TABS=[['bank','tabBank','.bank-filters-1row',28],['registry','tabRegistry','.reg-searchbar',27],['planfact','tabPlanfact','.dds-extra-filters',28],
+              ['opiu','tabOpiu','.dds-extra-filters',28],['dds','tabDds','.dds-extra-filters',28],['osv','tabOsv','.dds-extra-filters',28],['fot','tabFot','.dds-extra-filters',28]];
+  const WITH_SUMMARY=['bank','opiu','dds','osv','fot'];
+  const content=document.querySelector('.content');
+  const sv={tab:activeTab,F:JSON.parse(JSON.stringify(_tabFilters)),w:content.style.width,mw:content.style.maxWidth,bs:content.style.boxSizing};
+  const chrome=window.innerWidth-content.getBoundingClientRect().width;
+  // максимум фильтров, какой возможен на данных: год, месяц, направление, статья, ЦФО; у БДР - год и разрез ЦФО (самое широкое «Сбросить (N)»)
+  const dir0=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort()[0];
+  const art0=[...new Set(RAW.map(r=>_slC3(String(r[COL.ARTICLE_NAME]||r[COL.ARTICLE_CODE]||''))).filter(Boolean))].sort()[0];
+  const own0=Object.values(_planOwners||{}).map(v=>String(v||'').trim()).filter(Boolean).sort()[0];
+  const maxFilters=tab=>{const F=_tabFilters[tab]||{};
+    if(Array.isArray(F.years))F.years=[new Date().getFullYear()];if(Array.isArray(F.months))F.months=[8];
+    if(Array.isArray(F.activityDirs)&&dir0)F.activityDirs=[dir0];if(Array.isArray(F.dirs)&&dir0)F.dirs=[dir0];
+    if(Array.isArray(F.articles)&&art0)F.articles=[art0];if(Array.isArray(F.owners)&&own0)F.owners=[own0];
+    if(tab==='planfact'){F.period='year';F.cut='cfo';}};
+  try{
+    [[1600,TABS],[1280,TABS.filter(t=>WITH_SUMMARY.includes(t[0]))]].forEach(([W,tabs])=>{
+      content.style.boxSizing='border-box';content.style.maxWidth='none';content.style.width=(W-chrome)+'px';
+      tabs.forEach(([tab,cont,sel,exp])=>{
+        maxFilters(tab); try{switchTab(tab);}catch(e){}
+        const bar=document.getElementById(cont)&&document.getElementById(cont).querySelector(sel);
+        const h=bar?Math.round(bar.getBoundingClientRect().height):-1;
+        ok(W+' · '+tab+': бар '+exp+'px в одну строку с максимумом фильтров',h===exp,h+'px');});});
+  }finally{
+    content.style.width=sv.w;content.style.maxWidth=sv.mw;content.style.boxSizing=sv.bs;
+    Object.keys(sv.F).forEach(k=>{_tabFilters[k]=sv.F[k];});
+    try{switchTab(sv.tab);}catch(e){}
+  }
+  const bad=R.filter(r=>!r.pass);
+  console.log('[бар] barRunTests: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
+  bad.forEach(r=>console.log('  ✗ '+r.n+'  получено: '+r.got));
+  return{total:R.length,failed:bad.length,tests:R};
+};
 function pfRunLiveTests(){
   const {R,ok}=_pfTestBed();
   if(activeTab!=='planfact'||typeof RAW==='undefined'||!RAW.length){
@@ -11979,7 +12032,11 @@ function renderPlanFact(f){
   //   БДР отличается: min-width держит ширину при смене подписи («Статьи: все» → «Статьи: 3»),
   //   иначе бар дёргается на каждый выбор. 110 → 96 при сборке бара в одну строку: запас ряда
   //   нужен статусу заморозки и бейджу архива, которые в баре появляются не всегда.
-  const pfBtnStyle='min-width:96px;text-align:left';
+  // ⚠ 84, а не 96 (09.09.2026): селект «Разрез» съел запас ряда, и при 1600 с любым активным фильтром
+  //   («Сбросить (N)» шире на 16px) бар уезжал на вторую строку. Кнопки шире 84 естественной шириной,
+  //   при смене подписи «все ▾» → «3 ▾» не дёргаются. У БДР сводки нет - высота держится ШИРИНОЙ
+  //   контролов, и следующий контрол в этом баре требует замера (barRunTests).
+  const pfBtnStyle='min-width:84px;text-align:left';
   const pfArtDD=pfSearch('pf-art-dd')+pfAllBtns("pfMultiAll('pf-art-dd','pf-art-btn','articles','Все статьи',%s)")+pfOptList(pfArts,selArt,"pfMultiChange('pf-art-dd','pf-art-btn','articles','Все статьи')");
   const pfSubDD=pfSearch('pf-sub-dd')+pfAllBtns("pfMultiAll('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи',%s)")+pfOptList(pfSubs,selSub,"pfMultiChange('pf-sub-dd','pf-sub-btn','subarticles','Все подстатьи')");
   const pfOwnDD=pfSearch('pf-own-dd')+pfAllBtns("pfMultiAll('pf-own-dd','pf-own-btn','owners','Все ЦФО',%s)")+pfOptList([NOOWN,...pfOwners],selOwn,"pfMultiChange('pf-own-dd','pf-own-btn','owners','Все ЦФО')");
