@@ -1633,7 +1633,10 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 // ⚠ rowDim («По статьям / По направлениям») убран 07.09.2026 вместе с самим разрезом. Старые
 //   пресеты его ещё содержат - и это НЕ ломает применение: presetApply копирует ключи в состояние,
 //   лишнее поле там просто лежит и никем не читается (так же ведут себя offerIds/secondSides Банка).
-function _pfBlankState(){return {dir:'',dirs:[],year:0,level:'article',period:'',articles:[],subarticles:[],owners:[],sides:[],showHidden:false};}
+// ⚠ `cut` - РАЗРЕЗ (верхний уровень дерева): 'article' - статьи, 'dir' - направления. Имя именно
+//   `cut`, а не `level` и не `rowDim`: `level` занят уровнем строки (article/subarticle) и это
+//   другой вопрос, а `rowDim` был у удалённого 07.09.2026 переключателя и путал бы с ним.
+function _pfBlankState(){return {dir:'',dirs:[],year:0,level:'article',period:'',articles:[],subarticles:[],owners:[],sides:[],showHidden:false,cut:'article'};}
 // ── Per-tab filter state ──
 const _tabFilters={
   bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],articles:[],subarticles:[],finOps:[],fns:'',includeFuture:true},
@@ -2892,7 +2895,7 @@ function _presetApplyRel(tab,rel){
 // ⚠ ГОД хранится флагом «текущий», а не числом: пресет, сделанный в 2026, в январе 2027 молча
 //   показывал бы прошлый год, и человек читал бы чужие числа, не заметив подмены. Кому нужен
 //   конкретный год - он виден в снимке пресета («Год: 2026»), но при применении берётся текущий.
-const PF_PRESET_KEYS=['dirs','articles','subarticles','owners','sides','period','year','level','showHidden'];
+const PF_PRESET_KEYS=['dirs','articles','subarticles','owners','sides','period','year','level','showHidden','cut'];
 // _pfBlankState объявлена рядом с _tabFilters - она же задаёт умолчания вкладки (см. комментарий там).
 function _pfStateSnapshot(){const F=_tabFilters.planfact||{},o={};
   PF_PRESET_KEYS.forEach(k=>{if(k in F)o[k]=F[k];});
@@ -6949,6 +6952,10 @@ window.pfMultiAll=function(ddId,btnId,field,labelAll,s){const dd=document.getEle
 function _pfResetState(){
   _tabFilters.planfact=_pfBlankState();
   window._pfArtExp=new Set(); window._pfSubExp=new Set(); window._pfDirExp=new Set();
+  // ⚠ У разреза «Направления» СВОИ наборы разворотов, и чистить их надо здесь же: развороты,
+  //   сделанные в «Статьях», не должны переезжать в «Направления» и обратно (там раскрыта статья
+  //   ВНУТРИ конкретного направления - это другая строка, хотя код статьи тот же).
+  window._pfCutExp=new Set(); window._pfArtExpD=new Set(); window._pfSubExpD=new Set();
   _activePreset.planfact=''; _activePresetSig.planfact='';
 }
 window.pfResetFilters=function(){_pfResetState();renderPlanFact(getFilters());};
@@ -6970,7 +6977,7 @@ window.pfResetFilters=function(){_pfResetState();renderPlanFact(getFilters());};
 // ⚠ Подписи - только для подсказки; поле без подписи всё равно СЧИТАЕТСЯ и показывается ключом:
 //   забытая подпись обязана выглядеть небрежностью, а не отсутствием фильтра.
 const PF_COUNT_SKIP=['year','period'];
-const PF_FILTER_LABELS={dirs:'Направление',articles:'Статья',subarticles:'Подстатья',owners:'ЦФО',sides:'Контрагент',level:'Уровень',showHidden:'Скрытые направления'};
+const PF_FILTER_LABELS={dirs:'Направление',articles:'Статья',subarticles:'Подстатья',owners:'ЦФО',sides:'Контрагент',level:'Уровень',showHidden:'Скрытые направления',cut:'Разрез'};
 function _pfActiveFilters(f){
   f=f||_tabFilters.planfact||{};
   const D=_pfBlankState(),out=[];
@@ -9450,6 +9457,10 @@ window._pfScrollSave=function(key){
 // Инлайн-разворот статьи → подстатьи в отчёте БДР (режим «Статья»)
 window.pfToggleArt=function(kind,code){const S=window._pfArtExp||(window._pfArtExp=new Set());const k=kind+'|'+code;_pfScrollSave(k);if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());};
 window.pfToggleSub=function(kind,code){const S=window._pfSubExp||(window._pfSubExp=new Set());const k=kind+'|'+code;_pfScrollSave(k);if(S.has(k))S.delete(k);else S.add(k);renderPlanFact(getFilters());}; // разворот подстатьи → третий уровень (стороны)
+// Разворот по ГОТОВОМУ ключу и в НАЗВАННЫЙ набор - для разреза «Направления»: там ключ несёт
+// префикс контейнера ('dir|<направление>|'), иначе разворот статьи в одном направлении открыл бы
+// её во всех. Второй реализации тоггла не заводим: _pfScrollSave и ре-рендер здесь те же.
+window.pfToggleKeyed=function(set,key){const S=window[set]||(window[set]=new Set());_pfScrollSave(key);if(S.has(key))S.delete(key);else S.add(key);renderPlanFact(getFilters());};
 // Разворот подстатьи (или стороны) → ЧЕТВЁРТЫЙ уровень: направления. Ключ - 'kind|подстатья'
 // либо 'kind|подстатья|сторона': одна и та же подстатья разворачивается по направлениям и сама,
 // и внутри каждого сотрудника, и это РАЗНЫЕ строки - общий ключ схлопнул бы их в одну.
@@ -10064,6 +10075,11 @@ function pfRunTests(){
   const _pfSrcTop=(()=>{try{const sc=[...document.scripts].find(x=>!x.src&&/const _slPlanSide=/.test(x.textContent));return sc?sc.textContent:'';}catch(e){return '';}})();
   const {R,ok}=_pfTestBed();
   const src=String(renderPlanFact);
+  // ⚠ Строку статьи строят ДВА места - разрез «Статьи» и разрез «Направления» (09.09.2026), и
+  //   счётные проверки ниже считают ПО ВЕТКАМ: общее число сошлось бы и в том случае, если одна
+  //   ветка потеряла вызов, а другая завела второй. Срез делается один раз на весь набор.
+  const _pfCutSrc=(src.match(/РАЗРЕЗ «НАПРАВЛЕНИЯ»: КОНТЕЙНЕР[\s\S]*?const _cutBody=[\s\S]*?\n  \};/)||[''])[0];
+  const _pfArtSrc=_pfCutSrc?src.replace(_pfCutSrc,''):src;
   const cnt=re=>(src.match(re)||[]).length;
 
   // 1. База статуса - ТЕКУЩИЙ план (сторона t), а не утверждённый и не девбаза
@@ -10362,7 +10378,9 @@ function pfRunTests(){
   // ⚠ Стрелка разворота у подстатьи, где показывать нечего, обязана ИСЧЕЗАТЬ, а не разворачивать пустоту.
   ok('строки считаются ДО решения о стрелке',/const _sideRows=_isSub\?sidesOfSub\(sub\):\[\];/.test(src)&&/const _canOpen=_isSub&&_sideRows\.length>0;/.test(src));
   ok('стрелка берётся из _canOpen, а не из _isSub',/subExpandable:_canOpen,subExpanded:_subOpen/.test(src)&&!/subExpandable:_isSub/.test(src));
-  ok('sidesOfSub зовётся один раз на подстатью',(src.match(/sidesOfSub\(sub\)/g)||[]).length===1,(src.match(/sidesOfSub\(sub\)/g)||[]).length);
+  ok('sidesOfSub зовётся один раз на подстатью в КАЖДОЙ ветке',(_pfArtSrc.match(/sidesOfSub\(sub\)/g)||[]).length===1
+     &&(_pfCutSrc.match(/sidesOfSub\(sub\)/g)||[]).length===1,
+     (_pfArtSrc.match(/sidesOfSub\(sub\)/g)||[]).length+' / '+(_pfCutSrc.match(/sidesOfSub\(sub\)/g)||[]).length);
   // ── Сторож «факт раскладывается нацело» ──
   // ⚠ Проверка на ЧИСЛАХ: сторож обязан молчать при сходимости и называть величину при расхождении.
   ok('нацело - сторож молчит',_pfSplitOff(224977.50,[2512.50,213265,3000,6200])===0,_pfSplitOff(224977.50,[2512.50,213265,3000,6200]));
@@ -10609,7 +10627,7 @@ function pfRunTests(){
    ok('база по направлению - параметр dirs у _subOneBaseM/_subPlanM, а не вторая функция',/const _subOneBaseM=\(lvl,sub,m,utv,dirs\)=>/.test(src)&&/const _subPlanM=\(recsFn,cvt,planMonthFn,lvl,sub,mo,dirs\)=>\{if\(!dirs&&!selOwn\.size\)/.test(src));
    ok('у строки ОДНА стрелка: направления только там, где сторон нет',/const _dirRowsSub=\(!_canOpen&&_multiDir&&dirExp\)\?/.test(src));
    ok('сторож факта - общий _pfSplitOff, план и утв - с null-дисциплиной',/const off=_pfSplitOff\(parentF,rows\.map\(r=>r\.f\)\)/.test(src)&&/if\(v!=null\)t=\(t\|\|0\)\+v/.test(src));
-   ok('сторож зовётся с обоих уровней (подстатья и сторона)',(src.match(/_dirSplitWarn\(/g)||[]).length===2,(src.match(/_dirSplitWarn\(/g)||[]).length);
+   ok('сторож зовётся с обоих уровней (подстатья и сторона)',(_pfArtSrc.match(/_dirSplitWarn\(/g)||[]).length===2,(_pfArtSrc.match(/_dirSplitWarn\(/g)||[]).length);
    ok('ответственный строки направления - dirOverride ровно этого направления',/if\(dirOverride\)\{const o=\(_planOwners\|\|\{\}\)\[dirOverride\+'\|\|'\+code\]/.test(src));
    ok('клик строки под стороной - тот же pfShowTxn, сторона пятым аргументом',/opts\.side!=null\?`,'\$\{jesc2\(opts\.side\)\}'`/.test(src));
    ok('сторона в pfShowTxn - фильтр, а не второй ключ',/if\(side!=null\)all=all\.filter\(r=>String\(r\[COL\.SECOND_SIDE\]\|\|''\)\.trim\(\)===side\)/.test(String(pfShowTxn))&&String(pfShowTxn).indexOf("'|'+side")<0);
@@ -10797,6 +10815,60 @@ function pfRunTests(){
             &&String(renderOSV).indexOf('_barMoreCtlToggle(')>=0
             &&String(renderOPIU).indexOf('inline-flex;align-items:center;gap:6px;background')<0
             &&String(renderOSV).indexOf('inline-flex;align-items:center;gap:6px;background')<0);}}
+
+  // 30. РАЗРЕЗ СТРОК: КОНТЕЙНЕР - НАПРАВЛЕНИЕ (этап 1, 09.09.2026)
+  // ⚠ Проверки СТРУКТУРНЫЕ: разрез меняет форму дерева, а числа берёт существующими примитивами.
+  //   Главное обещание - «cut='article' не меняет ничего»; оно снимается сравнением разметки на
+  //   стенде (в наборе без данных таблицы нет), здесь держим состав правила и его источники.
+  {const src=String(renderPlanFact);
+   ok('поле разреза называется cut и умолчание - статьи',_pfBlankState().cut==='article'&&!('rowDim' in _pfBlankState()));
+   ok('cut входит в пресеты как обычное поле',PF_PRESET_KEYS.indexOf('cut')>=0&&PF_COUNT_SKIP.indexOf('cut')<0);
+   ok('у разреза есть подпись для сводки фильтров',PF_FILTER_LABELS.cut==='Разрез');
+   // ⚠ Чужое значение (старый пресет, будущий 'cfo' этапа 2) обязано читаться как умолчание,
+   //   а не рисовать пустую вкладку: разрез резолвится ОДНОЙ строкой на входе в рендер.
+   ok('разрез резолвится одной строкой, чужое значение = умолчание',/const cut=\(f\.cut==='dir'\)\?'dir':'article';/.test(src)
+      &&(src.match(/f\.cut/g)||[]).length===1);
+   ok('вариант «ЦФО» в списке не показывается до этапа 2',src.indexOf('>Разрез: ЦФО<')<0);
+   // ⚠ Контрол - в самом баре, а не под «⋯»: он меняет ФОРМУ отчёта, а под «⋯» живут редкие фильтры.
+   ok('селект разреза стоит в баре и берёт класс эталона',/<select class="bar-ctl"[^>]*onchange="_tabFilters\.planfact\.cut=this\.value/.test(src)
+      &&src.indexOf("_barMore('pf-")<0);
+   // ⚠ Состав контейнеров - общий _pfDirsToAgg: копии правила о скрытых направлениях быть не должно,
+   //   иначе у исключения появится вторая точка и соседние цифры вкладки станут считаться по разным
+   //   наборам направлений (то же основание, что у гейта dirsToAgg).
+   const _cutBlk=_pfCutSrc;
+   ok('тело разреза найдено в исходнике',_cutBlk.length>500,_cutBlk.length);
+   // ⚠ Смотрим ВЫЗОВЫ, а не упоминания: в комментариях блока обе функции названы намеренно -
+   //   правило пишется там, где его читают, а тест обязан ловить КОД.
+   ok('контейнеры берутся из dirsToAgg, своей фильтрации скрытых нет',
+      /dirsToAgg\.forEach\(d=>\{/.test(_cutBlk)&&!/_pfHiddenDirs/.test(_cutBlk)&&!/_pfDirsToAgg\(/.test(_cutBlk));
+   // ⚠ Пустое направление ПОКАЗЫВАЕТСЯ: строка контейнера рисуется до всякой проверки на пустоту -
+   //   «в направлении ничего нет» это тоже ответ. Прячутся только скрытые, и тем же правилом.
+   ok('пустые направления не отсеиваются',_cutBlk.indexOf('_rowDead(netF')<0&&!/dirsToAgg\.filter\(/.test(_cutBlk));
+   // ⚠ Своего прохода по RAW у разреза нет: числа - существующими per-dir примитивами.
+   ok('своего прохода по RAW и своих счётных функций нет',!/RAW\.(forEach|filter|map|some)/.test(_cutBlk)&&!/COL\./.test(_cutBlk));
+   ok('числа идут через _dSub*/_dSide* (те же, что у четвёртого уровня)',
+      /_dSubFactP\(/.test(_cutBlk)&&/_dSubPlanP\(/.test(_cutBlk)&&/_dSideFactP\(/.test(_cutBlk));
+   // ⚠ ЧЕТВЁРТОГО УРОВНЯ ВНУТРИ НЕТ: направление уже контейнер.
+   ok('четвёртого уровня внутри контейнера нет',_cutBlk.indexOf('_dirsOfSub')<0&&_cutBlk.indexOf('_dirsOfSide')<0
+      &&_cutBlk.indexOf('ggrand')<0&&_cutBlk.indexOf('dirExpandable')<0);
+   // ⚠ ЧП контейнера: план - ТОЛЬКО при обеих заданных частях (null-дисциплина), вывод 127 не участвует.
+   ok('ЧП контейнера: план прочерк, если хоть одна часть null',/const netP=\(I\.p!=null&&E\.p!=null\)\?\(I\.p-E\.p\):null;/.test(_cutBlk)
+      &&/const netB=\(I\.b!=null&&E\.b!=null\)\?\(I\.b-E\.b\):null;/.test(_cutBlk));
+   ok('ЧП контейнера не включает вывод 127',/const netF=I\.f-E\.f;/.test(_cutBlk));
+   ok('у строки контейнера нет остатка и статуса, цвет - по знаку',/signColor:true,skind:'net',pfkey:'cut\|'/.test(_cutBlk)&&!/rem:.{0,12}netF/.test(_cutBlk));
+   // ⚠ Ключ разворота несёт префикс контейнера, наборы у разрезов РАЗДЕЛЬНЫЕ.
+   ok('ключ разворота несёт префикс контейнера',/'dir\|'\+d\+'\|'\+kind\+'\|'/.test(_cutBlk));
+   ok('наборы разворотов раздельные',/_pfCutExp/.test(_cutBlk)&&/_pfArtExpD/.test(_cutBlk)&&/_pfSubExpD/.test(_cutBlk)
+      &&String(_pfResetState).indexOf('_pfCutExp')>=0&&String(_pfResetState).indexOf('_pfArtExpD')>=0&&String(_pfResetState).indexOf('_pfSubExpD')>=0);
+   ok('прокрутка - через существующий _pfScrollSave',String(window.pfToggleKeyed).indexOf('_pfScrollSave')>=0
+      &&_cutBlk.indexOf('_pfKeepScroll')<0);
+   // ⚠ Матрица разреза не знает и обязана сказать это словами, а не показать таблицу по статьям.
+   ok('матрица в разрезе «Направления» отключена с подписью',/if\(isMonthly&&cut==='dir'\)\{/.test(src)
+      &&src.indexOf('Матрица доступна в разрезе «Статьи»')>=0);
+   // ⚠ Сторож уровня контейнера - ТОТ ЖЕ _dirSplitWarn, второго с тем же смыслом не заводим.
+   ok('сторож зовётся и на уровне контейнера',(_cutBlk.match(/_dirSplitWarn\(/g)||[]).length===2
+      &&/_dirSplitWarn\('ИТОГО ДОХОДЫ'/.test(_cutBlk)&&/_dirSplitWarn\('ИТОГО РАСХОДЫ'/.test(_cutBlk));
+   ok('счётчик строк в разрезе не врёт, а молчит',/if\(cut==='dir'\)\{_cntInc=null;_cntExp=null;\}/.test(src));}
 
   // 31. НАЧИСЛЕНИЯ НА ФОТ: ОКЛАД - СУММА НА РУКИ, ОФИЦИАЛЬНОЕ СЧИТАЕТСЯ РАЗНАЧИСЛЕНИЕМ (08.09.2026)
   // ⚠ Ставки берутся от РАЗНЫХ баз (взносы - от начисленного, НДФЛ - внутри него), поэтому их
@@ -11341,6 +11413,10 @@ function renderPlanFact(f){
     const _now=new Date();
     f.period=(f.year===_now.getFullYear())?String(_now.getMonth()+1):String(_pfLastMonthWithData(f.year));
   }
+  // ⚠ РАЗРЕЗ читается ОДНОЙ строкой и приводится к двум значениям: чужое значение в состоянии
+  //   (старый пресет, будущий этап 2 с 'cfo') обязано читаться как умолчание, а не рисовать
+  //   пустую вкладку.
+  const cut=(f.cut==='dir')?'dir':'article';
   const year=f.year,level='article',period=f.period; // period уже проставлен умолчанием выше - второго умолчания («||'year'») здесь быть не должно, оно открывало бы вкладку годом // режим зафиксирован на «Статья» (+ инлайн-разворот подстатей); селект «Уровень» убран из UI, ветка 'subarticle' оставлена в коде, но недостижима. Сохранённый f.level игнорируется
   // ── мультивыбор направлений: f.dirs = массив; пусто → все (свод). Если f.dirs не задан - оставляем пустым (НЕ мигрируем из f.dir, чтобы при первом входе был свод, а не одиночное направление) ──
   let selDirs=Array.isArray(f.dirs)?f.dirs.filter(d=>dirs.includes(d)):[];
@@ -11873,6 +11949,11 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-dir-btn" onclick="pfMultiToggle('pf-dir-dd')" title="Направления (мультивыбор; пусто = все)" class="bar-ctl" style="${pfBtnStyle}">${pfDirBtn}</button><div id="pf-dir-dd" style="${pfDDstyle}">${pfDirDD}</div></div>
     <select class="bar-ctl" onchange="_tabFilters.planfact.year=+this.value;renderPlanFact(getFilters())">${yearOpts}</select>
     ${sel('period',perOpts)}
+    ${''/* ⚠ Разрез - НЕ под «⋯»: он меняет ФОРМУ отчёта (что стоит верхним уровнем дерева), а под «⋯» живут редкие фильтры. Категория - внутри вариантов, подписи-label рядом с контролом не ставим. Вариант «ЦФО» появится этапом 2 - до него его в списке нет. */}
+    <select class="bar-ctl" title="Верхний уровень таблицы: статьи или направления" onchange="_tabFilters.planfact.cut=this.value;renderPlanFact(getFilters())">
+      <option value="article"${cut==='article'?' selected':''}>Разрез: статьи</option>
+      <option value="dir"${cut==='dir'?' selected':''}>Разрез: направления</option>
+    </select>
     <div style="position:relative;display:inline-block"><button id="pf-art-btn" onclick="pfMultiToggle('pf-art-dd')" class="bar-ctl" style="${pfBtnStyle}">${pfArtBtn}</button><div id="pf-art-dd" style="${pfDDstyle}">${pfArtDD}</div></div>
     <div style="position:relative;display:inline-block"><button id="pf-sub-btn" onclick="pfMultiToggle('pf-sub-dd')" class="bar-ctl" style="${pfBtnStyle}">${pfSubBtn}</button><div id="pf-sub-dd" style="${pfDDstyle}">${pfSubDD}</div></div>
     ${''/* Переключатель «По статьям / По направлениям» убран 07.09.2026: разрез по направлениям заменён ЧЕТВЁРТЫМ УРОВНЕМ (строки направлений под подстатьёй и стороной). Тот показывает то же самое, но БЕЗ перестройки таблицы - человек остаётся в своём отчёте и раскрывает нужную строку. */}
@@ -12064,9 +12145,9 @@ function renderPlanFact(f){
     opts=opts||{};
     const _sk=kind||opts.skind; // семантический kind для Δ/статуса: у итоговых строк kind=null (не кликабельны), но net/vyv-семантика - через opts.skind
     const tog=opts.expandable?`<span title="${opts.expanded?'Свернуть подстатьи':'Показать подстатьи'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.expanded?'▾':'▸'}</span>`:opts.subExpandable?`<span title="${opts.subExpanded?'Свернуть расшифровку':'Показать расшифровку (сотрудники / объекты / контрагенты)'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.subExpanded?'▾':'▸'}</span>`:opts.dirExpandable?`<span title="${opts.dirExpanded?'Свернуть направления':'Показать по направлениям'}" style="display:inline-block;width:15px;color:var(--text2);user-select:none">${opts.dirExpanded?'▾':'▸'}</span>`:(opts.child||opts.grand||opts.ggrand?'<span style="display:inline-block;width:15px"></span>':'');
-    const labStyle=`${td};text-align:left${(opts.expandable||opts.subExpandable||opts.dirExpandable)?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${opts.grand?'padding-left:46px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${opts.ggrand?'padding-left:62px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${bold?'font-weight:700':''};position:sticky;left:0;z-index:1;background:${bold?'var(--surface2)':'var(--surface)'}`;
+    const labStyle=`${td};text-align:left${(opts.expandable||opts.subExpandable||opts.dirExpandable||opts.keyToggle)?';cursor:pointer':''};${opts.child?'padding-left:30px;color:var(--text2);font-size:10.5px;':''}${opts.grand?'padding-left:46px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${opts.ggrand?'padding-left:62px;color:var(--text3);font-size:10px;white-space:nowrap;':''}${bold?'font-weight:700':''};position:sticky;left:0;z-index:1;background:${bold?'var(--surface2)':'var(--surface)'}`;
     // клик по лейблу: у статьи - разворот подстатей; у подстатьи с 3-м уровнем - разворот сторон; у листа - гасим. Расшифровка операций - по клику на ячейки значений (строка сохраняет onclick)
-    const labClick=opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:opts.subExpandable?` onclick="event.stopPropagation();pfToggleSub('${kind}','${jesc2(code)}')" title="Клик - расшифровка по сторонам"`:opts.dirExpandable?` onclick="event.stopPropagation();pfToggleDir('${opts.dirKind||kind}','${jesc2(opts.dirCode||code)}'${opts.dirSide!=null?`,'${jesc2(opts.dirSide)}'`:''})" title="Клик - разрез по направлениям"`:(kind?` onclick="event.stopPropagation()"`:'');
+    const labClick=opts.keyToggle?` onclick="event.stopPropagation();pfToggleKeyed('${opts.keyToggle.set}','${jesc2(opts.keyToggle.key)}')" title="${_pesc(opts.keyToggle.title||'Клик - развернуть/свернуть')}"`:opts.expandable?` onclick="event.stopPropagation();pfToggleArt('${kind}','${jesc2(code)}')" title="Клик - развернуть/свернуть подстатьи"`:opts.subExpandable?` onclick="event.stopPropagation();pfToggleSub('${kind}','${jesc2(code)}')" title="Клик - расшифровка по сторонам"`:opts.dirExpandable?` onclick="event.stopPropagation();pfToggleDir('${opts.dirKind||kind}','${jesc2(opts.dirCode||code)}'${opts.dirSide!=null?`,'${jesc2(opts.dirSide)}'`:''})" title="Клик - разрез по направлениям"`:(kind?` onclick="event.stopPropagation()"`:'');
     const dash='<span style=color:var(--text3)>-</span>';
     // ── Прочерк в плановых колонках обязан ОТВЕЧАТЬ на вопрос, а не задавать его ──
     // ⚠ После того как 223 убрали из планирования по стороне (04.09.2026), у строк третьего уровня
@@ -12396,6 +12477,108 @@ function renderPlanFact(f){
     });
     return h;
   };
+  // ⚠ НАБОРЫ РАЗВОРОТОВ У РАЗРЕЗОВ РАЗДЕЛЬНЫЕ: статья, раскрытая в «Статьях», и та же статья
+  //   ВНУТРИ направления - разные строки, и переезжать состояние между разрезами не должно.
+  //   Ключи вдобавок несут префикс контейнера ('dir|<направление>|'), иначе разворот статьи в
+  //   одном направлении открыл бы её во всех. Чистятся вместе с прочими в _pfResetState.
+  const _cutExp=window._pfCutExp||(window._pfCutExp=new Set());
+  const _cutArtExp=window._pfArtExpD||(window._pfArtExpD=new Set());
+  const _cutSubExp=window._pfSubExpD||(window._pfSubExpD=new Set());
+  // ══ РАЗРЕЗ «НАПРАВЛЕНИЯ»: КОНТЕЙНЕР - НАПРАВЛЕНИЕ (этап 1, 09.09.2026) ═══════════════════════
+  // ⚠ Меняется только ВЕРХНИЙ уровень дерева. Внутри контейнера - те же четыре секции и те же
+  //   уровни (статья → подстатья → сторона), считанные ТЕМИ ЖЕ per-dir примитивами, что кормят
+  //   четвёртый уровень и фильтр ЦФО (`_dSub*`, `_dSide*`, `_pd*`). Своих проходов по RAW и своих
+  //   счётных функций здесь нет и быть не должно: вторая выборка по тем же строкам однажды
+  //   разойдётся с первой условиями отбора, и разойдётся МОЛЧА.
+  // ⚠ ЧЕТВЁРТОГО УРОВНЯ ВНУТРИ НЕТ: направление уже контейнер, и строка направления под подстатьёй
+  //   дословно повторяла бы его - разбор одного и того же числа дважды.
+  // ⚠ Состав контейнеров - тот же `dirsToAgg` (общий `_pfDirsToAgg`): своей копии правила о скрытых
+  //   направлениях здесь нет, иначе исключение получило бы вторую точку (см. комментарий у dirsToAgg).
+  const _cutSubs=(kind,code,d)=>subsOfArt(kind,code).filter(subOwnerPass).filter(sub=>_subAlive(kind,sub)).filter(sub=>ownDirsOf(sub).includes(d));
+  const _cutArtF=(kind,code,d)=>{let s=0;_cutSubs(kind,code,d).forEach(sub=>{s+=_dSubFactP(kind,sub,d);});return s;};
+  // ⚠ NULL-ДИСЦИПЛИНА: «плана нет» ≠ «план равен нулю». Складываем только заданные, сумма пустых
+  //   остаётся null (то же правило, что у sumOrNull) - иначе Δ и статус считались бы ОТ НУЛЯ.
+  const _cutArtSum=(kind,code,d,fn)=>{let t=null;_cutSubs(kind,code,d).forEach(sub=>{const v=fn(sub);if(v!=null)t=(t||0)+v;});return t;};
+  const _cutArtP=(kind,code,d)=>_cutArtSum(kind,code,d,sub=>_dSubPlanP(kind,sub,d));
+  const _cutArtB=(kind,code,d)=>_cutArtSum(kind,code,d,sub=>_dSubBaseP(kind,sub,d));
+  // остаток строки статьи внутри направления - тем же `_remMergeP`, что у статьи по компании,
+  // с тем же выходом для смешанной группы под фильтром «Контрагент» (иначе остаток по известной
+  // половине подстатей встал бы рядом с полным фактом строки и дал завышенную «экономию»)
+  const _cutArtRem=(kind,code,d)=>(selSide.size&&!_sideArtKnown(code))?_remMergeP(kind,[])
+    :_remMergeP(kind,_cutSubs(kind,code,d).map(sub=>_dSubRemFor(kind,sub,d)));
+  // живые строки статьи внутри направления - тот же `_rowDead`, второго порога «когда строка пуста» не заводим
+  const _cutArtRows=(arr,kind,d)=>arr.map(r=>({code:r.code,f:_cutArtF(kind,r.code,d),p:_cutArtP(kind,r.code,d),b:_cutArtB(kind,r.code,d)}))
+    .filter(r=>!_rowDead(r.f,r.p,r.b));
+  const _cutTot=(rows)=>{let f=0,p=null,b=null;rows.forEach(r=>{f+=r.f;if(r.p!=null)p=(p||0)+r.p;if(r.b!=null)b=(b||0)+r.b;});return{f,p,b};};
+  // ── строка статьи внутри контейнера (+ подстатьи, + стороны). Ключи разворотов несут префикс
+  //    контейнера и живут в СВОИХ наборах: развороты «Статей» и «Направлений» не переезжают друг в друга.
+  const _cutArtRow=(r,kind,d,revenue)=>{
+    const subs=_cutSubs(kind,r.code,d);
+    const key='dir|'+d+'|'+kind+'|'+r.code,open=subs.length>0&&_cutArtExp.has(key);
+    let h=dRow(artLabel(r.code),r.b,r.p,r.f,revenue,false,kind,r.code,{expandable:subs.length>0,expanded:open,rem:_cutArtRem(kind,r.code,d),pfkey:key,dir:d,
+      keyToggle:subs.length?{set:'_pfArtExpD',key:key,title:'Клик - развернуть/свернуть подстатьи'}:null});
+    if(!open)return h;
+    subs.forEach(sub=>{
+      const sf=_dSubFactP(kind,sub,d),sp=_dSubPlanP(kind,sub,d),sb=_dSubBaseP(kind,sub,d);
+      if(_rowDead(sf,sp,sb))return;
+      const _isSub=(kind==='exp')&&_slFactSide(sub);
+      const _sideRows=_isSub?sidesOfSub(sub).filter(side=>!_rowDead(_dSideFactP(sub,side,d),_dSidePlanP(sub,side,d),_dSideBaseP(sub,side,d))):[];
+      const sKey='dir|'+d+'|'+kind+'|'+sub,sOpen=_sideRows.length>0&&_cutSubExp.has(sKey);
+      h+=dRow(sub,sb,sp,sf,revenue,false,kind,sub,{child:true,rem:_dSubRemFor(kind,sub,d),subExpandable:_sideRows.length>0,subExpanded:sOpen,pfkey:sKey,dir:d,
+        keyToggle:_sideRows.length?{set:'_pfSubExpD',key:sKey,title:'Клик - расшифровка по сторонам'}:null});
+      if(!sOpen)return;
+      const _disp=_pfTrimCommon(_sideRows),_note=_slPlanSide(sub)?'':'ведётся по направлению',_facts=[];
+      _sideRows.forEach((side,_i)=>{const _f=_dSideFactP(sub,side,d);_facts.push(_f);
+        h+=dRow(_slIcon(sub)+' '+(_disp[_i]||_SL_UNALLOC),_dSideBaseP(sub,side,d),_dSidePlanP(sub,side,d),_f,false,false,null,null,
+          {grand:true,rem:_dSideRemFor(sub,side,d),planNote:_note,fullLabel:side,pfkey:'dir|'+d+'|'+kind+'|'+sub+'|'+side});});
+      // тот же сторож нацело, что и в разрезе «Статьи»: расшифровка обязана складываться в строку
+      const _off=_pfSplitOff(sf,_facts);
+      if(_off)console.warn('[БДР] разрез «Направления», третий уровень «'+sub+'» ('+d+') не раскладывает факт нацело: '+_off+' ₽');
+    });
+    return h;
+  };
+  const _cutBody=()=>{
+    let h='';
+    // ⚠ ИТОГО ПО КОМПАНИИ - СТАТИЧНЫЙ БЛОК СВЕРХУ, одинаковый во всех разрезах и не сворачивается:
+    //   разрез меняет РАЗБОР, а не итог, и итог обязан стоять на одном месте при любом разборе.
+    h+=secRow('Итого по компании')+incTotalRow+totalRow+netRow+(vyvodBody?dRow('ИТОГО ВЫВОД ПРИБЫЛИ',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv'),skind:'vyv'}):'');
+    const _tots={inc:[],exp:[]};
+    dirsToAgg.forEach(d=>{
+      const incRows=_cutArtRows(incRowsArr,'inc',d),expRows=_cutArtRows(rowsArr,'exp',d),vyvRows=_cutArtRows(vyvodArr,'vyv',d);
+      const I=_cutTot(incRows),E=_cutTot(expRows),V=_cutTot(vyvRows);
+      _tots.inc.push({d,f:I.f,p:I.p,b:I.b});_tots.exp.push({d,f:E.f,p:E.p,b:E.b});
+      // ⚠ ЧП КОНТЕЙНЕРА: факт - доходы минус расходы, вывод 127 НЕ участвует (он ниже линии ЧП,
+      //   как везде в проекте). План - ТОЛЬКО если заданы ОБЕ части: «плана нет» ≠ «план равен
+      //   нулю», и подстановка нуля за недостающую половину напечатала бы прибыль, которой никто
+      //   не планировал. ⚠ Правило здесь СТРОЖЕ, чем у строки «ЧИСТАЯ ПРИБЫЛЬ» по компании (там
+      //   хватает одной стороны): у компании обе части заданы всегда, а у отдельного направления
+      //   сплошь и рядом заведён план расходов и не заведён план доходов.
+      const netF=I.f-E.f;
+      const netP=(I.p!=null&&E.p!=null)?(I.p-E.p):null;
+      const netB=(I.b!=null&&E.b!=null)?(I.b-E.b):null;
+      const key=d,open=_cutExp.has(key);
+      // ⚠ У строки контейнера НЕТ ни светофора, ни остатка, ни статуса: это не лимит и не
+      //   обязательство, а результат. Цвет - по ЗНАКУ значения, как у строки ЧП (skind:'net').
+      // ⚠ Пустые направления ПОКАЗЫВАЮТСЯ (свёрнутыми): «в направлении ничего нет» - это тоже
+      //   ответ, и человек, ищущий своё направление, обязан его найти. Прячутся только скрытые -
+      //   тем же правилом (dirsToAgg), что и везде.
+      h+=dRow(d,netB,netP,netF,true,true,null,null,{signColor:true,skind:'net',pfkey:'cut|'+d,expandable:true,expanded:open,
+        keyToggle:{set:'_pfCutExp',key:key,title:'Клик - развернуть/свернуть направление'}});
+      if(!open)return;
+      h+=secRow('Доходы')+incRows.map(r=>_cutArtRow(r,'inc',d,true)).join('')
+        +dRow('ИТОГО ДОХОДЫ',I.b,I.p,I.f,true,true,null,null,{rem:_remMergeP('inc',incRows.map(r=>_cutArtRem('inc',r.code,d)))});
+      h+=secRow('Расходы')+expRows.map(r=>_cutArtRow(r,'exp',d,false)).join('')
+        +dRow('ИТОГО РАСХОДЫ',E.b,E.p,E.f,false,true,null,null,{rem:_remMergeP('exp',expRows.map(r=>_cutArtRem('exp',r.code,d)))});
+      h+=dRow('ЧИСТАЯ ПРИБЫЛЬ',netB,netP,netF,true,true,null,null,{signColor:true,skind:'net'});
+      if(vyvRows.length)h+=secRow('Распределение прибыли (вывод)')+vyvRows.map(r=>_cutArtRow(r,'vyv',d,false)).join('')
+        +dRow('ИТОГО ВЫВОД ПРИБЫЛИ',V.b,V.p,V.f,false,true,null,null,{rem:_remMergeP('vyv',vyvRows.map(r=>_cutArtRem('vyv',r.code,d))),skind:'vyv'});
+    });
+    // ⚠ СТОРОЖ УРОВНЯ КОНТЕЙНЕРА: сумма направлений против ИТОГО по компании. Тот же _dirSplitWarn,
+    //   что у четвёртого уровня - второго сторожа с тем же смыслом не заводим.
+    _dirSplitWarn('ИТОГО ДОХОДЫ',revRow.fact,incTotalPlan,incTotalBase,_tots.inc);
+    _dirSplitWarn('ИТОГО РАСХОДЫ',sumFact,sumPlan,sumBase,_tots.exp);
+    return h;
+  };
   // ── Счётчик в шапке таблицы: считаем РЕАЛЬНО ОТРИСОВАННЫЕ строки ────────────
   // ⚠ Раньше шапка печатала длины incRowsArr/rowsArr - наборов уровня СТАТЕЙ, а тело строится из
   //   другого: строки, отсеянные _rowDead, из тела выпадают, а в разрезе «По направлениям» строки
@@ -12406,6 +12589,10 @@ function renderPlanFact(f){
   let _cntInc=null,_cntExp=null;
   const _aliveInc=incRowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base)),_aliveExp=rowsArr.filter(r=>!_rowDead(r.fact,r.plan,r.base));
   _cntInc=_aliveInc.length;_cntExp=_aliveExp.length;
+  // ⚠ В разрезе «Направления» строки тела - НЕ статьи, и честный счётчик тут стоил бы обхода всех
+  //   контейнеров. Ветка, которая не может дать счётчик, оставляет null - шапка тогда не печатает
+  //   ничего: молча неверный счётчик хуже отсутствующего (правило заведено на боевом случае 13.08).
+  if(cut==='dir'){_cntInc=null;_cntExp=null;}
   const incBodyRows=_aliveInc.map(r=>artRow(r.code,r.base,r.plan,r.fact,true,'inc')).join('');
   const incTotalRow=dRow('ИТОГО ДОХОДЫ',incTotalBase,incTotalPlan,revRow.fact,true,true,null,null,{rem:remSum(incRowsArr,'inc')}); // доходы теперь тоже показывают остаток «осталось собрать» (#3 - единое поведение с «по направлениям»)
   const bodyRows=_aliveExp.map(r=>artRow(r.code,r.base,r.plan,r.fact,false,'exp')).join('');
@@ -12424,7 +12611,9 @@ function renderPlanFact(f){
   const incTotalRowF=dRow('ИТОГО ДОХОДЫ по фильтру',sumIncBase,sumIncPlan,sumIncFact,true,true,null,null,{rem:remSum(incRowsArr,'inc')});
   const totalRowF=dRow('ИТОГО РАСХОДЫ по фильтру',sumBase,sumPlan,sumFact,false,true,null,null,{rem:remSum(rowsArr,'exp')});
   const vyvodTotalF=dRow('ИТОГО ВЫВОД по фильтру',sumVyvodBase,sumVyvodPlan,sumVyvodFact,false,true,null,null,{rem:remSum(vyvodArr,'vyv'),skind:'vyv'});
-  const pfTbody=(pfFilterOn
+  // ⚠ Разрез «Направления» строит СВОЁ тело; при cut='article' ветка не трогается вовсе - разметка
+  //   в этом разрезе обязана совпадать с прежней побайтно (это первый тест правки).
+  const pfTbody=(cut==='dir')?_cutBody():(pfFilterOn
     ? ((incBodyRows?secRow('Доходы')+incBodyRows+incTotalRowF:'')+(bodyRows?secRow('Расходы')+bodyRows+totalRowF:'')+(vyvodBody?secRow('Распределение прибыли (вывод)')+vyvodBody+vyvodTotalF:''))||`<tr><td colspan="8" style="padding:14px 12px;color:var(--text3);font-size:12px">По фильтру строк нет</td></tr>`
     : (secRow('Доходы')+incBodyRows+incTotalRow+secRow('Расходы')+bodyRows+totalRow+netRow+vyvodRows));
   // ⚠ Фильтр по контрагенту подписывается в заголовке свода рядом с периодом: числа таблицы и строки
@@ -12435,7 +12624,13 @@ function renderPlanFact(f){
   const periodLbl=(period==='monthly'?('все месяцы '+year):isYear?('Весь год '+year):(MON[+period-1]+' '+year))+sideLbl;
   // ── Матрица «все месяцы (план/факт)»: строки статьи/подстатьи, колонки месяцы, в ячейке факт (цвет по отклонению) + план мелким ──
   let monthlyHtml='';
-  if(isMonthly){
+  // ⚠ МАТРИЦА «ВСЕ МЕСЯЦЫ» РАЗРЕЗА НЕ ЗНАЕТ: её строки собирает свой набор (artMrow/mrow), верхний
+  //   уровень там - статья, а колонки - месяцы. Учить её направлениям - отдельная работа, и молча
+  //   показывать в разрезе «Направления» таблицу по статьям нельзя: человек прочёл бы её как ответ
+  //   на свой вопрос. Поэтому честная подпись вместо таблицы.
+  if(isMonthly&&cut==='dir'){
+    monthlyHtml=`<div class="table-wrap" style="margin-top:10px">${emptyState('Матрица доступна в разрезе «Статьи»','Помесячная матрица строится по статьям. Выберите разрез «Статьи» или период короче года.')}</div>`;
+  }else if(isMonthly){
     const MS=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
     const monthsOn=[];for(let m=1;m<=12;m++){let any=false;for(const c in factByCode){if(factByCode[c][m]){any=true;break;}}if(!any)for(const c in incByCode){if(incByCode[c][m]){any=true;break;}}if(!any)for(const c in vyvodByCode){if(vyvodByCode[c][m]){any=true;break;}}if(!any&&plans.some(p=>p.month===m||p.month===0))any=true;if(!any&&PB&&PB.R.some(p=>p.month===m||p.month===0))any=true;if(any)monthsOn.push(m);} // годовой план (month=0) распределяется /12 - месяц с ним считается заполненным; учитываем и baseline
     if(!monthsOn.length)for(let m=1;m<=12;m++)monthsOn.push(m);
