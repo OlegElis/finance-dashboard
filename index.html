@@ -1235,6 +1235,21 @@ const isVyvodRow=r=>{const a=String(r[COL.ANALYTICS]||'').toLowerCase().replace(
 //   До этого правило жило копией в сводной, а выписка кода вывода не различала вовсе - и печатала
 //   план 127 строкой РАСХОДА против нулевого факта, то есть экономию на весь план вывода.
 const _vyvodCodeF=seen=>code=>!!(seen&&seen[code])||_slC3(code)==='127';
+// ══ ЧЕЙ ЭТО ФАКТ - ОДИН ПРИМИТИВ НА СВОДНУЮ, СВОД ЦФО И ВЫПИСКУ ЦФО (09.09.2026) ═══════════════
+// Код владения по строке факта = ARTICLE_NAME || ARTICLE_CODE: строка без подстатьи ложится под код
+// статьи, а не теряется. Ключ = направление||код, владелец = _planOwners[ключ].
+// ⚠ До этого правило жило ТРЕМЯ копиями с РАЗНЫМ ключом: сводная брала an||ac, а выписка ЦФО и свод
+//   ЦФО - только an и строку без подстатьи ОТБРАСЫВАЛИ (`if(!an)return`). Отчёт, который человек
+//   читает про свои деньги, не имеет права молча терять платёж; пустая подстатья - брак данных, и
+//   ловится он диагностикой, а не потерей строки в отчёте. На боевых данных 09.09.2026 таких строк
+//   ноль, поэтому сведение не сдвинуло ни одного числа - и это проверено побайтно.
+// ⚠ НАБОР НАПРАВЛЕНИЙ СЮДА НЕ ВХОДИТ И НЕ ДОЛЖЕН: он параметр ВЫЗЫВАЮЩЕГО (сводная - dirsToAgg без
+//   скрытых, выписка - dirsScope). Это одно правило с разной ОБЛАСТЬЮ, и область остаётся у каждого
+//   своя; зашей её сюда - выписка узнала бы о скрытых направлениях, чего ей знать нельзя (тест).
+// ⚠ Копий построения ключа в файле быть не должно - это держит тест по образцу сторожей isVyvodRow.
+const _ownerKey=(dir,code)=>String(dir||'')+'||'+String(code||'');
+const _ownCodeOf=r=>String(r[COL.ARTICLE_NAME]||'').trim()||String(r[COL.ARTICLE_CODE]||'').trim();
+const _ownerOf=(dir,code)=>String((_planOwners||{})[_ownerKey(dir,code)]||'').trim();
 let RAW=[];
 let activeTab='bank';
 // ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи по стороне (ФОТ→сотрудник 👤, аренда→объект 🏢, консалтинг→контрагент 👤). ЕДИНЫЙ источник для Выписки ЦФО, редактора планов и сводной БДР - иначе две копии классификации разъедутся (как было бы с OPIU_CATS). Матрицу «все месяцы» это не касается.
@@ -1270,7 +1285,7 @@ const _slFactSide=c=>_slFot(c)||_slConsult(c); // 111 + консалтинг; 22
 const _slIcon=c=>_slRent(c)?'🏢':'👤';
 const _SL_UNALLOC='(не распределено)';
 // факт по стороне: {dir||ARTICLE_NAME → {сторона → [13 мес]}} - списания sub-level подстатей (вывод прибыли исключён), за год+направления
-function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const v=expOf(r);if(!v)return;const an=String(r[COL.ARTICLE_NAME]||'').trim();if(!an||!_slFactSide(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;if(isVyvodRow(r))return;const m=d.getMonth()+1,key=dir+'||'+an,sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=v;});return idx;}
+function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const v=expOf(r);if(!v)return;const an=_ownCodeOf(r);if(!an||!_slFactSide(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;if(isVyvodRow(r))return;const m=d.getMonth()+1,key=_ownerKey(dir,an),sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=v;});return idx;}
 // план по стороне: записи level='subarticle' с этой стороной, конвертер cvt(d,rec,m). Σ по сторонам = план кода → дочерние строки сходятся к строке-подстатье.
 // ⚠ Индекс dir|code|side строится ОДИН раз при создании (как PIDX в renderPlanFact): раньше каждый
 //   вызов фильтровал весь массив планов (тысячи записей × стороны × месяцы на каждый рендер).
@@ -1285,7 +1300,7 @@ function _planSideMD(recsAll,cvt){const IDX=new Map();(recsAll||[]).forEach(p=>{
 //   у него тоже один и тоже недостижимый (planAddEmp). РЕШЕНИЕ ОЛЕГА 06.09.2026: справочник в базе
 //   ОСТАВИТЬ, не удалять и не чистить - лежит, читателей нет, удалять незачем. Ветка остаётся как
 //   путь назад на случай возврата третьего уровня аренды.
-function _sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code){const named={};let hasUn=false;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});if(_slRent(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};}
+function _sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code){const named={};let hasUn=false;dirsSet.forEach(d=>{const SK=sideFactIdx[_ownerKey(d,code)];if(SK)Object.keys(SK).forEach(sd=>{if(sd)named[sd]=1;else hasUn=true;});blRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});fcRecs.forEach(p=>{if(p.level==='subarticle'&&p.dir===d&&p.code===code){const sd=String(p.side||'').trim();if(sd)named[sd]=1;else hasUn=true;}});});if(_slRent(code))(window._rentObjects||[]).forEach(o=>{const s=String(o||'').trim();if(s)named[s]=1;});return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),hasUn};}
 
 // ── Общий префикс в списке сторон срезается, чтобы строки РАЗЛИЧАЛИСЬ НА ГЛАЗ ──
 // ⚠ Полное значение и раньше было доступно - в нативном title на строке. Проблема была не «не узнать
@@ -10545,6 +10560,44 @@ function pfRunTests(){
   ok('isVyvodRow: «Вывод чистой прибыли»',isVyvodRow({[COL.ANALYTICS]:'Вывод чистой прибыли'})===true);
   ok('isVyvodRow: регистр и пунктуация не мешают',isVyvodRow({[COL.ANALYTICS]:'ВЫВОД ПРИБЫЛИ (дивиденды)'})===true);
   ok('isVyvodRow: просто прибыль - не вывод',isVyvodRow({[COL.ANALYTICS]:'Прибыль'})===false&&isVyvodRow({})===false);
+
+  // ── «ЧЕЙ ЭТО ФАКТ» - ОДИН ПРИМИТИВ, ОДИН КЛЮЧ (09.09.2026) ─────────────────────────────────
+  // ⚠ Правило жило тремя копиями с разным ключом (сводная - an||ac, выписка и свод ЦФО - только an
+  //   с отбрасыванием строки без подстатьи). Сторож по образцу isVyvodRow: примитив на месте, копий
+  //   построения ключа нет, область направлений в примитив не зашита.
+  ok('_ownCodeOf: подстатья есть - берётся она',_ownCodeOf({[COL.ARTICLE_NAME]:'220_ФОТ',[COL.ARTICLE_CODE]:'220_Статья'})==='220_ФОТ');
+  ok('_ownCodeOf: подстатьи нет - код статьи, строка не теряется',_ownCodeOf({[COL.ARTICLE_NAME]:'',[COL.ARTICLE_CODE]:'220_Статья'})==='220_Статья');
+  ok('_ownCodeOf: нет ни того ни другого - пусто',_ownCodeOf({})==='');
+  ok('_ownerKey и _ownerOf - один ключ',_ownerKey('БФЛ','220_ФОТ')==='БФЛ||220_ФОТ'&&(function(){const sv=_planOwners;try{_planOwners={'БФЛ||220_ФОТ':' Иванов И.И. '};return _ownerOf('БФЛ','220_ФОТ')==='Иванов И.И.'&&_ownerOf('САУ','220_ФОТ')==='';}finally{_planOwners=sv;}})());
+  {const top=_pfSrcTop;
+   // ⚠ Копия ключа владельца - это `<направление>+'||'+<код>` или прямая индексация _planOwners по
+   //   склеенной строке. Единственное законное место обоих - сам примитив.
+   const keyCopies=(top.match(/\b(?:dir|rd|dd|d|dirOverride|pick\.dir)\+'\|\|'\+/g)||[]).length;
+   ok('копий построения ключа владельца в файле нет',keyCopies===0,keyCopies);
+   const idxCopies=(top.match(/_planOwners\|\|\{\}\)\[/g)||[]).length;
+   ok('прямая индексация _planOwners по паре - только в _ownerOf',idxCopies===1,idxCopies);
+   ok('_ownerKey определён один раз',top.split('const _owner'+'Key=').length-1===1); // иголка из половин: литерал целиком нашёл бы сам себя
+   // ⚠ Все три потребителя берут код владения ОДНОЙ функцией - вот где раньше расходился ключ.
+   ok('сводная берёт код владения примитивом',/const sn=_ownCodeOf\(r\);/.test(String(renderPlanFact))&&/if\(sp&&sn\)\{const K=_ownerKey\(rd,sn\);\(expByDirSub/.test(String(renderPlanFact)));
+   ok('выписка ЦФО берёт код владения примитивом и строку без подстатьи не отбрасывает',/const an=_ownCodeOf\(r\); if\(!an\)return;/.test(String(_cfoStmtData))
+      &&/const code=_ownCodeOf\(r\); if\(!code\)return;/.test(String(_cfoStmtData))&&!/ARTICLE_NAME\]\|\|''\)\.trim\(\); if\(!an\)return;/.test(String(_cfoStmtData)));
+   ok('индекс сторон (общий) берёт код владения примитивом',/const an=_ownCodeOf\(r\);if\(!an\|\|!_slFactSide\(an\)\)return;/.test(String(_buildSideFactIdx)));
+   ok('выписка зовёт _ownerOf, а не свою копию',/const ownerOf=_ownerOf;/.test(String(_cfoStmtData)));
+   // ⚠ Область направлений - параметр вызывающего, а не свойство примитива.
+   const prim=String(_ownerKey)+String(_ownCodeOf)+String(_ownerOf);
+   ok('набор направлений в примитив не зашит',!/dirsToAgg|dirsScope|_pfHiddenDirs|_pfDirsToAgg|hidden/i.test(prim));}
+  // ⚠ ФИКСТУРА: строка БЕЗ подстатьи. Выписка обязана положить её под код статьи (раньше теряла),
+  //   сводная кладёт туда же (по построению sn=_ownCodeOf) - один ответ на «чей это факт».
+  {const svRAW=RAW,svOwn=_planOwners;
+   try{
+     RAW=[['12.04.2026','12.04.2026','Списание','',0,-7777,'нет','р/с','220_Статья','','Прямые / Переменные','Поставщик','x','БФЛ','Основная']];
+     _planOwners={'БФЛ||220_Статья':'Иванов И.И.'};
+     const D=_cfoStmtData({fio:'Иванов И.И.',isNoOwn:false,withSubs:false,withDetail:false,year:2026,month:4,allMonths:false});
+     const f=D&&D.factIdx&&D.factIdx[_ownerKey('БФЛ','220_Статья')];
+     ok('выписка: строка без подстатьи легла под код статьи',!!f&&f[4]===7777,f?f[4]:'нет ключа'); // expOf: трата положительна
+     ok('выписка и сводная отвечают одинаково: владелец пары - Иванов',_ownerOf('БФЛ',_ownCodeOf(RAW[0]))==='Иванов И.И.');
+   }catch(e){ok('фикстура выписки без подстатьи отработала',false,e.message);}
+   finally{RAW=svRAW;_planOwners=svOwn;}}
   // ⚠ _cfoStmtData в списке с 07.09.2026: до правки про вывод прибыли она держала ДВЕ инлайн-копии
   //   правила (проход контекста и проход факта), и обе ушли вместе с разделением индексов.
   // ⚠ Список полон на 07.09.2026: из БДР инлайн-копий предиката не осталось ни одной. Копии в
@@ -10615,8 +10668,8 @@ function pfRunTests(){
    const _dirBlock=(src.match(/const _dSubFactM=[\s\S]*?const _dirsOfSide=[^\n]*/)||[''])[0];
    ok('блок 4-го уровня найден в исходнике',_dirBlock.length>200,_dirBlock.length);
    ok('4-й уровень НЕ ходит в RAW сам',_dirBlock.indexOf('RAW')<0&&_dirBlock.indexOf('forEach(r=>')<0);
-   ok('факт направления - из _pd*-карт',/const _dSubFactM=\(kind,sub,d,m\)=>\{const a=_pdFactMap\(kind\)\[d\+'\|\|'\+sub\]/.test(src));
-   ok('факт стороны×направления - из _sfIdx',/const _dSideFactM=\(sub,side,d,m\)=>\{const SK=_sfIdx\[d\+'\|\|'\+sub\]/.test(src));
+   ok('факт направления - из _pd*-карт',/const _dSubFactM=\(kind,sub,d,m\)=>\{const a=_pdFactMap\(kind\)\[_ownerKey\(d,sub\)\]/.test(src));
+   ok('факт стороны×направления - из _sfIdx',/const _dSideFactM=\(sub,side,d,m\)=>\{const SK=_sfIdx\[_ownerKey\(d,sub\)\]/.test(src));
    // ⚠ Две ветки, и обе обязаны быть: без фильтра по стороне - план направления (_pdPlanMonth/
    //   _pdPlanYear), ПОД фильтром «Контрагент» - план ПО СТОРОНЕ этого направления, иначе строка
    //   показывала бы полный план рядом с фактом одного человека (поймано сторожем расклада).
@@ -10632,7 +10685,7 @@ function pfRunTests(){
    ok('у строки ОДНА стрелка: направления только там, где сторон нет',/const _dirRowsSub=\(!_canOpen&&_multiDir&&dirExp\)\?/.test(src));
    ok('сторож факта - общий _pfSplitOff, план и утв - с null-дисциплиной',/const off=_pfSplitOff\(parentF,rows\.map\(r=>r\.f\)\)/.test(src)&&/if\(v!=null\)t=\(t\|\|0\)\+v/.test(src));
    ok('сторож зовётся с обоих уровней (подстатья и сторона)',(_pfArtSrc.match(/_dirSplitWarn\(/g)||[]).length===2,(_pfArtSrc.match(/_dirSplitWarn\(/g)||[]).length);
-   ok('ответственный строки направления - dirOverride ровно этого направления',/if\(dirOverride\)\{const o=\(_planOwners\|\|\{\}\)\[dirOverride\+'\|\|'\+code\]/.test(src));
+   ok('ответственный строки направления - dirOverride ровно этого направления',/if\(dirOverride\)\{const o=_ownerOf\(dirOverride,code\);/.test(src));
    ok('клик строки под стороной - тот же pfShowTxn, сторона пятым аргументом',/opts\.side!=null\?`,'\$\{jesc2\(opts\.side\)\}'`/.test(src));
    ok('сторона в pfShowTxn - фильтр, а не второй ключ',/if\(side!=null\)all=all\.filter\(r=>String\(r\[COL\.SECOND_SIDE\]\|\|''\)\.trim\(\)===side\)/.test(String(pfShowTxn))&&String(pfShowTxn).indexOf("'|'+side")<0);
    ok('разворот направлений сбрасывается вместе с прочими',/window\._pfDirExp=new Set\(\)/.test(String(_pfResetState)));
@@ -10894,7 +10947,7 @@ function pfRunTests(){
    ok('тело ownersOfRow найдено',_own.length>200,_own.length);
    ok('ветки агрегации по subsOfArt для показа не осталось',!/subsOfArt\([^)]*\)[^;]*ownersOfSub/.test(_own)&&_own.indexOf('subsOfArt')<0);
    ok('ветка подстатьи (ownersOfSub) на месте',/add\(ownersOfSub\(code\)\);/.test(_own));
-   ok('ветка строки направления (пара направление||код) на месте',/_planOwners\|\|\{\}\)\[dirOverride\+'\|\|'\+code\]/.test(_own));
+   ok('ветка строки направления (пара направление||код) на месте',/_ownerOf\(dirOverride,code\)/.test(_own));
    // ⚠ Показ решает ОДИН предикат, и он смотрит на РОД строки, а не на dirOverride: в разрезе
    //   «Направления» направление стоит и у строки СТАТЬИ - оно нужно клику по операциям.
    ok('показ решает один предикат _ownerShown',/const _ownerShown=\(kind,code,isChild,isGGrand\)=>!!kind&&!!code&&\(!!isChild\|\|!!isGGrand\|\|level!=='article'\);/.test(src)
@@ -11218,12 +11271,12 @@ function pfRunLiveTests(){
         // ⚠ Берём подстатью БЕЗ третьего уровня: у _slFactSide (ФОТ, консалтинг) направления лежат
         //   под СТОРОНОЙ, и факт такой строки - доля одного человека, а сверяем мы пару
         //   «направление × подстатья». Прежний отбор по _slFot сюда больше не годится.
-        if(_slFactSide(an))return;const own=String((_planOwners||{})[dir+'||'+an]||'').trim();if(!own)return;const k=dir+'||'+an;(cand[k]=cand[k]||{dir,an,own,n:0}).n++;});
+        if(_slFactSide(an))return;const own=_ownerOf(dir,an);if(!own)return;const k=_ownerKey(dir,an);(cand[k]=cand[k]||{dir,an,own,n:0}).n++;});
       const pick=Object.values(cand).sort((a,b)=>b.n-a.n)[0];
       ok('живой прогон: есть подстатья без сторон с фактом и владельцем за '+M+'.'+yr,!!pick,pick&&(pick.dir+' / '+pick.an+' / '+pick.own));
       if(pick){
         const D=_cfoStmtData({fio:pick.own,isNoOwn:false,withSubs:false,withDetail:false,year:yr,month:M,allMonths:false});
-        const fW=((D.factIdx[pick.dir+'||'+pick.an]||[])[M])||0,pW=D.fcPlanMD(pick.dir,pick.an,M),bW=D.blPlanMD(pick.dir,pick.an,M);
+        const fW=((D.factIdx[_ownerKey(pick.dir,pick.an)]||[])[M])||0,pW=D.fcPlanMD(pick.dir,pick.an,M),bW=D.blPlanMD(pick.dir,pick.an,M);
         const stW=statusOf(_pfStatusBase(bW,pW),fW,false);
         const P=D.people.find(p=>p.own);ok('выписка: подстатья в секции владельца и у неё есть stMonth',!!(P&&P.exp.codes.includes(pick.an)&&P.exp.stMonth(pick.an).k),pick.an);
         // ⚠ Строку сводной адресуем ЧЕТВЁРТЫМ УРОВНЕМ: раньше здесь включался разрез «по
@@ -11521,7 +11574,7 @@ function renderPlanFact(f){
     const m=d.getMonth()+1,out=parseNum(r[COL.OUTCOME]),inc=parseNum(r[COL.INCOME]);
     const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim();
     const gkey=an?c3(an):c3(ac); // ключ строки-статьи (режим «Статья») = c3 ПОДСТАТЬИ; общий для доходов/расходов/вывода, чтобы статья = Σ подстатей по c3 и разворот сходился с родителем. Нет подстатьи - fallback c3 статьи (сохраняет ИТОГО)
-    const sn=an||ac; // имя дочерней «подстатьи» для разворота; при пустой подстатье - код статьи (c3(sn)===gkey), чтобы строка была видна и статья = Σ детей сходилась
+    const sn=_ownCodeOf(r); // код владения (общий примитив); имя дочерней «подстатьи» для разворота; при пустой подстатье - код статьи (c3(sn)===gkey), чтобы строка была видна и статья = Σ детей сходилась
     const rvD=revByMonthD[rd]||(revByMonthD[rd]=new Array(13).fill(0)),npD=npExpMonthD[rd]||(npExpMonthD[rd]=new Array(13).fill(0));
     // sp - строка прошла фильтр «Контрагент». Гасит ТОЛЬКО карты по кодам (строки таблицы, матрица,
     // третий уровень, модал). revByMonth/npExpMonth и их per-dir близнецы остаются полными: на них
@@ -11529,7 +11582,7 @@ function renderPlanFact(f){
     const sp=sidePassRow(r);
     if(level==='article'&&gkey&&ac){const _amt=Math.abs(inc)+Math.abs(out);if(_amt){(artRepAmt[gkey]=artRepAmt[gkey]||{})[ac]=(artRepAmt[gkey][ac]||0)+_amt;}} // представитель лейбла статьи = ARTICLE_CODE с макс. оборотом в c3-группе
     if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?gkey:an;if(sp&&ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}
-      if(sp&&level==='article'&&sn){(incSubN[sn]=incSubN[sn]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+sn]=pfTxn['inc|'+sn]||[]).push(r);const K=rd+'||'+sn;(_pdInc[K]=_pdInc[K]||new Array(13).fill(0))[m]+=inc;}}
+      if(sp&&level==='article'&&sn){(incSubN[sn]=incSubN[sn]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+sn]=pfTxn['inc|'+sn]||[]).push(r);const K=_ownerKey(rd,sn);(_pdInc[K]=_pdInc[K]||new Array(13).fill(0))[m]+=inc;}}
     // ⚠ av - расход СО ЗНАКОМ (expOf): >0 трата, <0 возврат. Строкой выше `out` остаётся сырым
     //   намеренно - там модуль означает ОБЪЁМ активности кода для выбора представителя лейбла статьи,
     //   и возврат обязан этот объём увеличивать, а не вычитать.
@@ -11539,13 +11592,13 @@ function renderPlanFact(f){
       const isVyvod=isVyvodRow(r); // «Вывод чистой прибыли» - распределение, НЕ расход (как в ОПиУ: ниже линии ЧП)
       if(isVyvod){if(c)vyvodAllM[m]+=av; // ⚠ БЕЗ sp: график ЧП идёт под бейджем «по компании», и вывод для него обязан быть по компании (см. vyvodMonth)
         if(sp&&c){(vyvodByCode[c]=vyvodByCode[c]||new Array(13).fill(0))[m]+=av;vyvodCodes[c]=1;(pfTxn['vyv|'+c]=pfTxn['vyv|'+c]||[]).push(r);}
-        if(sp&&level==='article'&&sn){(vyvodSubN[sn]=vyvodSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+sn]=pfTxn['vyv|'+sn]||[]).push(r);const K=rd+'||'+sn;(_pdVyv[K]=_pdVyv[K]||new Array(13).fill(0))[m]+=av;}}
+        if(sp&&level==='article'&&sn){(vyvodSubN[sn]=vyvodSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['vyv|'+sn]=pfTxn['vyv|'+sn]||[]).push(r);const K=_ownerKey(rd,sn);(_pdVyv[K]=_pdVyv[K]||new Array(13).fill(0))[m]+=av;}}
       else{
         if(c)factExpAllM[m]+=av; // ⚠ БЕЗ sp: на этом стоят KPI «по компании» (YTD-исполнение и прогноз года) - см. factExpArrY
         if(sp&&c){(factByCode[c]=factByCode[c]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+c]=pfTxn['exp|'+c]||[]).push(r);}
-        if(sp&&level==='article'&&sn){(factSubN[sn]=factSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+sn]=pfTxn['exp|'+sn]||[]).push(r);const Kp=rd+'||'+sn;(_pdExp[Kp]=_pdExp[Kp]||new Array(13).fill(0))[m]+=av;}
+        if(sp&&level==='article'&&sn){(factSubN[sn]=factSubN[sn]||new Array(13).fill(0))[m]+=av;(pfTxn['exp|'+sn]=pfTxn['exp|'+sn]||[]).push(r);const Kp=_ownerKey(rd,sn);(_pdExp[Kp]=_pdExp[Kp]||new Array(13).fill(0))[m]+=av;}
         npExpMonth[m]+=av;npD[m]+=av; // ⚠ БЕЗ sp - на этом стоят KPI по компании и базы %-планов
-        if(sp&&an){const K=rd+'||'+an;(expByDirSub[K]=expByDirSub[K]||new Array(13).fill(0))[m]+=av;}
+        if(sp&&sn){const K=_ownerKey(rd,sn);(expByDirSub[K]=expByDirSub[K]||new Array(13).fill(0))[m]+=av;}
       }
     }
   });
@@ -11585,7 +11638,7 @@ function renderPlanFact(f){
     const _npBuild=acc=>{const listNP=[];let withPlan=0;
       Object.keys(acc).forEach(an=>{const a=acc[an];
         if(_npHasPlan(an)){withPlan+=a.sum;return;} // план есть - в знаменатель покрытия
-        const os=new Set();dirsToAgg.forEach(dd=>{const o=(_planOwners||{})[dd+'||'+an];if(o)os.add(String(o).trim());});
+        const os=new Set();dirsToAgg.forEach(dd=>{const o=_ownerOf(dd,an);if(o)os.add(o);});
         listNP.push({sub:an,sum:a.sum,cnt:a.cnt,rows:a.rows,dirs:[...a.dirs].sort((x,y)=>x.localeCompare(y,'ru')),owner:[...os].filter(Boolean).sort((x,y)=>x.localeCompare(y,'ru')).join(', ')});
       });
       listNP.sort((x,y)=>y.sum-x.sum);
@@ -11609,18 +11662,18 @@ function renderPlanFact(f){
   // фильтр «ЦФО» (ответственный из редактора планов, _planOwners dir||подстатья); NOOWN - строки без ответственного
   const NOOWN='(не назначен)';
   const selOwn=new Set(_tabFilters.planfact.owners||[]);
-  const ownersOfSub=sub=>{const s=new Set();dirsToAgg.forEach(d=>{const o=(_planOwners||{})[d+'||'+sub];if(o)s.add(o);});return s;};
+  const ownersOfSub=sub=>{const s=new Set();dirsToAgg.forEach(d=>{const o=_ownerOf(d,sub);if(o)s.add(o);});return s;};
   const subOwnerPass=sub=>{if(!selOwn.size)return true;const os=ownersOfSub(sub);if(!os.size)return selOwn.has(NOOWN);return [...os].some(o=>selOwn.has(o));};
   // ── Точный per-(dir,подстатья) owner-cut под фильтром ЦФО: подстатья агрегируется ТОЛЬКО по направлениям, где её владелец проходит selOwn.
   //    Без фильтра (selOwn пуст) аксессоры отдают полную подстатью (per-sub) - поведение прежнее. Все потребители (строки/матрица/остаток/модал/ответственный) идут через эти примитивы. subOwnerPass остаётся для ВИДИМОСТИ строки.
-  const _dirSubPass=(d,sub)=>{if(!selOwn.size)return true;const o=(_planOwners||{})[d+'||'+sub];return o?selOwn.has(o):selOwn.has(NOOWN);};
+  const _dirSubPass=(d,sub)=>{if(!selOwn.size)return true;const o=_ownerOf(d,sub);return o?selOwn.has(o):selOwn.has(NOOWN);};
   const ownDirsOf=sub=>dirsToAgg.filter(d=>_dirSubPass(d,sub)); // owner-passing направления подстатьи
   const _pdFactMap=kind=>kind==='inc'?_pdInc:kind==='vyv'?_pdVyv:_pdExp;
   const _factSubMap=kind=>kind==='inc'?incSubN:kind==='vyv'?vyvodSubN:factSubN;
   const _pdPlanMonth=(recsFn,cvt,lvl,d,sub,mo)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const r2=rs.filter(p=>String(p.side||'')===sd);let hit=false;r2.forEach(r=>{if(r.month===mo){tot=(tot||0)+cvt(r,mo);hit=true;}});if(hit)return;if(!r2.some(p=>p.month>=1)){const yr=r2.find(p=>p.month===0);if(yr)tot=(tot||0)+cvt(yr,0)/12;}});return tot;};
   const _pdPlanYear=(recsFn,cvt,lvl,d,sub)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const r2=rs.filter(p=>String(p.side||'')===sd);const yr=r2.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else{for(let mm=1;mm<=12;mm++){const r=r2.find(p=>p.month===mm);if(r)v=(v||0)+cvt(r,mm);}}if(v!=null)tot=(tot||0)+v;});return tot;};
-  const _subFactP=(kind,sub)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];if(!a)return 0;if(isYear){let s=0;for(let mm=1;mm<=12;mm++)s+=a[mm];return s;}return a[+period]||0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[d+'||'+sub];if(a){if(isYear){for(let mm=1;mm<=12;mm++)s+=a[mm];}else s+=a[+period]||0;}});return s;};
-  const _subFactM=(kind,sub,mo)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];return a?(a[mo]||0):0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[d+'||'+sub];if(a)s+=a[mo]||0;});return s;};
+  const _subFactP=(kind,sub)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];if(!a)return 0;if(isYear){let s=0;for(let mm=1;mm<=12;mm++)s+=a[mm];return s;}return a[+period]||0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[_ownerKey(d,sub)];if(a){if(isYear){for(let mm=1;mm<=12;mm++)s+=a[mm];}else s+=a[+period]||0;}});return s;};
+  const _subFactM=(kind,sub,mo)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];return a?(a[mo]||0):0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[_ownerKey(d,sub)];if(a)s+=a[mo]||0;});return s;};
   const _subPlanP=(recsFn,cvt,planOfFn,lvl,sub)=>{if(!selOwn.size)return planOfFn(lvl,sub);let tot=null;ownDirsOf(sub).forEach(d=>{const v=isYear?_pdPlanYear(recsFn,cvt,lvl,d,sub):_pdPlanMonth(recsFn,cvt,lvl,d,sub,+period);if(v!=null)tot=(tot||0)+v;});return tot;};
   // dirs (необязательный) - считать ровно по этим направлениям (4-й уровень: строка одного направления).
   // ⚠ Ранний выход по !selOwn.size при заданном dirs НЕ применяется: без фильтра ЦФО planMonthFn отдаёт
@@ -12178,7 +12231,7 @@ function renderPlanFact(f){
   const _ownerShown=(kind,code,isChild,isGGrand)=>!!kind&&!!code&&(!!isChild||!!isGGrand||level!=='article');
   const ownersOfRow=(kind,code,isChild,dirOverride)=>{
     const s=new Set(),add=set=>set.forEach(o=>{const t=String(o||'').trim();if(t)s.add(t);});
-    if(dirOverride){const o=(_planOwners||{})[dirOverride+'||'+code];if(o)add(new Set([o]));} // строка направления: ответственный ровно этой пары направление+подстатья
+    if(dirOverride){const o=_ownerOf(dirOverride,code);if(o)add(new Set([o]));} // строка направления: ответственный ровно этой пары направление+подстатья
     else add(ownersOfSub(code)); // подстатья: свои владельцы (их может быть несколько - по одному на направление, это настоящие назначения)
     let out=[...s];if(selOwn.size)out=out.filter(o=>selOwn.has(o)); // при фильтре ЦФО - только выбранные ответственные (не задан - все, как раньше)
     return out.sort((a,b)=>a.localeCompare(b,'ru'));};
@@ -12358,7 +12411,7 @@ function renderPlanFact(f){
   const _sfIdx=_buildSideFactIdx(year,dirsToAgg);
   // ⚠ _fcSideMD/_blSideMD подняты в блок «ПЛАН ПО СТОРОНЕ» выше - их зовёт и фильтр «Контрагент».
   //   Второй копии здесь быть не должно: разъехавшись, третий уровень и строка-подстатья показали бы разные планы.
-  const sideFactM=(sub,side,m)=>{let s=0;ownDirsOf(sub).forEach(d=>{const SK=_sfIdx[d+'||'+sub];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
+  const sideFactM=(sub,side,m)=>{let s=0;ownDirsOf(sub).forEach(d=>{const SK=_sfIdx[_ownerKey(d,sub)];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
   const _sidePer=(fn,sub,side)=>{if(isYear){let s=null;for(let m=1;m<=12;m++){const v=fn(sub,side,m);if(v!=null)s=(s||0)+v;}return s;}return fn(sub,side,+period);};
   const _fcSideM=(sub,side,m)=>{let s=null;ownDirsOf(sub).forEach(d=>{const v=_fcSideMD(d,sub,side,m);if(v!=null)s=(s||0)+v;});return s;};
   const _blSideM=(sub,side,m)=>{if(!_blSideMD)return null;let s=null;ownDirsOf(sub).forEach(d=>{const v=_blSideMD(d,sub,side,m);if(v!=null)s=(s||0)+v;});return s;};
@@ -12406,7 +12459,7 @@ function renderPlanFact(f){
   const _multiDir=dirsToAgg.length>1;
   const dirExp=(level==='article')?(window._pfDirExp||(window._pfDirExp=new Set())):null;
   // подстатья × направление
-  const _dSubFactM=(kind,sub,d,m)=>{const a=_pdFactMap(kind)[d+'||'+sub];return a?(a[m]||0):0;};
+  const _dSubFactM=(kind,sub,d,m)=>{const a=_pdFactMap(kind)[_ownerKey(d,sub)];return a?(a[m]||0):0;};
   const _dSubFactP=(kind,sub,d)=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=_dSubFactM(kind,sub,d,m);return s;}return _dSubFactM(kind,sub,d,+period);};
   const _dLvl=kind=>kind==='inc'?'income':'subarticle';
   // ⚠ ПОД ФИЛЬТРОМ «КОНТРАГЕНТ» ПЛАН СТРОКИ НАПРАВЛЕНИЯ - ПЛАН ПО СТОРОНЕ, а не полный план
@@ -12423,7 +12476,7 @@ function renderPlanFact(f){
   const _dSubPlanP=(kind,sub,d)=>selSide.size?_dPer(m=>_dSubPlanM(kind,sub,d,m)):(isYear?_pdPlanYear(recsOf,cvtD,_dLvl(kind),d,sub):_pdPlanMonth(recsOf,cvtD,_dLvl(kind),d,sub,+period));
   const _dSubBaseP=(kind,sub,d)=>!PB?null:(selSide.size?_dPer(m=>_dSubBaseM(kind,sub,d,m)):(isYear?_pdPlanYear(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub):_pdPlanMonth(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub,+period)));
   // сторона × направление (третий уровень, разложенный по направлениям)
-  const _dSideFactM=(sub,side,d,m)=>{const SK=_sfIdx[d+'||'+sub];return (SK&&SK[side])?(SK[side][m]||0):0;};
+  const _dSideFactM=(sub,side,d,m)=>{const SK=_sfIdx[_ownerKey(d,sub)];return (SK&&SK[side])?(SK[side][m]||0):0;};
   const _dSideFactP=(sub,side,d)=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=_dSideFactM(sub,side,d,m);return s;}return _dSideFactM(sub,side,d,+period);};
   const _dSidePlanM=(sub,side,d,m)=>_sideNoPlan(sub)?null:_fcSideMD(d,sub,side,m);
   const _dSideBaseM=(sub,side,d,m)=>(_sideNoPlan(sub)||!_blSideMD)?null:_blSideMD(d,sub,side,m);
@@ -12819,9 +12872,9 @@ function renderPlanFact(f){
     const agg={};
     dirsToAgg.forEach(d=>{subsExp.forEach(sub=>{
       if(isVyvodCode(sub)||!subPass(sub))return;
-      const fv=perOf(expByDirSub[d+'||'+sub]),pv=planDirSub(d,sub),bv=basePlanDirSub(d,sub);
+      const fv=perOf(expByDirSub[_ownerKey(d,sub)]),pv=planDirSub(d,sub),bv=basePlanDirSub(d,sub);
       if(!fv&&pv==null&&bv==null)return;
-      const o=(_planOwners||{})[d+'||'+sub]||NOOWN;
+      const o=_ownerOf(d,sub)||NOOWN;
       const A=agg[o]||(agg[o]={plan:null,fact:0,base:null,remPlan:null,remFact:0});
       if(pv!=null)A.plan=(A.plan||0)+pv; if(bv!=null)A.base=(A.base||0)+bv; A.fact+=fv;
       // Остаток за ВЫБРАННЫЙ период, факт ТОЛЬКО за месяцы, где база ЕСТЬ (#1).
@@ -12836,7 +12889,7 @@ function renderPlanFact(f){
       //   скажет «план не задан». Прежний фолбэк на утверждённое вернул бы вторую базу через заднюю дверь.
       remMonths.forEach(m=>{const b=basePlanDirSubM(d,sub,m),p=planDirSubM(d,sub,m);
         const v=_pfStatusBase(b,p); if(v==null)return;
-        A.remPlan=(A.remPlan||0)+v;const fm=expByDirSub[d+'||'+sub];A.remFact+=fm?(fm[m]||0):0;});
+        A.remPlan=(A.remPlan||0)+v;const fm=expByDirSub[_ownerKey(d,sub)];A.remFact+=fm?(fm[m]||0):0;});
     });});
     const names=Object.keys(agg);
     if(names.length&&!(names.length===1&&names[0]===NOOWN)){ // показываем, только если ответственные вообще назначены
@@ -15579,7 +15632,7 @@ window.cfoApproveMonthInfo=function(){
 // ===== Ответственные за расходы (ФИО по подстатье+направлению) - config/planOwners =====
 // ключ = `${dir}||${code}`; значение = ФИО (строка). Хранится отдельно от планов, чтобы не зависеть от года
 let _planOwners=(()=>{try{return JSON.parse(localStorage.getItem('finPlanOwners')||'{}')}catch(e){return{}}})();
-const _ownerKey=(dir,code)=>String(dir||'')+'||'+String(code||'');
+// ⚠ _ownerKey живёт у примитива «чей это факт» (рядом с isVyvodRow) - здесь его больше нет
 function _ownersSave(){
   try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){_lsWarn('finPlanOwners',e)}
   return _fbSetSafe('config/planOwners',_rtdbEncObj(_planOwners),'Ответственные по планам'); // ключ dir||подстатья кодируем (слэш в подстатьях ломал .set всего объекта)
@@ -16033,7 +16086,7 @@ function _planRenderMatrix(){
   const fotSides=(d,code)=>{const named={};let unalloc=false;
     const F=FAD[d];if(F&&F.sideExp&&F.sideExp[code])Object.keys(F.sideExp[code]).forEach(sd=>{if(sd)named[sd]=1;else unalloc=true;});
     eRecs(d,level,code).forEach(p=>{const sd=String(p.side||'').trim();if(sd)named[sd]=1;else unalloc=true;});
-    const ak=d+'||'+code;((window._planAddedSides||{})[ak]||[]).forEach(sd=>{if(sd)named[sd]=1;});
+    const ak=_ownerKey(d,code);((window._planAddedSides||{})[ak]||[]).forEach(sd=>{if(sd)named[sd]=1;});
     // ⚠ Справочника объектов аренды здесь БОЛЬШЕ НЕТ: fotSides зовётся только из третьего уровня
     //   редактора, а он теперь 111+консалтинг - 223 сюда не доходит по построению. Сам справочник
     //   (config/rentObjects) ЖИВ и нужен - его читает _sideUniverse для расшифровки ФАКТА в сводной
@@ -16413,7 +16466,7 @@ window.planAddEmp=function(dir,code,key){
     if(!window._rentObjects)window._rentObjects=[];
     if(!window._rentObjects.includes(nm)){window._rentObjects.push(nm);try{_rentObjectsSave();}catch(e){}}
   }else{
-    const k=dir+'||'+code; const arr=(window._planAddedSides[k]=window._planAddedSides[k]||[]); if(!arr.includes(nm))arr.push(nm);
+    const k=_ownerKey(dir,code); const arr=(window._planAddedSides[k]=window._planAddedSides[k]||[]); if(!arr.includes(nm))arr.push(nm);
   }
   const S=window._planExpanded||(window._planExpanded=new Set()); S.add(key); S.add(key+'|'+dir);
   _planRenderMatrix();
@@ -16855,7 +16908,7 @@ function cfoScreenRender(){
   //   не пустота, а неисполнение утверждённого, и прятать её нельзя.
   const baseDirScr=(d,code)=>{const bl=rev?D.blPlanIncMD:D.blPlanMD;if(!bl)return null;
     let s=null;MS.forEach(m=>{const v=bl(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
-  const factDir=(d,code)=>{const FI=rev?D.factIncIdx:vyv?D.vyvIdx:D.factIdx,a=FI[d+'||'+code];if(!a)return 0;
+  const factDir=(d,code)=>{const FI=rev?D.factIncIdx:vyv?D.vyvIdx:D.factIdx,a=FI[_ownerKey(d,code)];if(!a)return 0;
     let s=0;MS.forEach(m=>{s+=a[m]||0;});return s;};
   const opsDir=(d,code)=>{let o=[];MS.forEach(m=>{o=o.concat(D.opsOf(d,code,m,vyv?'vyv':'exp')||[]);});
     return o.sort((x,y)=>{const a=parseDate(x[COL.DATE_OPIU]),b=parseDate(y[COL.DATE_OPIU]);return (a?a.getTime():0)-(b?b.getTime():0);});};
@@ -17061,21 +17114,21 @@ function _cfoStmtData(P){
   // ⚠ Один проход, а не два: второй проход по 60 тыс. строк ради того же разбора - это вторая
   //   выборка, которая однажды разойдётся с первой условиями отбора.
   const factIdx={},opsIdx={},vyvIdx={},vyvOpsIdx={},vyvSeen={};
-  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=expOf(r); if(!out)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!an)return; const m=d.getMonth()+1,key=dir+'||'+an;
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=expOf(r); if(!out)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const an=_ownCodeOf(r); if(!an)return; const m=d.getMonth()+1,key=_ownerKey(dir,an);
     const isV=isVyvodRow(r),FI=isV?vyvIdx:factIdx,OI=isV?vyvOpsIdx:opsIdx; if(isV)vyvSeen[an]=1;
     (FI[key]=FI[key]||new Array(13).fill(0))[m]+=out; (OI[key]=OI[key]||[]).push(r); });
   // код вывода = c3 127 ∪ коды, под которыми реально прошли строки вывода (общее правило, см. _vyvodCodeF)
   const isVyvodCode=_vyvodCodeF(vyvSeen);
   // факт ДОХОДОВ: dir||ARTICLE_NAME → [13] месяцев (поступления, тот же критерий что в ОПиУ/БДР; перемещения и начальный остаток исключены). Отдельный проход - расходный factIdx не трогаем
   const factIncIdx={};
-  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; if(!an)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1,key=dir+'||'+an; (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; const code=_ownCodeOf(r); if(!code)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1,key=_ownerKey(dir,code); (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
   // ── Задача 5: 3-й уровень выписки - расшифровка sub-level РАСХОДНЫХ подстатей по стороне (ФОТ→сотрудник, аренда→объект, консалтинг→контрагент). Только визуальный разворот поверх посчитанных сумм - ИТОГО не меняет ──
   const _c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const isFotCode=_slFot,isConsultCode=_slConsult,isSubLevel=_slFactSide,sideIcon=_slIcon,UNALLOC=_SL_UNALLOC; // общие примитивы 3-го уровня - модульный уровень, не дублируем (вариант A)
   const sideFactIdx=_buildSideFactIdx(year,dirsScope);
   const blPlanSideMD=_planSideMD(blRecs,blCvt),fcPlanSideMD=_planSideMD(fcRecs,fcCvt);
   const stmtSides=(dirsSet,code)=>_sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code);
-  const sideFactMonth=(dirsSet,code,side,m)=>{let s=0;dirsSet.forEach(d=>{const SK=sideFactIdx[d+'||'+code];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
+  const sideFactMonth=(dirsSet,code,side,m)=>{let s=0;dirsSet.forEach(d=>{const SK=sideFactIdx[_ownerKey(d,code)];if(SK&&SK[side])s+=SK[side][m]||0;});return s;};
   // ⚠ ПОДСТАТЬЯ, КОТОРУЮ ПО СТОРОНЕ НЕ ПЛАНИРУЮТ, В ВЫПИСКЕ - РАСШИФРОВКА
   //   ФАКТА И ТОЛЬКО ЕГО. Гейт стоит ЗДЕСЬ, в точке, где план стороны рождается, а не в местах вывода:
   //   отсюда он закрывает разом обе плановые колонки, обе Δ, отбор строк (sideHasActivity смотрит на
@@ -17099,7 +17152,7 @@ function _cfoStmtData(P){
   const sideHasActivity=(dirsSet,code,side)=>{let fY=0,pY=0;for(let m=1;m<=12;m++){fY+=sideFactMonth(dirsSet,code,side,m);const b=sideBlMonth(dirsSet,code,side,m);if(b)pY+=b;const c=sideFcMonth(dirsSet,code,side,m);if(c)pY+=c;}return Math.abs(fY)>0.005||Math.abs(pY)>0.005;};
   const sidesWithActivity=(dirsSet,code)=>{const S=stmtSides(dirsSet,code);const list=S.named.slice();if(S.hasUn)list.push('');return list.filter(side=>sideHasActivity(dirsSet,code,side));};
   // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = человек секции (пусто для «не назначен»)
-  const ownerOf=(d,code)=>String((_planOwners||{})[d+'||'+code]||'').trim();
+  const ownerOf=_ownerOf; // общий примитив «чей это факт», своей копии нет
   const ownMatchP=(d,code,person,noOwn)=>{const o=ownerOf(d,code);return noOwn?!o:(o===person);};
   // ── СЕКЦИЯ ОДНОГО ЧЕЛОВЕКА: только расчёт, без единой строки HTML ──
   // ⚠ Прежняя buildSection собирала в ОДНОМ цикле и суммы, и строки таблицы. Строки уехали
@@ -17120,7 +17173,7 @@ function _cfoStmtData(P){
     const codes=Object.keys(pairSet).sort((a,b)=>a.localeCompare(b,'ru'));
     const blMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=blPlanF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
     const fcMonth=(code,m)=>{let s=null;pairSet[code].forEach(d=>{const v=fcPlanFF(d,code,m);if(v!=null)s=(s||0)+v;});return s;};
-    const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=FI[d+'||'+code];if(a)s+=a[m]||0;});return s;};
+    const factMonth=(code,m)=>{let s=0;pairSet[code].forEach(d=>{const a=FI[_ownerKey(d,code)];if(a)s+=a[m]||0;});return s;};
     // ── БАЗА ИСПОЛНЕНИЯ ВЫПИСКИ - ТЕКУЩИЙ ПЛАН (решение Олега 06.09.2026), как у сводной и свода ЦФО с 03.09 ──
     // ⚠ План пересмотрели - выписку печатают заново с текущим, для этого он и текущий. Утверждённый
     //   остаётся СПРАВОЧНОЙ колонкой «Утв.» (baseline, только замороженные месяцы) и припиской о
@@ -17156,7 +17209,7 @@ function _cfoStmtData(P){
     .map(p=>Object.assign(p,{exp:buildSection(p.fio,p.own?isNoOwn:false,'exp'),inc:buildSection(p.fio,p.own?isNoOwn:false,'inc'),vyv:buildSection(p.fio,p.own?isNoOwn:false,'vyv')}));
   // ⚠ Операции ЗА КОНКРЕТНЫЙ МЕСЯЦ - обёртка над уже построенным opsIdx, своего прохода по RAW нет.
   // ⚠ kind по умолчанию - расход: все прежние вызовы трёхаргументные и обязаны вести себя как прежде.
-  const opsOf=(dir,code,m,kind)=>{const a=(kind==='vyv'?vyvOpsIdx:opsIdx)[dir+'||'+code];if(!a)return [];
+  const opsOf=(dir,code,m,kind)=>{const a=(kind==='vyv'?vyvOpsIdx:opsIdx)[_ownerKey(dir,code)];if(!a)return [];
     return a.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&(d.getMonth()+1)===m;});};
   return {year,month:M,allMonths,dirsScope,dirLabel,isAll,fio,fioLabel,isNoOwn,wantDetail,
     people,subs,wantSubs,opsOf,opsIdx,factIdx,factIncIdx,vyvIdx,vyvOpsIdx,isVyvodCode,
@@ -17404,7 +17457,7 @@ window.cfoStatementGen=function(O){
   // операции по подстатьям с превышением YTD (Δ YTD > 0), январь-M; в блок-режиме - по всем людям с меткой
   let opsRows='';
   opsList.forEach(item=>{const sec=item.sec;
-    sec.overCodes.forEach(code=>{ let ops=[]; sec.pairSet[code].forEach(d=>{const a=opsIdx[d+'||'+code];if(a)ops=ops.concat(a);});
+    sec.overCodes.forEach(code=>{ let ops=[]; sec.pairSet[code].forEach(d=>{const a=opsIdx[_ownerKey(d,code)];if(a)ops=ops.concat(a);});
       ops=ops.filter(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return dt&&(dt.getMonth()+1)<=M;}).sort((x,y)=>{const a=parseDate(x[COL.DATE_OPIU]),b=parseDate(y[COL.DATE_OPIU]);return (a?a.getTime():0)-(b?b.getTime():0);});
       opsRows+='<tr class="opsec"><td colspan="4">'+(item.label?esc(item.label)+' · ':'')+esc(code)+' · перерасход YTD +'+f(sec.factYTD(code)-sec.fcYTD(code))+' (к текущему плану)</td></tr>';
       opsRows+=ops.map(r=>{const dt=parseDate(r[COL.DATE_OPIU]);return '<tr><td class="c">'+(dt?dt.toLocaleDateString('ru-RU'):'')+'</td><td>'+esc(r[COL.SECOND_SIDE])+'</td><td class="r">'+f(Math.abs(parseNum(r[COL.OUTCOME])||0))+'</td><td class="pp">'+esc(r[COL.PURPOSE])+'</td></tr>';}).join('');
