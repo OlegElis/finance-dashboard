@@ -10069,6 +10069,10 @@ function _pfTestBed(){const R=[],ok=(n,c,got)=>R.push({n,pass:!!c,got});return{R
 // ⚠ Признак именно такой, а НЕ «список имён»: список разъедется с первой же новой проверкой.
 //   «Трогает состояние вкладки» само по себе не критерий - блок сброса фильтров тоже трогает
 //   `_tabFilters`, но работает без данных и без DOM, и потому остаётся в чистом наборе.
+// ⚠ Предикат показа ответственного живёт ВНУТРИ renderPlanFact (ему нужен `level`), поэтому для
+//   набора без данных его формула повторена здесь ОДНОЙ строкой и сверяется с исходником регуляркой
+//   в том же тесте: разъедься они - тест это и покажет.
+function _ownerShownProbe(kind,code,isChild,isGGrand){const level='article';return !!kind&&!!code&&(!!isChild||!!isGGrand||level!=='article');}
 function pfRunTests(){
   // исходник ВЕРХНЕГО уровня (объявления предикатов - не функции, String() их не отдаст): читаем из
   // единственного инлайн-скрипта документа; на стенде и в бою он один и тот же
@@ -10879,6 +10883,32 @@ function pfRunTests(){
    // ⚠ Сторож остаётся и становится ВАЖНЕЕ: сверка ушла с экрана, консоль - единственное место,
    //   где расхождение суммы направлений с итогом компании теперь всплывёт.
    ok('сторож контейнера пережил удаление блока',(_cutBlk.match(/_dirSplitWarn\(/g)||[]).length===2);}
+
+  // 30б. ОТВЕТСТВЕННЫЙ - ТОЛЬКО ТАМ, ГДЕ НАЗНАЧЕН (09.09.2026)
+  // ⚠ Агрегация по подстатьям («Васильев Л.В. +13» на строке статьи) убрана: под одной статьёй
+  //   столько людей, что строка перестаёт отвечать на вопрос «с кого спрашивать». Тест держит и
+  //   то, ГДЕ ответственный есть, и то, что фильтр ЦФО этой правкой не тронут - отбор строк идёт
+  //   другим путём (subOwnerPass/ownDirsOf), и разъехаться показу с отбором нельзя.
+  {const src=String(renderPlanFact);
+   const _own=(src.match(/const ownersOfRow=[\s\S]*?return out\.sort[^;]*;\};/)||[''])[0];
+   ok('тело ownersOfRow найдено',_own.length>200,_own.length);
+   ok('ветки агрегации по subsOfArt для показа не осталось',!/subsOfArt\([^)]*\)[^;]*ownersOfSub/.test(_own)&&_own.indexOf('subsOfArt')<0);
+   ok('ветка подстатьи (ownersOfSub) на месте',/add\(ownersOfSub\(code\)\);/.test(_own));
+   ok('ветка строки направления (пара направление||код) на месте',/_planOwners\|\|\{\}\)\[dirOverride\+'\|\|'\+code\]/.test(_own));
+   // ⚠ Показ решает ОДИН предикат, и он смотрит на РОД строки, а не на dirOverride: в разрезе
+   //   «Направления» направление стоит и у строки СТАТЬИ - оно нужно клику по операциям.
+   ok('показ решает один предикат _ownerShown',/const _ownerShown=\(kind,code,isChild,isGGrand\)=>!!kind&&!!code&&\(!!isChild\|\|!!isGGrand\|\|level!=='article'\);/.test(src)
+      &&(src.match(/_ownerShown\(/g)||[]).length===1,(src.match(/_ownerShown\(/g)||[]).length); // ровно ОДНА точка решения - в ownerTd
+   ok('строка статьи ответственного не несёт',_ownerShownProbe('exp','220',false,false)===false);
+   ok('строка подстатьи несёт',_ownerShownProbe('exp','220_ФОТ',true,false)===true);
+   ok('строка направления под подстатьёй несёт',_ownerShownProbe('exp','220_ФОТ',false,true)===true);
+   ok('итоговые строки и контейнер направления не несут',_ownerShownProbe(null,null,false,false)===false
+      &&_ownerShownProbe('exp',null,true,false)===false);
+   // ⚠ Ячейка строки статьи ПУСТАЯ, а не «не назначен»: назначение живёт уровнем ниже, и подпись
+   //   «не назначен» была бы неправдой о данных.
+   ok('у строки без ответственного ячейка пустая, но с data-label',/if\(!_ownerShown\(kind,code,isChild,isGGrand\)\)return `<td style="\$\{td\}" data-label="Ответственный"><\/td>`;/.test(src));
+   // ⚠ ФИЛЬТР ЦФО НЕ ТРОНУТ: отбор строк и разворотов идёт своими путями.
+   ok('отбор по ЦФО идёт мимо показа',(src.match(/subOwnerPass/g)||[]).length>=4&&(src.match(/ownDirsOf\(/g)||[]).length>=3);}
 
   // 31. НАЧИСЛЕНИЯ НА ФОТ: ОКЛАД - СУММА НА РУКИ, ОФИЦИАЛЬНОЕ СЧИТАЕТСЯ РАЗНАЧИСЛЕНИЕМ (08.09.2026)
   // ⚠ Ставки берутся от РАЗНЫХ баз (взносы - от начисленного, НДФЛ - внутри него), поэтому их
@@ -12132,14 +12162,32 @@ function renderPlanFact(f){
   //   тогда несколько ФИО появится даже на строке-подстатье; это честно, а не дефект.
   const _fioInit=fio=>{const p=String(fio||'').trim().split(/\s+/); // «Черновский Александр Борисович» → «Черновский А.Б.»; 1 слово отдаём как есть
     return p.length<2?String(fio||'').trim():p[0]+' '+p.slice(1).map(x=>x.charAt(0).toUpperCase()+'.').join('');};
+  // ── ОТВЕТСТВЕННЫЙ ПОКАЗЫВАЕТСЯ ТОЛЬКО ТАМ, ГДЕ ОН НАЗНАЧЕН (решение Олега 09.09.2026) ────────
+  // ⚠ Владелец задаётся парой «направление + подстатья» - значит назначение живёт на ПОДСТАТЬЕ и
+  //   на строке НАПРАВЛЕНИЯ под ней. У строки СТАТЬИ своего владельца нет и быть не может.
+  // ⚠ Агрегация по подстатьям УДАЛЕНА, и это не упрощение показа: «Васильев Л.В. +13» с подсказкой
+  //   на четырнадцать фамилий ничего не сообщает об ответственности - под одной статьёй столько
+  //   людей, что строка перестаёт отвечать на вопрос «с кого спрашивать». Пустая ячейка честнее.
+  // ⚠ Правило ОДНО на оба разреза: в «Направлениях» строка-контейнер зовёт dRow с kind=null и
+  //   ячейка пуста по той же причине - у направления целиком владельца нет.
+  // ⚠ ФИЛЬТР ЦФО ЭТИМ НЕ ТРОНУТ: отбор строк идёт через subOwnerPass/ownDirsOf, а здесь только
+  //   ПОКАЗ. Разъедься эти два вопроса - и таблица показывала бы одни строки, а считала другие.
+  // ⚠ Признак «строка НЕ статья» - `isChild` (подстатья) либо `isGGrand` (строка направления
+  //   под подстатьёй). По одному `dirOverride` его не вывести: в разрезе «Направления»
+  //   направление стоит и у строки СТАТЬИ - оно нужно клику по операциям, а не ответственному.
+  const _ownerShown=(kind,code,isChild,isGGrand)=>!!kind&&!!code&&(!!isChild||!!isGGrand||level!=='article');
   const ownersOfRow=(kind,code,isChild,dirOverride)=>{
     const s=new Set(),add=set=>set.forEach(o=>{const t=String(o||'').trim();if(t)s.add(t);});
-    if(dirOverride){const o=(_planOwners||{})[dirOverride+'||'+code];if(o)add(new Set([o]));} // режим «по направлениям»: ответственный ровно этого направления+подстатьи
-    else if(isChild||level!=='article')add(ownersOfSub(code)); else subsOfArt(kind,code).filter(subOwnerPass).forEach(sub=>add(ownersOfSub(sub))); // при фильтре ЦФО статья агрегирует владельцев только прошедших подстатей
+    if(dirOverride){const o=(_planOwners||{})[dirOverride+'||'+code];if(o)add(new Set([o]));} // строка направления: ответственный ровно этой пары направление+подстатья
+    else add(ownersOfSub(code)); // подстатья: свои владельцы (их может быть несколько - по одному на направление, это настоящие назначения)
     let out=[...s];if(selOwn.size)out=out.filter(o=>selOwn.has(o)); // при фильтре ЦФО - только выбранные ответственные (не задан - все, как раньше)
     return out.sort((a,b)=>a.localeCompare(b,'ru'));};
-  const ownerTd=(kind,code,isChild,dirOverride)=>{
-    if(!kind||!code)return `<td style="${td}" data-label="Ответственный"></td>`; // ИТОГО/ЧП/ИТОГО ВЫВОД зовут dRow с kind=null - ячейка пустая (подпись всё равно нужна: без неё mobileCardify подставит ярлык из 2-го ряда шапки)
+  const ownerTd=(kind,code,isChild,dirOverride,isGGrand)=>{
+    // ⚠ Пусто у ИТОГО/ЧП/ВЫВОДА (dRow зовут с kind=null) И У СТРОКИ СТАТЬИ: у неё своего
+    //   владельца нет, а «не назначен» было бы неправдой - назначение живёт уровнем ниже.
+    //   `data-label` обязателен даже у пустой ячейки: без него mobileCardify подставит
+    //   ярлык из шапки позиционно и подписи в мобильной карточке съедут.
+    if(!_ownerShown(kind,code,isChild,isGGrand))return `<td style="${td}" data-label="Ответственный"></td>`;
     const os=ownersOfRow(kind,code,isChild,dirOverride);
     if(!os.length)return `<td style="${td};text-align:left;color:var(--text3);cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" ${_tipAttr([],null,'Ответственный не назначен в редакторе планов')}>-</td>`;
     // ПЕРВЫЙ по алфавиту + счётчик остальных («Данилова А.П. +7»); полный список - в title. Жёсткая ширина + ellipsis, одна строка - колонка не выдавливает Δ/Остаток/Статус за край
@@ -12215,7 +12263,7 @@ function renderPlanFact(f){
     //   Ключ ТОТ ЖЕ, что в _pfArtExp/_pfSubExp/_pfDirExp: разъедься они - строка не найдётся молча.
     return`<tr${opts.pfkey?` data-pfkey="${_pesc(opts.pfkey)}"`:''}${bold?' style="background:var(--surface2)"':kind?' style="cursor:pointer"':''}${opts.child?' class="dds-sub"':''}${kind?` onclick="pfShowTxn('${kind}','${jesc2(code)}',${isYear?0:+period}${opts.dir?`,'${jesc2(opts.dir)}'`:(opts.side!=null?',null':'')}${opts.side!=null?`,'${jesc2(opts.side)}'`:''})" title="Клик - операции по строке"`:''}>
       <td style="${labStyle}" data-label="${level==='article'?'Статья':'Подстатья'}"${(opts.grand||opts.ggrand)?` title="${_pesc(opts.fullLabel||label)}"`:''}${labClick}>${tog}${(opts.grand||opts.ggrand)?`<span style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">${esc(label)}</span>`:esc(label)}</td>
-      ${ownerTd(kind,code,opts.child,opts.dir)}
+      ${ownerTd(kind,code,opts.child,opts.dir,opts.ggrand)}
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Утв. план" ${_tipAttr(planNoteTip,null,'Утверждённый (замороженный) план. Не редактируется.')}>${planNum(base!=null?fmt(revenue?base:-base):planDash,'')}</td>
       <td style="${td};text-align:right;font-weight:${numW};cursor:default" onclick="event.stopPropagation()" data-label="Тек. план" ${(opts.planNote&&plan==null)?_tipAttr(planNoteTip,null,'Текущий план (рабочий, правится свободно)'):planMark.tip}>${planNum(plan!=null?fmt(revenue?plan:-plan):planDash,planMark.ar)}</td>
       <td style="${td};text-align:right;border-left:1px solid var(--border);border-right:1px solid var(--border);font-weight:${numW}${factCol}${opts.signColor?';color:'+(fact>=-0.0001?'var(--income)':'var(--outcome)'):''}${kind?';cursor:pointer':''}" data-label="Факт"${kind?' title="Клик - операции за период по этой строке"':''}>${fmt(revenue?fact:-fact)}</td>
