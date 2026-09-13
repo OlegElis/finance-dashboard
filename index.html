@@ -11017,6 +11017,10 @@ function pfRunTests(){
         ok('ОСВ: «без вход. сальдо» и разрез строк живы, но под «⋯»',/_tabFilters\['osv'\]\.noOpening=this\.checked/.test(v)
            &&/_tabFilters\['osv'\]\.rowDim='direction'/.test(v)&&/_barMore\('osv-more'/.test(v));
         ok('ФОТ: детализация жива, но под «⋯»',/_tabFilters\['fot'\]\.fotDetail=this\.value/.test(ft)&&/_barMore\('fot-more'/.test(ft));
+        // ⚠ ДИАГНОСТИКА ПРОВАЛА (13.09.2026): при неверной высоте barRunTests печатает, ЧТО не влезло, - и только тогда.
+        {const bt=String(barRunTests);
+         ok('barRunTests при провале высоты зовёт _barDiag, и только при провале',typeof _barDiag==='function'&&/if\(bar&&h!==exp\)_barDiag\(bar,/.test(bt)&&(bt.match(/_barDiag\(/g)||[]).length===1);
+         ok('_barDiag печатает доступную ширину, потребность, нехватку и таблицу контролов',/console\.table\(rows\)/.test(String(_barDiag))&&/НЕ ХВАТИЛО/.test(String(_barDiag))&&/перенесён/.test(String(_barDiag))&&/'min-width'/.test(String(_barDiag)));}
         // ⚠ БДР (13.09.2026): статус утверждения, бейдж архива и «⚙ Действия» - под «⋯», обработчики прежние.
         {const pf=String(renderPlanFact);
          ok('БДР: статус, архив и «Действия» живы, но под «⋯»',/_barMore\('pf-more'/.test(pf)&&/pfActionsToggle\(\)/.test(pf)&&/pfArchiveOpen\(\)/.test(pf)&&/_pfMoreRows/.test(pf));}
@@ -11431,6 +11435,37 @@ window.pfRunTests=pfRunTests;
 //   рендерерами по RAW), поэтому набор живой и без данных честно отказывается.
 // ⚠ 1280 - только пять вкладок со сводкой: у БДР и Реестра сводки нет, там перенос при 1280 -
 //   действующее правило (честнее невидимых «⚙ Действия» и «Пресет»).
+// ── ДИАГНОСТИКА БАРА: ЧТО ИМЕННО НЕ ВЛЕЗЛО (задача Олега 13.09.2026) ─────────────────────────
+// ⚠ Высота «55px» говорит «перенёсся», но не говорит КТО - а стенд расхождение не воспроизводит
+//   (у Банка и ФОТ там запас 54 и 51px, на боевой странице бар переносится: 55 и 51px). Поэтому
+//   диагностика обязана работать на боевой странице руками: `_barDiag(бар, подпись)` печатает
+//   доступную ширину ряда, сумму ширин контролов, нехватку в пикселях и таблицу контролов
+//   (подпись, ширина, min-width, резина ли, перенесён ли на вторую строку).
+// ⚠ Из `barRunTests` зовётся ТОЛЬКО при провале проверки высоты - зелёный прогон молчит.
+// ⚠ Резиновый элемент (сводка, flex-grow>0) в сумму входит своим `min-width`, а не тем, что
+//   занял на экране: его ширина - остаток, а не потребность. Ширина берётся по
+//   `getBoundingClientRect`, без margin: единственные маргины в барах - `margin-left:auto` у
+//   прижатого элемента, и в потребность они не входят (это свободное место, а не контрол).
+window._barDiag=function(bar,label){
+  if(!bar){console.log('[бар] _barDiag: узел бара не передан');return null;}
+  const cs=getComputedStyle(bar),br=bar.getBoundingClientRect();
+  const avail=bar.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);
+  const gap=parseFloat(cs.columnGap)||0;
+  const kids=[...bar.children].filter(k=>getComputedStyle(k).display!=='none');
+  const rowTop=Math.min(...kids.map(k=>k.getBoundingClientRect().top));
+  const rows=kids.map(k=>{const m=getComputedStyle(k),r=k.getBoundingClientRect();
+    const ctl=k.matches('button,select,input,label')?k:(k.querySelector(':scope > button, :scope > select, :scope > input, :scope > label')||k);
+    let txt=ctl.tagName==='SELECT'?((ctl.options[ctl.selectedIndex]||{}).textContent||''):(ctl.tagName==='INPUT'?(ctl.value||ctl.type):ctl.textContent);
+    txt=String(txt||'').replace(/\s+/g,' ').trim().slice(0,40);
+    const elastic=(parseFloat(m.flexGrow)||0)>0;
+    return {контрол:(k.id||String(k.className||'').split(' ')[0]||k.tagName)+(txt?' «'+txt+'»':''),ширина:Math.round(r.width),'min-width':m.minWidth,резина:elastic?'да, сжимается до '+m.minWidth:'',перенесён:(r.top-rowTop>8)?'ДА':''};});
+  const need=rows.reduce((s,r)=>s+(r.резина?(parseFloat(r['min-width'])||0):r.ширина),0)+gap*Math.max(0,rows.length-1);
+  const short=Math.max(0,Math.round(need-avail));
+  const moved=rows.filter(r=>r.перенесён).map(r=>r.контрол);
+  console.log('[бар] '+(label||'')+': высота '+Math.round(br.height)+'px · доступно '+Math.round(avail)+'px · контролам нужно '+Math.round(need)+'px (зазор '+gap+'px × '+Math.max(0,rows.length-1)+') · '+(short?'НЕ ХВАТИЛО '+short+'px':'помещается, запас '+Math.round(avail-need)+'px')+' · на второй строке: '+(moved.length?moved.join(', '):'ничего'));
+  console.table(rows);
+  return {avail:Math.round(avail),need:Math.round(need),short,moved,rows};
+};
 window.barRunTests=function(){
   const {R,ok}=_pfTestBed();
   if(typeof RAW==='undefined'||!RAW.length){console.log('[бар] barRunTests: данные не загружены - проверять не на чем.');return{total:0,failed:0,tests:[],skipped:true};}
@@ -11458,6 +11493,7 @@ window.barRunTests=function(){
         const bar=document.getElementById(cont)&&document.getElementById(cont).querySelector(sel);
         const h=bar?Math.round(bar.getBoundingClientRect().height):-1;
         ok(W+' · '+tab+': бар '+exp+'px в одну строку с максимумом фильтров',h===exp,h+'px');
+        if(bar&&h!==exp)_barDiag(bar,W+' · '+tab+' (ожидалось '+exp+'px)'); // ⚠ только при провале: что именно не влезло
         // ⚠ «Сбросить (N)» стоит ПЕРЕД селектом пресета, последней парой бара; сводка (где есть) - перед ними
         if(bar){const rb=bar.querySelector(':scope > button.bar-reset'),ps=bar.querySelector(':scope > select.preset-pick'),sm=bar.querySelector(':scope > .bank-summary, :scope > .tab-filter-summary');
           ok(W+' · '+tab+': «Сбросить (N)» есть, активна и стоит перед селектом пресета',!!rb&&!!ps&&rb.nextElementSibling===ps&&ps.nextElementSibling===null&&!rb.disabled&&/^Сбросить \(\d+\)$/.test(rb.textContent),rb?rb.textContent:'нет кнопки');
@@ -11831,6 +11867,7 @@ function renderPlanFact(f){
   const revByMonthD={},npExpMonthD={}; // по направлениям - для разрешения %-планов в режиме «Свод»
   const pfTxn={}; // 'inc|код'/'exp|код'/'vyv|код' → строки RAW (расшифровка по клику)
   const expByDirSub={}; // 'направление||подстатья(an)' → расходы по месяцам (свод «Исполнение по ЦФО»)
+  const _incNoCodeM={}; // 'направление | статья | подстатья' → доход по месяцам у строк БЕЗ трёхзначного кода: они в revByMonth (ИТОГО ДОХОДЫ, ЧП, KPI), но ни в одной строке-статье и ни в одном контейнере - сторож разреза печатает их как «что именно потерялось» (13.09.2026)
   const _pdExp={},_pdInc={},_pdVyv={}; // 'направление||sn' (sn=an||ac, КАК factSubN) → расход/доход/вывод по месяцам - для точного per-dir owner-cut под фильтром ЦФО (пустая подстатья → sn=ac → NOOWN, чтобы контроль «Σ по ЦФО = ИТОГО» держался)
   const factSubN={},incSubN={},vyvodSubN={}; // по ПОДСТАТЬЕ (ARTICLE_NAME) - для инлайн-разворота статья→подстатья в режиме «Статья»
   // Расход по месяцам ПО КОМПАНИИ (без фильтра «Контрагент») - ровно те же строки, что копит factByCode,
@@ -11853,7 +11890,7 @@ function renderPlanFact(f){
     // стоят KPI по компании и базы %-планов - см. фильтр selSide выше.
     const sp=sidePassRow(r);
     if(level==='article'&&gkey&&ac){const _amt=Math.abs(inc)+Math.abs(out);if(_amt){(artRepAmt[gkey]=artRepAmt[gkey]||{})[ac]=(artRepAmt[gkey][ac]||0)+_amt;}} // представитель лейбла статьи = ARTICLE_CODE с макс. оборотом в c3-группе
-    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;const ic=level==='article'?gkey:an;if(sp&&ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}
+    if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an)){revByMonth[m]+=inc;rvD[m]+=inc;if(!gkey){const Kn=rd+' | статья «'+ac+'» | подстатья «'+an+'»';(_incNoCodeM[Kn]=_incNoCodeM[Kn]||new Array(13).fill(0))[m]+=inc;}const ic=level==='article'?gkey:an;if(sp&&ic){(incByCode[ic]=incByCode[ic]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+ic]=pfTxn['inc|'+ic]||[]).push(r);}
       if(sp&&level==='article'&&sn){(incSubN[sn]=incSubN[sn]||new Array(13).fill(0))[m]+=inc;(pfTxn['inc|'+sn]=pfTxn['inc|'+sn]||[]).push(r);const K=_ownerKey(rd,sn);(_pdInc[K]=_pdInc[K]||new Array(13).fill(0))[m]+=inc;}}
     // ⚠ av - расход СО ЗНАКОМ (expOf): >0 трата, <0 возврат. Строкой выше `out` остаётся сырым
     //   намеренно - там модуль означает ОБЪЁМ активности кода для выбора представителя лейбла статьи,
@@ -12797,14 +12834,32 @@ function renderPlanFact(f){
   //   вовсе, а его факт входит в остаток родителя (у родителя за этот месяц база ЕСТЬ, значит
   //   правило #1 берёт факт месяца целиком). Требовать тут равенства значило бы требовать
   //   неверного - сторож кричал бы на штатной картине, и его перестали бы читать.
-  const _dirSplitWarn=(what,parentF,parentP,parentB,rows)=>{
+  // ⚠ СТОРОЖ ОБЯЗАН ГОВОРИТЬ, ГДЕ ИМЕННО (13.09.2026): «не сходится на N» без состава - та же
+  //   болезнь, что у теста высоты бара. При расхождении печатается таблица строк (факт, план, утв)
+  //   с суммой и родителем, а шестой параметр `explain` - функция, которую зовём ТОЛЬКО при
+  //   расхождении факта: она возвращает список того, что заведомо лежит в родителе и не лежит
+  //   ни в одной строке (у доходов - строки без трёхзначного кода, `_incNoCodeM`). Ленивая: на
+  //   штатной картине стоит ноль.
+  const _dirSplitWarn=(what,parentF,parentP,parentB,rows,explain)=>{
     const off=_pfSplitOff(parentF,rows.map(r=>r.f));
-    if(off)console.warn('[БДР] разрез по направлениям «'+what+'» не раскладывает факт нацело: сумма направлений отличается от строки на '+off+' ₽ (направлений показано '+rows.length+')');
     const sum=(get)=>{let t=null;rows.forEach(r=>{const v=get(r);if(v!=null)t=(t||0)+v;});return t;};
+    let bad=!!off;
+    if(off)console.warn('[БДР] разрез по направлениям «'+what+'» не раскладывает факт нацело: сумма направлений отличается от строки на '+off+' ₽ (направлений показано '+rows.length+')');
     const cmp=(lbl,par,got)=>{if(par==null&&got==null)return;
-      if(par==null||got==null||Math.abs(par-got)>0.005)console.warn('[БДР] разрез по направлениям «'+what+'»: '+lbl+' строки '+(par==null?'не задан':par.toFixed(2))+', сумма направлений '+(got==null?'не задана':got.toFixed(2)));};
+      if(par==null||got==null||Math.abs(par-got)>0.005){bad=true;console.warn('[БДР] разрез по направлениям «'+what+'»: '+lbl+' строки '+(par==null?'не задан':par.toFixed(2))+', сумма направлений '+(got==null?'не задана':got.toFixed(2)));}};
     cmp('текущий план',parentP,sum(r=>r.p)); cmp('утверждённый план',parentB,sum(r=>r.b));
+    if(!bad)return;
+    const f2=v=>v==null?'':(Math.round(v*100)/100).toFixed(2);
+    console.table(rows.map(r=>({строка:r.d,факт:f2(r.f),план:f2(r.p),утв:f2(r.b)}))
+      .concat([{строка:'Σ строк',факт:f2(rows.reduce((t,r)=>t+r.f,0)),план:f2(sum(r=>r.p)),утв:f2(sum(r=>r.b))},
+               {строка:'РОДИТЕЛЬ «'+what+'»',факт:f2(parentF),план:f2(parentP),утв:f2(parentB)},
+               {строка:'разница (родитель − Σ строк)',факт:f2((parentF||0)-rows.reduce((t,r)=>t+r.f,0)),план:(parentP==null||sum(r=>r.p)==null)?'':f2(parentP-sum(r=>r.p)),утв:(parentB==null||sum(r=>r.b)==null)?'':f2(parentB-sum(r=>r.b))}]));
+    if(off&&typeof explain==='function'){const ex=explain()||[];
+      if(ex.length){console.warn('[БДР] «'+what+'»: в родителе есть, а ни в одной строке нет (Σ '+f2(ex.reduce((t,e)=>t+e.сумма,0))+' ₽):');console.table(ex);}
+      else console.warn('[БДР] «'+what+'»: строк вне состава не найдено - остаток объясняют активные фильтры (родитель у сторожа полный, строки отфильтрованы)'+(pfFilterOn?' - фильтры СЕЙЧАС активны':' - но фильтры не активны, причину искать дальше'));}
   };
+  // доходные строки без кода за показанный период - «что потерялось» для сторожа ИТОГО ДОХОДЫ
+  const _incNoCodeList=()=>Object.keys(_incNoCodeM).map(K=>{const a=_incNoCodeM[K];let v=0;if(isYear){for(let mm=1;mm<=12;mm++)v+=a[mm];}else v=a[+period]||0;return {где:K,сумма:Math.round(v*100)/100};}).filter(e=>Math.abs(e.сумма)>=0.005).sort((x,y)=>y.сумма-x.сумма);
   const _dSideRemFor=(sub,side,d)=>({
     u:sideRemBy(sub,side,(sb,sd,m)=>({v:_dSideBaseM(sb,sd,d,m),src:_dSideBaseM(sb,sd,d,m)==null?null:'utv'}),m=>_dSideFactM(sub,side,d,m)),
     t:sideRemBy(sub,side,(sb,sd,m)=>({v:_dSidePlanM(sb,sd,d,m),src:_dSidePlanM(sb,sd,d,m)==null?null:'prog'}),m=>_dSideFactM(sub,side,d,m))});
@@ -13039,7 +13094,7 @@ function renderPlanFact(f){
     // ⚠ СТОРОЖ УРОВНЯ КОНТЕЙНЕРА: сумма контейнеров против ИТОГО по компании (для ЦФО - включая
     //   «(не назначен)»). Тот же _dirSplitWarn, что у четвёртого уровня - второго сторожа с тем же
     //   смыслом не заводим.
-    _dirSplitWarn('ИТОГО ДОХОДЫ ('+_CUT.what+')',revRow.fact,incTotalPlan,incTotalBase,_tots.inc);
+    _dirSplitWarn('ИТОГО ДОХОДЫ ('+_CUT.what+')',revRow.fact,incTotalPlan,incTotalBase,_tots.inc,_incNoCodeList); // ⚠ родитель - revByMonth (по компании), строки - только с кодом; explain называет строки без кода
     _dirSplitWarn('ИТОГО РАСХОДЫ ('+_CUT.what+')',sumFact,sumPlan,sumBase,_tots.exp);
     return h;
   };
