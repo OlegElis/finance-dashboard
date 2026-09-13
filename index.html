@@ -491,7 +491,7 @@
        специфичность (0,1,1), поэтому спор решает порядок - правило обязано стоять ПОСЛЕ них.
        Стояло раньше - и на ОПиУ, ОСВ, ФОТ и ДДС селект получал чужие padding 3px и line-height
        normal, выходил 23px вместо 21 и растил бар на 2px. Ставить правило выше по файлу нельзя. */
-  select.preset-pick{margin:-2px 0;max-width:140px;text-overflow:ellipsis;} /* габариты - .bar-ctl; своё только узость и отрицательный margin */
+  select.preset-pick{margin:-2px 0;max-width:104px;text-overflow:ellipsis;} /* габариты - .bar-ctl; своё только узость и отрицательный margin. 140 → 104 (13.09.2026): при 1280 на боевой Банку не хватало 29px, ФОТ - 14px, и переносился именно пресет; длинное имя режется многоточием, полное - в title (_presetPickTitle) */
   /* ── КНОПКА «СБРОСИТЬ (N)» В ФИЛЬТР-БАРЕ (13.09.2026) - ставит _presetBarInject перед селектом пресета.
      Габариты - .bar-ctl; своё только приглушённый фон и запертое состояние. Запертость - атрибутом
      disabled, а не классом: контрол существует всегда, меняется только состояние. */
@@ -11001,7 +11001,7 @@ function pfRunTests(){
        ok('у селекта пресета своей геометрии нет',!!B&&!B['font-size']&&!B['padding']&&!B['border']&&!B['border-radius']);
        ok('селект пресета берёт класс эталона',/sel\.className='bar-ctl preset-pick'/.test(src));
        ok('эталонный селект «ФНС» тоже без инлайновой геометрии',/id="bank-fns-sel"[^>]*class="bar-ctl"/.test(String(renderBank))&&!/id="bank-fns-sel"[^>]*style="[^"]*font-size/.test(String(renderBank)));
-       ok('селект узкий, имя обрезается',!!B&&B['max-width']==='140px'&&B['text-overflow']==='ellipsis');
+       ok('селект узкий (104px), имя обрезается',!!B&&B['max-width']==='104px'&&B['text-overflow']==='ellipsis');
        // ── БАРЫ ВСЕХ СЕМИ ВКЛАДОК: ОДИН ИСТОЧНИК ГАБАРИТОВ И РЕДКОЕ ПОД «⋯» (07.09.2026) ──
        // ⚠ Инлайновые копии геометрии в рендерерах - это то, из-за чего бары разъехались; тест
        //   держит, что новый контрол берёт КЛАСС, а не копию.
@@ -11148,7 +11148,11 @@ function pfRunTests(){
    // ⚠ Клик по операциям в контейнере ЦФО - состав [{sub,dirs}] под ключом КОНТЕЙНЕРА.
    ok('клик в контейнере ЦФО отдаёт состав под ключом контейнера',/window\._pfOwnSubs\[k\]=subs\.map\(sub=>\(\{sub,dirs:_CUT\.dirsOf\(sub,C\)\}\)\);/.test(_cutBlk)
       &&/window\.pfShowTxn=function\(kind,code,m,dir,side,ownKey\)/.test(_pfSrcTop)&&/\[ownKey\|\|\(kind\+'\|'\+code\)\]/.test(_pfSrcTop));
-   ok('сторож контейнера зовётся для обоих разрезов с подписью',/_dirSplitWarn\('ИТОГО ДОХОДЫ \('\+_CUT\.what\+'\)'/.test(_cutBlk));}
+   ok('сторож контейнера зовётся для обоих разрезов с подписью',/_dirSplitWarn\('ИТОГО ДОХОДЫ \('\+_CUT\.what\+'\)'/.test(_cutBlk));
+   // ⚠ 13.09.2026: родитель доходного сторожа - ТОТ ЖЕ набор, что у контейнеров (Σ incRowsArr), а не
+   //   выручка по компании: под любым фильтром revRow.fact давал «все контейнеры 0 при полном родителе».
+   ok('родитель сторожа доходов - Σ строк таблицы, не выручка компании',/_dirSplitWarn\('ИТОГО ДОХОДЫ \('\+_CUT\.what\+'\)',sumIncFact,sumIncPlan,sumIncBase,_tots\.inc\)/.test(_cutBlk)&&_cutBlk.indexOf("revRow.fact,incTotalPlan")<0);
+   ok('выручка компании сверяется со строками отдельно и называет строки без кода',/const _gh=_incNoCodeList\(\);/.test(src)&&/console\.table\(_gh\)/.test(src)&&/_incNoCodeM\[Kn\]/.test(src));}
 
   // 30б. ОТВЕТСТВЕННЫЙ - ТОЛЬКО ТАМ, ГДЕ НАЗНАЧЕН (09.09.2026)
   // ⚠ Агрегация по подстатьям («Васильев Л.В. +13» на строке статьи) убрана: под одной статьёй
@@ -11457,9 +11461,14 @@ window._barDiag=function(bar,label){
     const ctl=k.matches('button,select,input,label')?k:(k.querySelector(':scope > button, :scope > select, :scope > input, :scope > label')||k);
     let txt=ctl.tagName==='SELECT'?((ctl.options[ctl.selectedIndex]||{}).textContent||''):(ctl.tagName==='INPUT'?(ctl.value||ctl.type):ctl.textContent);
     txt=String(txt||'').replace(/\s+/g,' ').trim().slice(0,40);
-    const elastic=(parseFloat(m.flexGrow)||0)>0;
-    return {контрол:(k.id||String(k.className||'').split(' ')[0]||k.tagName)+(txt?' «'+txt+'»':''),ширина:Math.round(r.width),'min-width':m.minWidth,резина:elastic?'да, сжимается до '+m.minWidth:'',перенесён:(r.top-rowTop>8)?'ДА':''};});
-  const need=rows.reduce((s,r)=>s+(r.резина?(parseFloat(r['min-width'])||0):r.ширина),0)+gap*Math.max(0,rows.length-1);
+    const grows=(parseFloat(m.flexGrow)||0)>0,shrinks=(parseFloat(m.flexShrink)||0)>0&&m.minWidth==='0px';
+    // ⚠ Растущий элемент (сводка) в потребность входит своим min-width - его ширина это остаток ряда.
+    //   Сжимаемый, но не растущий (группа доп-фильтров Банка: flex-shrink:1, min-width:0, внутри
+    //   flex-wrap) входит ПОЛНОЙ шириной: сжатие у него - это перенос его же детей на вторую строку
+    //   внутри группы, то есть та же потеря 28px, только в другом месте.
+    return {контрол:(k.id||String(k.className||'').split(' ')[0]||k.tagName)+(txt?' «'+txt+'»':''),ширина:Math.round(r.width),'min-width':m.minWidth,резина:grows?'растёт, сжимается до '+m.minWidth:(shrinks?'сжимается (дети переносятся внутри)':''),перенесён:(r.top-rowTop>8)?'ДА':'',_grow:grows};});
+  const need=rows.reduce((s,r)=>s+(r._grow?(parseFloat(r['min-width'])||0):r.ширина),0)+gap*Math.max(0,rows.length-1);
+  rows.forEach(r=>{delete r._grow;});
   const short=Math.max(0,Math.round(need-avail));
   const moved=rows.filter(r=>r.перенесён).map(r=>r.контрол);
   console.log('[бар] '+(label||'')+': высота '+Math.round(br.height)+'px · доступно '+Math.round(avail)+'px · контролам нужно '+Math.round(need)+'px (зазор '+gap+'px × '+Math.max(0,rows.length-1)+') · '+(short?'НЕ ХВАТИЛО '+short+'px':'помещается, запас '+Math.round(avail-need)+'px')+' · на второй строке: '+(moved.length?moved.join(', '):'ничего'));
@@ -12227,6 +12236,15 @@ function renderPlanFact(f){
   Object.keys(incSet).forEach(c=>{if(!codePasses(c))delete incSet[c];});
   const incRowsArr=Object.keys(incSet).map(code=>({code,plan:planIncOwn(code),fact:incFactOf(code),base:bPlanIncOwn(code)})).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ru'));
   const sumIncPlan=sumOrNull(incRowsArr,r=>r.plan),sumIncFact=incRowsArr.reduce((s,r)=>s+r.fact,0),sumIncBase=hasBaseline?sumOrNull(incRowsArr,r=>r.base):null;
+  // ── СВЕРКА: ВЫРУЧКА ПО КОМПАНИИ (revByMonth) ПРОТИВ СТРОК ТАБЛИЦЫ (13.09.2026) ────────────
+  // ⚠ Строка ИТОГО ДОХОДЫ, ЧП и KPI считаются от revByMonth, а строки-статьи и контейнеры разрезов -
+  //   только из строк с ТРЁХЗНАЧНЫМ кодом в подстатье (или в коде статьи, если подстатья пуста).
+  //   Доходная строка без кода лежит в итоге и ни в одной строке - и без этой сверки это молчало бы
+  //   во всех трёх разрезах. Под фильтром разница есть ПО ПОСТРОЕНИЮ (итог полный, строки
+  //   отфильтрованы) - про неё не кричим; кричим только про строки без кода, и называем их.
+  const _incNoCodeList=()=>Object.keys(_incNoCodeM).map(K=>{const a=_incNoCodeM[K];let v=0;if(isYear){for(let mm=1;mm<=12;mm++)v+=a[mm];}else v=a[+period]||0;return {где:K,сумма:Math.round(v*100)/100};}).filter(e=>Math.abs(e.сумма)>=0.005).sort((x,y)=>y.сумма-x.сумма);
+  {const _gh=_incNoCodeList();if(_gh.length){const _ghS=Math.round(_gh.reduce((t,e)=>t+e.сумма,0)*100)/100;
+    console.warn('[БДР] ИТОГО ДОХОДЫ: '+_ghS.toFixed(2)+' ₽ ('+_gh.length+' поз.) лежат в итоге по компании ('+revRow.fact.toFixed(2)+'), но ни в одной строке-статье ('+sumIncFact.toFixed(2)+((selArt.size||selSub.size||selOwn.size||selSide.size)?', фильтры активны':'')+'): у строк нет трёхзначного кода в подстатье и коде статьи');console.table(_gh);}}
   const incTotalPlan=sumIncPlan!=null?sumIncPlan:revRow.plan; // ни у одной доходной строки нет плана - берём общий план «Выручка» (проверка на null, а не >0: доходный план 0 - это план)
   const incTotalBase=hasBaseline?(sumIncBase!=null?sumIncBase:revRow.base):null;
   const netFactV=revRow.fact-sumFact, netPlanV=(incTotalPlan!=null||sumPlan!=null)?((incTotalPlan||0)-(sumPlan||0)):null; // !=null, а не truthiness: 0 - валидный план
@@ -12836,11 +12854,17 @@ function renderPlanFact(f){
   //   неверного - сторож кричал бы на штатной картине, и его перестали бы читать.
   // ⚠ СТОРОЖ ОБЯЗАН ГОВОРИТЬ, ГДЕ ИМЕННО (13.09.2026): «не сходится на N» без состава - та же
   //   болезнь, что у теста высоты бара. При расхождении печатается таблица строк (факт, план, утв)
-  //   с суммой и родителем, а шестой параметр `explain` - функция, которую зовём ТОЛЬКО при
-  //   расхождении факта: она возвращает список того, что заведомо лежит в родителе и не лежит
-  //   ни в одной строке (у доходов - строки без трёхзначного кода, `_incNoCodeM`). Ленивая: на
-  //   штатной картине стоит ноль.
-  const _dirSplitWarn=(what,parentF,parentP,parentB,rows,explain)=>{
+  //   с суммой, родителем и разницей.
+  // ⚠ РОДИТЕЛЬ ОБЯЗАН БЫТЬ ТЕМ ЖЕ НАБОРОМ, ЧТО И СТРОКИ (разбор 13.09.2026). У доходов родителем
+  //   стоял `revRow.fact` - выручка ПО КОМПАНИИ (revByMonth, без фильтров статьи/подстатьи/ЦФО/
+  //   контрагента), а контейнеры и строки-статьи режутся фильтром. Под любым фильтром сторож
+  //   кричал «все контейнеры 0 при родителе 16,7 млн» - и это не потеря денег, а сравнение
+  //   отфильтрованной таблицы с полной компанией. У расходов родитель (`sumFact`) фильтруется,
+  //   поэтому там расхождения не было. Теперь у доходов родитель - `sumIncFact` (Σ incRowsArr,
+  //   тот же набор, что у контейнеров), а «выручка компании против строк таблицы» - ОТДЕЛЬНАЯ
+  //   сверка рядом с incRowsArr: она называет строки без кода и молчит про фильтры (там разница
+  //   по построению).
+  const _dirSplitWarn=(what,parentF,parentP,parentB,rows)=>{
     const off=_pfSplitOff(parentF,rows.map(r=>r.f));
     const sum=(get)=>{let t=null;rows.forEach(r=>{const v=get(r);if(v!=null)t=(t||0)+v;});return t;};
     let bad=!!off;
@@ -12854,12 +12878,7 @@ function renderPlanFact(f){
       .concat([{строка:'Σ строк',факт:f2(rows.reduce((t,r)=>t+r.f,0)),план:f2(sum(r=>r.p)),утв:f2(sum(r=>r.b))},
                {строка:'РОДИТЕЛЬ «'+what+'»',факт:f2(parentF),план:f2(parentP),утв:f2(parentB)},
                {строка:'разница (родитель − Σ строк)',факт:f2((parentF||0)-rows.reduce((t,r)=>t+r.f,0)),план:(parentP==null||sum(r=>r.p)==null)?'':f2(parentP-sum(r=>r.p)),утв:(parentB==null||sum(r=>r.b)==null)?'':f2(parentB-sum(r=>r.b))}]));
-    if(off&&typeof explain==='function'){const ex=explain()||[];
-      if(ex.length){console.warn('[БДР] «'+what+'»: в родителе есть, а ни в одной строке нет (Σ '+f2(ex.reduce((t,e)=>t+e.сумма,0))+' ₽):');console.table(ex);}
-      else console.warn('[БДР] «'+what+'»: строк вне состава не найдено - остаток объясняют активные фильтры (родитель у сторожа полный, строки отфильтрованы)'+(pfFilterOn?' - фильтры СЕЙЧАС активны':' - но фильтры не активны, причину искать дальше'));}
   };
-  // доходные строки без кода за показанный период - «что потерялось» для сторожа ИТОГО ДОХОДЫ
-  const _incNoCodeList=()=>Object.keys(_incNoCodeM).map(K=>{const a=_incNoCodeM[K];let v=0;if(isYear){for(let mm=1;mm<=12;mm++)v+=a[mm];}else v=a[+period]||0;return {где:K,сумма:Math.round(v*100)/100};}).filter(e=>Math.abs(e.сумма)>=0.005).sort((x,y)=>y.сумма-x.сумма);
   const _dSideRemFor=(sub,side,d)=>({
     u:sideRemBy(sub,side,(sb,sd,m)=>({v:_dSideBaseM(sb,sd,d,m),src:_dSideBaseM(sb,sd,d,m)==null?null:'utv'}),m=>_dSideFactM(sub,side,d,m)),
     t:sideRemBy(sub,side,(sb,sd,m)=>({v:_dSidePlanM(sb,sd,d,m),src:_dSidePlanM(sb,sd,d,m)==null?null:'prog'}),m=>_dSideFactM(sub,side,d,m))});
@@ -13094,7 +13113,7 @@ function renderPlanFact(f){
     // ⚠ СТОРОЖ УРОВНЯ КОНТЕЙНЕРА: сумма контейнеров против ИТОГО по компании (для ЦФО - включая
     //   «(не назначен)»). Тот же _dirSplitWarn, что у четвёртого уровня - второго сторожа с тем же
     //   смыслом не заводим.
-    _dirSplitWarn('ИТОГО ДОХОДЫ ('+_CUT.what+')',revRow.fact,incTotalPlan,incTotalBase,_tots.inc,_incNoCodeList); // ⚠ родитель - revByMonth (по компании), строки - только с кодом; explain называет строки без кода
+    _dirSplitWarn('ИТОГО ДОХОДЫ ('+_CUT.what+')',sumIncFact,sumIncPlan,sumIncBase,_tots.inc); // ⚠ родитель - Σ incRowsArr, тот же набор, что у контейнеров (НЕ revRow.fact и НЕ incTotalPlan с фолбэком на план «Выручка» - см. разбор у _dirSplitWarn)
     _dirSplitWarn('ИТОГО РАСХОДЫ ('+_CUT.what+')',sumFact,sumPlan,sumBase,_tots.exp);
     return h;
   };
