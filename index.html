@@ -297,8 +297,6 @@
   /* прозрачная рамка, а не border:0 - иначе акцентная кнопка на 2px ниже соседей и полоса «спотыкается» */
   .reg-btn-csv{border:1px solid transparent;background:var(--accent);color:#fff;}
   .reg-btn-csv:hover{color:#fff;filter:brightness(1.08);}
-  .reg-btn-reset{border-color:var(--outcome);background:#fdecea;color:var(--outcome);}
-  .reg-btn-reset:hover{border-color:var(--outcome);color:var(--outcome);}
   /* Панель фильтров раскрывается ПОВЕРХ содержимого: 789px контролов не должны раздвигать таблицу.
      ⚠ overflow тут задавать нельзя - выпадающие списки внутри position:absolute и обрежутся по нему
      (та же ловушка, что с подсказками внутри .table-scroll). */
@@ -494,6 +492,11 @@
        Стояло раньше - и на ОПиУ, ОСВ, ФОТ и ДДС селект получал чужие padding 3px и line-height
        normal, выходил 23px вместо 21 и растил бар на 2px. Ставить правило выше по файлу нельзя. */
   select.preset-pick{margin:-2px 0;max-width:140px;text-overflow:ellipsis;} /* габариты - .bar-ctl; своё только узость и отрицательный margin */
+  /* ── КНОПКА «СБРОСИТЬ (N)» В ФИЛЬТР-БАРЕ (13.09.2026) - ставит _presetBarInject перед селектом пресета.
+     Габариты - .bar-ctl; своё только приглушённый фон и запертое состояние. Запертость - атрибутом
+     disabled, а не классом: контрол существует всегда, меняется только состояние. */
+  button.bar-reset{background:var(--surface2);color:var(--text2);white-space:nowrap;}
+  button.bar-reset:disabled{color:var(--text3);opacity:.55;cursor:not-allowed;}
 
   /* ── Кнопки в подвале сайдбара (единый стиль) ── */
   .foot-btn{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);transition:border-color .15s,color .15s;white-space:nowrap;}
@@ -629,6 +632,7 @@
        что у селекта «ФНС», - иначе пресет стоял бы в ряду голым текстом. !important нужен, потому
        что !important и стоит в правиле, которое мы перебиваем. */
     #tabBank>.bank-filters-1row>select.preset-pick{background:var(--surface)!important;border:1px solid var(--border)!important;padding:2px 10px!important;margin:-2px 0!important;}
+    #tabBank>.bank-filters-1row>button.bar-reset{background:var(--surface2)!important;border:1px solid var(--border)!important;padding:2px 10px!important;} /* та же причина: правило `>*` выше снимает оформление и с кнопки сброса */
     #tabBank .bank-sort-th:hover{color:var(--accent);}
     /* ── Реестр: тот же флекс-стек фиксированной высоты, что у Банка ──
        ⚠ 80px = топбар 56 + паддинги .content 12+12. Правишь паддинг выше - правь и это число,
@@ -1588,13 +1592,7 @@ function bankApplyFilter(){
 }
 
 const dsOpiu=v=>{const d=parseDate(v);return d?`${MONTHS_FULL[d.getMonth()].slice(0,3)} ${d.getFullYear()}`:'';}; // общий форматтер даты ОПиУ (используется многими вкладками)
-window.bankResetAllFilters=function(){
-  const b=_tabFilters.bank;
-  b.accounts=[];b.activityDirs=[];b.fns='';b.includeFuture=true;b.articles=[];b.subarticles=[];b.finOps=[]; // articles/subarticles/finOps фильтры убраны из UI - гасим на случай старых значений
-  if(typeof _activePreset==='object')_activePreset.bank='';
-  setPreset('bank','all'); if(!bankDefaultPeriod())_tabFilters.bank.preset='all'; // период - к умолчанию вкладки (текущий год), а не ко всему учёту
-  renderBank(getFilters());
-};
+// Сброс фильтров Банка - общий _tabResetFilters('bank') (кнопка «Сбросить (N)» в баре, с 13.09.2026); своей копии здесь больше нет.
 
 
 function bankRebuildChartData(){
@@ -1660,25 +1658,46 @@ function toIso(d){if(!d)return'';const y=d.getFullYear(),m=String(d.getMonth()+1
 //   `cut`, а не `level` и не `rowDim`: `level` занят уровнем строки (article/subarticle) и это
 //   другой вопрос, а `rowDim` был у удалённого 07.09.2026 переключателя и путал бы с ним.
 function _pfBlankState(){return {dir:'',dirs:[],year:0,level:'article',period:'',articles:[],subarticles:[],owners:[],sides:[],showHidden:false,cut:'article'};}
+// ── УМОЛЧАНИЯ СЕМИ ВКЛАДОК С ПРЕСЕТАМИ - ОДИН ИСТОЧНИК (13.09.2026) ─────────
+// ⚠ Отсюда берут умолчания ТРИ места: инициализация _tabFilters ниже, сброс к чистому виду (кнопка
+//   «Сбросить (N)» и _presetTabReset перед применением пресета) и счётчик заданных полей
+//   (_tabActiveFilters). До этого у Банка, ОПиУ, ДДС, ОСВ и ФОТ умолчания были записаны ДВАЖДЫ -
+//   в литерале _tabFilters и в _presetTabDefaults - и УЖЕ РАЗОШЛИСЬ: periodType 'year' против
+//   'month' у ОПиУ и ДДС, rowDim 'direction' против 'account' у ОСВ. Пресет без этих полей ставил
+//   не то, с чем вкладка открывается. Правило то же, что у _pfBlankState выше: список полей
+//   записан один раз, новый фильтр попадает в сброс и в счётчик сам.
+// ⚠ Функции, а не объекты: каждому вызывающему нужна СВОЯ копия массивов.
+// ⚠ rel ('' = период фиксированный) - поле пресета (авто-период от сегодня); лежит в состоянии
+//   с самого начала, чтобы сброс ставил его как любое другое поле, а не проверял «'rel' in F».
+const _TAB_BLANK={
+  bank:()=>({dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],accounts:[],articles:[],subarticles:[],finOps:[],fns:'',includeFuture:true}), // ⚠ accounts (фильтр «Реквизиты счёта») в прежнем литерале НЕ БЫЛО - поле заводил дропдаун на лету, а умолчание знал только _presetTabDefaults
+  dds:()=>({dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',rel:'',activityDirs:[],years:[],months:[]}),
+  opiu:()=>({dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',rel:'',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false,dyn:''}),
+  osv:()=>({dateFrom:'',dateTo:'',periodType:'year',preset:'all',rel:'',activityDirs:[],accounts:[],years:[],months:[],rowDim:'direction',noOpening:false}),
+  fot:()=>({dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',rel:'',years:[],months:[],articles:[],subarticles:[],counterparties:[]}),
+  planfact:()=>_pfBlankState(),
+  registry:()=>_regBlankState()
+};
+function _tabBlankState(tab){const mk=_TAB_BLANK[tab];return mk?mk():null;}
 // ── Per-tab filter state ──
 const _tabFilters={
-  bank:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',activityDirs:[],articles:[],subarticles:[],finOps:[],fns:'',includeFuture:true},
+  bank:_tabBlankState('bank'),
   marketing:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',activityDir:'БФЛ - Банкротство физических лиц',years:[new Date().getFullYear()],months:[]},
   expenses:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],expGroup:'analytics',articles:[],subarticles:[],years:[],months:[]},
   dupes:{dateFrom:'',dateTo:'',periodType:'month',preset:'all'},
   incomplete:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',incField:''},
-  osv:{dateFrom:'',dateTo:'',periodType:'year',preset:'all',activityDirs:[],accounts:[],years:[],months:[],rowDim:'direction',noOpening:false},
+  osv:_tabBlankState('osv'),
   debtbfl:{dateFrom:'',dateTo:'',periodType:'month',preset:'all',search:'',onlyDebt:true,stages:[],resps:[],payCat:'',orphansOnly:false,hideClosed:false,overOnly:false,cutoffOn:true,dateSort:''},
   loans:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyDebt:false},
   anomaly:{dateFrom:'',dateTo:'',preset:'all',field:'',minConf:'0.9',showAcked:false},
   depau:{dateFrom:'',dateTo:'',preset:'all',search:'',onlyOpen:false,statuses:[]},
-  dds:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[]},
-  opiu:{dateFrom:'',dateTo:'',periodType:'year',fotDetail:'direction',preset:'all',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false,dyn:''},
-  fot:{dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',years:[],months:[],articles:[],subarticles:[],counterparties:[]},
-  planfact:_pfBlankState(), // ⚠ литерала здесь БОЛЬШЕ НЕТ - умолчания живут в _pfBlankState (см. выше), иначе список полей был бы записан дважды
+  dds:_tabBlankState('dds'),
+  opiu:_tabBlankState('opiu'),
+  fot:_tabBlankState('fot'),
+  planfact:_tabBlankState('planfact'), // ⚠ литералов у семи вкладок с пресетами здесь БОЛЬШЕ НЕТ - умолчания живут в _TAB_BLANK (см. выше), иначе список полей был бы записан дважды
   target:{dirs:[],years:[],months:[],targetPct:10,revManual:null,locked:[]},
   bflmodel:{view:'depts',block:'all',showOverhead:false,month:'2026-06',scenario:'plan',compare:false,dir:'d1',depositExcluded:false,exclPayrollTax:false},
-  registry:{q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}}
+  registry:_tabBlankState('registry')
 };
 
 function getFilters(){return _tabFilters[activeTab]||_tabFilters.bank;}
@@ -2789,7 +2808,13 @@ let _presetObsOn=false;
 function _presetBarSetup(){
   if(_presetObsOn)return; const mc=document.getElementById('mainContent'); if(!mc)return;
   _presetObsOn=true;
-  try{ new MutationObserver(()=>{try{_presetBarInject();}catch(e){}}).observe(mc,{childList:true,subtree:true}); }catch(e){}
+  // ⚠ Наблюдатель возвращает и СВОДКУ «Фильтры: …» (13.09.2026): контролы ОПиУ, ДДС, ОСВ и ФОТ
+  //   перерисовывают вкладку прямыми вызовами renderOPIU/renderDDS/renderOSV/renderFOT мимо
+  //   renderActiveTab, и после первой же смены года или направления сводка исчезала - в баре
+  //   оставался один селект пресета. Обе вставки идемпотентны (сводка пишется только при смене
+  //   data-sig, селект - только когда его нет), поэтому зациклиться наблюдатель не может.
+  //   Порядок значим: сводка → «Сбросить (N)» → селект, как при обычном рендере.
+  try{ new MutationObserver(()=>{try{_tabFilterSummary();_presetBarInject();}catch(e){}}).observe(mc,{childList:true,subtree:true}); }catch(e){}
 }
 function _presetBarTarget(){
   const cont=document.getElementById('tab'+activeTab.charAt(0).toUpperCase()+activeTab.slice(1)); if(!cont)return null;
@@ -2818,6 +2843,15 @@ function _presetBarInject(){
   // ⚠ Оформление - классом `.preset-pick` в общем `<style>`, инлайновых стилей у селекта НЕТ:
   //   набор свойств тот же, что у селекта «ФНС» на Банке (эталон бара), и тест сверяет их состав,
   //   чтобы копия не разъехалась с эталоном молча.
+  // ── «СБРОСИТЬ (N)» - ПЕРЕД СЕЛЕКТОМ, ТОЙ ЖЕ ВСТАВКОЙ (13.09.2026) ─────────────
+  // ⚠ Кнопка есть ВСЕГДА, в чистом состоянии заперта (disabled) с подсказкой «Фильтры не заданы»:
+  //   исчезающий контрол ничего не сообщает, а «фильтров нет» - это ответ, ради которого счётчик
+  //   и заведён (правило перенесено с прежней кнопки БДР; у Реестра и в сводках четырёх вкладок
+  //   кнопка до этого появлялась только при непустом отборе). Счёт и сброс - общие
+  //   _tabActiveFilters/_tabResetFilters, по умолчаниям вкладки. Оформление - класс .bar-reset.
+  const btn=document.createElement('button'); btn.type='button'; btn.className='bar-ctl bar-reset';
+  btn.setAttribute('onclick','_tabResetFilters()');
+  bar.appendChild(btn); _barResetRefresh(btn,tab);
   const sel=document.createElement('select');
   sel.className='bar-ctl preset-pick'; // габариты - общий эталон бара, см. .bar-ctl в <style>
   sel.setAttribute('onchange','_presetPick(this.value)');
@@ -2829,6 +2863,14 @@ function _presetBarInject(){
   bar.appendChild(sel);
   _presetPickTitle(sel);
 }
+// Состояние кнопки «Сбросить (N)»: подпись, запертость и подсказка - из одного счётчика.
+// ⚠ Подсказка нативная СОЗНАТЕЛЬНО (правило подсказок): чисел в столбик тут нет, есть перечисление.
+function _barResetRefresh(btn,tab){
+  const act=_tabActiveFilters(tab),n=act.length;
+  btn.disabled=!n;
+  btn.textContent='Сбросить'+(n?' ('+n+')':'');
+  btn.title=n?('Сбросить все фильтры вкладки к умолчаниям (период и вид тоже). Сейчас задано: '+act.map(k=>_filterLabel(tab,k)).join(', ')):'Фильтры не заданы';
+}
 // Подпись селекта: пусто - короткое «Пресет», выбран - имя целиком в title (в поле оно обрезано).
 function _presetPickTitle(sel){
   const o=sel.options[sel.selectedIndex];
@@ -2839,6 +2881,7 @@ window._presetPick=function(v){ presetApply(activeTab,v||''); };
 // Селект показывает активный пресет и гаснет вместе с суффиксом заголовка - ОДИН источник (_presetActive)
 function _presetBarRefresh(){
   const bar=_presetBarTarget(); if(!bar)return;
+  const rb=bar.querySelector(':scope > button.bar-reset'); if(rb)_barResetRefresh(rb,activeTab);
   const sel=bar.querySelector(':scope > select.preset-pick'); if(!sel)return;
   const av=(typeof _presetActive==='function')?_presetActive(activeTab):'';
   if(sel.value!==av)sel.value=av;
@@ -2881,20 +2924,10 @@ function _filterSummaryInner(tab){
   if(tab==='opiu'&&f.postSplit)parts.push('<b style="color:var(--text2);font-weight:600">Транзит почты:</b> БФЛ↔АУ вкл.');
   if(tab==='osv'&&f.noOpening)parts.push('<b style="color:var(--text2);font-weight:600">Без вход. сальдо</b>');
   const fSumm=parts.filter(Boolean);
-  return `<b style="color:var(--text2);font-weight:600">Фильтры:</b> <span style="flex:1;min-width:160px">${fSumm.length?fSumm.join('&nbsp;·&nbsp;'):'не заданы'}</span>`+(fSumm.length?`<button onclick="_resetTabFilters('${tab}')" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сбросить всё</button>`:'');
+  // ⚠ Своей кнопки «× сбросить всё» в сводке больше нет (13.09.2026): сброс - общая кнопка
+  //   «Сбросить (N)» рядом с селектом пресета, её ставит _presetBarInject. Здесь только СОСТАВ отбора.
+  return `<b style="color:var(--text2);font-weight:600">Фильтры:</b> <span style="flex:1;min-width:160px">${fSumm.length?fSumm.join('&nbsp;·&nbsp;'):'не заданы'}</span>`;
 }
-window._resetTabFilters=function(tab){
-  const f=_tabFilters[tab]; if(!f)return;
-  ['years','months','activityDirs','accounts','articles','subarticles','counterparties'].forEach(k=>{ if(k in f)f[k]=[]; });
-  if('rel'in f)f.rel='';
-  if('ebitdaInclBelow'in f)f.ebitdaInclBelow=false;
-  if('expFlat'in f)f.expFlat=false;
-  if('postSplit'in f)f.postSplit=false;
-  if('dyn'in f)f.dyn='';
-  if('noOpening'in f)f.noOpening=false;
-  if(typeof _activePreset==='object'&&tab in _activePreset)_activePreset[tab]='';
-  renderActiveTab();
-};
 // Разрешение динамического (относительного) периода - всегда считается от текущей даты
 function _presetApplyRel(tab,rel){
   if(!rel)return; const F=_tabFilters[tab]; if(!F)return;
@@ -2965,6 +2998,91 @@ function _presetTabReset(tab){
   Object.keys(D).forEach(k=>{F[k]=(D[k]&&typeof D[k]==='object')?JSON.parse(JSON.stringify(D[k])):D[k];});
   if(tab==='bank'){ setPreset('bank','all'); if(!bankDefaultPeriod())F.preset='all'; }
 }
+// ══ СЧЁТЧИК ЗАДАННЫХ ПОЛЕЙ И СБРОС - ОДНИ НА СЕМЬ ВКЛАДОК (13.09.2026) ═════════════
+// Кнопка «Сбросить (N)» стоит в баре рядом с селектом пресета; ставит её _presetBarInject (одна
+// вставка после рендера, а не правка семи рендереров). До этого сбросов было ЧЕТЫРЕ РАЗНЫХ:
+// pfResetFilters у БДР (единственный с счётчиком и запертым состоянием), regResetAll у Реестра
+// («Сбросить всё», только при непустом отборе), bankResetAllFilters в сводке Банка и _resetTabFilters
+// в сводке ДДС/ОПиУ/ОСВ/ФОТ («× сбросить всё» мелкой кнопкой, тоже только при непустом отборе) -
+// и у трёх последних список полей был записан ВТОРОЙ раз, отдельно от умолчаний вкладки.
+// ⚠ N = число полей, ОТЛИЧНЫХ от умолчания вкладки (_tabBlankState), минус исключения ниже.
+// ⚠ ИСКЛЮЧЕНИЯ ИЗ СЧЁТА - НЕ ИСКЛЮЧЕНИЯ ИЗ СБРОСА: сброс ставит умолчание ЦЕЛИКОМ и этого списка
+//   не читает. Основание у исключений одно на все вкладки - то же, что у года и периода БДР:
+//   поле ЗАДАНО ВСЕГДА, состояния «не выбрано» у него нет, и счётчик показывал бы единицу на
+//   чистом экране, то есть отвечал бы «фильтры есть» там, где их нет. Это ПЕРИОД (preset/dateFrom/
+//   dateTo у Банка - умолчание текущий год; dateFrom/dateTo у прочих заполняет buildFilterOptions
+//   границами данных), РАЗРЕЗ ПЕРИОДА periodType, ДЕТАЛИЗАЦИЯ fotDetail, СТРОКИ ОСВ rowDim, маркер
+//   авто-периода rel (он дублирует years/months, которые считаются сами) и СОРТИРОВКА Реестра sort
+//   (вид, не отбор; сброс её и не трогает). Второе основание - ПОЛЕ НИЧЕГО НЕ РЕЖЕТ: articles/
+//   subarticles/finOps у Банка и offer у Реестра остались от старых пресетов, рендереры их не
+//   читают - посчитай их, и снятый до правки пресет давал бы «Сбросить (1)» на чистом экране.
+// ⚠ Что СЧИТАЕТСЯ - ровно то, что перечисляет сводка «Фильтры: …» той же вкладки: год, месяц,
+//   направление, счета, ФНС, будущие оплаты, статья/подстатья/сотрудник, тумблеры ОПиУ и ОСВ.
+//   Разойдись счётчик со сводкой - человек читал бы «Фильтры: не заданы» рядом с «Сбросить (1)».
+//   У Реестра колонки отбора считаются ПО ОДНОЙ (как бейдж «Фильтры (N)»), плюс строка поиска.
+const TAB_COUNT_SKIP={
+  bank:['preset','dateFrom','dateTo','periodType','fotDetail','articles','subarticles','finOps'], // ⚠ три последних - поля СТАРЫХ пресетов Банка, из интерфейса убраны и в renderBank не читаются: ничего не режут - не считаются (та же ловушка, что rowDim у БДР); сброс их всё равно чистит
+  dds:['preset','dateFrom','dateTo','periodType','fotDetail','rel'],
+  opiu:['preset','dateFrom','dateTo','periodType','fotDetail','rel'],
+  osv:['preset','dateFrom','dateTo','periodType','rel','rowDim'],
+  fot:['preset','dateFrom','dateTo','periodType','fotDetail','rel'],
+  registry:['sort','offer']
+};
+const TAB_FILTER_LABELS={years:'Год',months:'Месяц',activityDirs:'Направление',accounts:'Счёт',fns:'ФНС',includeFuture:'Будущие оплаты',articles:'Статья',subarticles:'Подстатья',counterparties:'Сотрудник',finOps:'Фин. операция',ebitdaInclBelow:'EBITDA-корр.',expFlat:'Расходы по статьям',postSplit:'Транзит почты',dyn:'Динамика',noOpening:'Без вход. сальдо',q:'Поиск',dds:'Дата ДДС',opiu:'Дата ОПиУ',inc:'Поступление',out:'Списание'};
+// ⚠ Список полей НЕ переписываем: ключи берутся из _pfBlankState(), и новый фильтр попадает в
+//   счётчик сам. Вычитаются ТРИ имени, и оснований у них ДВА РАЗНЫХ - записываем оба, потому что
+//   без записи правило со временем прочтут как «исключаем то, что неудобно считать»:
+//     • ГОД и ПЕРИОД исключены потому, что ЗАДАНЫ ВСЕГДА - состояния «не выбрано» у них нет,
+//       и счётчик показывал бы двойку на чистом экране, то есть отвечал бы «фильтры есть» там,
+//       где их нет;
+//   ⚠ ТРЕТЬЕГО ИМЕНИ БОЛЬШЕ НЕТ: разрез (rowDim) исключался потому, что ничего не СКРЫВАЛ - он
+//     менял только способ показа тех же чисел. Сам разрез удалён 07.09.2026 (его заменил четвёртый
+//     уровень - строки направлений внутри статей), и исключать стало нечего. Основание записано,
+//     потому что оно понадобится СНОВА: заведётся ещё один переключатель вида - его тоже не считать.
+//   ⚠ Исключение из СЧЁТА не было исключением из СБРОСА: кнопка ставит _pfBlankState() целиком и
+//     этого списка не читает вовсе.
+// ⚠ Направление - ОДИН фильтр в ДВУХ полях (dirs + устаревшее dir), поэтому считается один раз;
+//   иначе состояние из старого пресета давало бы двойку за одно выбранное направление.
+// ⚠ Подписи - только для подсказки; поле без подписи всё равно СЧИТАЕТСЯ и показывается ключом:
+//   забытая подпись обязана выглядеть небрежностью, а не отсутствием фильтра.
+const PF_COUNT_SKIP=['year','period'];
+const PF_FILTER_LABELS={dirs:'Направление',articles:'Статья',subarticles:'Подстатья',owners:'ЦФО',sides:'Контрагент',level:'Уровень',showHidden:'Скрытые направления',cut:'Разрез'};
+function _filterLabel(tab,k){ if(tab==='planfact')return PF_FILTER_LABELS[k]||k; if(k.indexOf('sel:')===0)return k.slice(4); return TAB_FILTER_LABELS[k]||k; }
+function _tabActiveFilters(tab,f){
+  const D=_tabBlankState(tab); if(!D)return [];
+  f=f||_tabFilters[tab]||{};
+  const skip=(tab==='planfact')?PF_COUNT_SKIP:(TAB_COUNT_SKIP[tab]||[]),out=[];
+  const same=k=>JSON.stringify((k in f)?f[k]:D[k])===JSON.stringify(D[k]);
+  Object.keys(D).forEach(k=>{
+    if(skip.indexOf(k)>=0)return;
+    if(tab==='planfact'){ // направление - ОДИН фильтр в ДВУХ полях (dirs + устаревшее dir), см. PF_COUNT_SKIP выше
+      if(k==='dir')return;
+      if(k==='dirs'){if(!same('dirs')||!same('dir'))out.push('dirs');return;}}
+    if(tab==='registry'&&k==='sel'){ // колонки отбора - по одной, подпись - имя колонки
+      Object.entries(f.sel||{}).forEach(([c,a])=>{if(a&&a.length)out.push('sel:'+(((typeof REG_FIELDS!=='undefined'?REG_FIELDS:[]).find(x=>String(x.c)===String(c))||{}).label||c));});return;}
+    if(!same(k))out.push(k);
+  });
+  return out;
+}
+function _pfActiveFilters(f){return _tabActiveFilters('planfact',f);}
+// Чистое состояние вкладки БЕЗ рендера - ядро кнопки. Тесты зовут его, а не обёртку: обёртка
+// перерисовывает вкладку под руками у смотрящего.
+// ⚠ Своего сброса у вкладок здесь нет: БДР чистит _pfResetState (состояние + развороты строк),
+//   Реестр - _regStateRestore (состояние + поиск в списках + лимит показа), остальные пять -
+//   _presetTabReset, тот же путь, которым вкладка чистится перед применением пресета.
+// ⚠ Пресет снимается ЯВНО и всегда: сброс возвращает вкладку к чистому виду, а не к пресету.
+//   _presetActive снял бы его и сам по расхождению подписи, но состояние «пресет выбран, а
+//   фильтров нет» не должно существовать даже один кадр (правило прежней кнопки БДР).
+// ⚠ У Реестра сортировка ОСТАЁТСЯ: она вид, а не отбор (так делал и прежний regResetAll).
+function _tabResetCore(tab){
+  if(!_tabBlankState(tab))return false;
+  if(tab==='planfact')_pfResetState();
+  else if(tab==='registry'){const srt=(_tabFilters.registry||{}).sort||null;_regStateRestore(srt?{sort:srt}:null);}
+  else _presetTabReset(tab);
+  _activePreset[tab]=''; _activePresetSig[tab]='';
+  return true;
+}
+window._tabResetFilters=function(tab){ if(_tabResetCore(tab||activeTab))renderActiveTab(); };
 window.presetApply=function(tab,id){
   // ⚠ `let`, а не `const`: сброс к умолчаниям у БДР и Реестра ЗАМЕНЯЕТ объект состояния целиком
   //   (_pfStateRestore/_regStateRestore пишут `_tabFilters[tab]=…`), и прежняя ссылка после него
@@ -3175,15 +3293,12 @@ function _presetTabState(tab){
   (PRESET_FIELDS[tab]||[]).forEach(fd=>{if(fd.k in F)o[fd.k]=F[fd.k];});
   return JSON.parse(JSON.stringify(o));
 }
+// ⚠ Своего списка умолчаний здесь НЕТ с 13.09.2026 - он был второй копией литерала _tabFilters и
+//   разошёлся с ним (см. _TAB_BLANK). У БДР год подменяется маркером 'cur': в пресете год хранится
+//   признаком «текущий», и форма сравнивает с ним, а не с числом.
 function _presetTabDefaults(tab){
   if(tab==='planfact'){const b=_pfBlankState();b.year='cur';return b;}
-  if(tab==='registry')return _regBlankState();
-  const D={bank:{preset:'all',activityDirs:[],accounts:[],fns:'',includeFuture:true},
-           opiu:{rel:'',periodType:'month',years:[],months:[],activityDirs:[],ebitdaInclBelow:false},
-           dds:{rel:'',periodType:'month',years:[],months:[],activityDirs:[]},
-           osv:{rel:'',periodType:'year',years:[],months:[],activityDirs:[],rowDim:'account',noOpening:false},
-           fot:{rel:'',periodType:'month',articles:[],subarticles:[],counterparties:[],years:[],months:[],fotDetail:'direction'}};
-  return D[tab]||{};
+  return _tabBlankState(tab)||{};
 }
 const _presetSame=(a,b)=>JSON.stringify(a===undefined?null:a)===JSON.stringify(b===undefined?null:b);
 window._presetFillFromTab=function(tab){
@@ -4110,8 +4225,7 @@ function renderBank(f){
   }
   const summaryHtml=`<div class="bank-summary" title="${_pesc(fSumm.map(x=>String(x).replace(/<[^>]+>/g,'')).join(' · '))}" style="display:flex;align-items:center;gap:8px;padding:4px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;color:var(--text3);flex-wrap:wrap">
     <b style="color:var(--text2);font-weight:600">Фильтры:</b> <span style="flex:1;min-width:160px">${fSumm.length?fSumm.join('&nbsp;·&nbsp;'):'не заданы'}</span>
-    ${fSumm.length?`<button onclick="bankResetAllFilters()" style="margin-left:auto;padding:2px 10px;font-size:10px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;color:var(--text3);font-family:var(--sans)">× сбросить всё</button>`:''}
-  </div>`;
+  </div>`; // ⚠ своей кнопки сброса в сводке больше нет (13.09.2026): общая «Сбросить (N)» стоит рядом с селектом пресета
   // Три бара фильтров - в ОДНУ строку (desktop): flex nowrap + горизонтальный скролл при нехватке; на мобиле - обычный поток (стопкой).
   el.innerHTML=`<div class="bank-filters-1row">${renderFilterBar('bank')}${bankExtraFilters}${summaryHtml}</div>`+kpiHtml+colsHtml+grandHtml+chartsHtml;
 
@@ -6982,37 +7096,9 @@ function _pfResetState(){
   window._pfCutExpC=new Set(); window._pfArtExpC=new Set(); window._pfSubExpC=new Set(); window._pfDirExpC=new Set(); // разрез «ЦФО» - третий набор
   _activePreset.planfact=''; _activePresetSig.planfact='';
 }
-window.pfResetFilters=function(){_pfResetState();renderPlanFact(getFilters());};
-// ── Что считается «активным фильтром» для счётчика на кнопке ──────────────────
-// ⚠ Список полей НЕ переписываем: ключи берутся из _pfBlankState(), и новый фильтр попадает в
-//   счётчик сам. Вычитаются ТРИ имени, и оснований у них ДВА РАЗНЫХ - записываем оба, потому что
-//   без записи правило со временем прочтут как «исключаем то, что неудобно считать»:
-//     • ГОД и ПЕРИОД исключены потому, что ЗАДАНЫ ВСЕГДА - состояния «не выбрано» у них нет,
-//       и счётчик показывал бы двойку на чистом экране, то есть отвечал бы «фильтры есть» там,
-//       где их нет;
-//   ⚠ ТРЕТЬЕГО ИМЕНИ БОЛЬШЕ НЕТ: разрез (rowDim) исключался потому, что ничего не СКРЫВАЛ - он
-//     менял только способ показа тех же чисел. Сам разрез удалён 07.09.2026 (его заменил четвёртый
-//     уровень - строки направлений внутри статей), и исключать стало нечего. Основание записано,
-//     потому что оно понадобится СНОВА: заведётся ещё один переключатель вида - его тоже не считать.
-//   ⚠ Исключение из СЧЁТА не было исключением из СБРОСА: кнопка ставит _pfBlankState() целиком и
-//     этого списка не читает вовсе.
-// ⚠ Направление - ОДИН фильтр в ДВУХ полях (dirs + устаревшее dir), поэтому считается один раз;
-//   иначе состояние из старого пресета давало бы двойку за одно выбранное направление.
-// ⚠ Подписи - только для подсказки; поле без подписи всё равно СЧИТАЕТСЯ и показывается ключом:
-//   забытая подпись обязана выглядеть небрежностью, а не отсутствием фильтра.
-const PF_COUNT_SKIP=['year','period'];
-const PF_FILTER_LABELS={dirs:'Направление',articles:'Статья',subarticles:'Подстатья',owners:'ЦФО',sides:'Контрагент',level:'Уровень',showHidden:'Скрытые направления',cut:'Разрез'};
-function _pfActiveFilters(f){
-  f=f||_tabFilters.planfact||{};
-  const D=_pfBlankState(),out=[];
-  const same=(k)=>JSON.stringify((k in f)?f[k]:D[k])===JSON.stringify(D[k]);
-  Object.keys(D).forEach(k=>{
-    if(PF_COUNT_SKIP.indexOf(k)>=0||k==='dir')return; // dir учтён вместе с dirs
-    if(k==='dirs'){if(!same('dirs')||!same('dir'))out.push('dirs');return;}
-    if(!same(k))out.push(k);
-  });
-  return out;
-}
+// Сброс БДР - общий _tabResetFilters('planfact') (кнопка «Сбросить (N)» в баре); он зовёт _pfResetState выше.
+// Что считается «активным фильтром» (PF_COUNT_SKIP, PF_FILTER_LABELS, _pfActiveFilters) - в общем
+// кластере счётчика и сброса рядом с _presetTabReset: правило одно на семь вкладок.
 // ══ ФИЛЬТР «КОНТРАГЕНТ» (ID_SecondSide) в БДР - СВОЯ машинерия списка ══════════
 // ⚠ Почему не pfOptList+expFilterList, как у статьи/подстатьи/ЦФО: там десятки значений, а сторон
 //   тысячи. Общая схема рисует ВСЕ пункты в DOM и прячет неподходящие поиском - это 3-5 тысяч
@@ -8814,9 +8900,9 @@ function renderRegistry(f){
       <div class="reg-fld"><label>до ₽</label><input type="number" inputmode="decimal" class="reg-inp reg-inp-num" value="${st.to}" oninput="regNumRange('${which}','to',this.value)" placeholder="∞"></div>
     </div>`;
   const numActive=o=>String(o.from||'').trim()!==''||String(o.to||'').trim()!=='';
-  // fCnt - только фильтры (для бейджа на кнопке «Фильтры»); activeCnt - вместе с поиском (для «Сбросить всё»)
+  // fCnt - только фильтры (для бейджа на кнопке «Фильтры»). Счётчик «Сбросить (N)» (фильтры + поиск)
+  // считает общий _tabActiveFilters('registry') по тем же правилам - колонки по одной.
   const fCnt=Object.values(sel).reduce((s,a)=>s+((a&&a.length)?1:0),0)+(dateActive(dds)?1:0)+(dateActive(opiu)?1:0)+(numActive(finc)?1:0)+(numActive(fout)?1:0);
-  const activeCnt=fCnt+(q?1:0);
   const fdd=c=>{const F=REG_FIELDS.find(x=>x.c===c);return F?mkRegDD(F):'';};
   // ⚠ Порядок групп - ПО ЧАСТОТЕ ОБРАЩЕНИЯ, а не по порядку колонок таблицы:
   // бухгалтер чаще всего отбирает по периоду и по сумме. Прежний «как в таблице» отменён.
@@ -8858,7 +8944,7 @@ function renderRegistry(f){
         <span class="reg-qhint" ${qHint}>?</span>
         <button id="regFiltersBtn" class="bar-ctl reg-btn${fOpen?' reg-btn-on':''}" title="Показать или скрыть панель фильтров" onclick="regFiltersToggle()">Фильтры${fCnt?' ('+fCnt+')':''} ▾</button>
         <span class="reg-qhint" ${fHint}>?</span>
-        ${activeCnt?`<button class="bar-ctl reg-btn reg-btn-reset" title="Сбросить поиск и все фильтры" onclick="regResetAll()">× Сбросить всё (${activeCnt})</button>`:''}
+        <!-- «Сбросить (N)» и селект пресета ставит _presetBarInject последними элементами этой строки (13.09.2026) -->
         <!-- ⚠ Меню выгрузки живёт на ТОЙ ЖЕ механике, что фильтры (regDDToggle + класс .reg-dd),
              и id обязаны следовать её схеме: обработчик клика мимо закрывает .reg-dd, только если
              клик не внутри [id^="reg-btn-"] - с другим префиксом меню закрывалось бы от клика
@@ -8962,7 +9048,7 @@ window.regDateAll=function(id,which,part,select){const dd=document.getElementByI
 window.regDateRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{years:[],months:[],from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
 // числовой диапазон Поступление/Списание; ID Offer (подстрока + пусто)
 window.regNumRange=function(which,part,val){_tabFilters.registry[which]=_tabFilters.registry[which]||{from:'',to:''};_tabFilters.registry[which][part]=val;window._regLimit=500;registrySearchApply();};
-window.regResetAll=function(){const _srt=(_tabFilters.registry||{}).sort||null;_tabFilters.registry={sort:_srt,q:'',sel:{},dds:{years:[],months:[],from:'',to:''},opiu:{years:[],months:[],from:'',to:''},inc:{from:'',to:''},out:{from:'',to:''},offer:{q:'',empty:false}};window._regDD={};window._regLimit=500;renderRegistry(_tabFilters.registry);}; // _regDD - поиски внутри списков: «сбросить всё» обязано снимать и их
+// Сброс поиска и фильтров Реестра - общий _tabResetFilters('registry') (сортировка при этом остаётся: она вид, а не отбор).
 window.registryShowMore=function(){window._regLimit=(window._regLimit||500)+500;registryRender((_tabFilters.registry&&_tabFilters.registry.q)||'');};
 // ══ ОПИСАНИЕ НАЙДЕННОГО НАБОРА - ОДИН ИСТОЧНИК НА ВСЕ ФОРМЫ ВЫВОДА ═══════════
 // Возвращает {rows, period, sumInRaw, sumOutRaw, filterLine, ds} - всё, что описывает НАБОР,
@@ -10203,7 +10289,7 @@ function pfRunTests(){
     ok('пресет снят',_activePreset.planfact===''&&_activePresetSig.planfact==='');
     ok('умолчания - ОДИН источник: сброс зовёт _pfBlankState и своего списка полей не держит',
        String(_pfResetState).indexOf('_pfBlankState()')>=0&&!/articles:/.test(String(_pfResetState)));
-    ok('счётчик берёт поля оттуда же',String(_pfActiveFilters).indexOf('_pfBlankState()')>=0);
+    ok('счётчик берёт поля оттуда же - через общий _tabActiveFilters и _tabBlankState',/_tabActiveFilters\('planfact',f\)/.test(String(_pfActiveFilters))&&String(_tabActiveFilters).indexOf('_tabBlankState(tab)')>=0&&_TAB_BLANK.planfact()!==_TAB_BLANK.planfact()&&JSON.stringify(_tabBlankState('planfact'))===JSON.stringify(_pfBlankState()));
 
     // счётчик активных фильтров
     ok('счётчик: чистое состояние - 0',_pfActiveFilters(_pfBlankState()).length===0);
@@ -10229,11 +10315,85 @@ function pfRunTests(){
        _pfActiveFilters(Object.assign(_pfBlankState(),{level:'subarticle'})).length===1);
     // ⚠ Кнопка обязана СУЩЕСТВОВАТЬ всегда и в пустом состоянии быть запертой: исчезающий контрол
     //   ничего не сообщает, а «фильтров нет» - это ответ, ради которого счётчик и заведён.
-    ok('кнопка всегда в разметке, состояние - через disabled',/const pfResetBtn=/.test(src)&&/\$\{pfResetBtn\}/.test(src)&&/'disabled'/.test(src));
+    // ⚠ С 13.09.2026 кнопка ОБЩАЯ (ставит _presetBarInject), своей у БДР нет: правило «всегда в разметке, состояние через disabled» проверяется в блоке 5б.
+    ok('своей кнопки сброса в рендерере БДР больше нет',src.indexOf('const pfReset'+'Btn=')<0&&src.indexOf('pfReset'+'Filters')<0);
     ok('прежней частичной «× сброс» в баре не осталось',src.indexOf('pfResetExtra')<0);
   }finally{
     _tabFilters.planfact=_sv; window._pfArtExp=_svA; window._pfSubExp=_svS;
     _activePreset.planfact=_svP; _activePresetSig.planfact=_svPs;
+  }
+
+  // 5б. Кнопка «Сбросить (N)» - ОДНА на семь вкладок (13.09.2026): умолчания, счётчик, сброс, вставка
+  // ⚠ Набор структурный и без данных: умолчания и счётчик - чистые функции, сброс проверяется
+  //   ядром без рендера, вставка - по исходнику. Высота баров с кнопкой - в barRunTests (живой).
+  {const tabs=PRESET_TABS.map(([k])=>k);
+   // умолчания - один источник
+   ok('5б: умолчания есть у всех семи вкладок',tabs.every(t=>!!_tabBlankState(t)&&typeof _tabBlankState(t)==='object'));
+   ok('5б: каждый вызов даёт свою копию',_tabBlankState('opiu')!==_tabBlankState('opiu')&&_tabBlankState('opiu').years!==_tabBlankState('opiu').years);
+   ok('5б: инициализация _tabFilters читает умолчания из _TAB_BLANK, литералов у семи вкладок нет',
+      ['bank','dds','opiu','osv','fot','planfact','registry'].every(t=>new RegExp("\n  "+t+":_tabBlankState\\('"+t+"'\\)").test(_pfSrcTop)));
+   ok('5б: умолчания пресетов - тот же источник, второго списка нет',
+      ['bank','dds','opiu','osv','fot','registry'].every(t=>JSON.stringify(_presetTabDefaults(t))===JSON.stringify(_tabBlankState(t)))
+      &&String(_presetTabDefaults).indexOf('periodType')<0&&_presetTabDefaults('planfact').year==='cur');
+   ok('5б: каждый ключ умолчаний присутствует в живом состоянии вкладки',tabs.every(t=>Object.keys(_tabBlankState(t)).every(k=>k in (_tabFilters[t]||{}))));
+   // счётчик
+   ok('5б: счётчик - чистое состояние каждой вкладки даёт 0',tabs.every(t=>_tabActiveFilters(t,_tabBlankState(t)).length===0));
+   ok('5б: период и вид не считаются (Банк: preset/даты; ОПиУ: periodType/rel; ОСВ: rowDim; ФОТ: fotDetail)',
+      _tabActiveFilters('bank',Object.assign(_tabBlankState('bank'),{preset:'year',dateFrom:'2026-01-01',dateTo:'2026-08-31',periodType:'year'})).length===0
+      &&_tabActiveFilters('opiu',Object.assign(_tabBlankState('opiu'),{periodType:'month',rel:'cur_year',dateFrom:'2024-01-01'})).length===0
+      &&_tabActiveFilters('osv',Object.assign(_tabBlankState('osv'),{rowDim:'account'})).length===0
+      &&_tabActiveFilters('fot',Object.assign(_tabBlankState('fot'),{fotDetail:'counterparty'})).length===0);
+   ok('5б: мёртвые поля старых пресетов Банка не считаются, сброс их чистит',
+      _tabActiveFilters('bank',Object.assign(_tabBlankState('bank'),{articles:['x'],subarticles:['y'],finOps:['z']})).length===0
+      &&String(renderBank).indexOf('f.articles')<0&&String(renderBank).indexOf('f.finOps')<0
+      &&['articles','subarticles','finOps'].every(k=>k in _tabBlankState('bank')));
+   ok('5б: отбор считается по полям вкладки',
+      _tabActiveFilters('bank',Object.assign(_tabBlankState('bank'),{fns:'da',includeFuture:false,accounts:['К']})).length===3
+      &&_tabActiveFilters('opiu',Object.assign(_tabBlankState('opiu'),{years:[2026],activityDirs:['БФЛ'],dyn:'yoy'})).length===3
+      &&_tabActiveFilters('dds',Object.assign(_tabBlankState('dds'),{months:[8]})).length===1
+      &&_tabActiveFilters('osv',Object.assign(_tabBlankState('osv'),{accounts:['К'],noOpening:true})).length===2
+      &&_tabActiveFilters('fot',Object.assign(_tabBlankState('fot'),{counterparties:['И'],articles:['111']})).length===2);
+   ok('5б: счётчик ОПиУ/ОСВ/ФОТ считает ровно то, что перечисляет сводка',
+      ['years','months','activityDirs','ebitdaInclBelow','expFlat','dyn','postSplit'].every(k=>String(_filterSummaryInner).indexOf('f.'+k)>=0&&TAB_COUNT_SKIP.opiu.indexOf(k)<0)
+      &&['accounts','noOpening'].every(k=>String(_filterSummaryInner).indexOf('f.'+k)>=0&&TAB_COUNT_SKIP.osv.indexOf(k)<0)
+      &&['articles','subarticles','counterparties'].every(k=>String(_filterSummaryInner).indexOf('f.'+k)>=0&&TAB_COUNT_SKIP.fot.indexOf(k)<0)
+      &&TAB_COUNT_SKIP.opiu.every(k=>String(_filterSummaryInner).indexOf('f.'+k)<0));
+   ok('5б: счётчик Реестра - поиск плюс колонки по одной, сортировка и offer не считаются',
+      _tabActiveFilters('registry',Object.assign(_regBlankState(),{q:'иванов',sel:{2:['Списание'],8:['111']},sort:{c:1,d:1},offer:{q:'x',empty:true}})).length===3
+      &&_tabActiveFilters('registry',Object.assign(_regBlankState(),{dds:{years:[2026],months:[],from:'',to:''},inc:{from:'1',to:''}})).length===2);
+   ok('5б: исключения из счёта - одним списком, сброс их не читает',typeof TAB_COUNT_SKIP==='object'&&String(_tabResetCore).indexOf('TAB_COUNT_SKIP')<0&&String(_presetTabReset).indexOf('TAB_COUNT_SKIP')<0&&String(_pfResetState).indexOf('TAB_COUNT_SKIP')<0);
+   ok('5б: подпись есть у каждого считаемого поля пяти вкладок',['bank','dds','opiu','osv','fot'].every(t=>Object.keys(_tabBlankState(t)).filter(k=>TAB_COUNT_SKIP[t].indexOf(k)<0).every(k=>!!TAB_FILTER_LABELS[k])));
+   // сброс - ядром, без рендера; состояние и пресеты возвращаем
+   {const sv=JSON.parse(JSON.stringify(_tabFilters)),svA=Object.assign({},_activePreset),svS=Object.assign({},_activePresetSig),svDD=window._regDD,svL=window._regLimit;
+    try{
+      ['bank','dds','opiu','osv','fot'].forEach(t=>{const D=_tabBlankState(t),F=_tabFilters[t];
+        Object.keys(D).forEach(k=>{F[k]=Array.isArray(D[k])?['мусор']:(typeof D[k]==='boolean'?!D[k]:'мусор');});
+        _activePreset[t]='p'; _activePresetSig[t]='s';
+        const done=_tabResetCore(t); const G=_tabFilters[t];
+        // ⚠ у Банка период после сброса ставит bankDefaultPeriod (текущий год), сравнивать его с литералом нельзя
+        const diff=Object.keys(D).filter(k=>!(t==='bank'&&['preset','dateFrom','dateTo'].indexOf(k)>=0)&&JSON.stringify(G[k])!==JSON.stringify(D[k]));
+        ok('5б: '+t+' - после сброса состояние равно умолчаниям поле в поле',done&&diff.length===0,diff.join(', '));
+        ok('5б: '+t+' - счётчик после сброса 0 и пресет снят',_tabActiveFilters(t).length===0&&_activePreset[t]===''&&_activePresetSig[t]==='');});
+      _tabFilters.registry=Object.assign(_regBlankState(),{q:'x',sel:{2:['a']},sort:{c:3,d:-1}}); _tabFilters.registry.fOpen=true; window._regLimit=1500;
+      _activePreset.registry='p'; _tabResetCore('registry'); const G=_tabFilters.registry;
+      ok('5б: Реестр - отбор снят, сортировка и раскрытость панели остались, лимит показа вернулся',
+         G.q===''&&Object.keys(G.sel).length===0&&JSON.stringify(G.sort)==='{"c":3,"d":-1}'&&G.fOpen===true&&window._regLimit===500&&_activePreset.registry==='');
+      ok('5б: БДР сбрасывается своим _pfResetState (развороты строк чистятся там)',/_pfResetState\(\)/.test(String(_tabResetCore)));
+      ok('5б: чужая вкладка сбросу не поддаётся',_tabResetCore('marketing')===false);
+    }finally{Object.keys(sv).forEach(k=>{_tabFilters[k]=sv[k];});Object.assign(_activePreset,svA);Object.assign(_activePresetSig,svS);window._regDD=svDD;window._regLimit=svL;}}
+   // копий логики сброса нет
+   ok('5б: прежних четырёх сбросов в файле нет',typeof window['bankReset'+'AllFilters']==='undefined'&&typeof window['regReset'+'All']==='undefined'
+      &&typeof window['_resetTab'+'Filters']==='undefined'&&typeof window['pfReset'+'Filters']==='undefined'&&_pfSrcTop.indexOf('reg-btn-'+'reset')<0);
+   ok('5б: в сводках вкладок и Банка своей кнопки сброса нет',String(_filterSummaryInner).indexOf('<button')<0&&String(renderBank).indexOf('сбросить'+' всё')<0);
+   // вставка
+   {const s=String(_presetBarInject);
+    ok('5б: кнопка ставится той же вставкой, что селект, и ПЕРЕД ним',s.indexOf("btn.className='bar-ctl bar-reset'")>=0&&s.indexOf('bar.appendChild(btn)')>=0&&s.indexOf('bar.appendChild(btn)')<s.indexOf('bar.appendChild(sel)'));
+    ok('5б: клик - общий сброс активной вкладки',/btn\.setAttribute\('onclick','_tabResetFilters\(\)'\)/.test(s));
+    const r=String(_barResetRefresh);
+    ok('5б: кнопка всегда есть, состояние - через disabled, подпись «Сбросить (N)», пустое - «Фильтры не заданы»',/btn\.disabled=!n/.test(r)&&r.indexOf("'Сбросить'+(n?' ('+n+')':'')")>=0&&r.indexOf("'Фильтры не заданы'")>=0);
+    ok('5б: обновление после рендера идёт тем же _barResetRefresh',/_barResetRefresh\(rb,activeTab\)/.test(String(_presetBarRefresh)));
+    ok('5б: сводка «Фильтры: …» возвращается наблюдателем вместе с селектом (пункт 4: пропадала после прямого ре-рендера)',/_tabFilterSummary\(\);_presetBarInject\(\);/.test(String(_presetBarSetup)));
+    ok('5б: у кнопки нет инлайновых стилей - габариты из .bar-ctl',!/btn\.style/.test(s)&&!/btn\.setAttribute\('style'/.test(s));}
   }
 
   // 6. Третий уровень: ДВА предиката, у 223 третьего уровня НЕТ НИГДЕ (решение Олега 05.09.2026)
@@ -10721,7 +10881,7 @@ function pfRunTests(){
    ok('строка ищется перебором, а не селектором по ключу',/querySelectorAll\('tr\[data-pfkey\]'\)\]\.find\(t=>t\.getAttribute\('data-pfkey'\)===KS\.key\)/.test(src)&&src.indexOf('[data-pfkey="\'+')<0);
    ok('доводка только когда строки не видно, block:nearest',/if\(rb\.bottom>cb\.bottom\|\|rb\.top<cb\.top\)tr\.scrollIntoView\(\{block:'nearest'\}\)/.test(src));
    // ⚠ Смена фильтров, периода и сброс снимок НЕ делают: там меняется состав таблицы, и верх - правильное место.
-   ok('фильтры и сброс снимок не делают',String(_pfResetState).indexOf('_pfScrollSave')<0&&String(pfResetFilters).indexOf('_pfScrollSave')<0);
+   ok('фильтры и сброс снимок не делают',String(_pfResetState).indexOf('_pfScrollSave')<0&&String(_tabResetFilters).indexOf('_pfScrollSave')<0&&String(_tabResetCore).indexOf('_pfScrollSave')<0);
    ok('ключ строки - тот же, что у разворотов',/pfkey:key\}/.test(src)&&/pfkey:kind\+'\|'\+sub\}/.test(src)&&/pfkey:kind\+'\|'\+sub\+'\|'\+side\}/.test(src));
    ok('атрибут ключа идёт через _pesc',/data-pfkey="\$\{_pesc\(opts\.pfkey\)\}"/.test(src));}
 
@@ -10749,7 +10909,16 @@ function pfRunTests(){
    ok('«последний месяц с данными» учитывает вывод',/for\(const sel of \['exp','inc','vyv'\]\)/.test(String(_cfoLastMonthWithData)));}
 
   // 32. ПРЕСЕТЫ: НАБОР ЗАДАННЫХ ПОЛЕЙ, ВЫБОР НА ВКЛАДКЕ, ПРЕСЕТ ПО УМОЛЧАНИЮ (07.09.2026)
+  // ⚠ ТЕСТ НЕ ИМЕЕТ ПРАВА ПИСАТЬ ПРЕСЕТЫ (поймано 13.09.2026): блок (5) зовёт _presetSetDefault, а тот -
+  //   _presetsSave, то есть до этой правки прогон pfRunTests записывал ФИКСТУРЫ («т», «x», «y») в
+  //   localStorage и - на боевой странице, как админ - в облако config/presets, поверх настоящих
+  //   пресетов Банка и БДР. А восстановление возвращало только ключи, что были в снимке: на вкладке
+  //   без пресетов ключа нет, и фикстура с isDefault оставалась жить - следующий заход на БДР применял
+  //   «пресет по умолчанию» y и молча чистил фильтры. Сохранение заглушается на весь блок, число
+  //   перехваченных вызовов проверяется ниже; восстанавливаются ВСЕ семь ключей, а не те, что были.
   {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),P0=JSON.parse(JSON.stringify(_presets)),A0=_activePreset.planfact;
+   const SV=_presetsSave,LS0=(()=>{try{return localStorage.getItem('reportPresets');}catch(e){return null;}})();let saveCalls=0;
+   window._presetsSave=function(){saveCalls++;return Promise.resolve(false);};
    try{
      // (1) применение: заданное перебивает, «не заданное» НЕ трогается
      _tabFilters.planfact=Object.assign(_pfBlankState(),{sides:['ктото'],period:'year',year:new Date().getFullYear(),_defPeriodDone:1});
@@ -11080,8 +11249,11 @@ function pfRunTests(){
       ok('умолчание ставится ПОСЛЕ первого рендера',/renderActiveTab\(\);\n(?:\s*\/\/[^\n]*\n)+\s*try\{_presetApplyDefault\(name\);\}catch\(e\)\{\}/.test(String(switchTab)));}
      // (6) подпись фильтров снимается ДО и ПОСЛЕ рендера - иначе пресет гаснет сам
      ok('подпись пресета снимается дважды',(String(presetApply).match(/_activePresetSig\[tab\]=_filterSig\(tab\)/g)||[]).length===2);
+     ok('тесты пресетов сохранение перехватили, а не пропустили в облако',saveCalls>0,saveCalls);
    }catch(e){ok('блок пресетов упал',false,String(e&&e.message||e));}
-   finally{_tabFilters.planfact=F0;Object.keys(P0).forEach(k=>{_presets[k]=P0[k];});_activePreset.planfact=A0;}}
+   finally{window._presetsSave=SV;_tabFilters.planfact=F0;['bank','registry','planfact','opiu','dds','osv','fot'].forEach(k=>{if(k in P0)_presets[k]=P0[k];else delete _presets[k];});_activePreset.planfact=A0;
+     const LS1=(()=>{try{return localStorage.getItem('reportPresets');}catch(e){return null;}})();
+     ok('после тестов пресеты в памяти и в localStorage прежние',JSON.stringify(_presets)===JSON.stringify(P0)&&LS1===LS0);}}
 
   // 31. МЕНЮ «⚙ ДЕЙСТВИЯ»: 13 ПУНКТОВ → 3 (07.09.2026)
   // ⚠ Проверяем СОСТАВ, а не «меню не пустое»: смысл правки в том, что в меню осталось ТОЛЬКО то,
@@ -11113,7 +11285,7 @@ function pfRunTests(){
     // ⚠ Троица идёт ОДНОЙ группой с margin-left:auto - иначе правый край бара БДР кончался бы
     //   на 113px раньше, чем у остальных шести (там вправо тянет сводка фильтров).
     ok('статус, архив и «Действия» - в самом фильтр-баре, одной прижатой группой',
-       /\$\{pfResetBtn\}<span style="[^"]*margin-left:auto">\$\{baselineStatus\}\$\{backupBadge\}\$\{actionsWrap\}<\/span>/.test(fb));
+       /<span style="[^"]*margin-left:auto">\$\{baselineStatus\}\$\{backupBadge\}\$\{actionsWrap\}<\/span>\n  <\/div>`;/.test(fb)&&fb.indexOf('pfReset'+'Btn')<0);
     ok('текстовых подписей в баре БДР не осталось',fb.indexOf('text-transform:uppercase')<0,fb.length);
     ok('категория переехала внутрь контролов',/_barBtnLabel\('Направления'/.test(src)&&/_barBtnLabel\('Статьи'/.test(src)
        &&/_barBtnLabel\('Подстатьи'/.test(src)&&/_barBtnLabel\('ЦФО'/.test(src)&&/_barBtnLabel\('Контрагенты'/.test(src)
@@ -11264,7 +11436,8 @@ window.barRunTests=function(){
     if(Array.isArray(F.years))F.years=[new Date().getFullYear()];if(Array.isArray(F.months))F.months=[8];
     if(Array.isArray(F.activityDirs)&&dir0)F.activityDirs=[dir0];if(Array.isArray(F.dirs)&&dir0)F.dirs=[dir0];
     if(Array.isArray(F.articles)&&art0)F.articles=[art0];if(Array.isArray(F.owners)&&own0)F.owners=[own0];
-    if(tab==='planfact'){F.period='year';F.cut='cfo';}};
+    if(tab==='planfact'){F.period='year';F.cut='cfo';}
+    if(tab==='registry'){F.q='оплата';F.sel={};F.sel[COL.TYPE]=['Списание'];}}; // у Реестра свои поля: поиск и колонка - кнопка на замере обязана быть активной («Сбросить (2)» шире запертой)
   try{
     [[1600,TABS],[1280,TABS.filter(t=>WITH_SUMMARY.includes(t[0]))]].forEach(([W,tabs])=>{
       content.style.boxSizing='border-box';content.style.maxWidth='none';content.style.width=(W-chrome)+'px';
@@ -11272,7 +11445,11 @@ window.barRunTests=function(){
         maxFilters(tab); try{switchTab(tab);}catch(e){}
         const bar=document.getElementById(cont)&&document.getElementById(cont).querySelector(sel);
         const h=bar?Math.round(bar.getBoundingClientRect().height):-1;
-        ok(W+' · '+tab+': бар '+exp+'px в одну строку с максимумом фильтров',h===exp,h+'px');});});
+        ok(W+' · '+tab+': бар '+exp+'px в одну строку с максимумом фильтров',h===exp,h+'px');
+        // ⚠ «Сбросить (N)» стоит ПЕРЕД селектом пресета, последней парой бара; сводка (где есть) - перед ними
+        if(bar){const rb=bar.querySelector(':scope > button.bar-reset'),ps=bar.querySelector(':scope > select.preset-pick'),sm=bar.querySelector(':scope > .bank-summary, :scope > .tab-filter-summary');
+          ok(W+' · '+tab+': «Сбросить (N)» есть, активна и стоит перед селектом пресета',!!rb&&!!ps&&rb.nextElementSibling===ps&&ps.nextElementSibling===null&&!rb.disabled&&/^Сбросить \(\d+\)$/.test(rb.textContent),rb?rb.textContent:'нет кнопки');
+          if(WITH_SUMMARY.includes(tab))ok(W+' · '+tab+': сводка фильтров в баре, перед кнопкой',!!sm&&sm.nextElementSibling===rb);}});});
   }finally{
     content.style.width=sv.w;content.style.maxWidth=sv.mw;content.style.boxSizing=sv.bs;
     Object.keys(sv.F).forEach(k=>{_tabFilters[k]=sv.F[k];});
@@ -12104,22 +12281,10 @@ function renderPlanFact(f){
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" class="bar-ctl" style="position:relative;font-weight:600;border-color:var(--accent);background:transparent;color:var(--accent)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
       <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('pfDataCheckOpen()','⚠ Проверка данных'+(_chkN?' <b>('+_chkN+')</b>':''),_chkN?'var(--outcome)':'var(--text2)',null)}${_actItem('pfCfoOpen()','👥 ЦФО','var(--accent)',null)}${_actItem('showPlansPanel()',(isAdmin?'✏ Планы':'👁 Планы'),'var(--accent)',null)}</div>
     </div>`;
-  // ── «Сбросить (N)» - последним элементом фильтр-бара ─────────────────────────
-  // ⚠ Стоит В КОНЦЕ РЯДА и БЕЗ margin-left:auto: при flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки,
-  //   и кнопка прыгала бы справа налево в зависимости от того, сколько фильтров уместилось выше
-  //   (ровно та беда, ради которой «⚙ Действия» унесли на свою полосу).
-  // ⚠ Кнопка ЕСТЬ ВСЕГДА, меняется только её состояние: контрол, который появляется и исчезает,
-  //   заставляет искать его заново, а его отсутствие ничего не сообщает. Приглушённая кнопка без
-  //   счётчика - это ответ «фильтров нет», ради которого её и завели.
-  // ⚠ Прежняя частичная «× сброс» (статья/подстатья/ЦФО/контрагент) УДАЛЕНА вместе со своей
-  //   функцией: два разных сброса рядом в одном ряду - приглашение нажать не тот, а полный сброс
-  //   её покрывает целиком. (Имя функции здесь не написано НАМЕРЕННО: тест ниже ищет её вызов
-  //   по срезу String(renderPlanFact), и упоминание в комментарии он нашёл бы как живой код.)
-  // ⚠ Подсказка нативная СОЗНАТЕЛЬНО (правило подсказок): здесь нет чисел в столбик, есть
-  //   пояснение к контролу и перечисление заданных фильтров.
-  const _pfActive=_pfActiveFilters(f),_pfActN=_pfActive.length;
-  const _pfActLbl=_pfActive.map(k=>PF_FILTER_LABELS[k]||k).join(', ');
-  const pfResetBtn=`<button ${_pfActN?`onclick="pfResetFilters()"`:'disabled'} title="${_pfActN?_pesc('Сбросить все фильтры вкладки, включая год и период. Сейчас задано: '+_pfActLbl):'Фильтры не заданы - сбрасывать нечего (год и период выбраны всегда и в счёт не идут)'}" class="bar-ctl" style="background:var(--surface2);${_pfActN?'color:var(--text2);cursor:pointer':'color:var(--text3);opacity:.55;cursor:not-allowed'}">Сбросить${_pfActN?' ('+_pfActN+')':''}</button>`;
+  // ── «Сбросить (N)» - ОБЩАЯ кнопка, её ставит _presetBarInject рядом с селектом пресета (13.09.2026) ──
+  // ⚠ Своей кнопки у БДР больше нет: правила прежней (кнопка есть всегда, состояние через disabled,
+  //   счётчик по _pfBlankState, год и период сбрасываются, но не считаются) переехали в общий контрол
+  //   и действуют на всех семи вкладках. Частичная «× сброс» удалена ещё раньше и не возвращается.
   // ⚠ gap 6px - это КОНТРОЛЬНЫЙ зазор Банка, а не «уже, чем у Банка»: у Банка прямые дети бара это
   //   ГРУППЫ (даты, доп-фильтры, сводка) и между ними 10px, а контролы ВНУТРИ групп стоят через
   //   6px (`#tabBank>.bank-filters-1row .tab-filters,.bank-extra-filters{gap:6px}`). У БДР прямые
@@ -12142,7 +12307,7 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" class="bar-ctl" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${pfSides.length?`
     <div style="position:relative;display:inline-block"><button id="pf-side-btn" onclick="pfMultiToggle('pf-side-dd');pfSideRender('')" title="Сторона операции (ID_SecondSide): сотрудник, объект аренды, подрядчик" class="bar-ctl" style="${pfBtnStyle}">${pfSideBtn}</button><div id="pf-side-dd" style="${pfDDstyle};min-width:300px">${pfSideDD}</div></div>`:''}
-    ${pfResetBtn}<span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto">${baselineStatus}${backupBadge}${actionsWrap}</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto">${baselineStatus}${backupBadge}${actionsWrap}</span>
   </div>`;
   // ── Статус заморозки + архив + «⚙ Действия» - В САМОМ ФИЛЬТР-БАРЕ (07.09.2026) ───────────
   // ⚠ До этого троица жила ОТДЕЛЬНОЙ полосой под фильтрами, и заведена та полоса была не от
