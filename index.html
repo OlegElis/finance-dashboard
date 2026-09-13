@@ -4192,12 +4192,12 @@ function renderBank(f){
 
   const bankExtraFilters=`<div class="bank-extra-filters" style="display:flex;align-items:center;gap:8px;padding:4px var(--secpx);background:var(--surface);border-bottom:1px solid var(--border);flex-wrap:wrap">
     <div style="position:relative;display:inline-block">
-      <button id="bank-acc-btn" data-cat="Счета" onclick="bankAccToggle()" class="bar-ctl" style="min-width:104px;text-align:left" title="Реквизиты счёта">${_barBtnLabel('Счета',selAccounts.length)}</button>
+      <button id="bank-acc-btn" data-cat="Счета" onclick="bankAccToggle()" class="bar-ctl" style="min-width:84px;text-align:left" title="Реквизиты счёта">${_barBtnLabel('Счета',selAccounts.length)}</button>
       ${mkBankDD('bank-acc-dd',allAccounts,selAccounts,'bankAcc')}
     </div>
     <select id="bank-fns-sel" onchange="bankFnsChange(this.value)" class="bar-ctl" title="Признак ФНС у счёта. Режет состав счетов, суммы внутри счёта не меняются.">${BANK_FNS_OPTS.map(([v,l])=>`<option value="${v}"${(f.fns||'')===v?' selected':''}>ФНС: ${l.toLowerCase()}</option>`).join('')}</select>
     <div style="position:relative;display:inline-block">
-      <button id="bank-dir-btn" data-cat="Направления" onclick="bankDirToggle(this)" class="bar-ctl" style="min-width:136px;text-align:left" title="Направление деятельности">${bankDirBtnLabel}</button>
+      <button id="bank-dir-btn" data-cat="Направления" onclick="bankDirToggle(this)" class="bar-ctl" style="min-width:124px;text-align:left" title="Направление деятельности">${bankDirBtnLabel}</button>
       <div id="bank-dir-dd" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);max-height:280px;overflow-y:auto;min-width:340px;max-width:520px;margin-top:2px">${bankDirCheckboxes}</div>
     </div>
     <label title="Учитывать оплаты с датой позже сегодняшнего дня (плановые/будущие платежи)" class="bar-ctl" style="display:flex;align-items:center;gap:6px;margin-left:auto;background:${f.includeFuture?'var(--accent)':'var(--surface)'};color:${f.includeFuture?'#fff':'var(--text2)'};font-weight:600;white-space:nowrap;user-select:none">
@@ -11017,6 +11017,9 @@ function pfRunTests(){
         ok('ОСВ: «без вход. сальдо» и разрез строк живы, но под «⋯»',/_tabFilters\['osv'\]\.noOpening=this\.checked/.test(v)
            &&/_tabFilters\['osv'\]\.rowDim='direction'/.test(v)&&/_barMore\('osv-more'/.test(v));
         ok('ФОТ: детализация жива, но под «⋯»',/_tabFilters\['fot'\]\.fotDetail=this\.value/.test(ft)&&/_barMore\('fot-more'/.test(ft));
+        // ⚠ БДР (13.09.2026): статус утверждения, бейдж архива и «⚙ Действия» - под «⋯», обработчики прежние.
+        {const pf=String(renderPlanFact);
+         ok('БДР: статус, архив и «Действия» живы, но под «⋯»',/_barMore\('pf-more'/.test(pf)&&/pfActionsToggle\(\)/.test(pf)&&/pfArchiveOpen\(\)/.test(pf)&&/_pfMoreRows/.test(pf));}
         // ⚠ Точка на кнопке - единственное, что говорит о заданном скрытом фильтре; без неё числа
         //   на экране менялись бы молча.
         ok('«⋯» помечается точкой, когда внутри что-то задано',/\$\{n\?' •':''\}/.test(String(_barMore)));
@@ -11066,9 +11069,10 @@ function pfRunTests(){
    ok('разрез резолвится одной строкой, чужое значение = умолчание',/const cut=\(f\.cut==='dir'\|\|f\.cut==='cfo'\)\?f\.cut:'article';/.test(src)
       &&(src.match(/f\.cut/g)||[]).length===3); // три чтения - все в одной строке резолвера
    ok('вариант «ЦФО» в списке есть (этап 2)',src.indexOf('>Разрез: ЦФО<')>=0);
-   // ⚠ Контрол - в самом баре, а не под «⋯»: он меняет ФОРМУ отчёта, а под «⋯» живут редкие фильтры.
+   // ⚠ Контрол - в самом баре, а не под «⋯»: он меняет ФОРМУ отчёта, а под «⋯» живут редкие
+   //   контролы (с 13.09.2026 у БДР это статус, архив и «Действия» - `_pfMoreRows`; разреза там нет).
    ok('селект разреза стоит в баре и берёт класс эталона',/<select class="bar-ctl"[^>]*onchange="_tabFilters\.planfact\.cut=this\.value/.test(src)
-      &&src.indexOf("_barMore('pf-")<0);
+      &&!/const _pfMoreRows=[^\n]*planfact\.cut/.test(src)&&/const filterBar=`[\s\S]*?_tabFilters\.planfact\.cut=this\.value[\s\S]*?`;/.test(src));
    // ⚠ Состав контейнеров - общий _pfDirsToAgg: копии правила о скрытых направлениях быть не должно,
    //   иначе у исключения появится вторая точка и соседние цифры вкладки станут считаться по разным
    //   наборам направлений (то же основание, что у гейта dirsToAgg).
@@ -11282,10 +11286,18 @@ function pfRunTests(){
    //   (ровно поэтому полосу когда-то и завели).
    {const fb=(src.match(/const filterBar=`[\s\S]*?`;/)||[''])[0];
     ok('второй полосы у БДР нет',src.indexOf('actions'+'Bar')<0);
-    // ⚠ Троица идёт ОДНОЙ группой с margin-left:auto - иначе правый край бара БДР кончался бы
-    //   на 113px раньше, чем у остальных шести (там вправо тянет сводка фильтров).
-    ok('статус, архив и «Действия» - в самом фильтр-баре, одной прижатой группой',
-       /<span style="[^"]*margin-left:auto">\$\{baselineStatus\}\$\{backupBadge\}\$\{actionsWrap\}<\/span>\n  <\/div>`;/.test(fb)&&fb.indexOf('pfReset'+'Btn')<0);
+    // ⚠ С 13.09.2026 троица лежит ПОД «⋯» (`_pfMoreRows`), а прижатие вправо несёт обёртка самой
+    //   кнопки - один элемент ряда; в самом баре ни статуса, ни бейджа архива, ни «Действий» нет.
+    ok('статус, архив и «Действия» - под «⋯» в самом фильтр-баре, кнопка прижата вправо',
+       /<span style="[^"]*margin-left:auto">\$\{_barMore\('pf-more',_pfMoreN,_pfMoreTip,_pfMoreRows\)\}<\/span>\n  <\/div>`;/.test(fb)
+       &&fb.indexOf('${baselineStatus}')<0&&fb.indexOf('${backupBadge}')<0&&fb.indexOf('${actionsWrap}')<0&&fb.indexOf('pfReset'+'Btn')<0);
+    ok('под «⋯» у БДР - те же три элемента, бейдж архива остаётся условным',
+       /const _pfMoreRows=_barMoreRow\('[^']+',baselineStatus\)\+\(backupBadge\?_barMoreRow\('[^']+',backupBadge\):''\)\+_barMoreRow\('[^']+',actionsWrap\);/.test(src));
+    // ⚠ Под панелью три СИГНАЛА (не утверждено, архив устарел, проверка данных) - «⋯» обязана их
+    //   называть, иначе красное «⚠ 0/12» и точка проверки данных исчезли бы с экрана молча.
+    ok('«⋯» БДР помечается по трём сигналам и называет их в подсказке',
+       /const _pfMoreSig=\[hasBaseline\?'':'[^']+',backupBadge\?'[^']+':'',_chkN\?\('[^']+'\+_chkN\):''\]\.filter\(Boolean\);/.test(src)
+       &&/const _pfMoreN=_pfMoreSig\.length;/.test(src)&&/_pfMoreSig\.join\(' · '\)/.test(src));
     ok('текстовых подписей в баре БДР не осталось',fb.indexOf('text-transform:uppercase')<0,fb.length);
     ok('категория переехала внутрь контролов',/_barBtnLabel\('Направления'/.test(src)&&/_barBtnLabel\('Статьи'/.test(src)
        &&/_barBtnLabel\('Подстатьи'/.test(src)&&/_barBtnLabel\('ЦФО'/.test(src)&&/_barBtnLabel\('Контрагенты'/.test(src)
@@ -12281,6 +12293,19 @@ function renderPlanFact(f){
       <button id="pf-actions-btn" onclick="pfActionsToggle()" title="Действия по планам БДР" class="bar-ctl" style="position:relative;font-weight:600;border-color:var(--accent);background:transparent;color:var(--accent)">⚙ Действия ▾${(_npHasA||_abHasA||_ibHasA)?'<span title="Есть проблемы данных (факт без плана / аналитика вне ОПиУ / поступление вне 120_)" style="position:absolute;top:-4px;right:-4px;width:9px;height:9px;border-radius:50%;background:var(--outcome);border:1.5px solid var(--surface)"></span>':''}</button>
       <div id="pf-actions-dd" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:220px;overflow:hidden;margin-top:2px">${_actItem('pfDataCheckOpen()','⚠ Проверка данных'+(_chkN?' <b>('+_chkN+')</b>':''),_chkN?'var(--outcome)':'var(--text2)',null)}${_actItem('pfCfoOpen()','👥 ЦФО','var(--accent)',null)}${_actItem('showPlansPanel()',(isAdmin?'✏ Планы':'👁 Планы'),'var(--accent)',null)}</div>
     </div>`;
+  // ── «⋯» У БДР: СТАТУС УТВЕРЖДЕНИЯ · АРХИВ · «⚙ ДЕЙСТВИЯ» - ПОД ОДНОЙ КНОПКОЙ (решение Олега 13.09.2026) ──
+  // ⚠ Троица - РЕДКИЕ контролы (нужны раз в неделю), а место в ряду занимали постоянно: ширину бара
+  //   БДР при 1600 правили ТРИ раза, и каждый новый контрол её возвращал. Под «⋯» уходит ~150px,
+  //   и запас при 1600 растёт с единиц пикселей до ~130 - см. замер в CLAUDE.md.
+  // ⚠ Та же разметка, те же обработчики (`pfActionsToggle`, `pfArchiveOpen`), то же состояние - меняется
+  //   ТОЛЬКО место показа; «Сбросить (N)», «Пресет» и «Разрез» остаются в ряду: это ежедневные контролы.
+  // ⚠ СИГНАЛЫ НЕ ПРЯЧУТСЯ МОЛЧА: красное «⚠ 0/12», бейдж архива и красная точка проверки данных -
+  //   всё это под панелью, поэтому «⋯» помечается точкой и НАЗЫВАЕТ каждый сигнал в подсказке
+  //   (правило панели: скрытое и не названное - это тихо изменённый экран).
+  const _pfMoreSig=[hasBaseline?'':'план года не утверждён',backupBadge?'архив настроек давно не скачивали':'',_chkN?('проверка данных: '+_chkN):''].filter(Boolean);
+  const _pfMoreN=_pfMoreSig.length;
+  const _pfMoreTip='Дополнительно: утверждение плана, архив настроек, действия по планам'+(_pfMoreSig.length?(' · '+_pfMoreSig.join(' · ')):'');
+  const _pfMoreRows=_barMoreRow('Утверждено месяцев',baselineStatus)+(backupBadge?_barMoreRow('Архив настроек',backupBadge):'')+_barMoreRow('Действия по планам',actionsWrap);
   // ── «Сбросить (N)» - ОБЩАЯ кнопка, её ставит _presetBarInject рядом с селектом пресета (13.09.2026) ──
   // ⚠ Своей кнопки у БДР больше нет: правила прежней (кнопка есть всегда, состояние через disabled,
   //   счётчик по _pfBlankState, год и период сбрасываются, но не считаются) переехали в общий контрол
@@ -12307,9 +12332,9 @@ function renderPlanFact(f){
     <div style="position:relative;display:inline-block"><button id="pf-own-btn" onclick="pfMultiToggle('pf-own-dd')" title="Ответственный (из редактора планов)" class="bar-ctl" style="${pfBtnStyle}">${pfOwnBtn}</button><div id="pf-own-dd" style="${pfDDstyle}">${pfOwnDD}</div></div>`:''}
     ${pfSides.length?`
     <div style="position:relative;display:inline-block"><button id="pf-side-btn" onclick="pfMultiToggle('pf-side-dd');pfSideRender('')" title="Сторона операции (ID_SecondSide): сотрудник, объект аренды, подрядчик" class="bar-ctl" style="${pfBtnStyle}">${pfSideBtn}</button><div id="pf-side-dd" style="${pfDDstyle};min-width:300px">${pfSideDD}</div></div>`:''}
-    <span style="display:inline-flex;align-items:center;gap:6px;margin-left:auto">${baselineStatus}${backupBadge}${actionsWrap}</span>
+    <span style="margin-left:auto">${_barMore('pf-more',_pfMoreN,_pfMoreTip,_pfMoreRows)}</span>
   </div>`;
-  // ── Статус заморозки + архив + «⚙ Действия» - В САМОМ ФИЛЬТР-БАРЕ (07.09.2026) ───────────
+  // ── Статус заморозки + архив + «⚙ Действия» - ПОД «⋯» В САМОМ ФИЛЬТР-БАРЕ (13.09.2026) ───────
   // ⚠ До этого троица жила ОТДЕЛЬНОЙ полосой под фильтрами, и заведена та полоса была не от
   //   красоты: раньше троица стояла хвостом переносящегося бара, у статуса был `margin-left:auto`,
   //   и при flex-wrap «авто» считается от ПОСЛЕДНЕЙ строки - блок прыгал справа налево в
@@ -12318,12 +12343,12 @@ function renderPlanFact(f){
   //   тут нет ни у кого, троица просто идёт последними элементами ряда. Заводя ей «авто» снова,
   //   вернёте и прыжки.
   // ⚠ Обёртка меню (position:relative) едет ВМЕСТЕ с кнопкой - `pf-actions-dd` якорится на ней.
-  // ⚠ ТРОИЦА СТОИТ ОДНОЙ ГРУППОЙ С `margin-left:auto` - и это НЕ возврат к тому, что чинили: тогда
-  //   это были ТРИ отдельных элемента ряда, и «авто» на первом из них при переносе оставляло
-  //   остальных где придётся. Группа переезжает целиком и прижимается вправо на СВОЕЙ строке.
-  //   Нужна она затем, чтобы правый край бара совпадал с правым краем содержимого: без прижатия
-  //   ряд БДР кончался на 113px раньше, чем у Банка и прочих (у них вправо тянет сводка фильтров).
-  //   ⚠ Селект пресета добавляется ПОСЛЕ группы, поэтому у правого края оказывается именно он.
+  // ⚠ С 13.09.2026 ТРОИЦА ЛЕЖИТ ПОД «⋯» (`_pfMoreRows`), а `margin-left:auto` несёт обёртка самой
+  //   кнопки «⋯» - ОДИН элемент ряда, и это НЕ возврат к тому, что чинили: тогда «авто» стояло на
+  //   первом из ТРЁХ отдельных элементов, и при переносе остальные оставались где придётся.
+  //   Прижатие нужно затем, чтобы правый край бара совпадал с правым краем содержимого: без него
+  //   ряд БДР кончался раньше, чем у Банка и прочих (у них вправо тянет сводка фильтров).
+  //   ⚠ Селект пресета добавляется ПОСЛЕ «⋯», поэтому у правого края оказывается именно он.
 
   if(!plans.length&&!rowsArr.length){el.innerHTML=filterBar+emptyState('Нет данных по направлению','Выберите направление/год или задайте планы (шестерёнка → Планы)');return;}
 
