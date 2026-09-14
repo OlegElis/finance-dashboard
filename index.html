@@ -2671,8 +2671,8 @@ function _presetFieldText(tab,k,v){
   if(fd.t==='select'){const o=(fd.o||[]).find(x=>String(x[0])===String(v));return o?o[1]:String(v);}
   if(fd.t==='toggle')return v?'да':'нет';
   if(fd.t==='text')return String(v||'').trim()?('«'+v+'»'):'пусто';
-  if(fd.t==='pfyear')return v==='cur'?'текущий':String(v);
-  if(fd.t==='pfperiod')return v==='monthly'?'все месяцы (матрица)':v==='year'?'весь год':(+v>=1&&+v<=12?MONP[+v-1]:String(v));
+  if(fd.t==='pfyear')return v===PF_REL_CUR?'текущий':String(v);
+  if(fd.t==='pfperiod')return v==='monthly'?'все месяцы (матрица)':v==='year'?'весь год':v===PF_REL_CUR?'текущий месяц':v===PF_REL_PREV?'прошлый месяц':(+v>=1&&+v<=12?MONP[+v-1]:String(v));
   if(fd.t==='years'||fd.t==='months'){const a=Array.isArray(v)?v:[];
     return a.length?(fd.t==='months'?a.map(m=>PRESET_MONTHS[+m-1]||m).join(', '):a.join(', ')):'пусто (все)';}
   if(fd.t==='snap'){ // сводка по форме значения: массив, объект-набор или объект сортировки
@@ -2952,6 +2952,35 @@ function _presetApplyRel(tab,rel){
 //   показывал бы прошлый год, и человек читал бы чужие числа, не заметив подмены. Кому нужен
 //   конкретный год - он виден в снимке пресета («Год: 2026»), но при применении берётся текущий.
 const PF_PRESET_KEYS=['dirs','articles','subarticles','owners','sides','period','year','level','showHidden','cut'];
+// ── ОТНОСИТЕЛЬНЫЕ ЗНАЧЕНИЯ ПРЕСЕТА БДР - ОДНА РЕАЛИЗАЦИЯ НА ГОД И МЕСЯЦ (14.09.2026) ──────────
+// Признак лежит В ЗНАЧЕНИИ ПОЛЯ, как у года с 07.09: `year:'cur'` - текущий год; `period:'cur'` -
+// текущий месяц, `period:'prev'` - прошлый месяц. Абсолютные значения (число года, '1'..'12',
+// 'year', 'monthly') проходят через ту же функцию без изменений.
+// ⚠ ХРАНИТСЯ ПРИЗНАК, РАЗРЕШАЕТСЯ ПРИ ПРИМЕНЕНИИ (presetApply) от даты применения, а не от даты
+//   сохранения: пресет несёт «текущий месяц», а не «9», иначе через месяц он исторический.
+// ⚠ «ПРОШЛЫЙ МЕСЯЦ» В ЯНВАРЕ - ДЕКАБРЬ ПРЕДЫДУЩЕГО ГОДА, и год уменьшается И ПРИ АБСОЛЮТНО
+//   ЗАДАННОМ ГОДЕ (решение Олега 14.09.2026: «прошлый» значит прошлый, а не «декабрь того же
+//   года»). Месяц всегда берётся от сегодняшней даты; год - из пресета ('cur' → текущий, число
+//   → число, не задан → год вкладки после сброса, то есть текущий) и сдвигается только на этом переходе.
+// ⚠ Второй копии правила («new Date().getFullYear()» в presetApply/_pfStateRestore) быть не
+//   должно: подмена этой функции обязана менять и год, и оба месяца - это держит тест.
+// Возвращает ТОЛЬКО поля, которые надо положить в состояние: {year?,period?}.
+const PF_REL_CUR='cur',PF_REL_PREV='prev';
+function _pfPresetRelResolve(f,baseYear,now){
+  f=f||{}; now=now||new Date(); const out={};
+  let y=('year'in f)?((f.year===PF_REL_CUR)?now.getFullYear():(+f.year||0)):(+baseYear||0);
+  if('year'in f)out.year=y;
+  if('period'in f){
+    let p=f.period;
+    if(p===PF_REL_CUR||p===PF_REL_PREV){
+      let m=now.getMonth()+1; if(!y)y=now.getFullYear();
+      if(p===PF_REL_PREV){m-=1; if(m<1){m=12;y-=1;}}
+      p=String(m); out.year=y;
+    }
+    out.period=p;
+  }
+  return out;
+}
 // _pfBlankState объявлена рядом с _tabFilters - она же задаёт умолчания вкладки (см. комментарий там).
 function _pfStateSnapshot(){const F=_tabFilters.planfact||{},o={};
   PF_PRESET_KEYS.forEach(k=>{if(k in F)o[k]=F[k];});
@@ -2963,7 +2992,7 @@ function _pfStateRestore(st){
   const src=JSON.parse(JSON.stringify(st||{}));
   const yearIsCur=src.yearIsCurrent; delete src.yearIsCurrent;
   const F=Object.assign(_pfBlankState(),src);
-  if(yearIsCur||!F.year)F.year=new Date().getFullYear();
+  if(yearIsCur||!F.year)F.year=_pfPresetRelResolve({year:PF_REL_CUR}).year; // старая форма снимка (yearIsCurrent) - той же реализацией
   F._defPeriodDone=1; // период пришёл из пресета - умолчание его перебивать не должно
   if(!F.period)delete F._defPeriodDone; // пресет без периода → пусть отработает умолчание «текущий месяц»
   _tabFilters.planfact=F; window._pfArtExp=new Set(); window._pfSubExp=new Set(); window._pfDirExp=new Set();
@@ -3107,9 +3136,13 @@ window.presetApply=function(tab,id){
   // ⚠ Пустой пресет при этом ЧИСТИТ вкладку (это его состав: ничего не задано - всё по умолчанию),
   //   а не «ничего не делает».
   _presetTabReset(tab); F=_tabFilters[tab];
+  // ⚠ Год и период БДР могут быть ОТНОСИТЕЛЬНЫМИ (PF_REL_CUR/PF_REL_PREV) - разрешаются ОДНОЙ функцией
+  //   _pfPresetRelResolve от даты применения; базовый год - год вкладки после сброса (текущий).
+  const rel=(tab==='planfact')?_pfPresetRelResolve(p.f||{},F.year):null;
   Object.entries(p.f||{}).forEach(([k,v])=>{
-    if(k==='year'&&tab==='planfact'){F.year=(v==='cur')?new Date().getFullYear():(+v||0);return;}
+    if(rel&&(k==='year'||k==='period'))return; // положены ниже из rel
     F[k]=(v&&typeof v==='object')?JSON.parse(JSON.stringify(v)):v;});
+  if(rel)Object.assign(F,rel);
   if(tab==='planfact'){
     // ⚠ Период ИЗ ПРЕСЕТА перебивает умолчание «текущий месяц» (иначе умолчание тут же его снесёт).
     // ⚠ А вот СБРАСЫВАТЬ признак у пресета БЕЗ периода нельзя: это тронуло бы поле, о котором
@@ -3244,12 +3277,14 @@ function _presetFormHtml(tab,p){
         <div class="bank-dd-list" style="max-height:180px;overflow-y:auto">${list.length?list.map(a=>`<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11.5px;white-space:nowrap"><input type="checkbox" value="${_pesc(a)}" ${sel.includes(a)?'checked':''} onchange="_presetAccCnt('${wid}')"> <span>${_pesc(a)}</span></label>`).join(''):'<div style="padding:8px 10px;font-size:11px;color:var(--text3)">нет данных (пусто = все)</div>'}</div>
       </div>`;}
     else if(fd.t==='text'){ctrl=`<input type="text" class="preset-fld" data-k="${fd.k}" value="${_pesc(f[fd.k]||'')}" placeholder="строка поиска" style="width:100%;box-sizing:border-box;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)">`;}
-    else if(fd.t==='pfyear'){const ys=_presetAvailYears();const cur=(f[fd.k]===undefined)?'cur':String(f[fd.k]);
+    else if(fd.t==='pfyear'){const ys=_presetAvailYears();const cur=(f[fd.k]===undefined)?PF_REL_CUR:String(f[fd.k]);
       // ⚠ «Текущий» - НЕ число: пресет, сделанный в 2026, в январе 2027 молча показывал бы прошлый год
-      ctrl=`<select class="preset-fld" data-k="${fd.k}" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)"><option value="cur"${cur==='cur'?' selected':''}>текущий (всегда)</option>${ys.map(y=>`<option value="${y}"${cur===String(y)?' selected':''}>${y}</option>`).join('')}</select>`;}
+      ctrl=`<select class="preset-fld" data-k="${fd.k}" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)"><option value="${PF_REL_CUR}"${cur===PF_REL_CUR?' selected':''}>текущий (всегда)</option>${ys.map(y=>`<option value="${y}"${cur===String(y)?' selected':''}>${y}</option>`).join('')}</select>`;}
     else if(fd.t==='pfperiod'){const cur=String(f[fd.k]===undefined?'':f[fd.k]);
       const MONP=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-      const opts=[['year','весь год'],['monthly','все месяцы (матрица)']].concat(MONP.map((m,i)=>[String(i+1),m]));
+      // ⚠ «Текущий месяц» и «прошлый месяц» - ПРИЗНАКИ, как «текущий» у года (14.09.2026): хранятся
+      //   маркером, разрешаются при применении через _pfPresetRelResolve. Конкретные месяцы - как раньше.
+      const opts=[['year','весь год'],['monthly','все месяцы (матрица)'],[PF_REL_CUR,'текущий месяц (всегда)'],[PF_REL_PREV,'прошлый месяц (всегда)']].concat(MONP.map((m,i)=>[String(i+1),m]));
       ctrl=`<select class="preset-fld" data-k="${fd.k}" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)">${opts.map(o=>`<option value="${o[0]}"${cur===o[0]?' selected':''}>${o[1]}</option>`).join('')}</select>`;}
     else if(fd.t==='snap'){
       // ⚠ Поле, которое в форме НЕ НАБРАТЬ (мультивыбор на тысячи значений). Значение хранится
@@ -3297,13 +3332,13 @@ function _presetTabState(tab){
 //   разошёлся с ним (см. _TAB_BLANK). У БДР год подменяется маркером 'cur': в пресете год хранится
 //   признаком «текущий», и форма сравнивает с ним, а не с числом.
 function _presetTabDefaults(tab){
-  if(tab==='planfact'){const b=_pfBlankState();b.year='cur';return b;}
+  if(tab==='planfact'){const b=_pfBlankState();b.year=PF_REL_CUR;return b;}
   return _tabBlankState(tab)||{};
 }
 const _presetSame=(a,b)=>JSON.stringify(a===undefined?null:a)===JSON.stringify(b===undefined?null:b);
 window._presetFillFromTab=function(tab){
   const st=_presetTabState(tab),D=_presetTabDefaults(tab),f={};
-  if(tab==='planfact'&&st.yearIsCurrent){st.year='cur';}
+  if(tab==='planfact'&&st.yearIsCurrent){st.year=PF_REL_CUR;}
   delete st.yearIsCurrent;
   (PRESET_FIELDS[tab]||[]).forEach(fd=>{const v=st[fd.k];
     if(v===undefined)return;
@@ -3380,7 +3415,7 @@ function _presetMigCore(all){
       (PRESET_FIELDS[tab]||[]).forEach(fd=>{
         let v=f0[fd.k];
         // год БДР: старый снимок хранил число + признак yearIsCurrent
-        if(tab==='planfact'&&fd.k==='year'&&f0.yearIsCurrent)v='cur';
+        if(tab==='planfact'&&fd.k==='year'&&f0.yearIsCurrent)v=PF_REL_CUR;
         if(v===undefined){dropped.push(fd.k);return;}
         f[fd.k]=v; kept.push(fd.k);
       });
@@ -10977,6 +11012,48 @@ function pfRunTests(){
       ok('миграция: банковский пресет переносится целиком',JSON.stringify(g('c').kept)==='["preset","activityDirs","accounts","fns","includeFuture"]',JSON.stringify(g('c').kept));
       ok('миграция НИ ОДНОГО пресета не теряет',r.out.planfact.length===2&&r.out.bank.length===1);
       ok('миграция: год «текущий» не становится числом',r.out.planfact[0].f.year==='cur');}
+     // (3в) ОТНОСИТЕЛЬНЫЕ МЕСЯЦЫ (14.09.2026): признак в значении поля, разрешение ПРИ ПРИМЕНЕНИИ,
+     //   одна реализация на год и оба месяца (_pfPresetRelResolve). Бар вкладки не трогается.
+     {const RA=window.renderActiveTab; window.renderActiveTab=function(){};
+      try{
+        const now=new Date(),Y=now.getFullYear(),M=now.getMonth()+1,pM=M===1?12:M-1,pY=M===1?Y-1:Y;
+        const fh=_presetFormHtml('planfact',{id:'',name:'',f:{period:PF_REL_PREV}});
+        ok('3в: форма месяца предлагает «текущий» и «прошлый» рядом с конкретными',
+           /<option value="cur">текущий месяц \(всегда\)<\/option><option value="prev" selected>прошлый месяц \(всегда\)<\/option><option value="1">Январь<\/option>/.test(fh));
+        ok('3в: состав пресета называет признак словами',_presetFieldText('planfact','period',PF_REL_CUR)==='текущий месяц'&&_presetFieldText('planfact','period',PF_REL_PREV)==='прошлый месяц'&&_presetFieldText('planfact','period','7')==='Июль');
+        _presets.planfact=[{id:'r1',name:'т',f:{period:PF_REL_CUR}},{id:'r2',name:'т',f:{period:PF_REL_PREV}},{id:'r3',name:'т',f:{year:2025,period:PF_REL_PREV}},{id:'r4',name:'т',f:{year:2025,period:'7'}}];
+        presetApply('planfact','r1'); let F=_tabFilters.planfact;
+        ok('3в: «текущий месяц» → номер текущего месяца, текущий год, период зафиксирован',F.period===String(M)&&F.year===Y&&F._defPeriodDone===1,F.period+'/'+F.year);
+        ok('3в: пресет после применения несёт ПРИЗНАК, а не число',_presets.planfact[0].f.period===PF_REL_CUR&&!('year'in _presets.planfact[0].f));
+        presetApply('planfact','r2'); F=_tabFilters.planfact;
+        ok('3в: «прошлый месяц» → прошлый месяц (в январе - декабрь прошлого года)',F.period===String(pM)&&F.year===pY,F.period+'/'+F.year);
+        presetApply('planfact','r3'); F=_tabFilters.planfact;
+        ok('3в: абсолютный год + «прошлый месяц»: месяц от сегодня, год из пресета, в январе - на год назад',F.period===String(pM)&&F.year===(M===1?2024:2025),F.period+'/'+F.year);
+        presetApply('planfact','r4'); F=_tabFilters.planfact;
+        ok('3в: абсолютный месяц работает как раньше',F.period==='7'&&F.year===2025);
+        // разрешение от ЗАДАННОЙ даты - чистая функция: январь проверяется независимо от сегодняшнего числа
+        const jan=new Date(2027,0,15),sep=new Date(2026,8,14);
+        const r=(f,by,d)=>{const o=_pfPresetRelResolve(f,by,d);return JSON.stringify({year:o.year,period:o.period});}; // порядок ключей фиксирован, undefined выпадает
+        ok('3в: «прошлый месяц» в январе = декабрь ПРЕДЫДУЩЕГО года',r({period:PF_REL_PREV},2027,jan)==='{"year":2026,"period":"12"}',r({period:PF_REL_PREV},2027,jan));
+        ok('3в: «текущий год» + «текущий месяц» в январе = январь того же года',r({year:PF_REL_CUR,period:PF_REL_CUR},0,jan)==='{"year":2027,"period":"1"}');
+        ok('3в: абсолютный год + «прошлый месяц» в январе переходит границу года',r({year:2026,period:PF_REL_PREV},0,jan)==='{"year":2025,"period":"12"}');
+        ok('3в: вне января год из пресета остаётся',r({year:2025,period:PF_REL_PREV},0,sep)==='{"year":2025,"period":"8"}'&&r({period:PF_REL_CUR},2026,sep)==='{"year":2026,"period":"9"}');
+        ok('3в: абсолютные значения проходят без изменений',r({year:2025,period:'7'},0,jan)==='{"year":2025,"period":"7"}'&&r({period:'year'},2026,jan)==='{"period":"year"}'&&r({dirs:['x']},2026,jan)==='{}');
+        ok('3в: разрешается от даты ПРИМЕНЕНИЯ, а не сохранения - одно поле в разные даты даёт разное',r({period:PF_REL_CUR},2026,sep)!==r({period:PF_REL_CUR},2027,jan));
+        // ⚠ Главная проверка СТРУКТУРНАЯ: подмена резолвера меняет год, оба месяца и старую форму
+        //   снимка - значит все четыре идут через одну функцию, а не через согласованные копии.
+        const SVR=window._pfPresetRelResolve; window._pfPresetRelResolve=function(){return {year:1999,period:'5'};};
+        try{
+          _presets.planfact=[{id:'s1',name:'т',f:{year:PF_REL_CUR}},{id:'s2',name:'т',f:{period:PF_REL_CUR}},{id:'s3',name:'т',f:{period:PF_REL_PREV}}];
+          presetApply('planfact','s1'); const a=_tabFilters.planfact.year;
+          presetApply('planfact','s2'); const b=_tabFilters.planfact.period;
+          presetApply('planfact','s3'); const c=_tabFilters.planfact.period;
+          _pfStateRestore({yearIsCurrent:true}); const d=_tabFilters.planfact.year;
+          ok('3в: реализация относительного значения ОДНА - подмена меняет год, оба месяца и старую форму снимка',a===1999&&b==='5'&&c==='5'&&d===1999,[a,b,c,d].join('/'));
+        }finally{window._pfPresetRelResolve=SVR;}
+        ok('3в: своих копий «текущий год» у применения и восстановления нет',String(presetApply).indexOf('getFullYear')<0&&String(_pfStateRestore).indexOf('getFullYear')<0&&String(presetApply).indexOf("'cu"+"r'")<0);
+        ok('3в: в баре БДР у года нет «текущего» - и у месяца тоже (варианты только в форме пресета)',!/Год: текущий/.test(String(renderPlanFact))&&!/value="cur"|value="prev"/.test(String(renderPlanFact)));
+      }finally{window.renderActiveTab=RA;}}
      // (4) селект в баре - один на вкладку, последняя строка «сохранить»
      {const src=String(_presetBarInject);
       ok('селект ставится последним элементом бара',/bar\.appendChild\(sel\)/.test(src));
