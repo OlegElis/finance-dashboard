@@ -2858,11 +2858,18 @@ function _presetBarInject(){
   // ⚠ В БАРЕ ТОЛЬКО СЕЛЕКТ (решение Олега 07.09.2026). Ни строки-действия «сохранить», ни кнопки
   //   ⚙ рядом: бар - место ВЫБОРА отбора, а не управления им. Управление (состав, правка,
   //   удаление, «Подставить текущий отбор») живёт в окне пресетов, и вход в окно один - шестерёнка.
-  sel.innerHTML='<option value="">Пресет</option>'
-    +list.map(p=>'<option value="'+_pesc(p.id)+'"'+(av===p.id?' selected':'')+'>'+_pesc(p.name)+'</option>').join('');
+  sel.innerHTML=_presetBarOptions(tab,av); sel.dataset.sig=_presetBarSig(tab);
   bar.appendChild(sel);
   _presetPickTitle(sel);
 }
+// Опции селекта - В ПОРЯДКЕ МАССИВА _presets[tab], том же, что список в окне пресетов (14.09.2026).
+// ⚠ Сигнатура состава (id + имя по порядку) - чтобы _presetBarRefresh пересобирал опции ТОЛЬКО
+//   при реальной смене списка (перемещение, переименование, приход облака), а не на каждом рендере.
+function _presetBarOptions(tab,av){
+  return '<option value="">Пресет</option>'
+    +(_presets[tab]||[]).map(p=>'<option value="'+_pesc(p.id)+'"'+(av===p.id?' selected':'')+'>'+_pesc(p.name)+'</option>').join('');
+}
+function _presetBarSig(tab){return (_presets[tab]||[]).map(p=>p.id+'\u0001'+p.name).join('\u0002');}
 // Состояние кнопки «Сбросить (N)»: подпись, запертость и подсказка - из одного счётчика.
 // ⚠ Подсказка нативная СОЗНАТЕЛЬНО (правило подсказок): чисел в столбик тут нет, есть перечисление.
 function _barResetRefresh(btn,tab){
@@ -2884,6 +2891,7 @@ function _presetBarRefresh(){
   const rb=bar.querySelector(':scope > button.bar-reset'); if(rb)_barResetRefresh(rb,activeTab);
   const sel=bar.querySelector(':scope > select.preset-pick'); if(!sel)return;
   const av=(typeof _presetActive==='function')?_presetActive(activeTab):'';
+  const sig=_presetBarSig(activeTab); if(sel.dataset.sig!==sig){sel.innerHTML=_presetBarOptions(activeTab,av);sel.dataset.sig=sig;} // состав или порядок изменился
   if(sel.value!==av)sel.value=av;
   _presetPickTitle(sel);
 }
@@ -3203,7 +3211,11 @@ window._presetSelReport=function(tab){
 function _presetRenderBody(tab){
   const body=document.getElementById('presetBody'); if(!body)return; body.dataset.tab=tab;
   const list=_presets[tab]||[];
-  const listHtml=list.length?list.map(p=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:6px">
+  // ⚠ ▲/▼ - ПОРЯДОК В СПИСКЕ И В СЕЛЕКТЕ БАРА (14.09.2026): положение в массиве, отдельного поля нет.
+  //   У первого ▲ и у последнего ▼ заперты (disabled), а не спрятаны: исчезающая кнопка ничего не сообщает.
+  const mvBtn=(tab,id,dir,off)=>`<button type="button" ${off?'disabled':''} onclick="_presetMove('${tab}','${id}',${dir})" title="${dir<0?'Выше':'Ниже'}" style="font-size:9px;line-height:11px;padding:1px 5px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);cursor:${off?'default':'pointer'};opacity:${off?'.35':'1'};font-family:var(--sans)">${dir<0?'▲':'▼'}</button>`;
+  const listHtml=list.length?list.map((p,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:6px">
+      <span style="display:inline-flex;flex-direction:column;gap:2px;flex:0 0 auto">${mvBtn(tab,p.id,-1,i===0)}${mvBtn(tab,p.id,1,i===list.length-1)}</span>
       <span onclick="_presetUse('${tab}','${p.id}')" title="Открыть отчёт с этим пресетом" style="flex:1;min-width:0;cursor:pointer">
         <span style="font-size:13px;font-weight:600;color:var(--accent);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">${_pesc(p.name)}</span>
         <span style="display:block;font-size:10.5px;color:var(--text3);margin-top:2px;line-height:1.45">${(()=>{const q=_presetSummary(tab,p.f);return q.length?_pesc(q.join(' · ')):'ничего не задано - пресет ничего не меняет';})()}</span></span>
@@ -3382,6 +3394,23 @@ window._presetEdit=function(tab,id){
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
   const t=document.getElementById('presetFormTitle'); if(t)t.textContent='Изменение пресета';
   const fm=document.getElementById('presetForm'); if(fm)fm.innerHTML=_presetFormHtml(tab,p);
+};
+// ── ПОРЯДОК ПРЕСЕТОВ - ПОЛОЖЕНИЕ В МАССИВЕ, ОТДЕЛЬНОГО ПОЛЯ СОРТИРОВКИ НЕТ (14.09.2026) ─────
+// ⚠ Массив нигде не сортируется и не пересобирается по имени/дате: _presetsNormalize порядок
+//   сохраняет (RTDB отдаёт массив массивом; объект с числовыми ключами Object.values обходит по
+//   возрастанию ключа), поэтому порядок переживает перезагрузку сам. Заведи кто-нибудь сортировку
+//   в нормализации или в рендере списка - порядок слетал бы при каждом открытии (тест ищет .sort).
+// ⚠ Запись - ТОТ ЖЕ _presetsSave, что у переименования, удаления и признака «по умолчанию»;
+//   второго пути записи config/presets в файле нет (тест считает вызовы _fbSetSafe по ветке).
+// ⚠ Порядок и признак «по умолчанию» независимы: перемещение его не снимает и не назначает,
+//   записи меняются местами целиком, ни одно поле не трогается.
+// ⚠ Порядок свой у каждой вкладки: массив - _presets[tab], соседние вкладки не читаются.
+window._presetMove=function(tab,id,dir){
+  const a=_presets[tab]||[],i=a.findIndex(x=>x.id===id),j=i+(dir<0?-1:1);
+  if(i<0||j<0||j>=a.length)return false; // крайний - некуда; кнопка в этом состоянии заперта
+  [a[i],a[j]]=[a[j],a[i]];
+  _presetsSave(); _presetRenderBody(tab); if(activeTab===tab)_presetBarRefresh();
+  return true;
 };
 window._presetDelete=function(tab,id){
   if(!confirm('Удалить пресет?'))return;
@@ -11054,6 +11083,42 @@ function pfRunTests(){
         ok('3в: своих копий «текущий год» у применения и восстановления нет',String(presetApply).indexOf('getFullYear')<0&&String(_pfStateRestore).indexOf('getFullYear')<0&&String(presetApply).indexOf("'cu"+"r'")<0);
         ok('3в: в баре БДР у года нет «текущего» - и у месяца тоже (варианты только в форме пресета)',!/Год: текущий/.test(String(renderPlanFact))&&!/value="cur"|value="prev"/.test(String(renderPlanFact)));
       }finally{window.renderActiveTab=RA;}}
+     // (3г) ПОРЯДОК ПРЕСЕТОВ: ▲/▼, положение в массиве, тот же путь записи (14.09.2026)
+     {const mk=(id,extra)=>Object.assign({id,name:'п'+id,f:{dirs:['Д'+id]}},extra||{});
+      _presets.planfact=[mk('a',{isDefault:true}),mk('b'),mk('c')]; _presets.bank=[{id:'x',name:'x',f:{fns:'da'}},{id:'y',name:'y',f:{}}];
+      const snapB=JSON.stringify(_presets.bank),saves0=saveCalls;
+      const bBefore=JSON.stringify(_presets.planfact[1]);
+      ok('3г: ▼ двигает на одну позицию вниз',_presetMove('planfact','a',1)===true&&_presets.planfact.map(p=>p.id).join('')==='bac',_presets.planfact.map(p=>p.id).join(''));
+      ok('3г: перемещённая запись и соседняя не изменились ни в одном поле',JSON.stringify(_presets.planfact[0])===bBefore&&JSON.stringify(_presets.planfact[1])===JSON.stringify(mk('a',{isDefault:true})));
+      ok('3г: признак «по умолчанию» при перемещении не меняется',_presets.planfact[1].isDefault===true&&_presets.planfact.filter(p=>p.isDefault).length===1);
+      ok('3г: ▲ двигает на одну позицию вверх',_presetMove('planfact','c',-1)===true&&_presets.planfact.map(p=>p.id).join('')==='bca');
+      ok('3г: у первого ▲ и у последнего ▼ некуда - отказ без записи',_presetMove('planfact','b',-1)===false&&_presetMove('planfact','a',1)===false&&_presets.planfact.map(p=>p.id).join('')==='bca');
+      ok('3г: каждое удавшееся перемещение сохраняется - тем же _presetsSave',saveCalls===saves0+2);
+      ok('3г: порядок вкладок независим - Банк не тронут',JSON.stringify(_presets.bank)===snapB);
+      // порядок переживает перезагрузку: нормализация возвращает массив как есть и не сортирует;
+      //   объект с числовыми ключами (форма RTDB) обходится по ключу, а не по имени
+      const rt=_presetsNormalize(JSON.parse(JSON.stringify(_presets)));
+      ok('3г: порядок переживает перезагрузку (массив → массив)',rt.planfact.map(p=>p.id).join('')==='bca'&&rt.bank.map(p=>p.id).join('')==='xy');
+      ok('3г: порядок переживает перезагрузку (объект RTDB с числовыми ключами)',_presetsNormalize({planfact:{2:mk('a'),0:mk('b'),1:mk('c')}}).planfact.map(p=>p.id).join('')==='bca');
+      ok('3г: массив пресетов нигде не сортируется',!/_presets(\[[^\]]*\]|\.[a-z]+)[^;\n]*\.sort\(/.test(_pfSrcTop)&&String(_presetsNormalize).indexOf('.sort(')<0&&String(_presetRenderBody).indexOf('.sort(')<0&&String(_presetBarOptions).indexOf('.sort(')<0);
+      // селект бара - тот же порядок, что список в окне
+      {const opts=[...(_presetBarOptions('planfact','c').matchAll(/<option value="([^"]*)"/g))].map(m=>m[1]);
+       ok('3г: опции селекта бара идут в порядке массива',opts.join('')==='bca'&&/value="c" selected/.test(_presetBarOptions('planfact','c')));
+       const sigA=_presetBarSig('planfact'); _presetMove('planfact','a',-1); const sigB=_presetBarSig('planfact');
+       ok('3г: сигнатура состава меняется от перемещения - селект пересоберётся',sigA!==sigB&&/sel\.dataset\.sig!==sig/.test(String(_presetBarRefresh))&&/_presetBarRefresh\(\)/.test(String(_presetMove)));}
+      // кнопки в окне: временный узел, у первого ▲ и у последнего ▼ заперты
+      {const tmp=document.createElement('div'); tmp.id='presetBody'; tmp.style.display='none'; const had=document.getElementById('presetBody');
+       if(!had){document.body.appendChild(tmp); try{
+         _presetRenderBody('planfact');
+         const rows=[...tmp.querySelectorAll('button[onclick^="_presetMove("]')];
+         const up=rows.filter(b=>b.textContent==='▲'),dn=rows.filter(b=>b.textContent==='▼');
+         ok('3г: у каждой строки ▲ и ▼',up.length===3&&dn.length===3);
+         ok('3г: ▲ у первого и ▼ у последнего заперты, остальные активны',up[0].disabled&&!up[1].disabled&&!up[2].disabled&&dn[2].disabled&&!dn[0].disabled&&!dn[1].disabled);
+         ok('3г: порядок строк окна = порядок массива',[...tmp.querySelectorAll('span[onclick^="_presetUse("]')].map(s=>(s.getAttribute('onclick').match(/'([^']+)'\)$/)||[])[1]).join('')===_presets.planfact.map(p=>p.id).join(''));
+       }finally{tmp.remove();}}
+       else ok('3г: кнопки ▲/▼ (окно пресетов открыто - проверка по исходнику)',/_presetMove\('\$\{tab\}','\$\{id\}',\$\{dir\}\)/.test(String(_presetRenderBody)));}
+      ok('3г: второго пути записи пресетов нет - _fbSetSafe по ветке зовётся один раз, из _presetsSave',(_pfSrcTop.match(/_fbSetSafe\('config\/presets'/g)||[]).length===1&&/_presetsSave\(\)/.test(String(_presetMove)));
+     }
      // (4) селект в баре - один на вкладку, последняя строка «сохранить»
      {const src=String(_presetBarInject);
       ok('селект ставится последним элементом бара',/bar\.appendChild\(sel\)/.test(src));
@@ -11313,7 +11378,7 @@ function pfRunTests(){
        ok('в правиле пресета нет auto-margin',!!B&&!/auto/.test(B['margin']||'')&&!/auto/.test(B['margin-left']||''));
        // ⚠ Отрицательный margin - чтобы маргин-бокс не был выше ряда контролов и не растил бар.
        ok('маргин-бокс селекта ниже собственной высоты',!!B&&B['margin']==='-2px 0');}
-      ok('пустой выбор подписан коротким «Пресет», без «- не выбран -»',src.indexOf('<option value="">Пресет</option>')>=0&&src.indexOf('не выбран')<0);
+      ok('пустой выбор подписан коротким «Пресет», без «- не выбран -»',String(_presetBarOptions).indexOf('<option value="">Пресет</option>')>=0&&String(_presetBarOptions).indexOf('не выбран')<0&&/sel\.innerHTML=_presetBarOptions\(tab,av\)/.test(src));
       ok('полное имя пресета уходит в title',/sel\.title=\(sel\.value&&o\)\?o\.text:/.test(String(_presetPickTitle)));
       // ⚠ В БАРЕ ТОЛЬКО СЕЛЕКТ: ни строки-действия, ни кнопки настройки. Пункт списка, который не
       //   пресет, а действие, ломает понятие списка; окно пресетов открывается из шестерёнки.
