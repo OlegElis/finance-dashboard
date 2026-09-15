@@ -5862,7 +5862,12 @@ function renderOPIU(f){
   const postEligible=postIsBFL||postIsAU; // чекбокс только для одиночного БФЛ или САУ (не агрегат, не др. направления)
   const postOn=postEligible&&!!f.postSplit;
 
-  if(!data.length){el.innerHTML=renderFilterBar('opiu')+emptyState();return;}
+  // ⚠ Пустая выборка НЕ выходит здесь (15.09.2026): раньше стоял ранний выход с голым renderFilterBar и заглушкой,
+  //   то есть при отборе без строк (год + месяц + направление, где операций нет) вкладка показывала
+  //   ДРУГОЙ бар - голые даты без года/месяца/направлений, без «⋯», без «Сбросить (N)» и без пресета
+  //   (_presetBarInject ищет .dds-extra-filters и его не находил). Человек, попавший в пустой отбор,
+  //   не мог из него выйти тем же баром; barRunTests на боевых получал «бар -1px». Выход - ниже, когда
+  //   бар собран: списки года/месяца/направлений строятся от baseData/RAW, а не от data, и пусты не бывают.
 
   // --- period key using DATE_OPIU ---
   // ⚠ Ключ периода считается ОТ ДАТЫ (pkOfDate), а строка - лишь обёртка над ней: слой динамики
@@ -6314,6 +6319,7 @@ function renderOPIU(f){
     </select>
     ${_barMore('opiu-more',_oMoreN,_oMoreTip,_barMoreRow('Динамика',_oDynSel)+_barMoreRow('Корректировка EBITDA',_oEbitda)+(postEligible?_barMoreRow('Разделение БФЛ / САУ (почта)',_oPost):''))}
   </div>`;
+  if(!data.length){el.innerHTML=extraFiltersOPIU+emptyState('Нет данных','По этому отбору операций нет - снимите год, месяц или направление, либо «Сбросить»');return;} // тот же бар, что у непустой выборки
 
   // --- thead ---
   const thead=`<thead><tr style="position:sticky;top:0;z-index:2">
@@ -11123,7 +11129,7 @@ function pfRunTests(){
      //   иначе «Сегодня» поверх выбранных карт даёт «Сегодня по этим картам», и число на экране
      //   объясняется не именем пресета, а тем, что человек нажимал пять минут назад.
      {const RA=window.renderActiveTab; window.renderActiveTab=function(){};
-      const B0=JSON.parse(JSON.stringify(_tabFilters.bank));
+      const B0=JSON.parse(JSON.stringify(_tabFilters.bank)),AB0=_activePreset.bank,SB0=_activePresetSig.bank; // presetApply ставит _activePreset.bank='b1' - вернуть, иначе фикстура утекает в сессию
       try{
         _presets.bank=[{id:'b1',name:'т',f:{fns:'da'}}];
         Object.assign(_tabFilters.bank,{accounts:['Карта X'],activityDirs:['БФЛ'],includeFuture:false,fns:''});
@@ -11145,7 +11151,7 @@ function pfRunTests(){
         presetApply('planfact','p10');
         ok('БДР: пресет с периодом умолчание перебивает',_tabFilters.planfact._defPeriodDone===1&&_tabFilters.planfact.period==='year');
         ok('сброс - одна функция на все семь вкладок',typeof _presetTabReset==='function'&&/_presetTabReset\(tab\); F=_tabFilters\[tab\];/.test(String(presetApply)));
-      } finally { window.renderActiveTab=RA; _tabFilters.bank=B0; }}
+      } finally { window.renderActiveTab=RA; _tabFilters.bank=B0; _activePreset.bank=AB0; _activePresetSig.bank=SB0; }}
      // (2) состав строки собирается из ТЕХ ЖЕ полей, что применяются
      const sum=_presetSummary('planfact',{dirs:['Д1'],period:'year'});
      ok('состав - из описания полей, а не из второго списка',sum.length===2&&/^Направление: /.test(sum[0])&&/^Период: весь год$/.test(sum[1]),sum.join(' | '));
@@ -11327,6 +11333,16 @@ function pfRunTests(){
        }finally{try{_presetDragCancel();}catch(e){} const o=document.getElementById('presetsOverlay'); if(o)o.remove();}}
        else ok('3д: живые проверки окна пропущены (окно пресетов уже открыто или нет PointerEvent)',true);
       }
+      // (3е) barRunTests на боевых 25/30 (15.09.2026): три причины, каждая держится проверкой
+      {const ro=String(renderOPIU),bt=String(barRunTests),bd=String(_barDiag);
+       ok('3е: ОПиУ при пустой выборке рисует ТОТ ЖЕ бар (.dds-extra-filters), а не голый renderFilterBar',ro.indexOf("renderFilterBar('opiu')+emptyState")<0&&/el\.innerHTML=extraFiltersOPIU\+emptyState\(/.test(ro)&&ro.indexOf('const extraFiltersOPIU=')<ro.indexOf('el.innerHTML=extraFiltersOPIU+emptyState('));
+       ok('3е: списки года/месяца/направлений ОПиУ строятся от baseData/RAW, не от отфильтрованной data',/allOpiuDirs=\[\.\.\.new Set\(RAW\.map/.test(ro)&&/allOpiuYears=\[\.\.\.new Set\(baseData\.map/.test(ro));
+       ok('3е: _barDiag различает «не найден» и «не влезло» и печатает, что нарисовано вместо бара',/НЕ НАЙДЕН/.test(bd)&&/Ошибка построения/.test(bd)&&/state-box/.test(bd)&&/notFound:true/.test(bd));
+       ok('3е: barRunTests гасит пресеты по умолчанию на время прогона и возвращает снимок',/PRESET_TABS\.forEach\(\(\[k\]\)=>\{_presetDefDone\[k\]=1;\}\)/.test(bt)&&/Object\.assign\(_presetDefDone,sv\.def\)/.test(bt));
+       ok('3е: barRunTests зовёт _barDiag и при -1 (бар не найден), с контекстом вкладки',/if\(h!==exp\)_barDiag\(bar,[\s\S]*?\{cont:document\.getElementById\(cont\),sel,tab\}\)/.test(bt));
+       ok('3е: barRunTests печатает счётчик и поля при запертой «Сбросить» и число проверок против ожидаемого',/счётчик: /.test(bt)&&/проверок '\+R\.length\+' вместо '\+expected/.test(bt));
+       ok('3е: фикстура «b1» не утекает: _activePreset.bank возвращается после блока применения',/_activePreset\.bank=AB0; _activePresetSig\.bank=SB0;/.test(_pfSrcTop)&&_activePreset.bank!=='b1');
+      }
       ok('3г: второго пути записи пресетов нет - _fbSetSafe по ветке зовётся один раз, из _presetsSave',(_pfSrcTop.match(/_fbSetSafe\('config\/presets'/g)||[]).length===1&&/_presetsSave\(\)/.test(String(_presetReorder)));
      }
      // (4) селект в баре - один на вкладку, последняя строка «сохранить»
@@ -11371,7 +11387,7 @@ function pfRunTests(){
         ok('ФОТ: детализация жива, но под «⋯»',/_tabFilters\['fot'\]\.fotDetail=this\.value/.test(ft)&&/_barMore\('fot-more'/.test(ft));
         // ⚠ ДИАГНОСТИКА ПРОВАЛА (13.09.2026): при неверной высоте barRunTests печатает, ЧТО не влезло, - и только тогда.
         {const bt=String(barRunTests);
-         ok('barRunTests при провале высоты зовёт _barDiag, и только при провале',typeof _barDiag==='function'&&/if\(bar&&h!==exp\)_barDiag\(bar,/.test(bt)&&(bt.match(/_barDiag\(/g)||[]).length===1);
+         ok('barRunTests при провале высоты зовёт _barDiag, и только при провале',typeof _barDiag==='function'&&/if\(h!==exp\)_barDiag\(bar,/.test(bt)&&(bt.match(/_barDiag\(/g)||[]).length===1);
          ok('_barDiag печатает доступную ширину, потребность, нехватку и таблицу контролов',/console\.table\(rows\)/.test(String(_barDiag))&&/НЕ ХВАТИЛО/.test(String(_barDiag))&&/перенесён/.test(String(_barDiag))&&/'min-width'/.test(String(_barDiag)));}
         // ⚠ БДР (13.09.2026): статус утверждения, бейдж архива и «⚙ Действия» - под «⋯», обработчики прежние.
         {const pf=String(renderPlanFact);
@@ -11802,8 +11818,27 @@ window.pfRunTests=pfRunTests;
 //   занял на экране: его ширина - остаток, а не потребность. Ширина берётся по
 //   `getBoundingClientRect`, без margin: единственные маргины в барах - `margin-left:auto` у
 //   прижатого элемента, и в потребность они не входят (это свободное место, а не контрол).
-window._barDiag=function(bar,label){
-  if(!bar){console.log('[бар] _barDiag: узел бара не передан');return null;}
+// ⚠ Два разных исхода, и печатаются они по-разному (15.09.2026): «НЕ ВЛЕЗЛО» - бар есть, высота не та,
+//   ниже таблица контролов; «НЕ НАЙДЕН» - узла по селектору нет вовсе (высота -1 в barRunTests), и тогда
+//   вопрос не в ширине, а в том, ЧТО вкладка нарисовала вместо бара: заглушку ошибки, «Нет данных»
+//   с другим баром или ничего. Для этого третьим аргументом передаётся контекст {cont, sel, tab}.
+window._barDiag=function(bar,label,ctx){
+  if(!bar){
+    const c=ctx&&ctx.cont,why=[];
+    if(!c)why.push('контейнера вкладки нет в DOM');
+    else{
+      const err=c.querySelector('.state-box'),msg=err?String((err.querySelector('.msg')||{}).textContent||'').trim():'';
+      if(!c.innerHTML.trim())why.push('контейнер пуст - рендерер ничего не нарисовал');
+      else if(/Ошибка построения/.test(msg))why.push('рендерер УПАЛ: '+String((err.querySelector('.sub')||{}).textContent||'').trim().slice(0,200));
+      else if(err)why.push('вкладка нарисовала заглушку «'+msg+'» - бар при пустой выборке другой или его нет');
+      else why.push('разметка есть, но узла по селектору «'+(ctx&&ctx.sel)+'» нет');
+      const kids=[...c.children].map(k=>k.tagName.toLowerCase()+(k.className?'.'+String(k.className).split(' ').join('.'):'')).slice(0,6);
+      why.push('первые дети контейнера: '+(kids.join(', ')||'нет'));
+    }
+    if(ctx&&ctx.tab&&_tabFilters[ctx.tab])why.push('фильтры: '+JSON.stringify(_tabFilters[ctx.tab]).slice(0,300));
+    console.log('[бар] '+(label||'')+': бар НЕ НАЙДЕН (это не «не влезло»): '+why.join(' · '));
+    return {notFound:true,why};
+  }
   const cs=getComputedStyle(bar),br=bar.getBoundingClientRect();
   const avail=bar.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);
   const gap=parseFloat(cs.columnGap)||0;
@@ -11834,7 +11869,13 @@ window.barRunTests=function(){
               ['opiu','tabOpiu','.dds-extra-filters',28],['dds','tabDds','.dds-extra-filters',28],['osv','tabOsv','.dds-extra-filters',28],['fot','tabFot','.dds-extra-filters',28]];
   const WITH_SUMMARY=['bank','opiu','dds','osv','fot'];
   const content=document.querySelector('.content');
-  const sv={tab:activeTab,F:JSON.parse(JSON.stringify(_tabFilters)),w:content.style.width,mw:content.style.maxWidth,bs:content.style.boxSizing};
+  const sv={tab:activeTab,F:JSON.parse(JSON.stringify(_tabFilters)),w:content.style.width,mw:content.style.maxWidth,bs:content.style.boxSizing,def:Object.assign({},_presetDefDone)};
+  // ⚠ Пресет по умолчанию применяется на ПЕРВОМ заходе на вкладку за сессию (_presetApplyDefault) и
+  //   сбрасывает вкладку к умолчаниям - то есть стирает фильтры, которые тест выставил ДО первого
+  //   захода. В жизни такого не бывает (до первого захода человек фильтры трогать не может), а на
+  //   боевой странице с пресетом по умолчанию у БДР тест получал запертую «Сбросить» (15.09.2026).
+  //   На время прогона все семь вкладок помечаются «заход уже был»; снимок возвращается в finally.
+  PRESET_TABS.forEach(([k])=>{_presetDefDone[k]=1;});
   const chrome=window.innerWidth-content.getBoundingClientRect().width;
   // максимум фильтров, какой возможен на данных: год, месяц, направление, статья, ЦФО; у БДР - год и разрез ЦФО (самое широкое «Сбросить (N)»)
   const dir0=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort()[0];
@@ -11854,17 +11895,25 @@ window.barRunTests=function(){
         const bar=document.getElementById(cont)&&document.getElementById(cont).querySelector(sel);
         const h=bar?Math.round(bar.getBoundingClientRect().height):-1;
         ok(W+' · '+tab+': бар '+exp+'px в одну строку с максимумом фильтров',h===exp,h+'px');
-        if(bar&&h!==exp)_barDiag(bar,W+' · '+tab+' (ожидалось '+exp+'px)'); // ⚠ только при провале: что именно не влезло
+        if(h!==exp)_barDiag(bar,W+' · '+tab+' (ожидалось '+exp+'px)',{cont:document.getElementById(cont),sel,tab}); // ⚠ только при провале: не влезло - таблица контролов; не найден - что нарисовано вместо бара
         // ⚠ «Сбросить (N)» стоит ПЕРЕД селектом пресета, последней парой бара; сводка (где есть) - перед ними
         if(bar){const rb=bar.querySelector(':scope > button.bar-reset'),ps=bar.querySelector(':scope > select.preset-pick'),sm=bar.querySelector(':scope > .bank-summary, :scope > .tab-filter-summary');
-          ok(W+' · '+tab+': «Сбросить (N)» есть, активна и стоит перед селектом пресета',!!rb&&!!ps&&rb.nextElementSibling===ps&&ps.nextElementSibling===null&&!rb.disabled&&/^Сбросить \(\d+\)$/.test(rb.textContent),rb?rb.textContent:'нет кнопки');
+          // ⚠ При провале в «получено» - не только подпись, но и ПОЧЕМУ: список активных фильтров по счётчику, поля, которые
+          //   ставил тест, активный пресет. «Сбросить» без числа значит «счётчик дал ноль», и без этого не видно, кто обнулил.
+          const F=_tabFilters[tab]||{},diagR=()=>(rb?rb.textContent:'нет кнопки')+' · счётчик: '+JSON.stringify(_tabActiveFilters(tab))+' · ставил тест: '+JSON.stringify({years:F.years,months:F.months,activityDirs:F.activityDirs,dirs:F.dirs,owners:F.owners,cut:F.cut,q:F.q})+' · пресет: '+(_activePreset[tab]||'нет')+(rb?' · disabled='+rb.disabled:'');
+          ok(W+' · '+tab+': «Сбросить (N)» есть, активна и стоит перед селектом пресета',!!rb&&!!ps&&rb.nextElementSibling===ps&&ps.nextElementSibling===null&&!rb.disabled&&/^Сбросить \(\d+\)$/.test(rb.textContent),diagR());
           if(WITH_SUMMARY.includes(tab))ok(W+' · '+tab+': сводка фильтров в баре, перед кнопкой',!!sm&&sm.nextElementSibling===rb);}});});
   }finally{
     content.style.width=sv.w;content.style.maxWidth=sv.mw;content.style.boxSizing=sv.bs;
     Object.keys(sv.F).forEach(k=>{_tabFilters[k]=sv.F[k];});
+    Object.keys(_presetDefDone).forEach(k=>delete _presetDefDone[k]); Object.assign(_presetDefDone,sv.def);
     try{switchTab(sv.tab);}catch(e){}
   }
   const bad=R.filter(r=>!r.pass);
+  // ⚠ Число проверок - не константа: у вкладки без найденного бара пропадают ещё две (кнопка и сводка), и 34
+  //   превращаются в 30 молча. Поэтому ожидаемое число считается от состава и печатается рядом с фактом.
+  const expected=TABS.length*2+WITH_SUMMARY.length+WITH_SUMMARY.length*3;
+  if(R.length!==expected)console.log('[бар] barRunTests: проверок '+R.length+' вместо '+expected+' - у вкладок с «бар не найден» кнопка и сводка не проверялись');
   console.log('[бар] barRunTests: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+'  получено: '+r.got));
   return{total:R.length,failed:bad.length,tests:R};
