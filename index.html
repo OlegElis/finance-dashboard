@@ -117,6 +117,12 @@
   .preset-cfg-btn:hover{border-color:var(--accent);color:var(--accent);}
   .preset-rtab{font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);}
   /* окно пресетов: порядок перетаскиванием за ручку (15.09.2026). touch-action:none - иначе палец прокручивает окно вместо строки */
+  /* окно пресетов - три части, прокручивается только тело (15.09.2026); фон шапки и подвала непрозрачный */
+  .txn-card.preset-win{display:flex;flex-direction:column;overflow:hidden;}
+  .preset-win-head{flex:0 0 auto;background:var(--surface);}
+  .preset-win-tabs{display:flex;gap:6px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);}
+  .preset-win-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 20px 20px;}
+  .preset-win-foot{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 20px;border-top:1px solid var(--border);background:var(--surface);}
   .preset-list{position:relative;}
   .preset-grip{flex:0 0 auto;width:14px;text-align:center;font-size:15px;line-height:1;color:var(--text3);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;}
   .preset-grip:hover{color:var(--text2);}
@@ -3196,12 +3202,19 @@ window.showPresetsPanel=function(initTab){
     (['bank','registry','planfact','opiu','dds','osv','fot'].includes(activeTab)?activeTab:'bank');
   const ov=document.createElement('div'); ov.className='txn-card-overlay'; ov.id='presetsOverlay';
   ov.onclick=e=>{if(e.target===ov)ov.remove();};
-  ov.innerHTML=`<div class="txn-card" style="width:640px;max-width:94vw">
-    <div class="txn-card-head"><h3>Пресеты отчётов</h3><button class="txn-card-close" onclick="document.getElementById('presetsOverlay').remove()">✕</button></div>
-    <div style="padding:14px 20px 20px">
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${PRESET_TABS.map(([k,l])=>`<button class="preset-rtab" data-rt="${k}" onclick="_presetSelReport('${k}')">${l}</button>`).join('')}</div>
-      <div id="presetBody"></div>
-    </div></div>`;
+  // ⚠ ОКНО - ТРИ ЧАСТИ: ШАПКА, ТЕЛО, ПОДВАЛ; ПРОКРУЧИВАЕТСЯ ТОЛЬКО ТЕЛО (15.09.2026). До этого
+  //   прокручивалась вся карточка (.txn-card{overflow-y:auto}), и заголовок со строкой вкладок
+  //   уезжал вместе с кнопками - человек терял, на какой вкладке настраивает, и искал «Сохранить»
+  //   прокруткой. Фиксировано РАЗДЕЛЕНИЕМ (флекс-колонка, у тела свой overflow), а не «липкой»
+  //   шапкой: та держалась бы только внутри прокручиваемого тела, а прокручивалась карточка.
+  //   Фон шапки и подвала непрозрачный - иначе содержимое просвечивало бы под ними.
+  ov.innerHTML=`<div class="txn-card preset-win" style="width:640px;max-width:94vw">
+    <div class="preset-win-head">
+      <div class="txn-card-head"><h3>Пресеты отчётов</h3><button class="txn-card-close" onclick="document.getElementById('presetsOverlay').remove()">✕</button></div>
+      <div class="preset-win-tabs">${PRESET_TABS.map(([k,l])=>`<button class="preset-rtab" data-rt="${k}" onclick="_presetSelReport('${k}')">${l}</button>`).join('')}</div>
+    </div>
+    <div class="preset-win-body" id="presetBody"></div>
+    <div class="preset-win-foot" id="presetFoot"></div></div>`;
   document.body.appendChild(ov);
   _presetSelReport(tab0);
 };
@@ -3258,6 +3271,18 @@ function _presetRenderBody(tab){
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--label);font-weight:600;margin-bottom:10px" id="presetFormTitle">Новый пресет</div>
       <div id="presetForm">${_presetFormHtml(tab,null)}</div>
     </div>${hidBlock}`;
+  _presetFootRender(tab,null);
+}
+// ⚠ Кнопки формы живут в ПОДВАЛЕ окна, а не в самой форме (15.09.2026): подвал не прокручивается,
+//   «Сохранить» видна всегда. Подвал перерисовывают ДВА места - тело (новый пресет) и _presetEdit
+//   (правка: появляется «Отмена»); обе идут через эту функцию, второй разметки кнопок нет.
+//   Узла может не быть (тесты рисуют тело во временном узле без окна) - тогда молча ничего.
+function _presetFootRender(tab,p){
+  const foot=document.getElementById('presetFoot'); if(!foot)return;
+  foot.innerHTML=`<button class="btn btn-primary" onclick="_presetSave('${tab}')">${p?'Сохранить изменения':'Сохранить'}</button>
+    ${p?`<button class="btn btn-secondary" onclick="_presetRenderBody('${tab}')">Отмена</button>`:''}
+    <span style="flex:1 1 auto;min-width:0;font-size:10.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p?'правится «'+_pesc(p.name)+'»':''}</span>
+    <button class="btn btn-secondary" onclick="document.getElementById('presetsOverlay').remove()">Закрыть</button>`;
 }
 function _presetFieldWrap(fd,on,ctrl,val){
   return `<div class="preset-row" data-k="${fd.k}" style="margin-bottom:10px;border:1px solid var(--border);border-radius:7px;padding:8px 10px;background:${on?'var(--surface)':'var(--surface2)'}">
@@ -3325,11 +3350,7 @@ function _presetFormHtml(tab,p){
       <button type="button" class="btn btn-secondary" onclick="_presetFillFromTab('${tab}')" ${tab===activeTab?'':'disabled title="Откройте эту вкладку - подставлять нечего"'} style="font-size:11.5px">⤓ Подставить текущий отбор</button>
       <span style="font-size:10.5px;color:var(--text3)">${tab===activeTab?'заполнит поля тем, что сейчас на вкладке; НЕ сохраняет - состав видно, можно поправить':'вкладка не открыта'}</span>
     </div>
-    ${fields}
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-primary" onclick="_presetSave('${tab}')">Сохранить</button>
-      ${p?`<button class="btn btn-secondary" onclick="_presetRenderBody('${tab}')">Отмена</button>`:''}
-    </div>`;
+    ${fields}`;
 }
 window._presetAccAll=function(wid,on){const dd=document.getElementById(wid);if(!dd)return;
   dd.querySelectorAll('.bank-dd-list input[type=checkbox]').forEach(c=>c.checked=on); // как _bankExtraSelectAll на вкладке - ВСЕ, а не только видимые поиском
@@ -3404,6 +3425,8 @@ window._presetEdit=function(tab,id){
   const p=(_presets[tab]||[]).find(x=>x.id===id); if(!p)return;
   const t=document.getElementById('presetFormTitle'); if(t)t.textContent='Изменение пресета';
   const fm=document.getElementById('presetForm'); if(fm)fm.innerHTML=_presetFormHtml(tab,p);
+  _presetFootRender(tab,p);
+  if(fm)try{fm.scrollIntoView({block:'start'});}catch(e){} // форма ниже списка, тело прокручивается само - человек должен увидеть, что правит
 };
 // ── ПОРЯДОК ПРЕСЕТОВ - ПОЛОЖЕНИЕ В МАССИВЕ, ОТДЕЛЬНОГО ПОЛЯ СОРТИРОВКИ НЕТ (14.09.2026) ─────
 // ⚠ Массив нигде не сортируется и не пересобирается по имени/дате: _presetsNormalize порядок
@@ -3448,7 +3471,15 @@ window._presetDragStart=function(ev){
   row.classList.add('preset-drag-row'); row.style.width=r.width+'px'; row.style.left=(r.left-lr.left)+'px';
   const top0=r.top-lr.top; row.style.top=top0+'px';
   list.classList.add('preset-dragging');
-  window._presetDrag={tab:list.dataset.tab,id:row.dataset.pid,row,ph,list,grip,y0:ev.clientY,top0,from,pointerId:ev.pointerId};
+  // ⚠ Прокрутчик - тело окна (.preset-win-body): при подведении строки к его краю тело прокручивается
+  //   само (_presetDragAutoStep). Строка держится у указателя в КООРДИНАТАХ ОКНА (offY - смещение
+  //   её верха от указателя), а не «top0 + сдвиг»: прокрутка двигает список, а не указатель.
+  //   ⚠ И ЗАЖИМАЕТСЯ в видимую область тела: абсолютная строка, вышедшая ниже видимого низа,
+  //   РАСТЯГИВАЕТ прокручиваемую область тела, автопрокрутка догоняет её, и так до бесконечности
+  //   (на стенде тело укатилось на 3200px при 545 возможных), а сама строка уходила под подвал.
+  //   Прокрутчика может не быть (тело нарисовано без окна) - тогда ни автопрокрутки, ни зажима.
+  const scroller=list.closest('.preset-win-body');
+  window._presetDrag={tab:list.dataset.tab,id:row.dataset.pid,row,ph,list,grip,y0:ev.clientY,lastY:ev.clientY,top0,offY:r.top-ev.clientY,rowH:r.height,from,pointerId:ev.pointerId,scroller,autoDir:0,raf:0};
   try{grip.setPointerCapture(ev.pointerId);}catch(e){}
   document.addEventListener('pointermove',_presetDragMove);
   document.addEventListener('pointerup',_presetDragEnd);
@@ -3458,15 +3489,41 @@ window._presetDragStart=function(ev){
 window._presetDragMove=function(ev){
   const d=window._presetDrag; if(!d||(d.pointerId!=null&&ev.pointerId!=null&&ev.pointerId!==d.pointerId))return;
   ev.preventDefault();
-  d.row.style.top=(d.top0+(ev.clientY-d.y0))+'px';
-  const rows=[...d.list.querySelectorAll(':scope>.preset-item')].filter(x=>x!==d.row);
-  let tgt=null; for(const x of rows){const rr=x.getBoundingClientRect(); if(ev.clientY<rr.top+rr.height/2){tgt=x;break;}}
-  if(tgt?d.ph.nextElementSibling!==tgt:d.ph.nextElementSibling!==d.row)d.list.insertBefore(d.ph,tgt||d.row); // переставляем только при смене места
+  d.lastY=ev.clientY; _presetDragPlace(d);
+  // край тела: ближе PRESET_DRAG_EDGE px к верху или низу - крутим, пока указатель там стоит
+  d.autoDir=0;
+  if(d.scroller){const sr=d.scroller.getBoundingClientRect();
+    if(ev.clientY>sr.bottom-PRESET_DRAG_EDGE)d.autoDir=1; else if(ev.clientY<sr.top+PRESET_DRAG_EDGE)d.autoDir=-1;}
+  if(d.autoDir&&!d.raf)d.raf=requestAnimationFrame(_presetDragAutoLoop);
 };
+const PRESET_DRAG_EDGE=32,PRESET_DRAG_STEP=8;
+// строка у указателя (с поправкой на сдвиг прокрутки тела) + заглушка по середине соседей.
+//   ОДНА функция на движение указателя и на кадр автопрокрутки: два расчёта места разошлись бы.
+function _presetDragPlace(d){
+  const lr=d.list.getBoundingClientRect(); let top=d.lastY+d.offY-lr.top; // верх строки в координатах списка
+  if(d.scroller){const sr=d.scroller.getBoundingClientRect(); top=Math.max(sr.top-lr.top,Math.min(sr.bottom-lr.top-d.rowH,top));} // не выше и не ниже видимой части тела
+  d.row.style.top=top+'px';
+  const rows=[...d.list.querySelectorAll(':scope>.preset-item')].filter(x=>x!==d.row);
+  let tgt=null; for(const x of rows){const rr=x.getBoundingClientRect(); if(d.lastY<rr.top+rr.height/2){tgt=x;break;}}
+  if(tgt?d.ph.nextElementSibling!==tgt:d.ph.nextElementSibling!==d.row)d.list.insertBefore(d.ph,tgt||d.row); // переставляем только при смене места
+}
+// один шаг автопрокрутки; возвращает, сдвинулось ли тело (у края больше некуда - цикл гаснет).
+//   Вынесен отдельно от кадра, чтобы тест звал его синхронно, не дожидаясь requestAnimationFrame.
+window._presetDragAutoStep=function(d){
+  d=d||window._presetDrag; if(!d||!d.scroller||!d.autoDir)return false;
+  const before=d.scroller.scrollTop; d.scroller.scrollTop=before+d.autoDir*PRESET_DRAG_STEP;
+  if(d.scroller.scrollTop===before)return false;
+  _presetDragPlace(d); return true;
+};
+function _presetDragAutoLoop(){
+  const d=window._presetDrag; if(!d){return;} d.raf=0;
+  if(_presetDragAutoStep(d))d.raf=requestAnimationFrame(_presetDragAutoLoop);
+}
 // ⚠ Одна и та же уборка у окончания и у отмены: строка возвращается на место заглушки, стили
 //   снимаются, слушатели с document тоже. Разница ровно в одном - зовётся ли _presetReorder.
 function _presetDragFinish(commit){
   const d=window._presetDrag; if(!d)return; window._presetDrag=null;
+  if(d.raf){cancelAnimationFrame(d.raf);d.raf=0;}
   document.removeEventListener('pointermove',_presetDragMove);
   document.removeEventListener('pointerup',_presetDragEnd);
   document.removeEventListener('pointercancel',_presetDragCancel);
@@ -11220,6 +11277,56 @@ function pfRunTests(){
          ok('3г: порядок вкладок независим - Банк не тронут перетаскиванием',JSON.stringify(_presets.bank)===snapB);
        }finally{try{_presetDragCancel();}catch(e){} tmp.remove();}}
        else ok('3г: перетаскивание (окно пресетов открыто или нет PointerEvent - проверка по исходнику)',/_presetDragStart\(event\)/.test(rb)&&/_presetReorder\(d\.tab,d\.id,to\)/.test(String(_presetDragFinish)));}
+      // (3д) ОКНО - ШАПКА / ТЕЛО / ПОДВАЛ, ПРОКРУЧИВАЕТСЯ ТОЛЬКО ТЕЛО; АВТОПРОКРУТКА ПРИ ПЕРЕТАСКИВАНИИ (15.09.2026)
+      //   Открываем НАСТОЯЩЕЕ окно (данных ему не нужно), телу задаём max-height, чтобы прокрутка была на любом экране.
+      {const fh=String(_presetFormHtml),sp=String(showPresetsPanel);
+       const cssOf=sel=>{try{for(const ss of document.styleSheets){for(const r of ss.cssRules){if(r.selectorText===sel)return r.cssText;}}}catch(e){}return '';}; // стили - в <style>, в _pfSrcTop их нет
+       ok('3д: кнопок в форме больше нет - они в подвале, разметка кнопок одна (_presetFootRender)',!/_presetSave\(/.test(fh)&&!/Отмена/.test(fh)&&/_presetSave\('\$\{tab\}'\)/.test(String(_presetFootRender))&&(_pfSrcTop.match(/onclick="_presetSave\('\$\{tab\}'\)"/g)||[]).length===1);
+       ok('3д: окно собрано из трёх частей и это флекс-колонка с прокруткой у тела, а не sticky',/preset-win-head[\s\S]*preset-win-body[\s\S]*preset-win-foot/.test(sp)&&!/sticky/.test(sp)&&/flex-direction: column/.test(cssOf('.txn-card.preset-win'))&&/overflow: hidden/.test(cssOf('.txn-card.preset-win'))&&/overflow-y: auto/.test(cssOf('.preset-win-body'))&&!['.txn-card.preset-win','.preset-win-head','.preset-win-body','.preset-win-foot'].some(x=>/sticky/.test(cssOf(x))));
+       ok('3д: подвал и шапка с непрозрачным фоном',/background: var\(--surface\)/.test(cssOf('.preset-win-head'))&&/background: var\(--surface\)/.test(cssOf('.preset-win-foot')));
+       ok('3д: подвал и шапка перерисовываются из _presetRenderBody и _presetEdit через одну функцию',/_presetFootRender\(tab,null\)/.test(String(_presetRenderBody))&&/_presetFootRender\(tab,p\)/.test(String(_presetEdit)));
+       ok('3д: автопрокрутка - один расчёт места на движение и на кадр (_presetDragPlace), шаг вынесен',/_presetDragPlace\(d\)/.test(String(_presetDragMove))&&/_presetDragPlace\(d\)/.test(String(_presetDragAutoStep))&&/_presetDragAutoStep\(d\)/.test(String(_presetDragAutoLoop))&&/Math\.min\(sr\.bottom-lr\.top-d\.rowH/.test(String(_presetDragPlace)));
+       if(!document.getElementById('presetsOverlay')&&typeof PointerEvent==='function'){try{
+         _presets.planfact=Array.from({length:10},(_,i)=>mk(String.fromCharCode(97+i),i===0?{isDefault:true}:null));
+         showPresetsPanel('planfact');
+         const ov=document.getElementById('presetsOverlay'),win=ov&&ov.querySelector('.preset-win'),head=ov&&ov.querySelector('.preset-win-head'),body=document.getElementById('presetBody'),foot=document.getElementById('presetFoot');
+         ok('3д: окно открылось на БДР с шапкой, телом и подвалом',!!win&&!!head&&!!body&&!!foot&&body.classList.contains('preset-win-body')&&ov.querySelector('.preset-rtab[data-rt="planfact"]').style.background==='var(--accent)');
+         body.style.maxHeight='260px';
+         const rc=el=>{const r=el.getBoundingClientRect();return [Math.round(r.top),Math.round(r.bottom),Math.round(r.left)].join(',');};
+         const h0=rc(head),f0=rc(foot),b0=rc(body);
+         ok('3д: тело прокручивается, подвал стоит НИЖЕ тела, а не поверх него',body.scrollHeight>body.clientHeight+50&&foot.getBoundingClientRect().top>=body.getBoundingClientRect().bottom-1&&head.getBoundingClientRect().bottom<=body.getBoundingClientRect().top+1,body.scrollHeight+'/'+body.clientHeight);
+         body.scrollTop=150; const st1=body.scrollTop;
+         ok('3д: при прокрутке тела координаты шапки и подвала не меняются',st1>0&&rc(head)===h0&&rc(foot)===f0&&rc(body)===b0,[h0,rc(head),f0,rc(foot)].join(' | '));
+         ok('3д: в подвале «Сохранить» и «Закрыть», «Отмены» у нового пресета нет',/Сохранить/.test(foot.textContent)&&/Закрыть/.test(foot.textContent)&&!/Отмена/.test(foot.textContent)&&!body.querySelector('button[onclick^="_presetSave("]'));
+         _presetEdit('planfact','b');
+         ok('3д: правка пресета - в подвале появляется «Отмена», форма показывает имя',/Отмена/.test(foot.textContent)&&document.getElementById('presetName').value==='пb'&&document.getElementById('presetEditId').value==='b');
+         _presetRenderBody('planfact'); body.scrollTop=0;
+         ok('3д: «Отмена» возвращает подвал нового пресета',!/Отмена/.test(foot.textContent)&&document.getElementById('presetEditId').value==='');
+         // автопрокрутка: тащим «a» к нижнему краю тела, шаги зовём синхронно (как кадры), отпускаем - «a» последний
+         const rowOf=id=>body.querySelector('.preset-item[data-pid="'+id+'"]');
+         const pe=(t,el,y)=>el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:200,clientY:y,pointerId:9,pointerType:'mouse',button:0,isPrimary:true}));
+         const ra=rowOf('a').getBoundingClientRect(),yA=ra.top+ra.height/2,br=body.getBoundingClientRect();
+         const sv2=saveCalls;
+         pe('pointerdown',rowOf('a').querySelector('.preset-grip'),yA);
+         pe('pointermove',document,br.bottom-6);
+         const d=window._presetDrag;
+         ok('3д: указатель у нижнего края тела - включён режим автопрокрутки вниз',!!d&&d.autoDir===1&&d.scroller===body);
+         let steps=0; while(steps<400&&_presetDragAutoStep(d))steps++;
+         const rowRect=rowOf('a').getBoundingClientRect(),last=rowOf('j').getBoundingClientRect();
+         const phAfterJ=(()=>{const ph=body.querySelector('.preset-drop');return !!ph&&!!(rowOf('j').compareDocumentPosition(ph)&Node.DOCUMENT_POSITION_FOLLOWING);})();
+         ok('3д: тело докрутилось до конца, заглушка встала после последней строки',steps>0&&body.scrollTop>=body.scrollHeight-body.clientHeight-1&&phAfterJ,'шагов '+steps+', scrollTop '+body.scrollTop);
+         ok('3д: строка прижата к нижнему краю тела и не ушла под подвал',Math.abs(rowRect.bottom-br.bottom)<1.5&&rowRect.bottom<=foot.getBoundingClientRect().top+1,Math.round(rowRect.top)+'-'+Math.round(rowRect.bottom)+' / тело до '+Math.round(br.bottom));
+         ok('3д: во время автопрокрутки записи нет',saveCalls===sv2);
+         pe('pointerup',document,br.bottom-6);
+         ok('3д: отпустили - «a» последний, запись одна, без следов',_presets.planfact.map(p=>p.id).join('')==='bcdefghija'&&saveCalls===sv2+1&&window._presetDrag===null&&!body.querySelector('.preset-drop'),_presets.planfact.map(p=>p.id).join(''));
+         ok('3д: признак «по умолчанию» уехал с «a»',_presets.planfact[9].isDefault===true&&_presets.planfact.filter(p=>p.isDefault).length===1);
+         ok('3д: подвал после перерисовки на месте',rc(foot)===f0&&/Сохранить/.test(foot.textContent));
+         // узкое окно: тело не схлопывается в ноль, подвал виден
+         win.style.width='360px'; win.style.maxHeight='320px';
+         ok('3д: узкое и низкое окно - тело не в ноль, подвал внутри окна',body.clientHeight>60&&foot.getBoundingClientRect().bottom<=win.getBoundingClientRect().bottom+1&&head.getBoundingClientRect().top>=win.getBoundingClientRect().top-1,body.clientHeight);
+       }finally{try{_presetDragCancel();}catch(e){} const o=document.getElementById('presetsOverlay'); if(o)o.remove();}}
+       else ok('3д: живые проверки окна пропущены (окно пресетов уже открыто или нет PointerEvent)',true);
+      }
       ok('3г: второго пути записи пресетов нет - _fbSetSafe по ветке зовётся один раз, из _presetsSave',(_pfSrcTop.match(/_fbSetSafe\('config\/presets'/g)||[]).length===1&&/_presetsSave\(\)/.test(String(_presetReorder)));
      }
      // (4) селект в баре - один на вкладку, последняя строка «сохранить»
