@@ -116,6 +116,14 @@
   .tab-filter-summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis;}
   .preset-cfg-btn:hover{border-color:var(--accent);color:var(--accent);}
   .preset-rtab{font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);}
+  /* окно пресетов: порядок перетаскиванием за ручку (15.09.2026). touch-action:none - иначе палец прокручивает окно вместо строки */
+  .preset-list{position:relative;}
+  .preset-grip{flex:0 0 auto;width:14px;text-align:center;font-size:15px;line-height:1;color:var(--text3);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;}
+  .preset-grip:hover{color:var(--text2);}
+  .preset-list.preset-dragging{user-select:none;-webkit-user-select:none;}
+  .preset-list.preset-dragging .preset-grip{cursor:grabbing;}
+  .preset-drag-row{position:absolute;z-index:2;box-sizing:border-box;background:var(--surface);box-shadow:0 10px 26px rgba(0,0,0,.22);border-color:var(--accent)!important;pointer-events:none;margin:0!important;}
+  .preset-drop{box-sizing:border-box;border:1px dashed var(--accent);border-radius:7px;background:var(--surface2);margin-bottom:6px;}
   .preset-fld-multi{display:flex;flex-wrap:wrap;gap:4px 12px;border:1px solid var(--border);border-radius:7px;padding:8px 10px;}
   .preset-fld-multi label{font-size:12px;color:var(--text);display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--sans);}
 
@@ -2650,6 +2658,7 @@ function startPresetsSync(){
       _presets=_presetsNormalize(s.val());
       try{localStorage.setItem('reportPresets',JSON.stringify(_presets));}catch(e){_lsWarn('reportPresets',e)}
       const ov=document.getElementById('presetsOverlay'),body=document.getElementById('presetBody');
+      try{if(window._presetDrag)_presetDragCancel();}catch(e){} // перерисовка вынула бы строку из-под указателя
       if(ov&&body&&body.dataset.tab)_presetRenderBody(body.dataset.tab);
       // ⚠ ВТОРАЯ ПРИЧИНА, ПО КОТОРОЙ ПРЕСЕТ ПО УМОЛЧАНИЮ НЕ СРАБАТЫВАЛ: список приходит из облака
       //   ПОЗЖЕ первого показа вкладки. На момент switchTab пресетов ещё нет, применять нечего, а
@@ -3211,11 +3220,12 @@ window._presetSelReport=function(tab){
 function _presetRenderBody(tab){
   const body=document.getElementById('presetBody'); if(!body)return; body.dataset.tab=tab;
   const list=_presets[tab]||[];
-  // ⚠ ▲/▼ - ПОРЯДОК В СПИСКЕ И В СЕЛЕКТЕ БАРА (14.09.2026): положение в массиве, отдельного поля нет.
-  //   У первого ▲ и у последнего ▼ заперты (disabled), а не спрятаны: исчезающая кнопка ничего не сообщает.
-  const mvBtn=(tab,id,dir,off)=>`<button type="button" ${off?'disabled':''} onclick="_presetMove('${tab}','${id}',${dir})" title="${dir<0?'Выше':'Ниже'}" style="font-size:9px;line-height:11px;padding:1px 5px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text2);cursor:${off?'default':'pointer'};opacity:${off?'.35':'1'};font-family:var(--sans)">${dir<0?'▲':'▼'}</button>`;
-  const listHtml=list.length?list.map((p,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:6px">
-      <span style="display:inline-flex;flex-direction:column;gap:2px;flex:0 0 auto">${mvBtn(tab,p.id,-1,i===0)}${mvBtn(tab,p.id,1,i===list.length-1)}</span>
+  // ⚠ ПОРЯДОК - ПЕРЕТАСКИВАНИЕМ ЗА РУЧКУ «⠿» (15.09.2026; кнопки-стрелки 14.09 убраны: занимали место,
+  //   а двух способов на одно действие быть не должно). Тащить можно ТОЛЬКО за ручку - у неё одной
+  //   стоит pointerdown; клик по имени и по галочке «по умолчанию» перетаскивания не начинает.
+  //   Механика - _presetDragStart (pointer events), положение в массиве, отдельного поля нет.
+  const listHtml=list.length?list.map((p,i)=>`<div class="preset-item" data-pid="${p.id}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:6px">
+      <span class="preset-grip" onpointerdown="_presetDragStart(event)" title="Перетащить, чтобы изменить порядок">⠿</span>
       <span onclick="_presetUse('${tab}','${p.id}')" title="Открыть отчёт с этим пресетом" style="flex:1;min-width:0;cursor:pointer">
         <span style="font-size:13px;font-weight:600;color:var(--accent);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px">${_pesc(p.name)}</span>
         <span style="display:block;font-size:10.5px;color:var(--text3);margin-top:2px;line-height:1.45">${(()=>{const q=_presetSummary(tab,p.f);return q.length?_pesc(q.join(' · ')):'ничего не задано - пресет ничего не меняет';})()}</span></span>
@@ -3243,7 +3253,7 @@ function _presetRenderBody(tab){
       <button class="btn btn-secondary" onclick="pfHiddenDirsOpen()" style="font-size:11.5px">🙈 Настроить список</button>
       <span style="font-size:11px;color:var(--text3);margin-left:8px">сейчас скрыто: ${(_pfHiddenDirs||[]).length?_pesc((_pfHiddenDirs||[]).join(', ')):'ничего'}</span>
     </div>`;
-  body.innerHTML=`${dirNote}<div style="margin-bottom:14px">${listHtml}</div>
+  body.innerHTML=`${dirNote}<div class="preset-list" data-tab="${tab}" style="margin-bottom:14px">${listHtml}</div>
     <div style="border-top:1px solid var(--border);padding-top:12px">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--label);font-weight:600;margin-bottom:10px" id="presetFormTitle">Новый пресет</div>
       <div id="presetForm">${_presetFormHtml(tab,null)}</div>
@@ -3403,15 +3413,76 @@ window._presetEdit=function(tab,id){
 // ⚠ Запись - ТОТ ЖЕ _presetsSave, что у переименования, удаления и признака «по умолчанию»;
 //   второго пути записи config/presets в файле нет (тест считает вызовы _fbSetSafe по ветке).
 // ⚠ Порядок и признак «по умолчанию» независимы: перемещение его не снимает и не назначает,
-//   записи меняются местами целиком, ни одно поле не трогается.
+//   запись переезжает целиком, ни одно поле не трогается.
 // ⚠ Порядок свой у каждой вкладки: массив - _presets[tab], соседние вкладки не читаются.
-window._presetMove=function(tab,id,dir){
-  const a=_presets[tab]||[],i=a.findIndex(x=>x.id===id),j=i+(dir<0?-1:1);
-  if(i<0||j<0||j>=a.length)return false; // крайний - некуда; кнопка в этом состоянии заперта
-  [a[i],a[j]]=[a[j],a[i]];
+// ⚠ ЗАПИСЬ - ОДИН РАЗ, ПО ОКОНЧАНИИ ПЕРЕТАСКИВАНИЯ (15.09.2026): _presetReorder зовётся из
+//   _presetDragEnd, а не из pointermove - иначе одно перетаскивание давало бы десятки записей в
+//   Firebase. Отпустили на том же месте - записи нет вовсе (порядок не изменился, писать нечего).
+window._presetReorder=function(tab,id,to){
+  const a=_presets[tab]||[],i=a.findIndex(x=>x.id===id); if(i<0)return false;
+  to=Math.max(0,Math.min(a.length-1,to|0)); if(to===i)return false; // некуда - без записи
+  const [p]=a.splice(i,1); a.splice(to,0,p);
   _presetsSave(); _presetRenderBody(tab); if(activeTab===tab)_presetBarRefresh();
   return true;
 };
+// ── ПЕРЕТАСКИВАНИЕ ЗА РУЧКУ - POINTER EVENTS, НЕ HTML5 drag-and-drop (15.09.2026) ────────────
+// ⚠ Pointer events работают одинаково мышью и пальцем, отдельной ветки для узких экранов нет;
+//   у ручки touch-action:none, иначе палец прокручивал бы окно вместо строки.
+// ⚠ Строка на время перетаскивания вынимается из потока (position:absolute внутри .preset-list) и
+//   едет за указателем; её место держит заглушка .preset-drop той же высоты - она и есть «куда
+//   встанет». Заглушка переставляется, когда указатель пересекает середину соседней строки.
+// ⚠ pointermove/pointerup слушаются на document, а не на ручке: захват указателя (setPointerCapture)
+//   - страховка от ухода за окно, но на синтетических событиях он бросает, и слушатель на document
+//   работает в обоих случаях.
+// ⚠ Приход облака во время перетаскивания (_presetRenderBody из подписки) снимает его - иначе
+//   перерисовка вынула бы строку из-под указателя, а состояние показывало бы на мёртвые узлы.
+window._presetDrag=null;
+window._presetDragStart=function(ev){
+  if(window._presetDrag||(ev.button!=null&&ev.button!==0))return; // второй указатель / не основная кнопка
+  const grip=ev.currentTarget,row=grip&&grip.closest('.preset-item'),list=row&&row.closest('.preset-list'); if(!row||!list)return;
+  ev.preventDefault();
+  const rows=[...list.querySelectorAll(':scope>.preset-item')],from=rows.indexOf(row);
+  const r=row.getBoundingClientRect(),lr=list.getBoundingClientRect();
+  const ph=document.createElement('div'); ph.className='preset-drop'; ph.style.height=r.height+'px';
+  row.after(ph); list.appendChild(row); // строка - последним ребёнком: в потоке её нет, порядок остальных читается без неё
+  row.classList.add('preset-drag-row'); row.style.width=r.width+'px'; row.style.left=(r.left-lr.left)+'px';
+  const top0=r.top-lr.top; row.style.top=top0+'px';
+  list.classList.add('preset-dragging');
+  window._presetDrag={tab:list.dataset.tab,id:row.dataset.pid,row,ph,list,grip,y0:ev.clientY,top0,from,pointerId:ev.pointerId};
+  try{grip.setPointerCapture(ev.pointerId);}catch(e){}
+  document.addEventListener('pointermove',_presetDragMove);
+  document.addEventListener('pointerup',_presetDragEnd);
+  document.addEventListener('pointercancel',_presetDragCancel);
+  document.addEventListener('keydown',_presetDragKey);
+};
+window._presetDragMove=function(ev){
+  const d=window._presetDrag; if(!d||(d.pointerId!=null&&ev.pointerId!=null&&ev.pointerId!==d.pointerId))return;
+  ev.preventDefault();
+  d.row.style.top=(d.top0+(ev.clientY-d.y0))+'px';
+  const rows=[...d.list.querySelectorAll(':scope>.preset-item')].filter(x=>x!==d.row);
+  let tgt=null; for(const x of rows){const rr=x.getBoundingClientRect(); if(ev.clientY<rr.top+rr.height/2){tgt=x;break;}}
+  if(tgt?d.ph.nextElementSibling!==tgt:d.ph.nextElementSibling!==d.row)d.list.insertBefore(d.ph,tgt||d.row); // переставляем только при смене места
+};
+// ⚠ Одна и та же уборка у окончания и у отмены: строка возвращается на место заглушки, стили
+//   снимаются, слушатели с document тоже. Разница ровно в одном - зовётся ли _presetReorder.
+function _presetDragFinish(commit){
+  const d=window._presetDrag; if(!d)return; window._presetDrag=null;
+  document.removeEventListener('pointermove',_presetDragMove);
+  document.removeEventListener('pointerup',_presetDragEnd);
+  document.removeEventListener('pointercancel',_presetDragCancel);
+  document.removeEventListener('keydown',_presetDragKey);
+  try{d.grip.releasePointerCapture(d.pointerId);}catch(e){}
+  const rows=[...d.list.querySelectorAll(':scope>.preset-item')].filter(x=>x!==d.row);
+  let to=0; for(const x of rows){if(x.compareDocumentPosition(d.ph)&Node.DOCUMENT_POSITION_FOLLOWING)to++;else break;} // сколько чужих строк выше заглушки
+  d.list.insertBefore(d.row,d.ph); d.ph.remove();
+  d.row.classList.remove('preset-drag-row'); d.row.style.width=d.row.style.left=d.row.style.top='';
+  d.list.classList.remove('preset-dragging');
+  if(!commit||to===d.from){ if(!commit)_presetRenderBody(d.tab); return false; } // отмена - вернуть порядок массива; то же место - без записи
+  return _presetReorder(d.tab,d.id,to);
+}
+window._presetDragEnd=function(ev){const d=window._presetDrag; if(d&&ev&&ev.pointerId!=null&&d.pointerId!=null&&ev.pointerId!==d.pointerId)return; _presetDragFinish(true);};
+window._presetDragCancel=function(){_presetDragFinish(false);};
+window._presetDragKey=function(ev){if(ev.key==='Escape'){ev.stopPropagation();_presetDragFinish(false);}};
 window._presetDelete=function(tab,id){
   if(!confirm('Удалить пресет?'))return;
   _presets[tab]=(_presets[tab]||[]).filter(x=>x.id!==id);
@@ -11083,41 +11154,73 @@ function pfRunTests(){
         ok('3в: своих копий «текущий год» у применения и восстановления нет',String(presetApply).indexOf('getFullYear')<0&&String(_pfStateRestore).indexOf('getFullYear')<0&&String(presetApply).indexOf("'cu"+"r'")<0);
         ok('3в: в баре БДР у года нет «текущего» - и у месяца тоже (варианты только в форме пресета)',!/Год: текущий/.test(String(renderPlanFact))&&!/value="cur"|value="prev"/.test(String(renderPlanFact)));
       }finally{window.renderActiveTab=RA;}}
-     // (3г) ПОРЯДОК ПРЕСЕТОВ: ▲/▼, положение в массиве, тот же путь записи (14.09.2026)
+     // (3г) ПОРЯДОК ПРЕСЕТОВ: перетаскивание за ручку, положение в массиве, один путь записи (15.09.2026)
      {const mk=(id,extra)=>Object.assign({id,name:'п'+id,f:{dirs:['Д'+id]}},extra||{});
       _presets.planfact=[mk('a',{isDefault:true}),mk('b'),mk('c')]; _presets.bank=[{id:'x',name:'x',f:{fns:'da'}},{id:'y',name:'y',f:{}}];
       const snapB=JSON.stringify(_presets.bank),saves0=saveCalls;
       const bBefore=JSON.stringify(_presets.planfact[1]);
-      ok('3г: ▼ двигает на одну позицию вниз',_presetMove('planfact','a',1)===true&&_presets.planfact.map(p=>p.id).join('')==='bac',_presets.planfact.map(p=>p.id).join(''));
-      ok('3г: перемещённая запись и соседняя не изменились ни в одном поле',JSON.stringify(_presets.planfact[0])===bBefore&&JSON.stringify(_presets.planfact[1])===JSON.stringify(mk('a',{isDefault:true})));
-      ok('3г: признак «по умолчанию» при перемещении не меняется',_presets.planfact[1].isDefault===true&&_presets.planfact.filter(p=>p.isDefault).length===1);
-      ok('3г: ▲ двигает на одну позицию вверх',_presetMove('planfact','c',-1)===true&&_presets.planfact.map(p=>p.id).join('')==='bca');
-      ok('3г: у первого ▲ и у последнего ▼ некуда - отказ без записи',_presetMove('planfact','b',-1)===false&&_presetMove('planfact','a',1)===false&&_presets.planfact.map(p=>p.id).join('')==='bca');
-      ok('3г: каждое удавшееся перемещение сохраняется - тем же _presetsSave',saveCalls===saves0+2);
+      const UP='\u25B2',DN='\u25BC',rb=String(_presetRenderBody); // иголки кодами: литерал в тесте нашёл бы сам себя
+      ok('3г: кнопок ▲/▼ в окне пресетов не осталось - ни в разметке строки, ни функции _presetMove',rb.indexOf(UP)<0&&rb.indexOf(DN)<0&&typeof window['_preset'+'Move']==='undefined'&&_pfSrcTop.indexOf('_preset'+'Move(')<0);
+      ok('3г: _presetReorder ставит запись на позицию',_presetReorder('planfact','a',2)===true&&_presets.planfact.map(p=>p.id).join('')==='bca',_presets.planfact.map(p=>p.id).join(''));
+      ok('3г: перемещённая запись и соседние не изменились ни в одном поле',JSON.stringify(_presets.planfact[0])===bBefore&&JSON.stringify(_presets.planfact[2])===JSON.stringify(mk('a',{isDefault:true})));
+      ok('3г: признак «по умолчанию» при перемещении не меняется',_presets.planfact[2].isDefault===true&&_presets.planfact.filter(p=>p.isDefault).length===1);
+      ok('3г: та же позиция или чужой id - отказ без записи',_presetReorder('planfact','a',2)===false&&_presetReorder('planfact','zz',0)===false&&saveCalls===saves0+1);
+      ok('3г: позиция за краем массива прижимается к краю',_presetReorder('planfact','a',99)===false&&_presetReorder('planfact','b',-5)===false&&_presets.planfact.map(p=>p.id).join('')==='bca');
+      ok('3г: каждое удавшееся перемещение сохраняется - тем же _presetsSave, один раз',saveCalls===saves0+1);
       ok('3г: порядок вкладок независим - Банк не тронут',JSON.stringify(_presets.bank)===snapB);
       // порядок переживает перезагрузку: нормализация возвращает массив как есть и не сортирует;
       //   объект с числовыми ключами (форма RTDB) обходится по ключу, а не по имени
       const rt=_presetsNormalize(JSON.parse(JSON.stringify(_presets)));
       ok('3г: порядок переживает перезагрузку (массив → массив)',rt.planfact.map(p=>p.id).join('')==='bca'&&rt.bank.map(p=>p.id).join('')==='xy');
       ok('3г: порядок переживает перезагрузку (объект RTDB с числовыми ключами)',_presetsNormalize({planfact:{2:mk('a'),0:mk('b'),1:mk('c')}}).planfact.map(p=>p.id).join('')==='bca');
-      ok('3г: массив пресетов нигде не сортируется',!/_presets(\[[^\]]*\]|\.[a-z]+)[^;\n]*\.sort\(/.test(_pfSrcTop)&&String(_presetsNormalize).indexOf('.sort(')<0&&String(_presetRenderBody).indexOf('.sort(')<0&&String(_presetBarOptions).indexOf('.sort(')<0);
+      ok('3г: массив пресетов нигде не сортируется',!/_presets(\[[^\]]*\]|\.[a-z]+)[^;\n]*\.sort\(/.test(_pfSrcTop)&&String(_presetsNormalize).indexOf('.sort(')<0&&rb.indexOf('.sort(')<0&&String(_presetBarOptions).indexOf('.sort(')<0);
       // селект бара - тот же порядок, что список в окне
       {const opts=[...(_presetBarOptions('planfact','c').matchAll(/<option value="([^"]*)"/g))].map(m=>m[1]);
        ok('3г: опции селекта бара идут в порядке массива',opts.join('')==='bca'&&/value="c" selected/.test(_presetBarOptions('planfact','c')));
-       const sigA=_presetBarSig('planfact'); _presetMove('planfact','a',-1); const sigB=_presetBarSig('planfact');
-       ok('3г: сигнатура состава меняется от перемещения - селект пересоберётся',sigA!==sigB&&/sel\.dataset\.sig!==sig/.test(String(_presetBarRefresh))&&/_presetBarRefresh\(\)/.test(String(_presetMove)));}
-      // кнопки в окне: временный узел, у первого ▲ и у последнего ▼ заперты
-      {const tmp=document.createElement('div'); tmp.id='presetBody'; tmp.style.display='none'; const had=document.getElementById('presetBody');
-       if(!had){document.body.appendChild(tmp); try{
-         _presetRenderBody('planfact');
-         const rows=[...tmp.querySelectorAll('button[onclick^="_presetMove("]')];
-         const up=rows.filter(b=>b.textContent==='▲'),dn=rows.filter(b=>b.textContent==='▼');
-         ok('3г: у каждой строки ▲ и ▼',up.length===3&&dn.length===3);
-         ok('3г: ▲ у первого и ▼ у последнего заперты, остальные активны',up[0].disabled&&!up[1].disabled&&!up[2].disabled&&dn[2].disabled&&!dn[0].disabled&&!dn[1].disabled);
-         ok('3г: порядок строк окна = порядок массива',[...tmp.querySelectorAll('span[onclick^="_presetUse("]')].map(s=>(s.getAttribute('onclick').match(/'([^']+)'\)$/)||[])[1]).join('')===_presets.planfact.map(p=>p.id).join(''));
-       }finally{tmp.remove();}}
-       else ok('3г: кнопки ▲/▼ (окно пресетов открыто - проверка по исходнику)',/_presetMove\('\$\{tab\}','\$\{id\}',\$\{dir\}\)/.test(String(_presetRenderBody)));}
-      ok('3г: второго пути записи пресетов нет - _fbSetSafe по ветке зовётся один раз, из _presetsSave',(_pfSrcTop.match(/_fbSetSafe\('config\/presets'/g)||[]).length===1&&/_presetsSave\(\)/.test(String(_presetMove)));
+       const sigA=_presetBarSig('planfact'); _presetReorder('planfact','a',0); const sigB=_presetBarSig('planfact');
+       ok('3г: сигнатура состава меняется от перемещения - селект пересоберётся',sigA!==sigB&&/sel\.dataset\.sig!==sig/.test(String(_presetBarRefresh))&&/_presetBarRefresh\(\)/.test(String(_presetReorder)));}
+      // механика: pointerdown стоит ТОЛЬКО на ручке, запись - из окончания, не из движения
+      ok('3г: тащить можно только за ручку - pointerdown один и на .preset-grip',(rb.match(/onpointerdown=/g)||[]).length===1&&/class="preset-grip" onpointerdown="_presetDragStart\(event\)"/.test(rb)&&!/onclick="[^"]*"[^>]*onpointerdown/.test(rb));
+      ok('3г: HTML5 drag-and-drop не используется',!/draggable|ondragstart|dragover/.test(rb+String(_presetDragStart)+String(_presetDragMove)));
+      ok('3г: запись только по окончании - в pointermove ни _presetReorder, ни _presetsSave',!/_presetReorder|_presetsSave/.test(String(_presetDragMove))&&/_presetReorder\(/.test(String(_presetDragFinish))&&!/_presetsSave/.test(String(_presetDragFinish)));
+      ok('3г: ручка запрещает прокрутку пальцем (touch-action:none)',/\.preset-grip\{[^}]*touch-action:none/.test(_pfSrcTop)||[...document.styleSheets].some(ss=>{try{return [...ss.cssRules].some(r=>r.selectorText==='.preset-grip'&&/none/.test(r.style.touchAction));}catch(e){return false;}}));
+      // живое перетаскивание во временном узле: раскладка нужна (rects), поэтому узел не display:none, а за экраном
+      {const tmp=document.createElement('div'); tmp.id='presetBody'; tmp.style.cssText='position:fixed;left:-3000px;top:0;width:520px;visibility:hidden'; const had=document.getElementById('presetBody');
+       if(!had&&typeof PointerEvent==='function'){document.body.appendChild(tmp); try{
+         _presets.planfact=[mk('a',{isDefault:true}),mk('b'),mk('c')]; _presetRenderBody('planfact');
+         const ids=()=>[...tmp.querySelectorAll('.preset-item')].map(x=>x.dataset.pid).join('');
+         ok('3г: порядок строк окна = порядок массива, у каждой строки ручка',ids()==='abc'&&tmp.querySelectorAll('.preset-grip').length===3);
+         const pe=(t,el,y)=>el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,clientX:10,clientY:y,pointerId:7,pointerType:'mouse',button:0,isPrimary:true}));
+         const cy=el=>{const r=el.getBoundingClientRect();return r.top+r.height/2;};
+         const rowOf=id=>tmp.querySelector('.preset-item[data-pid="'+id+'"]');
+         // клик по имени и по галочке - перетаскивания нет
+         pe('pointerdown',rowOf('a').querySelector('span[onclick^="_presetUse("]'),cy(rowOf('a'))); pe('pointerup',rowOf('a'),cy(rowOf('a')));
+         pe('pointerdown',rowOf('a').querySelector('input[type=checkbox]'),cy(rowOf('a'))); pe('pointerup',rowOf('a'),cy(rowOf('a')));
+         const sv1=saveCalls;
+         ok('3г: клик по имени и по галочке не начинает перетаскивание',window._presetDrag===null&&!tmp.querySelector('.preset-drop')&&saveCalls===sv1&&ids()==='abc');
+         // тащим «a» за ручку ниже середины «c»: несколько движений - запись одна, по отпусканию
+         const gripA=rowOf('a').querySelector('.preset-grip'),yC=cy(rowOf('c')),yA=cy(rowOf('a'));
+         pe('pointerdown',gripA,yA);
+         ok('3г: после pointerdown на ручке строка приподнята, место обозначено заглушкой',!!window._presetDrag&&rowOf('a').classList.contains('preset-drag-row')&&!!tmp.querySelector('.preset-drop')&&tmp.querySelector('.preset-list').classList.contains('preset-dragging'));
+         pe('pointermove',document,yA+8); pe('pointermove',document,cy(rowOf('b'))+4); pe('pointermove',document,yC+6);
+         const phBelowC=(()=>{const ph=tmp.querySelector('.preset-drop');return !!ph&&!!(rowOf('c').compareDocumentPosition(ph)&Node.DOCUMENT_POSITION_FOLLOWING);})();
+         ok('3г: заглушка переставилась под «c», записи в движении нет',phBelowC&&saveCalls===sv1&&_presets.planfact.map(p=>p.id).join('')==='abc');
+         pe('pointerup',document,yC+6);
+         ok('3г: отпустили - порядок b,c,a в массиве, запись ровно одна',_presets.planfact.map(p=>p.id).join('')==='bca'&&saveCalls===sv1+1&&window._presetDrag===null,_presets.planfact.map(p=>p.id).join('')+'/'+(saveCalls-sv1));
+         ok('3г: после перетаскивания следов нет - ни заглушки, ни приподнятой строки, окно перерисовано в новом порядке',!tmp.querySelector('.preset-drop')&&!tmp.querySelector('.preset-drag-row')&&ids()==='bca');
+         ok('3г: признак «по умолчанию» уехал вместе со своей записью',_presets.planfact[2].id==='a'&&_presets.planfact[2].isDefault===true&&!_presets.planfact[0].isDefault&&!_presets.planfact[1].isDefault);
+         // отпустили на том же месте - записи нет
+         const gripB=rowOf('b').querySelector('.preset-grip'),yB=cy(rowOf('b'));
+         pe('pointerdown',gripB,yB); pe('pointermove',document,yB+3); pe('pointerup',document,yB+3);
+         ok('3г: отпустили на том же месте - порядок прежний, записи нет',ids()==='bca'&&saveCalls===sv1+1&&!tmp.querySelector('.preset-drop'));
+         // Escape отменяет
+         pe('pointerdown',gripB,yB); pe('pointermove',document,cy(rowOf('a'))+6);
+         document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+         ok('3г: Escape отменяет перетаскивание без записи',window._presetDrag===null&&_presets.planfact.map(p=>p.id).join('')==='bca'&&saveCalls===sv1+1&&!tmp.querySelector('.preset-drop'));
+         ok('3г: порядок вкладок независим - Банк не тронут перетаскиванием',JSON.stringify(_presets.bank)===snapB);
+       }finally{try{_presetDragCancel();}catch(e){} tmp.remove();}}
+       else ok('3г: перетаскивание (окно пресетов открыто или нет PointerEvent - проверка по исходнику)',/_presetDragStart\(event\)/.test(rb)&&/_presetReorder\(d\.tab,d\.id,to\)/.test(String(_presetDragFinish)));}
+      ok('3г: второго пути записи пресетов нет - _fbSetSafe по ветке зовётся один раз, из _presetsSave',(_pfSrcTop.match(/_fbSetSafe\('config\/presets'/g)||[]).length===1&&/_presetsSave\(\)/.test(String(_presetReorder)));
      }
      // (4) селект в баре - один на вкладку, последняя строка «сохранить»
      {const src=String(_presetBarInject);
