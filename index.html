@@ -11752,16 +11752,27 @@ function pfRunLiveTests(){
     console.log('[БДР] pfRunLiveTests: проверять не на чем - '+why+'. Перейдите на вкладку БДР, дождитесь загрузки данных и повторите. Структурные проверки идут отдельно: pfRunTests().');
     return{total:0,failed:0,tests:[],skipped:true,why};
   }
+  // ⚠ ИЗОЛЯЦИЯ ОТ СОСТОЯНИЯ ВКЛАДКИ (22.09.2026). Каждый живой блок стартует с ЧИСТОЙ вкладки
+  //   (_pfBlankState + год/период), а не поверх того, что на ней стояло. Иначе под пресетом с
+  //   направлениями блок 22 падал: кандидат выбирался по ВСЕМУ RAW, а _cfoStmtData читает направления
+  //   из _tabFilters.planfact.dirs - выписка считалась без направления кандидата (факт 0), сводная
+  //   после своего dirs:[] - со всеми (на боевых 22.09: 300_Выплата Агентам, −222 982 против 0).
+  //   Снимок держит и АКТИВНЫЙ ПРЕСЕТ: промежуточные рендеры снимают его через _presetActive
+  //   (подпись фильтров расходится), и возврат одних фильтров оставлял селект на «- не выбран -»,
+  //   а заголовок без суффикса. Три вещи в снимок, три обратно; возврат рендерит сам.
+  const _liveSnap=()=>({F:JSON.parse(JSON.stringify(_tabFilters.planfact)),ap:_activePreset.planfact,sig:_activePresetSig.planfact,E:window._pfArtExp,S:window._pfSubExp,D:window._pfDirExp});
+  const _liveClean=extra=>{_tabFilters.planfact=Object.assign(_pfBlankState(),extra||{});window._pfArtExp=new Set();window._pfSubExp=new Set();window._pfDirExp=new Set();};
+  const _liveBack=z=>{_tabFilters.planfact=z.F;_activePreset.planfact=z.ap;_activePresetSig.planfact=z.sig;window._pfArtExp=z.E;window._pfSubExp=z.S;window._pfDirExp=z.D;try{renderActiveTab();}catch(e){}};
   // 14. ЖИВОЙ ПРОГОН: ЧЕТВЁРТЫЙ УРОВЕНЬ под фильтром «Контрагент» + график ЧП
   // ⚠ Раньше здесь проверялся разрез «по направлениям» (строки-направления вместо статей). Разрез
   //   удалён 07.09.2026, а вопрос остался тот же: под фильтром по стороне разбивка по направлениям
   //   обязана сходиться с фактом строки. Теперь она живёт СТРОКАМИ ЧЕТВЁРТОГО УРОВНЯ, и адресуем мы
   //   их не по onclick, а по data-pfkey - тому же ключу, что у разворотов.
-  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
+  {const Z0=_liveSnap(),F0=Z0.F;
     try{
       const yr=+F0.year||new Date().getFullYear();
       const concl=()=>{const el=document.getElementById('pfNpConcl');const m=el&&el.textContent.match(/выведено\s+([^,]+,\d{2})/);return m?m[1].replace(/[\s\u00a0]/g,''):null;};
-      Object.assign(_tabFilters.planfact,{sides:[],period:'year',year:yr,_defPeriodDone:true});renderActiveTab();
+      _liveClean({period:'year',year:yr,_defPeriodDone:true});renderActiveTab();
       const vyA=concl();
       // сторона с наибольшим числом списаний за год - чтобы разбивка была непустой
       const cnt={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание'||!expOf(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr)return;const sd=String(r[COL.SECOND_SIDE]||'').trim();if(sd)cnt[sd]=(cnt[sd]||0)+1;});
@@ -11802,15 +11813,18 @@ function pfRunLiveTests(){
         ok('график ЧП: «выведено» одинаково с фильтром по стороне и без',vyA!=null&&vyA===vyB,vyA+' vs '+vyB);
       }
     }catch(e){ok('живой прогон 14 упал',false,String(e&&e.message||e));}
-    finally{_tabFilters.planfact=F0;window._pfArtExp=E0;window._pfSubExp=S0;window._pfDirExp=D0;try{renderActiveTab();}catch(e){}}
+    finally{_liveBack(Z0);}
   }
 
   // 22. ЖИВОЙ ПРОГОН: вердикт выписки = вердикту сводной по той же подстатье за текущий месяц
   // ⚠ Выписка судит по направлению (как экран) теми же примитивами _cfoStmtData; сводная - строка
   //   подстатьи под фильтром «направление + подстатья + месяц». База у обеих - текущий план.
-  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
+  {const Z0=_liveSnap(),F0=Z0.F;
     try{
       const yr=+F0.year||new Date().getFullYear(),M=new Date().getMonth()+1;
+      // ⚠ Чистая вкладка ДО выбора кандидата и ДО _cfoStmtData: и кандидат, и выписка, и сводная
+      //   считаются по ОДНОМУ набору направлений - всем. Под пресетом с dirs здесь и расходились.
+      _liveClean({period:String(M),year:yr,_defPeriodDone:true});
       const cand={};(RAW||[]).forEach(r=>{if(String(r[COL.TYPE]||'').trim().toLowerCase()!=='списание')return;const v=expOf(r);if(!v||isVyvodRow(r))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==yr||d.getMonth()+1!==M)return;
         const an=String(r[COL.ARTICLE_NAME]||'').trim(),dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(!an||!dir)return;
         // ⚠ Берём подстатью БЕЗ третьего уровня: у _slFactSide (ФОТ, консалтинг) направления лежат
@@ -11828,7 +11842,6 @@ function pfRunLiveTests(){
         //   направлениям» (строка = направление), но разрез удалён 07.09.2026. Теперь раскрываем
         //   статью → подстатью (у 111 третий уровень есть, значит и сторону) → направления и берём
         //   строку по data-pfkey с префиксом 'dir|'. Колонки те же: факт children[4], статус children[7].
-        const E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
         // ⚠ Направление ФИЛЬТРОМ НЕ ЗАДАЁМ: четвёртый уровень существует только в СВОДЕ
         //   (dirsToAgg.length>1), и под фильтром одного направления строки направления нет вовсе -
         //   разворачивать было бы нечего. Именно на этом первая версия теста и не нашла строку.
@@ -11846,18 +11859,16 @@ function pfRunLiveTests(){
         ok('вердикт выписки = бейджу сводной ('+pick.an+' · '+pick.dir+')',!!tr&&kOf(badge)===stW.k,'сводная: «'+badge+'» / выписка: '+stW.k);
         const numT=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
         ok('факт строки сводной = факту выписки по направлению',!!tr&&Math.abs(Math.abs(numT(tr.children[4].textContent))-Math.abs(fW))<0.006,(tr&&tr.children[4].textContent.trim())+' vs '+fW.toFixed(2));
-        window._pfArtExp=E0;window._pfSubExp=S0;window._pfDirExp=D0;
       }
     }catch(e){ok('живой прогон выписки упал',false,String(e&&e.message||e));}
-    finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}
+    finally{_liveBack(Z0);}
   }
 
 
   // 28. ЖИВОЙ ПРОГОН: после разворота статьи прокрутка контейнера осталась на месте
-  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
+  {const Z0=_liveSnap(),F0=Z0.F;
     try{
-      Object.assign(_tabFilters.planfact,{dir:'',dirs:[],articles:[],subarticles:[],owners:[],sides:[],rowDim:'art',level:'article',period:'year',_defPeriodDone:true});
-      window._pfArtExp=new Set();window._pfSubExp=new Set();window._pfDirExp=new Set();
+      _liveClean({year:F0.year,period:'year',_defPeriodDone:true});
       renderActiveTab();
       const sc0=document.querySelector('#tabPlanfact .table-scroll');
       ok('контейнер прокрутки найден',!!sc0);
@@ -11883,7 +11894,7 @@ function pfRunLiveTests(){
         }
       }
     }catch(e){ok('живой прогон прокрутки упал',false,String(e&&e.message||e));}
-    finally{_tabFilters.planfact=F0;window._pfArtExp=E0;window._pfSubExp=S0;window._pfDirExp=D0;window._pfKeepScroll=null;try{renderActiveTab();}catch(e){}}
+    finally{window._pfKeepScroll=null;_liveBack(Z0);}
   }
 
 
@@ -11891,7 +11902,7 @@ function pfRunLiveTests(){
   // ⚠ Идёт по ДАННЫМ, а не по DOM: подстатья с максимумом направлений ищется в RAW, а суммы
   //   сверяются с теми же примитивами, которыми рисуются строки. Нужна вкладка БДР (примитивы
   //   живут в замыкании renderPlanFact) - поэтому проверка идёт через отрисованную таблицу.
-  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact)),E0=window._pfArtExp,S0=window._pfSubExp,D0=window._pfDirExp;
+  {const Z0=_liveSnap(),F0=Z0.F;
     try{
       const yr=+F0.year||new Date().getFullYear();
       // подстатья с наибольшим числом направлений за год (по факту расхода)
@@ -11907,7 +11918,7 @@ function pfRunLiveTests(){
       const num=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?null:parseFloat(x);};
       const sumBelow=(trs,from,pad)=>{let s=0,n=0;for(let i=from+1;i<trs.length;i++){const st=trs[i].children[0].getAttribute('style')||'';
         if(!/padding-left:62px/.test(st))break;s+=num(trs[i].children[4].textContent)||0;n++;}return{s,n};};
-      const baseState=extra=>Object.assign(_tabFilters.planfact,{dir:'',dirs:[],articles:[],subarticles:[],owners:[],sides:[],rowDim:'art',level:'article',period:'year',year:yr,_defPeriodDone:true},extra||{});
+      const baseState=extra=>_liveClean(Object.assign({period:'year',year:yr,_defPeriodDone:true},extra||{}));
 
       // (1) подстатья без третьего уровня: стрелка открывает направления
       const pick=Object.keys(byS).sort((a,b)=>byS[b].size-byS[a].size)[0];
@@ -11941,7 +11952,7 @@ function pfRunLiveTests(){
           ok('Σ факта направлений = факту стороны ('+side2+')',Math.abs(g.s-(parent||0))<0.006,g.s.toFixed(2)+' vs '+(parent||0).toFixed(2));}
       }
     }catch(e){ok('живой прогон 4-го уровня упал',false,String(e&&e.message||e));}
-    finally{_tabFilters.planfact=F0;window._pfArtExp=E0;window._pfSubExp=S0;window._pfDirExp=D0;try{renderActiveTab();}catch(e){}}
+    finally{_liveBack(Z0);}
   }
 
 
@@ -11949,8 +11960,9 @@ function pfRunLiveTests(){
   // ⚠ Числовой ответ («экономии больше нет») тут дать нечем: у кого именно заведён план 127 -
   //   свойство данных, а не кода. Поэтому владелец ИЩЕТСЯ в _planOwners по коду вывода, и если
   //   его нет, проверка честно говорит «проверять не на чем», а не молча зеленеет.
-  {try{
-    const yr=+((_tabFilters.planfact||{}).year)||new Date().getFullYear(),M=new Date().getMonth()+1;
+  {const Z0=_liveSnap();try{
+    const yr=+Z0.F.year||new Date().getFullYear(),M=new Date().getMonth()+1;
+    _liveClean({period:'year',year:yr,_defPeriodDone:true}); // _cfoStmtData читает направления из состояния вкладки
     const vc=_vyvodCodeF({});
     let vOwn=null,vCode=null;
     Object.keys(_planOwners||{}).forEach(k=>{const i=k.indexOf('||');if(i<0)return;const code=k.slice(i+2),own=String(_planOwners[k]||'').trim();
@@ -11980,14 +11992,14 @@ function pfRunLiveTests(){
         ok('у ЦФО без вывода секция пустая ('+other+')',!!P2&&P2.vyv.codes.length===0,P2&&P2.vyv.codes.join(', '));}
       else ok('ЦФО без вывода для контроля не нашлось',true,'все владельцы имеют коды вывода - проверка пропущена');
     }
-  }catch(e){ok('живой прогон вывода упал',false,String(e&&e.message||e));}}
+  }catch(e){ok('живой прогон вывода упал',false,String(e&&e.message||e));}finally{_liveBack(Z0);}}
 
   // ЖИВОЙ ПРОГОН: скрытые направления вычитаются ровно на свой факт
   // ⚠ Проверка идёт по ОТРИСОВАННОМУ ИТОГО, а не по внутренним картам: она отвечает на вопрос
   //   человека («свод стал меньше ровно на скрытое?»), а не на вопрос кода о самом себе.
   // ⚠ Если скрытых направлений не настроено, проверка честно говорит, что ей не на чем работать,
   //   а не зеленеет: настройка общая и в облаке её может не быть вовсе.
-  {const F0=JSON.parse(JSON.stringify(_tabFilters.planfact));
+  {const Z0=_liveSnap(),F0=Z0.F;
    try{
      const hid=(_pfHiddenDirs||[]).filter(d=>(RAW||[]).some(r=>String(r[COL.ACTIVITY_DIR]||'').trim()===d));
      ok('живой прогон скрытых: настроено хоть одно скрытое направление с данными',hid.length>0,hid.join(', ')||'config/pfHiddenDirs пуст - проверять не на чем');
@@ -11996,7 +12008,7 @@ function pfRunLiveTests(){
        const num=t=>{const x=String(t||'').replace(/[\s\u00a0]/g,'').replace(/\u2212/g,'-').replace(',','.');return x===''||x==='-'?0:parseFloat(x);};
        const totExp=()=>{const tr=[...document.querySelectorAll('#tabPlanfact tbody tr')].find(t=>t.children[0]&&/^ИТОГО РАСХОДЫ/.test(t.children[0].textContent.trim()));
          return tr?num(tr.children[4].textContent):null;};
-       const st=extra=>{Object.assign(_tabFilters.planfact,{dir:'',dirs:[],articles:[],subarticles:[],owners:[],sides:[],rowDim:'art',level:'article',period:'year',year:yr,_defPeriodDone:true},extra);renderActiveTab();};
+       const st=extra=>{_liveClean(Object.assign({period:'year',year:yr,_defPeriodDone:true},extra));renderActiveTab();};
        st({showHidden:false});const svod=totExp();
        st({showHidden:true}); const all=totExp();
        ok('ИТОГО свода и ИТОГО с показанными скрытыми найдены',svod!=null&&all!=null,svod+' / '+all);
@@ -12017,7 +12029,7 @@ function pfRunLiveTests(){
           (one==null?'нет строки':Math.abs(one).toFixed(2))+' vs '+Math.abs(want1).toFixed(2));
      }
    }catch(e){ok('живой прогон скрытых упал',false,String(e&&e.message||e));}
-   finally{_tabFilters.planfact=F0;try{renderActiveTab();}catch(e){}}}
+   finally{_liveBack(Z0);}}
 
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] pfRunLiveTests (на данных, с вкладки БДР): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
