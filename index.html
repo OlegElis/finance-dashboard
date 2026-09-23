@@ -11714,7 +11714,7 @@ function pfRunTests(){
     const f=cfoqParse(oldWhere),oldSet=rows.map((r,i)=>f&&f(r)?i:-1).filter(i=>i>=0),m=cfoqNorm(flat);
     ok('миграция · плоская запись → 4 правила + 1 исключение, помечена',m.rules.length===4&&m.excl.length===1&&!!m.migrated&&m.excl[0].raw==="NOT (Col11 != 'Вывод чистой прибыли')");
     ok('миграция · множество строк совпадает с прежней формулой',JSON.stringify(set(m))===JSON.stringify(oldSet)&&oldSet.length>0,JSON.stringify(set(m))+' vs '+JSON.stringify(oldSet));
-    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[],sheetCode:''}));
+    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[],sheetCode:'',importChunks:0,hubId:''}));
     ok('миграция · правило прежнего вида (фиксированные ключи) → conds, то же множество строк',(()=>{const oldR={dir:[AP],sub:[ZP],offer:'x'},newR={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:'offer',text:'x'}]};const n=cfoqRuleNorm(oldR);return n.conds.length===3&&n.conds.map(c=>c.field).join()==='offer,sub,dir'&&JSON.stringify(set({rules:[oldR]}))===JSON.stringify(set({rules:[newR]}))&&JSON.stringify(set({rules:[R1]}))===JSON.stringify(set({rules:[{conds:[{field:'sub',values:[ZP]},{field:'dir',values:[AP]}]}]}));})());
     ok('условия · неизвестное поле и пустое условие отбрасываются при нормализации',cfoqRuleNorm({conds:[{field:'nope',values:['x']},{field:'dir',values:[]},{field:'dir',values:[AP]}]}).conds.length===1);
     ok('условия · занятое в правиле поле второй раз не предлагается, своё - остаётся',(()=>{const r={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:''}]};const o2=cfoqFieldOptions(r,2).map(f=>f.k),o0=cfoqFieldOptions(r,0).map(f=>f.k);return o2.indexOf('dir')<0&&o2.indexOf('sub')<0&&o2.length===CFOQ_FIELDS.length-2&&o0.indexOf('dir')>=0&&o0.indexOf('sub')<0;})());
@@ -11739,6 +11739,16 @@ function pfRunTests(){
    ok('код листа · не подобрать - null, а не дубль',cfoqCodeGen(new Set([CFOQ_CODE_PREFIX+CFOQ_CODE_ALPHABET[0].repeat(CFOQ_CODE_LEN)]),()=>0)===null);
    ok('код листа · запись без sheetCode читается: «код не задан», кнопка генерации, окно не ломается',(()=>{const r=cfoqNorm({email:'a@b',rules:[{conds:[{field:'dir',values:['x']}]}]});const h=cfoqSheetHtml(r);return r.sheetCode===''&&h.indexOf('код не задан')>=0&&h.indexOf('cfoqCodeIssue(false)')>=0&&cfoqSheetNote(r).indexOf('не задан')>=0&&!cfoqHasCond({email:'a@b'});})());
    ok('код листа · с кодом: код в блоке, копирование и перевыпуск с подтверждением, подпись под формулой по коду',(()=>{const r=cfoqNorm({email:'a@b',sheetCode:'RawData_ACDEFGHJ'});const h=cfoqSheetHtml(r);return r.sheetCode==='RawData_ACDEFGHJ'&&h.indexOf('RawData_ACDEFGHJ')>=0&&h.indexOf('Скопировать имя')>=0&&h.indexOf('cfoqCodeIssue(true)')>=0&&/confirm\(/.test(String(cfoqCodeIssue))&&String(cfoqCodeIssue).indexOf('IMPORTRANGE')>=0&&cfoqSheetNote(r).indexOf('RawData_ACDEFGHJ')>=0&&cfoqHasCond(r);})());
+   // 11. ВТОРАЯ ФОРМУЛА - IMPORTRANGE кусками по 10 000 (23.09.2026)
+   {ok('импорт · число кусков от счётчика: ceil(n × 1,5 / 10 000), не меньше 3 и не больше 12',cfoqChunksFor(0)===3&&cfoqChunksFor(20000)===3&&cfoqChunksFor(20001)===4&&cfoqChunksFor(30000)===5&&cfoqChunksFor(65000)===10&&cfoqChunksFor(100000)===12&&cfoqChunksFor(null)===3);
+    const rg=cfoqImportRanges(4);
+    ok('импорт · диапазоны без разрывов и нахлёста, первый с A2',JSON.stringify(rg)==='["A2:O10000","A10001:O20000","A20001:O30000","A30001:O40000"]'&&rg.every((r,i)=>{const m=r.match(/^A(\d+):O(\d+)$/);if(!m)return false;const a=+m[1],b=+m[2];if(i===0)return a===2&&b===CFOQ_CHUNK;const pm=rg[i-1].match(/O(\d+)$/);return a===+pm[1]+1&&b===a-1+CFOQ_CHUNK;}));
+    ok('импорт · последний кусок закрывает расчётную границу k × 10 000',[3,5,12].every(k=>cfoqImportRanges(k)[k-1].endsWith(':O'+(k*CFOQ_CHUNK))&&cfoqImportRanges(k).length===k));
+    const f=cfoqImportFormula('1abcDEF_-xyz','RawData_ACDEFGHJ',3);
+    ok('импорт · текст формулы посимвольно (3 куска)',f==='=QUERY({\n  IMPORTRANGE("1abcDEF_-xyz"; "RawData_ACDEFGHJ!A2:O10000");\n  IMPORTRANGE("1abcDEF_-xyz"; "RawData_ACDEFGHJ!A10001:O20000");\n  IMPORTRANGE("1abcDEF_-xyz"; "RawData_ACDEFGHJ!A20001:O30000")\n}; "SELECT *")',f);
+    ok('импорт · без кода или без ID формулы нет, причина названа',cfoqImportFormula('','RawData_ACDEFGHJ',3)===''&&cfoqImportFormula('1abc','',3)===''&&cfoqImportFormula('1abc','RawData_ACDEFGHJ',0)===''&&cfoqImportView({hubId:'1abc'},5).why==='сначала сгенерируйте код листа'&&(()=>{const v=cfoqImportView({sheetCode:'RawData_ACDEFGHJ',hubId:''},5);return v.text!==''||v.why==='не задан ID таблицы, откройте Настройки → Подключение';})());
+    ok('импорт · ручное число кусков перебивает авто и хранится в записи, ID хаба переопределяется',(()=>{const v=cfoqImportView({sheetCode:'RawData_ACDEFGHJ',hubId:'1abc',importChunks:7},50000);const a=cfoqImportView({sheetCode:'RawData_ACDEFGHJ',hubId:'1abc'},50000);const n=cfoqNorm({email:'a@b',importChunks:'7',hubId:' 1abc '});return v.k===7&&!v.auto&&v.capacity===70000&&a.k===8&&a.auto&&n.importChunks===7&&n.hubId==='1abc'&&cfoqHasCond(n);})());
+    ok('импорт · окно: два поля формул, две кнопки копирования, подпись «рассчитано на … сейчас …»',String(cfoQueryOpen).indexOf('id="cfoq-out2"')>=0&&String(cfoQueryOpen).indexOf('id="cfoq-copy2"')>=0&&String(cfoQueryOpen).indexOf('в первую ячейку листа в файле')>=0&&String(cfoqRefresh).indexOf('рассчитано на ')>=0&&String(cfoqRefresh).indexOf('сейчас под условия попадает ')>=0);}
    // 10. ЗАПИСЬ ВЕТКИ НЕ ЗАТИРАЕТ ОБЛАКО (баг 23.09.2026: config/cfoQueries пуста после сохранения)
    {const q1=[{email:'a@b',rules:[{conds:[{field:'dir',values:['x'],text:''}],raw:''}],excl:[],sheetCode:''}];
     ok('запись · без изменений - не пишется',_accessQueriesPlan(q1,JSON.stringify(q1),true).action==='unchanged');
@@ -16082,7 +16092,7 @@ function cfoqRuleEmpty(r){return !(r.conds||[]).some(c=>!cfoqCondEmpty(c))&&!r.r
 // поля, доступные условию j правила r: все, кроме занятых ДРУГИМИ условиями того же правила -
 // два условия по одной колонке через И дают пустой лист, и человек не понял бы, почему он пуст
 function cfoqFieldOptions(r,j){const used=new Set((r.conds||[]).map((c,k)=>k===j?'':(c.field||'')).filter(Boolean));return CFOQ_FIELDS.filter(f=>!used.has(f.k));}
-function cfoqBlank(){return {email:'',rules:[],excl:[],sheetCode:''};}
+function cfoqBlank(){return {email:'',rules:[],excl:[],sheetCode:'',importChunks:0,hubId:''};}
 // ── КОД ЛИСТА-ПРИЁМНИКА (23.09.2026): персональные листы называются НЕ RawData_<Фамилия> (имя угадывается
 //   по чужой фамилии), а RawData_<8 знаков> - код известен только админу и хранится в записи человека
 //   (sheetCode) рядом с правилами. Алфавит без похожих символов (0/O, 1/I/L, 5/S, 8/B), руками не вводится -
@@ -16106,6 +16116,8 @@ function cfoqNorm(rec){
   if(typeof rec!=='object'){o.bad='запись не объект: '+String(rec).slice(0,80);o._orig=rec;return o;}
   o.email=String(rec.email||'').trim().toLowerCase();
   o.sheetCode=cfoqCodeNorm(rec.sheetCode); // записи без кода читаются: '' → «код не задан»
+  o.importChunks=Math.max(0,Math.min(CFOQ_CHUNK_MANUAL_MAX,Math.floor(Number(rec.importChunks)||0))); // 0 = авто от счётчика
+  o.hubId=String(rec.hubId||'').trim(); // '' = из настроек подключения
   if(rec.bad){o.bad=rec.bad;o._orig=rec._orig;return o;} // уже нормализованная неразобранная запись: флаг и оригинал не теряем (идемпотентность)
   if(rec.migrated)o.migrated=rec.migrated;
   const list=v=>v==null?[]:(Array.isArray(v)?v:(typeof v==='object'?Object.values(v):[v]));
@@ -16126,7 +16138,7 @@ function cfoqNorm(rec){
   }catch(e){o.bad=(e&&e.message)||String(e);o._orig=rec;o.rules=[];o.excl=[];}
   return o;
 }
-function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length||r.sheetCode);} // код листа - тоже повод хранить запись
+function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length||r.sheetCode||r.importChunks||r.hubId);} // код листа и настройки импорта - тоже повод хранить запись
 function cfoqEsc(v){return String(v).replace(/"/g,'""');}
 function cfoqBad(v){return /'/.test(String(v))?'В значении есть апостроф: QUERY держит строку в одинарных кавычках и экранировать его нечем - отобрать такое значение через равенство нельзя':'';}
 // текст ГОДА по режиму (mode задаётся параметром ради тестов обеих веток; по умолчанию - константа)
@@ -16164,6 +16176,30 @@ function cfoqWhere(rec){
 }
 function cfoqFormula(rec){const w=cfoqWhere(rec);return w?'=QUERY(RawData!A:O; "SELECT * WHERE '+w+' ORDER BY Col1 DESC, Col3 DESC")':'';}
 function cfoqShownText(rec){return cfoqFormula(rec)||CFOQ_NONE;}
+// ── ВТОРАЯ ФОРМУЛА: IMPORTRANGE в файле самого ЦФО (23.09.2026) - тянет лист-приёмник из таблицы-хаба ──
+// ⚠ Кусками по 10 000 строк: на больших диапазонах Google отдаёт ошибку (проверено Олегом). Первый кусок
+//   с A2 - шапка не тянется. Число кусков - от счётчика строк правила: ceil(строк × 1,5 / 10 000), не меньше 3
+//   и не больше 12; полуторный запас - чтобы лист не обрезался, когда данных станет больше. Админ может
+//   поправить число руками (поле «кусков», хранится в записи как importChunks; 0 = авто). ID таблицы-хаба -
+//   из настроек подключения (fin_sheetId) с переопределением в поле (hubId в записи).
+const CFOQ_CHUNK=10000,CFOQ_CHUNK_MIN=3,CFOQ_CHUNK_MAX=12,CFOQ_CHUNK_RESERVE=1.5,CFOQ_CHUNK_MANUAL_MAX=40;
+function cfoqChunksFor(n){n=Math.max(0,Number(n)||0);return Math.min(CFOQ_CHUNK_MAX,Math.max(CFOQ_CHUNK_MIN,Math.ceil(n*CFOQ_CHUNK_RESERVE/CFOQ_CHUNK)));}
+function cfoqImportRanges(k){const out=[];for(let i=0;i<k;i++)out.push('A'+(i===0?2:i*CFOQ_CHUNK+1)+':O'+((i+1)*CFOQ_CHUNK));return out;} // без разрывов и нахлёста
+function cfoqImportFormula(hubId,code,k){
+  hubId=String(hubId||'').trim();code=String(code||'').trim();k=Math.floor(Number(k)||0);
+  if(!hubId||!code||k<1||/["\s]/.test(hubId)||/["\s!]/.test(code))return '';
+  return '=QUERY({\n'+cfoqImportRanges(k).map(r=>'  IMPORTRANGE("'+hubId+'"; "'+code+'!'+r+'")').join(';\n')+'\n}; "SELECT *")';
+}
+function cfoqHubId(rec){const r=rec||{};let id=String(r.hubId||'').trim();if(!id){try{id=String(localStorage.getItem('fin_sheetId')||'').trim();}catch(e){}}return id;}
+// {text, why, k, capacity}: text - формула либо ''; why - почему её нет; k - кусков; capacity - на сколько строк рассчитано
+function cfoqImportView(rec,n){
+  const r=cfoqNorm(rec),hub=cfoqHubId(r),k=r.importChunks>0?r.importChunks:cfoqChunksFor(n);
+  const out={k,capacity:k*CFOQ_CHUNK,auto:!(r.importChunks>0),text:'',why:''};
+  if(!r.sheetCode){out.why='сначала сгенерируйте код листа';return out;}
+  if(!hub){out.why='не задан ID таблицы, откройте Настройки → Подключение';return out;}
+  out.text=cfoqImportFormula(hub,r.sheetCode,k);if(!out.text)out.why='ID таблицы или код листа содержат недопустимые символы';
+  return out;
+}
 // ── Разбор условия WHERE для счётчиков ──────────────────────────────────────────────────────
 // Счётчики - главная проверка окна: у каждого правила своё число строк, у исключения - сколько
 // убирает, внизу итог. Чтобы итог считал ТО ЖЕ, что посчитает лист, разбирается ВЕСЬ текст WHERE
@@ -16290,10 +16326,16 @@ window.cfoQueryOpen=function(tr){
       <div id="cfoq-sheet" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin:0 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)"></div>
       <div id="cfoq-problems"></div>
       <div id="cfoq-rules"></div>
-      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула</div>
+      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула 1 · <span id="cfoq-f1-where">в лист таблицы-хаба</span></div>
         <button type="button" id="cfoq-copy" onclick="cfoqCopy()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Скопировать</button>
         <span id="cfoq-total" style="font-size:12px;margin-left:auto"></span></div>
       <textarea id="cfoq-out" readonly rows="5" style="${inp};resize:vertical;background:var(--surface2)"></textarea>
+      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;flex-wrap:wrap"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула 2 · в первую ячейку листа в файле ${_htmlEsc(name||email||'человека')}</div>
+        <button type="button" id="cfoq-copy2" onclick="cfoqCopyText('cfoq-copy2',(cfoqImportView(_cfoqRec(),window._cfoqLastN)||{}).text)" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Скопировать</button>
+        <label style="font-size:11px;color:var(--text2);display:inline-flex;align-items:center;gap:4px;margin-left:auto">ID таблицы-хаба <input type="text" id="cfoq-hub" class="bar-ctl" value="${_pesc(rec.hubId)}" oninput="cfoqHubInput(this.value)" placeholder="из Настройки → Подключение" title="Пусто - берётся из настроек подключения (fin_sheetId); впишите, чтобы переопределить" style="width:230px;box-sizing:border-box;text-align:left"></label>
+        <label style="font-size:11px;color:var(--text2);display:inline-flex;align-items:center;gap:4px">кусков <input type="number" id="cfoq-chunks" class="bar-ctl" min="1" max="${CFOQ_CHUNK_MANUAL_MAX}" step="1" value="${rec.importChunks||''}" oninput="cfoqChunksInput(this.value)" title="Кусков по ${CFOQ_CHUNK.toLocaleString('ru-RU')} строк; пусто - авто: ceil(строк × ${CFOQ_CHUNK_RESERVE} / ${CFOQ_CHUNK.toLocaleString('ru-RU')}), не меньше ${CFOQ_CHUNK_MIN} и не больше ${CFOQ_CHUNK_MAX}" style="width:64px;box-sizing:border-box;text-align:left"></label>
+        <span id="cfoq-import-note" style="font-size:11px;color:var(--text2);flex-basis:100%"></span></div>
+      <textarea id="cfoq-out2" readonly rows="5" style="${inp};resize:vertical;background:var(--surface2)"></textarea>
       <p style="font-size:11px;color:var(--text3);margin:8px 0 0;line-height:1.6"><span id="cfoq-sheetnote"></span> Дашборд в таблицу не пишет - только отдаёт текст. Кнопка «Готово» СРАЗУ пишет условия и код листа в облако (и кнопка «Сохранить» панели тоже); крестик и клик вне окна закрывают БЕЗ сохранения. Порядок правил - только для чтения, на результат не влияет.</p>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px"><span id="cfoq-save-status" style="font-size:11px;color:var(--text2);flex:1;text-align:right"></span><button type="button" id="cfoq-done" onclick="cfoqDone()" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Готово</button></div>
     </div>
@@ -16311,7 +16353,9 @@ function cfoqSheetHtml(rec){
   const okFmt=CFOQ_CODE_RE.test(code);
   return `<b style="color:var(--text)">Лист-приёмник:</b> <code style="font-family:var(--mono);font-size:12px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 6px">${_htmlEsc(code)}</code>${okFmt?'':' <span style="color:var(--orange);font-size:10.5px" title="Ожидается RawData_ и 8 знаков из алфавита без похожих символов">⚠ не по шаблону</span>'} ${btn('Скопировать имя',"cfoqCopyText('cfoq-code-copy',cfoqNorm(_cfoqRec()).sheetCode)",'Скопировать имя листа в буфер').replace('<button ','<button id="cfoq-code-copy" ')} ${btn('Перевыпустить код','cfoqCodeIssue(true)','Старый лист перестанет обновляться, в файле человека нужно поправить IMPORTRANGE')}`;
 }
-function cfoqSheetNote(rec){const code=cfoqNorm(rec).sheetCode;return code?`Вставить в первую ячейку листа <b>${_htmlEsc(code)}</b>.`:'Код листа не задан - сгенерируйте его выше, формула вставляется в первую ячейку листа с этим именем.';}
+function cfoqSheetNote(rec){const code=cfoqNorm(rec).sheetCode;return code?`Формулу 1 - в первую ячейку листа <b>${_htmlEsc(code)}</b> таблицы-хаба, формулу 2 - в первую ячейку листа в файле человека.`:'Код листа не задан - сгенерируйте его выше: формула 1 вставляется в первую ячейку листа с этим именем в таблице-хабе, формула 2 - в файл человека.';}
+window.cfoqHubInput=function(v){const rec=_cfoqRec();if(!rec)return;rec.hubId=String(v||'').trim();cfoqRefresh();};
+window.cfoqChunksInput=function(v){const rec=_cfoqRec();if(!rec)return;const n=Math.floor(Number(v)||0);rec.importChunks=n>0?Math.min(CFOQ_CHUNK_MANUAL_MAX,n):0;cfoqRefresh();};
 // все занятые коды - со строк панели доступа (записи живут на строках), плюс снимок загруженного
 function _cfoqAllCodes(){const out=new Set();try{const tb=document.getElementById('acc-tbody');if(tb)[...tb.querySelectorAll('tr')].forEach(tr=>{const c=tr._cfoq&&cfoqCodeNorm(tr._cfoq.sheetCode);if(c)out.add(c);});JSON.parse(window._accessQueriesLoaded||'[]').forEach(q=>{const c=cfoqCodeNorm(q&&q.sheetCode);if(c)out.add(c);});}catch(e){}return out;}
 window.cfoqCodeIssue=function(reissue){
@@ -16425,6 +16469,12 @@ window.cfoqRefresh=function(){
     const cnt=document.getElementById('cfoq-cnt-'+sec+'-'+i);if(cnt){const n=(sec==='rules'?c.perRule:c.perExcl)[i];cnt.textContent=!loaded?'':(n==null?(cfoqRuleText(r)?'⚠ не разобрано':''):CFOQ_SEC[sec].cnt+' '+fmtN(n)+' строк');cnt.style.color=n==null&&cfoqRuleText(r)?'var(--orange)':'var(--text2)';}
   }));
   const pb=document.getElementById('cfoq-problems');if(pb)pb.innerHTML=probs.length?`<div style="font-size:11px;color:var(--outcome);margin:0 0 8px;line-height:1.5">${probs.map(p=>'⚠ '+_htmlEsc(p)).join('<br>')}</div>`:(rec.migrated?`<div style="font-size:11px;color:var(--text2);margin:0 0 8px">Запись переведена из прежнего плоского формата: правил ${rec.migrated.rules}, исключений ${rec.migrated.excl} - каждое прежнее поле стало отдельным правилом (тот же ИЛИ). Сохраните панель, чтобы записать в новом виде.</div>`:'');
+  // формула 2 (IMPORTRANGE): от кода листа, ID хаба и числа кусков; n - итог счётчика (нет - 0 → минимум кусков)
+  window._cfoqLastN=(c.n==null?0:c.n);const iv=cfoqImportView(rec,window._cfoqLastN);
+  const o2=document.getElementById('cfoq-out2');if(o2){o2.value=iv.text||iv.why;o2.style.color=iv.text?'var(--text)':'var(--text3)';}
+  const cp2=document.getElementById('cfoq-copy2');if(cp2){const can=!!iv.text&&loaded;cp2.disabled=!can;cp2.style.opacity=can?'1':'.5';cp2.style.cursor=can?'pointer':'not-allowed';cp2.title=can?'':(iv.why||'Данные ещё не загружены');}
+  const inote=document.getElementById('cfoq-import-note');if(inote)inote.textContent='рассчитано на '+iv.capacity.toLocaleString('ru-RU')+' строк ('+iv.k+' × '+CFOQ_CHUNK.toLocaleString('ru-RU')+(iv.auto?', авто':', вручную')+'), сейчас под условия попадает '+(c.n==null?'-':c.n.toLocaleString('ru-RU'))+(c.n!=null&&c.n>iv.capacity?' - НЕ ВЛЕЗАЕТ, увеличьте число кусков':'');
+  const f1w=document.getElementById('cfoq-f1-where');if(f1w)f1w.textContent=rec.sheetCode?'в лист '+rec.sheetCode+' таблицы-хаба':'в лист таблицы-хаба (код не задан)';
   const text=cfoqShownText(rec),has=!!cfoqFormula(rec)&&!probs.some(p=>/только ОДНИМ условием|не разобрана/.test(p));
   const out=document.getElementById('cfoq-out');if(out){out.value=text;out.style.color=has?'var(--text)':'var(--text3)';}
   const canCopy=has&&loaded;
@@ -16467,7 +16517,7 @@ window._accessQueriesCollect=function(tb){
   const out=[],seen={};
   [...tb.querySelectorAll('tr')].forEach(tr=>{const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();if(!em||seen[em]||!tr._cfoq||!cfoqHasCond(tr._cfoq))return;seen[em]=1;
     const r=cfoqNorm(tr._cfoq);if(r.bad&&r._orig&&typeof r._orig==='object'){out.push(Object.assign({},r._orig,{email:em}));return;}
-    out.push({email:em,rules:r.rules,excl:r.excl,sheetCode:r.sheetCode});});
+    out.push({email:em,rules:r.rules,excl:r.excl,sheetCode:r.sheetCode,importChunks:r.importChunks,hubId:r.hubId});});
   return out;
 };
 
