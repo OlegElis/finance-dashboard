@@ -11714,7 +11714,7 @@ function pfRunTests(){
     const f=cfoqParse(oldWhere),oldSet=rows.map((r,i)=>f&&f(r)?i:-1).filter(i=>i>=0),m=cfoqNorm(flat);
     ok('миграция · плоская запись → 4 правила + 1 исключение, помечена',m.rules.length===4&&m.excl.length===1&&!!m.migrated&&m.excl[0].raw==="NOT (Col11 != 'Вывод чистой прибыли')");
     ok('миграция · множество строк совпадает с прежней формулой',JSON.stringify(set(m))===JSON.stringify(oldSet)&&oldSet.length>0,JSON.stringify(set(m))+' vs '+JSON.stringify(oldSet));
-    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[],sheetCode:'',importReserve:0,hubId:''}));
+    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[],sheetCode:'',importReserve:0,hubId:'',fileUrl:''}));
     ok('миграция · правило прежнего вида (фиксированные ключи) → conds, то же множество строк',(()=>{const oldR={dir:[AP],sub:[ZP],offer:'x'},newR={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:'offer',text:'x'}]};const n=cfoqRuleNorm(oldR);return n.conds.length===3&&n.conds.map(c=>c.field).join()==='offer,sub,dir'&&JSON.stringify(set({rules:[oldR]}))===JSON.stringify(set({rules:[newR]}))&&JSON.stringify(set({rules:[R1]}))===JSON.stringify(set({rules:[{conds:[{field:'sub',values:[ZP]},{field:'dir',values:[AP]}]}]}));})());
     ok('условия · неизвестное поле и пустое условие отбрасываются при нормализации',cfoqRuleNorm({conds:[{field:'nope',values:['x']},{field:'dir',values:[]},{field:'dir',values:[AP]}]}).conds.length===1);
     ok('условия · занятое в правиле поле второй раз не предлагается, своё - остаётся',(()=>{const r={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:''}]};const o2=cfoqFieldOptions(r,2).map(f=>f.k),o0=cfoqFieldOptions(r,0).map(f=>f.k);return o2.indexOf('dir')<0&&o2.indexOf('sub')<0&&o2.length===CFOQ_FIELDS.length-2&&o0.indexOf('dir')>=0&&o0.indexOf('sub')<0;})());
@@ -11750,6 +11750,15 @@ function pfRunTests(){
     ok('импорт · ID с ведущими цифрами и дефисом проходит без изменений (поле, ссылка, запись)',cfoqHubIdParse(RID)===RID&&cfoqHubIdParse('https://docs.google.com/spreadsheets/d/'+RID+'/edit#gid=0')===RID&&cfoqNorm({email:'a@b',hubId:RID}).hubId===RID&&cfoqImportView({sheetCode:CODE,hubId:RID},1200).text.indexOf('IMPORTRANGE("'+RID+'"; "'+CODE+'!A10001:O11200")')>=0&&!cfoqHubIdLooksCut(RID)&&cfoqHubIdLooksCut('j1Qmok_7UoceBz0YaRiYoHwDVwob6JVnXc66JBbhI'));
     ok('импорт · запас: поле в записи (0 = умолчание), минимум 1000, равный умолчанию хранится как умолчание, прежнее importChunks не читается',(()=>{const n=cfoqNorm({email:'a@b',importReserve:'25000',importChunks:5});const v=cfoqImportView({sheetCode:CODE,hubId:RID,importReserve:25000},135);return n.importReserve===25000&&!('importChunks' in n)&&cfoqReserveNorm(500)===CFOQ_RESERVE_MIN&&cfoqReserveNorm('')===0&&cfoqReserveOf({})===CFOQ_RESERVE_DEFAULT&&v.boundary===25135&&v.chunks===3&&cfoqHasCond(n);})());
     ok('импорт · окно: поле «запас» вместо «кусков», подпись «строк сейчас N, запас M, лист рассчитан до границы»',String(cfoQueryOpen).indexOf('id="cfoq-reserve"')>=0&&String(cfoQueryOpen).indexOf('cfoq-chunks')<0&&String(cfoqRefresh).indexOf("'строк сейчас '")>=0&&String(cfoqRefresh).indexOf("', запас '")>=0&&String(cfoqRefresh).indexOf("', лист рассчитан до границы '")>=0&&String(cfoQueryOpen).indexOf('id="cfoq-out2"')>=0&&String(cfoQueryOpen).indexOf('id="cfoq-copy2"')>=0);}
+   // 12. ДВЕ ССЫЛКИ В ОКНЕ (23.09.2026)
+   {const RID='1a-j1Qmok_7UoceBz0YaRiYoHwDVwob6JVnXc66JBbhI',CODE='RawData_ACDEFGHJ';
+    ok('ссылки · лист хаба собирается с правильным gid',(()=>{const L=cfoqSheetLink(RID,CODE,{'RawData':0,[CODE]:1234567});return L.found&&L.gid===1234567&&L.url==='https://docs.google.com/spreadsheets/d/'+RID+'/edit#gid=1234567'&&!L.note;})());
+    ok('ссылки · листа нет - ссылка на таблицу без gid и подпись «переименуйте его в хабе»',(()=>{const L=cfoqSheetLink(RID,CODE,{'RawData':0});return !L.found&&L.gid===null&&L.url==='https://docs.google.com/spreadsheets/d/'+RID+'/edit'&&/переименуйте его в хабе/.test(L.note);})()&&(()=>{const L=cfoqSheetLink(RID,CODE,null);return L.url.indexOf('#gid')<0&&/не загружен/.test(L.note);})()&&cfoqSheetLink(RID,'',{}).url===''&&cfoqSheetLink('',CODE,{}).url==='');
+    ok('ссылки · gid 0 - тоже найденный лист',cfoqSheetLink(RID,CODE,{[CODE]:0}).found&&cfoqSheetLink(RID,CODE,{[CODE]:0}).url.endsWith('#gid=0'));
+    ok('ссылки · полная ссылка на файл разбирается и сохраняется, голый ID становится ссылкой, мусор не пишется',cfoqFileUrlNorm(' https://docs.google.com/spreadsheets/d/'+RID+'/edit#gid=5 ')==='https://docs.google.com/spreadsheets/d/'+RID+'/edit#gid=5'&&cfoqFileUrlNorm(RID)==='https://docs.google.com/spreadsheets/d/'+RID+'/edit'&&cfoqFileUrlNorm('javascript:alert(1)')===''&&cfoqFileUrlNorm('abc')===''&&cfoqNorm({email:'a@b',fileUrl:'https://x.y/z'}).fileUrl==='https://x.y/z'&&cfoqHasCond({email:'a@b',fileUrl:'https://x.y/z'}));
+    ok('ссылки · запись без fileUrl не ломает окно: поле ввода с подписью; с fileUrl - ссылка в новой вкладке',(()=>{const h0=cfoqLink2Html(cfoqNorm({email:'a@b'}),'Васильев'),h1=cfoqLink2Html(cfoqNorm({email:'a@b',fileUrl:'https://x.y/z'}),'Васильев');return cfoqNorm({email:'a@b'}).fileUrl===''&&h0.indexOf('вставьте ссылку на файл человека')>=0&&h0.indexOf('<a ')<0&&h1.indexOf('href="https://x.y/z"')>=0&&h1.indexOf('target="_blank"')>=0&&h1.indexOf('Открыть файл Васильев')>=0;})());
+    ok('ссылки · у формулы 1 - «Открыть лист <код>», у формулы 2 - «Открыть файл <ФИО>»',(()=>{const h=cfoqLink1Html(cfoqNorm({email:'a@b',sheetCode:CODE,hubId:RID}),{[CODE]:7});const qo=String(cfoQueryOpen);return h.indexOf('Открыть лист '+CODE)>=0&&h.indexOf('#gid=7')>=0&&qo.indexOf('id="cfoq-link1"')<qo.indexOf('id="cfoq-out"')&&qo.indexOf('id="cfoq-link2"')>qo.indexOf('id="cfoq-out"')&&qo.indexOf('id="cfoq-link2"')<qo.indexOf('id="cfoq-out2"');})());
+    ok('ссылки · gid читается через Sheets API как список вкладок (fields=sheets.properties), ссылка на файл не печатается вне окна',String(cfoqHubSheetsFetch).indexOf('fields=sheets.properties(title,sheetId)')>=0&&[_accessRowHtml,showAccessPanel,cfoqRowMark,_accessQueriesAttach].map(String).join('\n').indexOf('fileUrl')<0&&!/console\.log\([^)]*fileUrl/.test([cfoqRender,cfoqRefresh,cfoQueryOpen,cfoqLink2Html].map(String).join('\n')));}
    // 10. ЗАПИСЬ ВЕТКИ НЕ ЗАТИРАЕТ ОБЛАКО (баг 23.09.2026: config/cfoQueries пуста после сохранения)
    {const q1=[{email:'a@b',rules:[{conds:[{field:'dir',values:['x'],text:''}],raw:''}],excl:[],sheetCode:''}];
     ok('запись · без изменений - не пишется',_accessQueriesPlan(q1,JSON.stringify(q1),true).action==='unchanged');
@@ -16093,7 +16102,7 @@ function cfoqRuleEmpty(r){return !(r.conds||[]).some(c=>!cfoqCondEmpty(c))&&!r.r
 // поля, доступные условию j правила r: все, кроме занятых ДРУГИМИ условиями того же правила -
 // два условия по одной колонке через И дают пустой лист, и человек не понял бы, почему он пуст
 function cfoqFieldOptions(r,j){const used=new Set((r.conds||[]).map((c,k)=>k===j?'':(c.field||'')).filter(Boolean));return CFOQ_FIELDS.filter(f=>!used.has(f.k));}
-function cfoqBlank(){return {email:'',rules:[],excl:[],sheetCode:'',importReserve:0,hubId:''};}
+function cfoqBlank(){return {email:'',rules:[],excl:[],sheetCode:'',importReserve:0,hubId:'',fileUrl:''};}
 // ── КОД ЛИСТА-ПРИЁМНИКА (23.09.2026): персональные листы называются НЕ RawData_<Фамилия> (имя угадывается
 //   по чужой фамилии), а RawData_<8 знаков> - код известен только админу и хранится в записи человека
 //   (sheetCode) рядом с правилами. Алфавит без похожих символов (0/O, 1/I/L, 5/S, 8/B), руками не вводится -
@@ -16118,6 +16127,7 @@ function cfoqNorm(rec){
   o.email=String(rec.email||'').trim().toLowerCase();
   o.sheetCode=cfoqCodeNorm(rec.sheetCode); // записи без кода читаются: '' → «код не задан»
   o.importReserve=cfoqReserveNorm(rec.importReserve); // 0 = умолчание (10 000); прежнее поле importChunks не читается - число кусков теперь следствие границы
+  o.fileUrl=cfoqFileUrlNorm(rec.fileUrl); // ссылка на файл человека; записи без неё читаются - в окне поле ввода
   o.hubId=String(rec.hubId||'').trim(); // '' = из настроек подключения
   if(rec.bad){o.bad=rec.bad;o._orig=rec._orig;return o;} // уже нормализованная неразобранная запись: флаг и оригинал не теряем (идемпотентность)
   if(rec.migrated)o.migrated=rec.migrated;
@@ -16139,7 +16149,7 @@ function cfoqNorm(rec){
   }catch(e){o.bad=(e&&e.message)||String(e);o._orig=rec;o.rules=[];o.excl=[];}
   return o;
 }
-function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length||r.sheetCode||r.importReserve||r.hubId);} // код листа и настройки импорта - тоже повод хранить запись
+function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length||r.sheetCode||r.importReserve||r.hubId||r.fileUrl);} // код листа, настройки импорта и ссылка на файл - тоже повод хранить запись
 function cfoqEsc(v){return String(v).replace(/"/g,'""');}
 function cfoqBad(v){return /'/.test(String(v))?'В значении есть апостроф: QUERY держит строку в одинарных кавычках и экранировать его нечем - отобрать такое значение через равенство нельзя':'';}
 // текст ГОДА по режиму (mode задаётся параметром ради тестов обеих веток; по умолчанию - константа)
@@ -16204,6 +16214,23 @@ function cfoqHubIdParse(v){v=String(v||'').trim();const m=v.match(/\/d\/([A-Za-z
 // ID не похож на полный (у Google 44 знака, первый - «1»): не запрет, а подпись «сверьте с адресом файла»
 function cfoqHubIdLooksCut(id){id=String(id||'');return !!id&&!(id.length===44&&/^1[A-Za-z0-9_-]+$/.test(id));}
 function cfoqHubId(rec){const r=rec||{};let id=String(r.hubId||'').trim();if(!id){try{id=String(localStorage.getItem('fin_sheetId')||'').trim();}catch(e){}}return id;}
+// ── ДВЕ ССЫЛКИ В ОКНЕ (23.09.2026): на лист-приёмник в хабе (у формулы 1) и на файл ЦФО (у формулы 2) ──
+// fileUrl - ссылка на персональную таблицу человека, вводится один раз (полная ссылка; голый ID тоже принимается
+// и превращается в ссылку), хранится в записи рядом с правилами. ⚠ Показывается ТОЛЬКО в этом окне (то же
+// правило, что у кода листа). Ссылка на лист хаба собирается из ID хаба и gid листа с именем sheetCode; gid -
+// через Sheets API (fields=sheets.properties), как список вкладок в панели; листа ещё нет - ссылка на таблицу
+// без gid и подпись «переименуйте его в хабе».
+function cfoqFileUrlNorm(v){v=String(v||'').trim();if(!v)return '';if(/^https?:\/\//i.test(v))return v;if(/^[A-Za-z0-9_-]{20,}$/.test(v))return 'https://docs.google.com/spreadsheets/d/'+v+'/edit';return '';}
+function cfoqHubUrl(hubId){hubId=String(hubId||'').trim();return hubId&&!/["\s]/.test(hubId)?'https://docs.google.com/spreadsheets/d/'+hubId+'/edit':'';}
+// {url, gid, found, note}: sheets - карта «имя листа → sheetId» из Sheets API (null - список не загружен)
+function cfoqSheetLink(hubId,code,sheets){
+  const base=cfoqHubUrl(hubId);code=String(code||'').trim();
+  if(!base||!code)return {url:'',gid:null,found:false,note:!code?'сначала сгенерируйте код листа':'не задан ID таблицы'};
+  if(!sheets)return {url:base,gid:null,found:false,note:'список листов хаба не загружен - ссылка на таблицу без листа'};
+  const gid=Object.prototype.hasOwnProperty.call(sheets,code)?sheets[code]:null;
+  if(gid==null)return {url:base,gid:null,found:false,note:'лист с этим именем пока не найден - переименуйте его в хабе'};
+  return {url:base+'#gid='+gid,gid,found:true,note:''};
+}
 // {text, why, n, reserve, boundary, chunks}: text - формула либо ''; why - почему её нет
 function cfoqImportView(rec,n){
   const r=cfoqNorm(rec),hub=cfoqHubId(r),reserve=cfoqReserveOf(r),nn=Math.max(0,Math.floor(Number(n)||0)),boundary=cfoqBoundary(nn,reserve);
@@ -16341,10 +16368,12 @@ window.cfoQueryOpen=function(tr){
       <div id="cfoq-rules"></div>
       <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула 1 · <span id="cfoq-f1-where">в лист таблицы-хаба</span></div>
         <button type="button" id="cfoq-copy" onclick="cfoqCopy()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Скопировать</button>
+        <span id="cfoq-link1" style="font-size:11px;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap"></span>
         <span id="cfoq-total" style="font-size:12px;margin-left:auto"></span></div>
       <textarea id="cfoq-out" readonly rows="5" style="${inp};resize:vertical;background:var(--surface2)"></textarea>
       <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;flex-wrap:wrap"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула 2 · в первую ячейку листа в файле ${_htmlEsc(name||email||'человека')}</div>
         <button type="button" id="cfoq-copy2" onclick="cfoqCopyText('cfoq-copy2',(cfoqImportView(_cfoqRec(),window._cfoqLastN)||{}).text)" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Скопировать</button>
+        <span id="cfoq-link2" style="font-size:11px;display:inline-flex;align-items:center;gap:6px"></span>
         <label style="font-size:11px;color:var(--text2);display:inline-flex;align-items:center;gap:4px;margin-left:auto">ID таблицы-хаба <input type="text" id="cfoq-hub" class="bar-ctl" value="${_pesc(rec.hubId)}" oninput="cfoqHubInput(this.value)" placeholder="из Настройки → Подключение" title="Пусто - берётся из настроек подключения (fin_sheetId); впишите, чтобы переопределить" style="width:230px;box-sizing:border-box;text-align:left"></label>
         <label style="font-size:11px;color:var(--text2);display:inline-flex;align-items:center;gap:4px">запас, строк <input type="number" id="cfoq-reserve" class="bar-ctl" min="${CFOQ_RESERVE_MIN}" step="${CFOQ_RESERVE_STEP}" value="${cfoqReserveOf(rec)}" oninput="cfoqReserveInput(this.value)" title="Запас строк сверх счётчика: граница листа = строк сейчас + запас; по умолчанию ${CFOQ_RESERVE_DEFAULT.toLocaleString('ru-RU')}, шаг и минимум ${CFOQ_RESERVE_STEP.toLocaleString('ru-RU')}. Куски по ${CFOQ_CHUNK.toLocaleString('ru-RU')} строк, последний обрезается по границе" style="width:88px;box-sizing:border-box;text-align:left"></label>
         <span id="cfoq-import-note" style="font-size:11px;color:var(--text2);flex-basis:100%"></span></div>
@@ -16356,7 +16385,35 @@ window.cfoQueryOpen=function(tr){
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
   overlay.querySelector('.txn-card-close').addEventListener('click',()=>overlay.remove());
   document.body.appendChild(overlay);
+  window._cfoqName=name;
   cfoqRender();
+  cfoqHubSheetsFetch(cfoqHubId(rec)); // gid листа-приёмника - асинхронно, ссылка дорисуется в cfoqRefresh
+};
+// ── ссылки: разметка - чистые функции (тест), список листов хаба - через Sheets API как в панели доступа ──
+function cfoqLink1Html(rec,sheets){
+  const r=cfoqNorm(rec),L=cfoqSheetLink(cfoqHubId(r),r.sheetCode,sheets);
+  const a=L.url?`<a href="${_htmlEsc(L.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600;text-decoration:none">Открыть ${L.found?'лист '+_htmlEsc(r.sheetCode):'таблицу-хаб'} ↗</a>`:'';
+  const note=L.note?`<span style="color:${L.url?'var(--orange)':'var(--text3)'}">${_htmlEsc(L.note)}</span>`:'';
+  const btn=L.url?`<button type="button" onclick="cfoqHubSheetsFetch(cfoqHubId(_cfoqRec()),true)" title="Перечитать список листов хаба (после переименования листа)" style="border:1px solid var(--border);background:var(--surface);color:var(--text2);border-radius:5px;padding:1px 6px;font-size:11px;cursor:pointer">↻</button>`:'';
+  return a+note+btn;
+}
+function cfoqLink2Html(rec,name){
+  const r=cfoqNorm(rec);
+  if(r.fileUrl)return `<a href="${_htmlEsc(r.fileUrl)}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600;text-decoration:none">Открыть файл ${_htmlEsc(name||'человека')} ↗</a><button type="button" onclick="cfoqFileUrlEdit()" title="Заменить ссылку на файл" style="border:1px solid var(--border);background:var(--surface);color:var(--text2);border-radius:5px;padding:1px 6px;font-size:11px;cursor:pointer">изменить</button>`;
+  return `<input type="text" id="cfoq-fileurl" class="bar-ctl" oninput="cfoqFileUrlInput(this.value)" placeholder="вставьте ссылку на файл человека" title="Полная ссылка на персональную таблицу; хранится в записи и показывается только здесь" style="width:280px;box-sizing:border-box;text-align:left">`;
+}
+window.cfoqFileUrlInput=function(v){const rec=_cfoqRec();if(!rec)return;const u=cfoqFileUrlNorm(v);if(!u)return;rec.fileUrl=u;cfoqRefresh();}; // пока не похоже на ссылку - ничего не пишем, поле остаётся
+window.cfoqFileUrlEdit=function(){const rec=_cfoqRec();if(!rec)return;rec.fileUrl='';cfoqRefresh();const i=document.getElementById('cfoq-fileurl');if(i)i.focus();};
+window._cfoqHubSheets=window._cfoqHubSheets||{}; // {hubId: {имя листа: sheetId}} - кэш на сессию
+window.cfoqHubSheetsFetch=function(hubId,force){
+  hubId=String(hubId||'').trim();if(!hubId)return Promise.resolve(null);
+  if(!force&&window._cfoqHubSheets[hubId])return Promise.resolve(window._cfoqHubSheets[hubId]);
+  let key='';try{key=localStorage.getItem('fin_apiKey')||'';}catch(e){}
+  if(!key)return Promise.resolve(null);
+  return fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(hubId)}?key=${key}&fields=sheets.properties(title,sheetId)`).then(r=>r.ok?r.json():null).then(j=>{
+    if(!j||!j.sheets)return null;const map={};j.sheets.forEach(x=>{const pr=x&&x.properties;if(pr&&pr.title!=null)map[String(pr.title)]=pr.sheetId;});
+    window._cfoqHubSheets[hubId]=map;cfoqRefresh();return map;
+  }).catch(()=>null);
 };
 // блок «Лист-приёмник» и подпись под формулой - чистые функции от записи (тест: запись без кода не ломает окно)
 function cfoqSheetHtml(rec){
@@ -16492,6 +16549,9 @@ window.cfoqRefresh=function(){
   const hubWarn=cfoqHubIdLooksCut(hub)?' ⚠ ID не похож на полный (у Google 44 знака, первый - «1») - сверьте с адресом файла, часть между /d/ и /edit; можно вставить в поле всю ссылку':'';
   const inote=document.getElementById('cfoq-import-note');if(inote){inote.textContent='строк сейчас '+(c.n==null?'- (счётчик недоступен, взят 0)':c.n.toLocaleString('ru-RU'))+', запас '+iv.reserve.toLocaleString('ru-RU')+', лист рассчитан до границы '+iv.boundary.toLocaleString('ru-RU')+' ('+iv.chunks+' '+(iv.chunks===1?'кусок':iv.chunks<5?'куска':'кусков')+')'+(hubSrc?' · '+hubSrc+': '+hub:'')+hubWarn;inote.style.color=hubWarn?'var(--orange)':'var(--text2)';}
   const f1w=document.getElementById('cfoq-f1-where');if(f1w)f1w.textContent=rec.sheetCode?'в лист '+rec.sheetCode+' таблицы-хаба':'в лист таблицы-хаба (код не задан)';
+  const l1=document.getElementById('cfoq-link1');if(l1){const h=cfoqLink1Html(rec,window._cfoqHubSheets[hub]||null);if(l1.getAttribute('data-sig')!==h){l1.innerHTML=h;l1.setAttribute('data-sig',h);}}
+  // поле ссылки не перерисовываем, пока в нём печатают; но принятая ссылка (rec.fileUrl) сразу сменяет поле на «Открыть файл»
+  const l2=document.getElementById('cfoq-link2');if(l2){const h=cfoqLink2Html(rec,window._cfoqName);const typing=!rec.fileUrl&&document.activeElement===document.getElementById('cfoq-fileurl');if(l2.getAttribute('data-sig')!==h&&!typing){l2.innerHTML=h;l2.setAttribute('data-sig',h);}}
   const text=cfoqShownText(rec),has=!!cfoqFormula(rec)&&!probs.some(p=>/только ОДНИМ условием|не разобрана/.test(p));
   const out=document.getElementById('cfoq-out');if(out){out.value=text;out.style.color=has?'var(--text)':'var(--text3)';}
   const canCopy=has&&loaded;
@@ -16534,7 +16594,7 @@ window._accessQueriesCollect=function(tb){
   const out=[],seen={};
   [...tb.querySelectorAll('tr')].forEach(tr=>{const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();if(!em||seen[em]||!tr._cfoq||!cfoqHasCond(tr._cfoq))return;seen[em]=1;
     const r=cfoqNorm(tr._cfoq);if(r.bad&&r._orig&&typeof r._orig==='object'){out.push(Object.assign({},r._orig,{email:em}));return;}
-    out.push({email:em,rules:r.rules,excl:r.excl,sheetCode:r.sheetCode,importReserve:r.importReserve,hubId:r.hubId});});
+    out.push({email:em,rules:r.rules,excl:r.excl,sheetCode:r.sheetCode,importReserve:r.importReserve,hubId:r.hubId,fileUrl:r.fileUrl});});
   return out;
 };
 
