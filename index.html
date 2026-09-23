@@ -11716,7 +11716,7 @@ function pfRunTests(){
     const f=cfoqParse(oldWhere),oldSet=rows.map((r,i)=>f&&f(r)?i:-1).filter(i=>i>=0),m=cfoqNorm(flat);
     ok('миграция · плоская запись → 4 правила + 1 исключение, помечена',m.rules.length===4&&m.excl.length===1&&!!m.migrated&&m.excl[0].raw==="NOT (Col11 != 'Вывод чистой прибыли')");
     ok('миграция · множество строк совпадает с прежней формулой',JSON.stringify(set(m))===JSON.stringify(oldSet)&&oldSet.length>0,JSON.stringify(set(m))+' vs '+JSON.stringify(oldSet));
-    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[],sheetCode:'',sheetName:'',sheetCodePart:'',importReserve:0,hubId:'',fileUrl:'',sheetUrl:'',legacy:false}));
+    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[],sheetCode:'',sheetName:'',sheetCodePart:'',importLimit:0,importOpen:false,hubId:'',fileUrl:'',sheetUrl:'',legacy:false}));
     ok('миграция · правило прежнего вида (фиксированные ключи) → conds, то же множество строк',(()=>{const oldR={dir:[AP],sub:[ZP],offer:'x'},newR={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:'offer',text:'x'}]};const n=cfoqRuleNorm(oldR);return n.conds.length===3&&n.conds.map(c=>c.field).join()==='offer,sub,dir'&&JSON.stringify(set({rules:[oldR]}))===JSON.stringify(set({rules:[newR]}))&&JSON.stringify(set({rules:[R1]}))===JSON.stringify(set({rules:[{conds:[{field:'sub',values:[ZP]},{field:'dir',values:[AP]}]}]}));})());
     ok('условия · неизвестное поле и пустое условие отбрасываются при нормализации',cfoqRuleNorm({conds:[{field:'nope',values:['x']},{field:'dir',values:[]},{field:'dir',values:[AP]}]}).conds.length===1);
     ok('условия · занятое в правиле поле второй раз не предлагается, своё - остаётся',(()=>{const r={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:''}]};const o2=cfoqFieldOptions(r,2).map(f=>f.k),o0=cfoqFieldOptions(r,0).map(f=>f.k);return o2.indexOf('dir')<0&&o2.indexOf('sub')<0&&o2.length===CFOQ_FIELDS.length-2&&o0.indexOf('dir')>=0&&o0.indexOf('sub')<0;})());
@@ -11742,21 +11742,21 @@ function pfRunTests(){
    ok('имя листа · ручная правка фамилии сохраняется и переживает перечитывание',(()=>{const r=cfoqNorm({email:'a@b',sheetName:'VasylievLV',sheetCodePart:'K7P3QM'});const out={email:r.email,sheetCode:r.sheetCode,sheetName:r.sheetName,sheetCodePart:r.sheetCodePart};const back=cfoqNorm(JSON.parse(JSON.stringify(out)));return back.sheetName==='VasylievLV'&&back.sheetCode==='RawData_VasylievLV_K7P3QM'&&cfoqNorm({email:'a@b',sheetName:'Vasyliev L.V.',sheetCodePart:'k7p3qm'}).sheetCode==='RawData_VasylievLV_K7P3QM';})());
    ok('имя листа · старый формат читается как есть: legacy, «старый формат», «Пересобрать имя»; пересборка подставляет фамилию и сохраняет код',(()=>{const r=cfoqNorm({email:'a@b',sheetCode:'RawData_FZ2PEHX6'});const h=cfoqSheetHtml(r);const rebuilt=cfoqNorm({email:'a@b',sheetName:cfoqSheetNameAuto('Тертюк Александр Викторович'),sheetCodePart:cfoqCodePartNorm('FZ2PEHX6')});return r.legacy&&r.sheetCode==='RawData_FZ2PEHX6'&&r.sheetName===''&&h.indexOf('старый формат')>=0&&h.indexOf('cfoqRebuildName()')>=0&&h.indexOf('RawData_FZ2PEHX6')>=0&&cfoqHasCond(r)&&rebuilt.sheetCode==='RawData_TertyukAV_FZ2PEHX6'&&!rebuilt.legacy&&String(cfoqRebuildName).indexOf('cfoqSheetNameAuto(window._cfoqName)')>=0;})());
    ok('имя листа · запись без кода: «код не задан» и кнопка генерации; с кодом - поле фамилии, код, копирование, перевыпуск',(()=>{const h0=cfoqSheetHtml(cfoqNorm({email:'a@b'})),h1=cfoqSheetHtml(cfoqNorm({email:'a@b',sheetName:'TertyukAV',sheetCodePart:'K7P3QM'}));return h0.indexOf('код не задан')>=0&&h0.indexOf('cfoqCodeIssue(false)')>=0&&h1.indexOf('id="cfoq-sheetname"')>=0&&h1.indexOf('value="TertyukAV"')>=0&&h1.indexOf('<b>K7P3QM</b>')>=0&&h1.indexOf('Скопировать имя')>=0&&h1.indexOf('cfoqCodeIssue(true)')>=0&&!cfoqHasCond({email:'a@b'});})());
-   // 11. ВТОРАЯ ФОРМУЛА - IMPORTRANGE кусками по 10 000 до границы «строк + запас» (23.09.2026, правка расчёта)
+   // 11. ВТОРАЯ ФОРМУЛА - IMPORTRANGE кусками по 10 000 до заданной границы либо открытый диапазон (24.09.2026)
    {const RID='1a-j1Qmok_7UoceBz0YaRiYoHwDVwob6JVnXc66JBbhI',CODE='RawData_ACDEFGHJ';
-    ok('импорт · граница = строк + запас; умолчание 10 000; нулевой счётчик - только запас',cfoqBoundary(1200,10000)===11200&&cfoqBoundary(400,5000)===5400&&cfoqBoundary(45000,10000)===55000&&cfoqBoundary(0,10000)===10000&&cfoqBoundary(0,0)===CFOQ_RESERVE_DEFAULT&&cfoqBoundary(null,undefined)===CFOQ_RESERVE_DEFAULT&&cfoqBoundary(7,500)===7+CFOQ_RESERVE_MIN);
-    ok('импорт · примеры из задачи: 11 200 → два куска, 5 400 → один, 55 000 → шесть, последний A50001:O55000',JSON.stringify(cfoqImportRanges(11200))==='["A2:O10000","A10001:O11200"]'&&JSON.stringify(cfoqImportRanges(5400))==='["A2:O5400"]'&&(()=>{const r=cfoqImportRanges(55000);return r.length===6&&r[5]==='A50001:O55000'&&r[0]==='A2:O10000';})());
-    ok('импорт · последний кусок заканчивается РОВНО на границе, диапазоны без разрывов и нахлёста',[1000,5400,9999,10000,10001,11200,23456,55000,120000].every(bd=>{const r=cfoqImportRanges(bd);if(!r.length||!r[r.length-1].endsWith(':O'+bd))return false;return r.every((x,i)=>{const m=x.match(/^A(\d+):O(\d+)$/);if(!m)return false;const a=+m[1],b=+m[2];if(b<a||b-a+1>CFOQ_CHUNK)return false;if(i===0)return a===2;const pm=r[i-1].match(/O(\d+)$/);return a===+pm[1]+1;});}));
-    ok('импорт · при N меньше 10 000 минус запас - один кусок',cfoqImportRanges(cfoqBoundary(400,5000)).length===1&&cfoqImportRanges(cfoqBoundary(0,10000)).length===1&&cfoqImportRanges(cfoqBoundary(1,10000)).length===2);
-    ok('импорт · текст формулы посимвольно (1 200 строк, запас 10 000)',cfoqImportFormula(RID,CODE,11200)==='=QUERY({\n  IMPORTRANGE("'+RID+'"; "'+CODE+'!A2:O10000");\n  IMPORTRANGE("'+RID+'"; "'+CODE+'!A10001:O11200")\n}; "SELECT *")',cfoqImportFormula(RID,CODE,11200));
-    ok('импорт · без кода или без ID формулы нет, причина названа',cfoqImportFormula('',CODE,11200)===''&&cfoqImportFormula(RID,'',11200)===''&&cfoqImportFormula(RID,CODE,0)===''&&cfoqImportView({hubId:RID},5).why==='сначала сгенерируйте код листа'&&(()=>{const v=cfoqImportView({sheetCode:CODE,hubId:''},5);return v.text!==''||v.why==='не задан ID таблицы, откройте Настройки → Подключение';})());
-    ok('импорт · ID с ведущими цифрами и дефисом проходит без изменений (поле, ссылка, запись)',cfoqHubIdParse(RID)===RID&&cfoqHubIdParse('https://docs.google.com/spreadsheets/d/'+RID+'/edit#gid=0')===RID&&cfoqNorm({email:'a@b',hubId:RID}).hubId===RID&&cfoqImportView({sheetCode:CODE,hubId:RID},1200).text.indexOf('IMPORTRANGE("'+RID+'"; "'+CODE+'!A10001:O11200")')>=0&&!cfoqHubIdLooksCut(RID)&&cfoqHubIdLooksCut('j1Qmok_7UoceBz0YaRiYoHwDVwob6JVnXc66JBbhI'));
-    ok('импорт · запас: поле в записи (0 = умолчание), минимум 1000, равный умолчанию хранится как умолчание, прежнее importChunks не читается',(()=>{const n=cfoqNorm({email:'a@b',importReserve:'25000',importChunks:5});const v=cfoqImportView({sheetCode:CODE,hubId:RID,importReserve:25000},135);return n.importReserve===25000&&!('importChunks' in n)&&cfoqReserveNorm(500)===CFOQ_RESERVE_MIN&&cfoqReserveNorm('')===0&&cfoqReserveOf({})===CFOQ_RESERVE_DEFAULT&&v.boundary===25135&&v.chunks===3&&cfoqHasCond(n);})());
-    ok('импорт · окно: поле «запас» вместо «кусков», подпись «строк сейчас N, запас M, лист рассчитан до границы»',String(cfoQueryOpen).indexOf('id="cfoq-reserve"')>=0&&String(cfoQueryOpen).indexOf('cfoq-chunks')<0&&String(cfoqRefresh).indexOf("'строк сейчас '")>=0&&String(cfoqRefresh).indexOf("', запас '")>=0&&String(cfoqRefresh).indexOf("', лист рассчитан до границы '")>=0&&String(cfoQueryOpen).indexOf('id="cfoq-out2"')>=0&&String(cfoQueryOpen).indexOf('id="cfoq-copy2"')>=0);
+    ok('импорт · умолчание границы - счётчик вверх до ближайших 10 000, не меньше 10 000',cfoqLimitAuto(0)===10000&&cfoqLimitAuto(135)===10000&&cfoqLimitAuto(10000)===10000&&cfoqLimitAuto(10001)===20000&&cfoqLimitAuto(45000)===50000&&cfoqLimitOf({},12000)===20000&&cfoqLimitOf({importLimit:5000},12000)===5000);
+    ok('импорт · граница 5 000 - один кусок A2:O5000; 25 000 - три, последний A20001:O25000',JSON.stringify(cfoqImportRanges(5000))==='["A2:O5000"]'&&(()=>{const r=cfoqImportRanges(25000);return r.length===3&&r[2]==='A20001:O25000'&&r[0]==='A2:O10000'&&r[1]==='A10001:O20000';})()&&cfoqImportView({sheetCode:CODE,hubId:RID,importLimit:5000},135).chunks===1&&cfoqImportView({sheetCode:CODE,hubId:RID,importLimit:25000},135).chunks===3);
+    ok('импорт · последний кусок заканчивается РОВНО на границе, диапазоны без разрывов и нахлёста',[1000,5000,9999,10000,10001,11200,23456,25000,55000,120000].every(bd=>{const r=cfoqImportRanges(bd);if(!r.length||!r[r.length-1].endsWith(':O'+bd))return false;return r.every((x,i)=>{const m=x.match(/^A(\d+):O(\d+)$/);if(!m)return false;const a=+m[1],b=+m[2];if(b<a||b-a+1>CFOQ_CHUNK)return false;if(i===0)return a===2;const pm=r[i-1].match(/O(\d+)$/);return a===+pm[1]+1;});}));
+    ok('импорт · текст формулы посимвольно (граница 25 000)',cfoqImportFormula(RID,CODE,25000,false)==='=QUERY({\n  IMPORTRANGE("'+RID+'"; "'+CODE+'!A2:O10000");\n  IMPORTRANGE("'+RID+'"; "'+CODE+'!A10001:O20000");\n  IMPORTRANGE("'+RID+'"; "'+CODE+'!A20001:O25000")\n}; "SELECT *")',cfoqImportFormula(RID,CODE,25000,false));
+    ok('импорт · открытый режим - ровно один IMPORTRANGE с A2:O, посимвольно',(()=>{const f=cfoqImportFormula(RID,CODE,25000,true);return f==='=QUERY({IMPORTRANGE("'+RID+'"; "'+CODE+'!A2:O")}; "SELECT *")'&&(f.match(/IMPORTRANGE/g)||[]).length===1&&cfoqImportView({sheetCode:CODE,hubId:RID,importOpen:true},135).text===f&&cfoqImportView({sheetCode:CODE,hubId:RID,importOpen:true},135).chunks===1;})());
+    ok('импорт · переключение режима и граница хранятся в записи и переживают перечитывание; прежние importReserve/importChunks не читаются',(()=>{const a=cfoqNorm({email:'a@b',importLimit:'25000',importOpen:true,importReserve:7000,importChunks:5});const back=cfoqNorm(JSON.parse(JSON.stringify({email:a.email,importLimit:a.importLimit,importOpen:a.importOpen})));const b=cfoqNorm({email:'a@b',importOpen:false,importLimit:0});return a.importLimit===25000&&a.importOpen===true&&back.importLimit===25000&&back.importOpen===true&&!('importReserve' in a)&&!('importChunks' in a)&&b.importOpen===false&&b.importLimit===0&&cfoqLimitNorm(500)===CFOQ_LIMIT_MIN&&cfoqLimitNorm('')===0&&cfoqHasCond({email:'a@b',importOpen:true})&&cfoqSaveShapeJson(a)!==cfoqSaveShapeJson(b);})());
+    ok('импорт · без кода или без ID формулы нет, причина названа',cfoqImportFormula('',CODE,11200,false)===''&&cfoqImportFormula(RID,'',11200,false)===''&&cfoqImportFormula(RID,CODE,0,false)===''&&cfoqImportFormula(RID,'',0,true)===''&&cfoqImportView({hubId:RID},5).why==='сначала сгенерируйте код листа'&&(()=>{const v=cfoqImportView({sheetCode:CODE,hubId:''},5);return v.text!==''||v.why==='не задан ID таблицы, откройте Настройки → Подключение';})());
+    ok('импорт · окно: поле «всего строк», галочка «открытый диапазон», подписи по режиму',(()=>{const qo=String(cfoQueryOpen),rr=String(cfoqRefresh);return qo.indexOf('id="cfoq-limit"')>=0&&qo.indexOf('id="cfoq-open"')>=0&&qo.indexOf('cfoq-reserve')<0&&qo.indexOf('без верхней границы - удобно, пока строк немного; на больших объёмах Google может не отдать диапазон')>=0&&rr.indexOf("'лист рассчитан до строки '")>=0&&rr.indexOf("'диапазон открыт, '")>=0&&rr.indexOf("'сейчас под условия попадает '")>=0&&rr.indexOf('lmIn.disabled=iv.open')>=0;})());
+    ok('импорт · ID с ведущими цифрами и дефисом проходит без изменений (поле, ссылка, запись)',cfoqHubIdParse(RID)===RID&&cfoqHubIdParse('https://docs.google.com/spreadsheets/d/'+RID+'/edit#gid=0')===RID&&cfoqNorm({email:'a@b',hubId:RID}).hubId===RID&&cfoqImportView({sheetCode:CODE,hubId:RID},12000).text.indexOf('IMPORTRANGE("'+RID+'"; "'+CODE+'!A10001:O20000")')>=0&&!cfoqHubIdLooksCut(RID)&&cfoqHubIdLooksCut('j1Qmok_7UoceBz0YaRiYoHwDVwob6JVnXc66JBbhI'));
     // подача окна (23.09.2026, ночь): без пояснений, служебное под <details>, «+ выражение», три уровня кегля, короткие подписи формул
     {const qo=String(cfoQueryOpen),qr=String(cfoqRender);const all=qo+qr+String(cfoqRefresh)+String(cfoqLink1Html)+String(cfoqLink2Html)+String(cfoqFileBoxHtml)+String(cfoqSheetHtml);
      ok('подача · пояснений про ИЛИ/И и нижнего абзаца нет; «Готово: сохранить», у крестика «закрыть без сохранения»',qo.indexOf('Правила соединяются ИЛИ')<0&&qo.indexOf('Исключения вычитаются')<0&&qo.indexOf('Дашборд в таблицу не пишет')<0&&qo.indexOf('cfoq-sheetnote')<0&&qo.indexOf('>Сохранить и закрыть</button>')>=0&&qo.indexOf('закрыть без сохранения')>=0&&JSON.stringify(CFOQ_SEC).indexOf('note')<0);
-     ok('подача · служебные поля под свёрнутым «Настройки листа»',(()=>{const d=qo.indexOf('<details'),e=qo.indexOf('</details>');return d>0&&e>d&&qo.indexOf('id="cfoq-hub"')>d&&qo.indexOf('id="cfoq-hub"')<e&&qo.indexOf('id="cfoq-reserve"')>d&&qo.indexOf('id="cfoq-reserve"')<e&&qo.indexOf('id="cfoq-filebox"')>d&&qo.indexOf('id="cfoq-filebox"')<e&&qo.indexOf('id="cfoq-import-note"')>d&&qo.indexOf('id="cfoq-import-note"')<e&&qo.indexOf('<details open')<0&&qo.indexOf('Настройки листа')>=0;})());
+     ok('подача · служебные поля под свёрнутым «Настройки листа»',(()=>{const d=qo.indexOf('<details'),e=qo.indexOf('</details>');return d>0&&e>d&&qo.indexOf('id="cfoq-hub"')>d&&qo.indexOf('id="cfoq-hub"')<e&&qo.indexOf('id="cfoq-limit"')>d&&qo.indexOf('id="cfoq-limit"')<e&&qo.indexOf('id="cfoq-open"')>d&&qo.indexOf('id="cfoq-open"')<e&&qo.indexOf('id="cfoq-filebox"')>d&&qo.indexOf('id="cfoq-filebox"')<e&&qo.indexOf('id="cfoq-import-note"')>d&&qo.indexOf('id="cfoq-import-note"')<e&&qo.indexOf('<details open')<0&&qo.indexOf('Настройки листа')>=0;})());
      ok('подача · «готовое выражение» скрыто за «+ выражение», открывается по ссылке и при непустом raw',qr.indexOf('+ выражение')>=0&&qr.indexOf("(r.raw||r._rawOpen)?")>=0&&typeof cfoqRawToggle==='function'&&!('_rawOpen' in cfoqRuleNorm({raw:'x',_rawOpen:true})));
      ok('подача · три уровня кегля: секции 14px жирные, содержимое 12px, подписи 11px; мельче 11px нет',CFOQ_H.indexOf('font-size:14px')>=0&&CFOQ_H.indexOf('font-weight:700')>=0&&CFOQ_CAP.indexOf('font-size:11px')>=0&&qr.indexOf('${CFOQ_H}')>=0&&qo.indexOf('>Формулы</div>')>=0&&!/font-size:(10(\.\d+)?|[0-9])px/.test(all));
      ok('подача · подписи формул «Формула 1 · лист <код>» и «Формула 2 · файл <ФИО>», рядом копирование и «Открыть ↗»; поле формулы - моно, перенос, 4 строки',qo.indexOf('Формула 1 · лист <span id="cfoq-f1-where">')>=0&&qo.indexOf('Формула 2 · файл ${_htmlEsc(name||email')>=0&&/id="cfoq-out" readonly rows="4" wrap="soft"/.test(qo)&&/id="cfoq-out2" readonly rows="4" wrap="soft"/.test(qo)&&qo.indexOf('white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto')>=0&&String(cfoqLink1Html).indexOf('Открыть ↗')>=0&&String(cfoqLink2Html).indexOf('Открыть ↗')>=0);}}
@@ -16147,7 +16147,7 @@ function cfoqRuleEmpty(r){return !(r.conds||[]).some(c=>!cfoqCondEmpty(c))&&!r.r
 // поля, доступные условию j правила r: все, кроме занятых ДРУГИМИ условиями того же правила -
 // два условия по одной колонке через И дают пустой лист, и человек не понял бы, почему он пуст
 function cfoqFieldOptions(r,j){const used=new Set((r.conds||[]).map((c,k)=>k===j?'':(c.field||'')).filter(Boolean));return CFOQ_FIELDS.filter(f=>!used.has(f.k));}
-function cfoqBlank(){return {email:'',rules:[],excl:[],sheetCode:'',sheetName:'',sheetCodePart:'',importReserve:0,hubId:'',fileUrl:'',sheetUrl:''};}
+function cfoqBlank(){return {email:'',rules:[],excl:[],sheetCode:'',sheetName:'',sheetCodePart:'',importLimit:0,importOpen:false,hubId:'',fileUrl:'',sheetUrl:''};}
 // ── ИМЯ ЛИСТА-ПРИЁМНИКА = RawData_<ФамилияИО>_<код> (24.09.2026; до того - RawData_<8 знаков>) ──
 //   Часть с фамилией (sheetName) - транслит фамилии плюс инициалы из ФИО (config/names): «Тертюк Александр
 //   Викторович» → TertyukAV. ⚠ Транслитерация неоднозначна (в существующих листах Васильев → Vasyliev, у Кольцовой
@@ -16192,7 +16192,8 @@ function cfoqNorm(rec){
    if(part){o.sheetName=nm;o.sheetCodePart=part;o.sheetCode=cfoqSheetFull(nm,part);o.legacy=false;}
    else if(old){o.sheetName='';o.sheetCodePart='';o.sheetCode=old;o.legacy=true;}
    else{o.sheetName='';o.sheetCodePart='';o.sheetCode='';o.legacy=false;}}
-  o.importReserve=cfoqReserveNorm(rec.importReserve); // 0 = умолчание (10 000); прежнее поле importChunks не читается - число кусков теперь следствие границы
+  o.importLimit=cfoqLimitNorm(rec.importLimit); // 0 = умолчание (счётчик вверх до 10 000); прежние importReserve/importChunks не читаются
+  o.importOpen=!!rec.importOpen; // открытый диапазон (один IMPORTRANGE без верхней границы)
   o.fileUrl=cfoqFileUrlNorm(rec.fileUrl); // ссылка на файл человека; записи без неё читаются - в окне поле ввода
   o.sheetUrl=cfoqSheetUrlNorm(rec.sheetUrl); // ссылка на лист-приёмник в хабе (адрес вкладки с #gid=)
   o.hubId=String(rec.hubId||'').trim(); // '' = из настроек подключения
@@ -16216,7 +16217,7 @@ function cfoqNorm(rec){
   }catch(e){o.bad=(e&&e.message)||String(e);o._orig=rec;o.rules=[];o.excl=[];}
   return o;
 }
-function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length||r.sheetCode||r.importReserve||r.hubId||r.fileUrl||r.sheetUrl);} // код листа, настройки импорта и ссылки - тоже повод хранить запись
+function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length||r.sheetCode||r.importLimit||r.importOpen||r.hubId||r.fileUrl||r.sheetUrl);} // код листа, настройки импорта и ссылки - тоже повод хранить запись
 function cfoqEsc(v){return String(v).replace(/"/g,'""');}
 function cfoqBad(v){return /'/.test(String(v))?'В значении есть апостроф: QUERY держит строку в одинарных кавычках и экранировать его нечем - отобрать такое значение через равенство нельзя':'';}
 // текст ГОДА по режиму (mode задаётся параметром ради тестов обеих веток; по умолчанию - константа)
@@ -16272,25 +16273,28 @@ function cfoqFormula(rec){return cfoqFormulaLines(rec).join('\n');}
 // склейка кусков формулы 1 обратно в один текст (для теста и проверки): берёт литералы в кавычках построчно
 function cfoqFormulaJoined(text){const out=[];String(text||'').split('\n').slice(1).forEach(l=>{const m=l.match(/^\s*"(.*)"(?:&|\))$/);if(m)out.push(m[1]);});return out.join('');}
 function cfoqShownText(rec){return cfoqFormula(rec)||CFOQ_NONE;}
-// ── ВТОРАЯ ФОРМУЛА: IMPORTRANGE в файле самого ЦФО (23.09.2026) - тянет лист-приёмник из таблицы-хаба ──
+// ── ВТОРАЯ ФОРМУЛА: IMPORTRANGE в файле самого ЦФО (23.09.2026; правка 24.09.2026) - тянет лист-приёмник из хаба ──
 // ⚠ Кусками по 10 000 строк: на больших диапазонах Google отдаёт ошибку (проверено Олегом). Первый кусок
-//   с A2 - шапка не тянется. ГРАНИЦА = счётчик строк правила + ЗАПАС (поле в окне, по умолчанию 10 000,
-//   шаг и минимум 1000; хранится в записи как importReserve, 0 = умолчание). Куски по 10 000 до границы,
-//   ПОСЛЕДНИЙ ОБРЕЗАЕТСЯ РОВНО ПО ГРАНИЦЕ, а не до круглого числа: 1 200 + 10 000 → A2:O10000, A10001:O11200;
-//   400 + 5 000 → один кусок A2:O5400. Прежний «минимум 3 куска» убран (гнал пустые диапазоны при малом
-//   числе строк), поле «кусков» тоже: число кусков - следствие границы, хочется больше - растёт запас.
+//   с A2 - шапка не тянется. ВЕРХНЯЯ ГРАНИЦА ЛИСТА («всего строк», importLimit) - её задаёт админ (10 000, 5 000,
+//   50 000); по умолчанию - счётчик строк правила, округлённый ВВЕРХ до ближайших 10 000 (cfoqLimitAuto; 0 в записи =
+//   умолчание), значение всегда редактируемое. Куски по 10 000 до границы, ПОСЛЕДНИЙ ОБРЕЗАЕТСЯ РОВНО ПО ГРАНИЦЕ:
+//   5 000 → один кусок A2:O5000; 25 000 → три, последний A20001:O25000.
+//   ОТКРЫТЫЙ ДИАПАЗОН (importOpen, галочка) - формула 2 из ОДНОГО IMPORTRANGE без верхней границы
+//   («<имя листа>!A2:O»), поле «всего строк» гаснет; удобно, пока строк немного, на больших объёмах Google может
+//   не отдать диапазон. Выбор хранится в записи, как и остальные настройки листа.
+//   Прежний «запас, строк» (importReserve, 23.09) убран - граница задаётся прямо; старое поле при чтении не разбирается.
 //   ID таблицы-хаба - из настроек подключения (fin_sheetId) с переопределением в поле (hubId в записи).
-const CFOQ_CHUNK=10000,CFOQ_RESERVE_DEFAULT=10000,CFOQ_RESERVE_STEP=1000,CFOQ_RESERVE_MIN=1000,CFOQ_RESERVE_MAX=500000;
-// запас из записи/поля: 0 - умолчание; иначе целое не ниже минимума
-function cfoqReserveNorm(v){const n=Math.floor(Number(v)||0);if(n<=0)return 0;return Math.min(CFOQ_RESERVE_MAX,Math.max(CFOQ_RESERVE_MIN,n));}
-function cfoqReserveOf(rec){const r=rec||{};return cfoqReserveNorm(r.importReserve)||CFOQ_RESERVE_DEFAULT;}
-function cfoqBoundary(n,reserve){return Math.max(0,Math.floor(Number(n)||0))+(cfoqReserveNorm(reserve)||CFOQ_RESERVE_DEFAULT);}
+const CFOQ_CHUNK=10000,CFOQ_LIMIT_STEP=1000,CFOQ_LIMIT_MIN=1000,CFOQ_LIMIT_MAX=5000000;
+function cfoqLimitNorm(v){const n=Math.floor(Number(v)||0);if(n<=0)return 0;return Math.min(CFOQ_LIMIT_MAX,Math.max(CFOQ_LIMIT_MIN,n));} // 0 = умолчание
+function cfoqLimitAuto(n){n=Math.max(0,Math.floor(Number(n)||0));return Math.max(CFOQ_CHUNK,Math.ceil(n/CFOQ_CHUNK)*CFOQ_CHUNK);} // вверх до ближайших 10 000, не меньше 10 000
+function cfoqLimitOf(rec,n){const r=rec||{};return cfoqLimitNorm(r.importLimit)||cfoqLimitAuto(n);}
 // диапазоны до границы: без разрывов и нахлёста, последний заканчивается РОВНО на границе
 function cfoqImportRanges(boundary){boundary=Math.floor(Number(boundary)||0);const out=[];for(let i=0;i*CFOQ_CHUNK<boundary;i++){const a=i===0?2:i*CFOQ_CHUNK+1,b=Math.min((i+1)*CFOQ_CHUNK,boundary);if(b<a)break;out.push('A'+a+':O'+b);}return out;}
-function cfoqImportFormula(hubId,code,boundary){
+function cfoqImportFormula(hubId,code,boundary,open){
   hubId=String(hubId||'').trim();code=String(code||'').trim();
-  const rg=cfoqImportRanges(boundary);
-  if(!hubId||!code||!rg.length||/["\s]/.test(hubId)||/["\s!]/.test(code))return '';
+  if(!hubId||!code||/["\s]/.test(hubId)||/["\s!]/.test(code))return '';
+  if(open)return '=QUERY({IMPORTRANGE("'+hubId+'"; "'+code+'!A2:O")}; "SELECT *")'; // открытый диапазон - один кусок без верхней границы
+  const rg=cfoqImportRanges(boundary);if(!rg.length)return '';
   return '=QUERY({\n'+rg.map(r=>'  IMPORTRANGE("'+hubId+'"; "'+code+'!'+r+'")').join(';\n')+'\n}; "SELECT *")';
 }
 // ID таблицы-хаба из поля: принимает и полную ссылку (часть между /d/ и следующим «/»), и голый ID; дефис и
@@ -16313,13 +16317,13 @@ function cfoqFileUrlNorm(v){v=String(v||'').trim();if(!v)return '';if(/^https?:\
 function cfoqSheetUrlNorm(v){v=String(v||'').trim();return /^https?:\/\//i.test(v)?v:'';}
 // {ok, why}: ссылка на лист-приёмник обязана вести на ту же таблицу-хаб (ID между /d/ и следующим «/»)
 function cfoqSheetUrlCheck(url,hubId){url=cfoqSheetUrlNorm(url);hubId=String(hubId||'').trim();if(!url)return {ok:false,why:'это не ссылка'};const id=cfoqHubIdParse(url);if(id===url)return {ok:false,why:'в адресе нет ID таблицы (часть между /d/ и /edit)'};if(hubId&&id!==hubId)return {ok:false,why:'ссылка ведёт на другую таблицу'};return {ok:true,why:''};}
-// {text, why, n, reserve, boundary, chunks}: text - формула либо ''; why - почему её нет
+// {text, why, n, limit, auto, open, chunks}: text - формула либо ''; why - почему её нет; limit - граница листа
 function cfoqImportView(rec,n){
-  const r=cfoqNorm(rec),hub=cfoqHubId(r),reserve=cfoqReserveOf(r),nn=Math.max(0,Math.floor(Number(n)||0)),boundary=cfoqBoundary(nn,reserve);
-  const out={n:nn,reserve,boundary,chunks:cfoqImportRanges(boundary).length,text:'',why:''};
+  const r=cfoqNorm(rec),hub=cfoqHubId(r),nn=Math.max(0,Math.floor(Number(n)||0)),limit=cfoqLimitOf(r,nn),open=!!r.importOpen;
+  const out={n:nn,limit,auto:!cfoqLimitNorm(r.importLimit),open,chunks:open?1:cfoqImportRanges(limit).length,text:'',why:''};
   if(!r.sheetCode){out.why='сначала сгенерируйте код листа';return out;}
   if(!hub){out.why='не задан ID таблицы, откройте Настройки → Подключение';return out;}
-  out.text=cfoqImportFormula(hub,r.sheetCode,boundary);if(!out.text)out.why='ID таблицы или код листа содержат недопустимые символы';
+  out.text=cfoqImportFormula(hub,r.sheetCode,limit,open);if(!out.text)out.why='ID таблицы или код листа содержат недопустимые символы';
   return out;
 }
 // ── Разбор условия WHERE для счётчиков ──────────────────────────────────────────────────────
@@ -16464,7 +16468,9 @@ window.cfoQueryOpen=function(tr){
       <details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:var(--text2);font-weight:600;user-select:none">Настройки листа</summary>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 4px;font-size:12px;color:var(--text2)">
           <label style="display:inline-flex;align-items:center;gap:4px">ID таблицы-хаба <input type="text" id="cfoq-hub" class="bar-ctl" value="${_pesc(rec.hubId)}" oninput="cfoqHubInput(this.value)" placeholder="из Настройки → Подключение" title="Пусто - берётся из настроек подключения (fin_sheetId); впишите, чтобы переопределить" style="width:230px;box-sizing:border-box;text-align:left"></label>
-          <label style="display:inline-flex;align-items:center;gap:4px">запас, строк <input type="number" id="cfoq-reserve" class="bar-ctl" min="${CFOQ_RESERVE_MIN}" step="${CFOQ_RESERVE_STEP}" value="${cfoqReserveOf(rec)}" oninput="cfoqReserveInput(this.value)" title="Запас строк сверх счётчика: граница листа = строк сейчас + запас; по умолчанию ${CFOQ_RESERVE_DEFAULT.toLocaleString('ru-RU')}, шаг и минимум ${CFOQ_RESERVE_STEP.toLocaleString('ru-RU')}. Куски по ${CFOQ_CHUNK.toLocaleString('ru-RU')} строк, последний обрезается по границе" style="width:88px;box-sizing:border-box;text-align:left"></label>
+          <label style="display:inline-flex;align-items:center;gap:4px">всего строк <input type="number" id="cfoq-limit" class="bar-ctl" min="${CFOQ_LIMIT_MIN}" step="${CFOQ_LIMIT_STEP}" value="${cfoqLimitOf(rec,0)}" oninput="cfoqLimitInput(this.value)" title="Верхняя граница листа-приёмника: куски по ${CFOQ_CHUNK.toLocaleString('ru-RU')} строк, последний обрезается по границе; по умолчанию - счётчик строк правила, округлённый вверх до ближайших ${CFOQ_CHUNK.toLocaleString('ru-RU')}" style="width:96px;box-sizing:border-box;text-align:left"></label>
+          <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="Один IMPORTRANGE без верхней границы (A2:O)"><input type="checkbox" id="cfoq-open" ${rec.importOpen?'checked':''} onchange="cfoqOpenToggle(this.checked)" style="margin:0"> открытый диапазон</label>
+          <span style="${CFOQ_CAP}">без верхней границы - удобно, пока строк немного; на больших объёмах Google может не отдать диапазон</span>
           <span id="cfoq-filebox" style="display:inline-flex;align-items:center;gap:6px"></span>
         </div>
         <div id="cfoq-import-note" style="${CFOQ_CAP}"></div>
@@ -16481,7 +16487,7 @@ window.cfoQueryOpen=function(tr){
   cfoqRender();
 };
 // вид записи, который уходит в облако (то же, что _accessQueriesCollect кладёт для одной строки) - для признака несохранённого
-function cfoqSaveShapeJson(rec){const r=cfoqNorm(rec);return JSON.stringify({rules:r.rules,excl:r.excl,sheetCode:r.sheetCode,sheetName:r.sheetName,sheetCodePart:r.sheetCodePart,importReserve:r.importReserve,hubId:r.hubId,fileUrl:r.fileUrl,sheetUrl:r.sheetUrl});}
+function cfoqSaveShapeJson(rec){const r=cfoqNorm(rec);return JSON.stringify({rules:r.rules,excl:r.excl,sheetCode:r.sheetCode,sheetName:r.sheetName,sheetCodePart:r.sheetCodePart,importLimit:r.importLimit,importOpen:r.importOpen,hubId:r.hubId,fileUrl:r.fileUrl,sheetUrl:r.sheetUrl});}
 function cfoqDirty(){const rec=_cfoqRec();return !!rec&&cfoqSaveShapeJson(rec)!==window._cfoqSavedJson;}
 window.cfoqClose=function(){const ov=document.getElementById('cfoQueryOverlay');if(!ov)return;if(cfoqDirty()&&!confirm('Есть несохранённые изменения, закрыть?\n\nОни будут потеряны. Чтобы оставить - «Отмена», затем «Сохранить».'))return;ov.remove();};
 // ── ссылки: разметка - чистые функции (тест), список листов хаба - через Sheets API как в панели доступа ──
@@ -16522,7 +16528,8 @@ window.cfoqRebuildName=function(){const rec=_cfoqRec();if(!rec||!rec.legacy)retu
 // все занятые коды - со строк панели доступа (записи живут на строках), плюс снимок загруженного
 window.cfoqHubInput=function(v){const rec=_cfoqRec();if(!rec)return;rec.hubId=cfoqHubIdParse(v);cfoqRefresh();};
 // ручной ввод: значение, равное авто, - это «авто» (0), иначе ручное не ниже минимума; поле само показывает действующее число
-window.cfoqReserveInput=function(v){const rec=_cfoqRec();if(!rec)return;const n=cfoqReserveNorm(v);rec.importReserve=(n&&n!==CFOQ_RESERVE_DEFAULT)?n:0;cfoqRefresh();}; // равный умолчанию - хранится как умолчание
+window.cfoqLimitInput=function(v){const rec=_cfoqRec();if(!rec)return;const n=cfoqLimitNorm(v);rec.importLimit=(n&&n!==cfoqLimitAuto(window._cfoqLastN||0))?n:0;cfoqRefresh();}; // равный умолчанию - хранится как умолчание
+window.cfoqOpenToggle=function(on){const rec=_cfoqRec();if(!rec)return;rec.importOpen=!!on;cfoqRefresh();};
 // все занятые ПОЛНЫЕ имена листов - со строк панели доступа (записи живут на строках) плюс снимок загруженного; exceptEmail - чьё имя не считать (своё)
 function _cfoqAllCodes(exceptEmail){const out=new Set();const ex=String(exceptEmail||'').toLowerCase();try{const tb=document.getElementById('acc-tbody');if(tb)[...tb.querySelectorAll('tr')].forEach(tr=>{const em=((tr.querySelector('.acc-email')||{}).value||'').trim().toLowerCase();if(ex&&em===ex)return;const c=tr._cfoq&&cfoqNorm(tr._cfoq).sheetCode;if(c)out.add(c);});JSON.parse(window._accessQueriesLoaded||'[]').forEach(q=>{if(ex&&String(q&&q.email||'').toLowerCase()===ex)return;const c=cfoqNorm(q).sheetCode;if(c)out.add(c);});}catch(e){}return out;}
 window.cfoqCodeIssue=function(reissue){
@@ -16646,10 +16653,11 @@ window.cfoqRefresh=function(){
   window._cfoqLastN=(c.n==null?0:c.n);const iv=cfoqImportView(rec,window._cfoqLastN);
   const o2=document.getElementById('cfoq-out2');if(o2){o2.value=iv.text||iv.why;o2.style.color=iv.text?'var(--text)':'var(--text3)';}
   const cp2=document.getElementById('cfoq-copy2');if(cp2){const can=!!iv.text&&loaded;cp2.disabled=!can;cp2.style.opacity=can?'1':'.5';cp2.style.cursor=can?'pointer':'not-allowed';cp2.title=can?'':(iv.why||'Данные ещё не загружены');}
-  const rsIn=document.getElementById('cfoq-reserve');if(rsIn&&document.activeElement!==rsIn&&String(rsIn.value)!==String(iv.reserve))rsIn.value=iv.reserve; // поле всегда показывает ДЕЙСТВУЮЩИЙ запас (пока в нём не печатают)
+  const lmIn=document.getElementById('cfoq-limit');if(lmIn){if(document.activeElement!==lmIn&&String(lmIn.value)!==String(iv.limit))lmIn.value=iv.limit;lmIn.disabled=iv.open;lmIn.style.opacity=iv.open?'.5':'1';} // поле всегда показывает ДЕЙСТВУЮЩУЮ границу (пока в нём не печатают); в открытом режиме гаснет
+  const opIn=document.getElementById('cfoq-open');if(opIn&&opIn.checked!==iv.open)opIn.checked=iv.open;
   const hub=cfoqHubId(rec),hubSrc=rec.hubId?'ID задан в этом окне':(hub?'ID из Настройки → Подключение':'');
   const hubWarn=cfoqHubIdLooksCut(hub)?' ⚠ ID не похож на полный (у Google 44 знака, первый - «1») - сверьте с адресом файла, часть между /d/ и /edit; можно вставить в поле всю ссылку':'';
-  const inote=document.getElementById('cfoq-import-note');if(inote){inote.textContent='строк сейчас '+(c.n==null?'- (счётчик недоступен, взят 0)':c.n.toLocaleString('ru-RU'))+', запас '+iv.reserve.toLocaleString('ru-RU')+', лист рассчитан до границы '+iv.boundary.toLocaleString('ru-RU')+' ('+iv.chunks+' '+(iv.chunks===1?'кусок':iv.chunks<5?'куска':'кусков')+')'+(hubSrc?' · '+hubSrc+': '+hub:'')+hubWarn;inote.style.color=hubWarn?'var(--orange)':'var(--text2)';}
+  const inote=document.getElementById('cfoq-import-note');if(inote){const nowTxt='сейчас под условия попадает '+(c.n==null?'- (счётчик недоступен)':c.n.toLocaleString('ru-RU'));inote.textContent=(iv.open?'диапазон открыт, '+nowTxt:'лист рассчитан до строки '+iv.limit.toLocaleString('ru-RU')+' ('+iv.chunks+' '+(iv.chunks===1?'кусок':iv.chunks<5?'куска':'кусков')+(iv.auto?', авто':'')+'), '+nowTxt+(c.n!=null&&c.n>iv.limit?' - НЕ ВЛЕЗАЕТ, увеличьте границу':''))+(hubSrc?' · '+hubSrc+': '+hub:'')+hubWarn;inote.style.color=hubWarn?'var(--orange)':'var(--text2)';}
   const f1w=document.getElementById('cfoq-f1-where');if(f1w)f1w.textContent=rec.sheetCode||'(код не задан)';
   const l1=document.getElementById('cfoq-link1');if(l1){const h=cfoqLink1Html(rec);const typing1=!rec.sheetUrl&&document.activeElement===document.getElementById('cfoq-sheeturl');if(l1.getAttribute('data-sig')!==h&&!typing1){l1.innerHTML=h;l1.setAttribute('data-sig',h);}}
   // поле ссылки не перерисовываем, пока в нём печатают; но принятая ссылка (rec.fileUrl) сразу сменяет поле на «Открыть файл»
@@ -16705,7 +16713,7 @@ window._accessQueriesCollect=function(tb){
   const out=[],seen={};
   [...tb.querySelectorAll('tr')].forEach(tr=>{const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();if(!em||seen[em]||!tr._cfoq||!cfoqHasCond(tr._cfoq))return;seen[em]=1;
     const r=cfoqNorm(tr._cfoq);if(r.bad&&r._orig&&typeof r._orig==='object'){out.push(Object.assign({},r._orig,{email:em}));return;}
-    out.push({email:em,rules:r.rules,excl:r.excl,sheetCode:r.sheetCode,sheetName:r.sheetName,sheetCodePart:r.sheetCodePart,importReserve:r.importReserve,hubId:r.hubId,fileUrl:r.fileUrl,sheetUrl:r.sheetUrl});});
+    out.push({email:em,rules:r.rules,excl:r.excl,sheetCode:r.sheetCode,sheetName:r.sheetName,sheetCodePart:r.sheetCodePart,importLimit:r.importLimit,importOpen:r.importOpen,hubId:r.hubId,fileUrl:r.fileUrl,sheetUrl:r.sheetUrl});});
   return out;
 };
 
