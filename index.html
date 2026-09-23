@@ -11730,7 +11730,7 @@ function pfRunTests(){
    ok('окно · текстовые поля - ввод строки, оператор «содержит»',qr.indexOf("f.t==='text'")>=0&&qr.indexOf('cfoqCondInput(')>=0&&String(cfoqOp).indexOf('содержит')>=0);
    ok('окно · email простым текстом, не <b>',/<span>\$\{_htmlEsc\(email\|\|/.test(qo));
    ok('окно · итог и «нет условий» из одного источника',String(cfoqRefresh).indexOf('cfoqShownText(')>=0&&String(cfoqRefresh).indexOf('CFOQ_WARN_SHARE')>=0);
-   ok('панель доступа · пишет config/cfoQueries через _fbSetSafe',asp.indexOf("_fbSetSafe('config/cfoQueries'")>=0);
+   ok('панель доступа · пишет config/cfoQueries через _fbSetSafe (в _accessQueriesSave), панель зовёт её',String(_accessQueriesSave).indexOf("_fbSetSafe('config/cfoQueries'")>=0&&asp.indexOf('_accessQueriesSave(tb)')>=0&&asp.indexOf("_fbSetSafe('config/cfoQueries'")<0);
    // 9. КОД ЛИСТА-ПРИЁМНИКА (23.09.2026)
    ok('код листа · в алфавите нет похожих символов, 27 знаков',!/[0O1IL5S8B]/.test(CFOQ_CODE_ALPHABET)&&CFOQ_CODE_ALPHABET.length===27&&new Set(CFOQ_CODE_ALPHABET).size===27&&/^[A-Z0-9]+$/.test(CFOQ_CODE_ALPHABET));
    ok('код листа · формат RawData_ + 8 знаков алфавита',(()=>{const c=cfoqCodeGen(new Set());return CFOQ_CODE_RE.test(c)&&c.length===CFOQ_CODE_PREFIX.length+CFOQ_CODE_LEN&&![...c.slice(CFOQ_CODE_PREFIX.length)].some(ch=>'0O1IL5S8B'.indexOf(ch)>=0);})());
@@ -11739,6 +11739,17 @@ function pfRunTests(){
    ok('код листа · не подобрать - null, а не дубль',cfoqCodeGen(new Set([CFOQ_CODE_PREFIX+CFOQ_CODE_ALPHABET[0].repeat(CFOQ_CODE_LEN)]),()=>0)===null);
    ok('код листа · запись без sheetCode читается: «код не задан», кнопка генерации, окно не ломается',(()=>{const r=cfoqNorm({email:'a@b',rules:[{conds:[{field:'dir',values:['x']}]}]});const h=cfoqSheetHtml(r);return r.sheetCode===''&&h.indexOf('код не задан')>=0&&h.indexOf('cfoqCodeIssue(false)')>=0&&cfoqSheetNote(r).indexOf('не задан')>=0&&!cfoqHasCond({email:'a@b'});})());
    ok('код листа · с кодом: код в блоке, копирование и перевыпуск с подтверждением, подпись под формулой по коду',(()=>{const r=cfoqNorm({email:'a@b',sheetCode:'RawData_ACDEFGHJ'});const h=cfoqSheetHtml(r);return r.sheetCode==='RawData_ACDEFGHJ'&&h.indexOf('RawData_ACDEFGHJ')>=0&&h.indexOf('Скопировать имя')>=0&&h.indexOf('cfoqCodeIssue(true)')>=0&&/confirm\(/.test(String(cfoqCodeIssue))&&String(cfoqCodeIssue).indexOf('IMPORTRANGE')>=0&&cfoqSheetNote(r).indexOf('RawData_ACDEFGHJ')>=0&&cfoqHasCond(r);})());
+   // 10. ЗАПИСЬ ВЕТКИ НЕ ЗАТИРАЕТ ОБЛАКО (баг 23.09.2026: config/cfoQueries пуста после сохранения)
+   {const q1=[{email:'a@b',rules:[{conds:[{field:'dir',values:['x'],text:''}],raw:''}],excl:[],sheetCode:''}];
+    ok('запись · без изменений - не пишется',_accessQueriesPlan(q1,JSON.stringify(q1),true).action==='unchanged');
+    ok('запись · ветка НЕ прочитана при открытии - не пишется даже при изменениях, причина названа',(()=>{const p=_accessQueriesPlan(q1,'[]',false);return p.action==='unread'&&/не затереть/.test(p.reason);})());
+    ok('запись · пустой список поверх непустого - только через подтверждение с числом',(()=>{const p=_accessQueriesPlan([],JSON.stringify(q1),true);return p.action==='confirm-empty'&&p.loadedN===1;})()&&_accessQueriesPlan([],'[]',true).action==='unchanged');
+    ok('запись · прочитано и изменилось - пишется целиком',_accessQueriesPlan(q1,'[]',true).action==='write'&&_accessQueriesPlan(q1,'[]',true).n===1);
+    ok('запись · запись с правилами и кодом уходит целиком и читается обратно той же',(()=>{const rec=cfoqNorm({email:'A@B',sheetCode:'RawData_ACDEFGHJ',rules:[{conds:[{field:'dir',values:['АП']},{field:'offer',text:'7'}],raw:'Col5 > 0'}],excl:[{conds:[{field:'sub',values:['x']}]}]});const out={email:rec.email,rules:rec.rules,excl:rec.excl,sheetCode:rec.sheetCode};const back=cfoqNorm(JSON.parse(JSON.stringify(out)));return JSON.stringify(back)===JSON.stringify(rec)&&back.sheetCode==='RawData_ACDEFGHJ'&&cfoqFormula(back)===cfoqFormula(rec);})());
+    const sap=String(showAccessPanel),asp=String(accessSavePanel),qs=String(_accessQueriesSave);
+    ok('запись · панель читает ветку отдельно с таймаутом и ставит флаг «прочитано» только при ответе',/_snapRead\('config\/cfoQueries'/.test(sap)&&/window\._accessQueriesRead=true;/.test(sap)&&/window\._accessQueriesRead=false;/.test(sap));
+    ok('запись · панель и «Готово» пишут одной функцией, панель ждёт результат и называет его',asp.indexOf('_accessQueriesSave(tb)')>=0&&String(cfoqDone).indexOf('_accessQueriesSave(tb)')>=0&&asp.indexOf('qp.then(')>=0&&asp.indexOf('_accessToast(')>=0&&qs.indexOf('сохранено записей')>=0);
+    ok('запись · отказ облака показывается каждый раз, а не один раз за сессию',qs.indexOf("delete window._fbSetWarned['config/cfoQueries']")>=0&&qs.indexOf('_accessQueriesPlan(')>=0&&/confirm\(/.test(qs));}
    ok('код листа · код сохраняется в записи и не печатается вне окна (нет console.log с sheetCode, панель доступа кода не знает)',(()=>{const src=[cfoqRender,cfoqRefresh,cfoQueryOpen,cfoqCodeIssue,_accessQueriesCollect,_accessQueriesAttach,cfoqRowMark,_accessRowHtml,showAccessPanel].map(String).join('\n');return src.indexOf('sheetCode:r.sheetCode')>=0&&!/console\.log\([^)]*sheetCode/.test(src)&&String(_accessRowHtml).indexOf('sheetCode')<0&&String(showAccessPanel).indexOf('sheetCode')<0&&String(cfoqRowMark).indexOf('sheetCode')<0;})());}
 
   const bad=R.filter(r=>!r.pass);
@@ -15854,15 +15865,41 @@ window.accessSavePanel=function(btn){
   // Применяем правки руководителя из панели (значения дропдаунов - через renameMap, если руководителя тоже переименовали)
   rowsData.forEach(r=>{if(!r.nm)return;let mg=r.mg;if(mg&&renameMap[mg])mg=renameMap[mg];if(mg&&mg!==r.nm)_cfoHierarchy[r.nm]=mg;else delete _cfoHierarchy[r.nm];});
   _cfoHierSave(); if(ownersChanged)_ownersSave();
-  // Условия персональных листов (config/cfoQueries): своя запись через _fbSetSafe и ТОЛЬКО при изменении -
-  // отказ правил у новой ветки не должен ронять сохранение доступа, а сообщение об отказе называет ветку сам _fbSetSafe.
-  const queries=_accessQueriesCollect(tb);
-  if(JSON.stringify(queries)!==window._accessQueriesLoaded){_fbSetSafe('config/cfoQueries',queries,'Запросы ЦФО (персональные листы)').then(ok=>{if(ok)window._accessQueriesLoaded=JSON.stringify(queries);});}
+  // Условия персональных листов (config/cfoQueries): своя запись (_accessQueriesSave) - отказ правил у этой ветки
+  // не роняет сохранение доступа, но панель ЖДЁТ её результата и называет его: «сохранено записей N» либо почему нет.
   if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
+  const qp=_accessQueriesSave(tb);
   fbApp();const db=firebase.database();
   Promise.all([db.ref('config/allowedEmails').set(allowed),db.ref('config/sheetAccess').set(sheetAcc),db.ref('config/names').set(names)])
-    .then(()=>{ const ov=document.getElementById('accessPanelOverlay'); if(ov)ov.remove(); })
+    .then(()=>qp.then(qr=>{
+      const ov=document.getElementById('accessPanelOverlay');
+      if(qr.ok||qr.cancelled){if(ov)ov.remove();_accessToast('Доступ сохранён. '+qr.msg,false);}
+      else{if(btn){btn.disabled=false;btn.textContent='Сохранить';}_accessStatusSet('Доступ сохранён, но: '+qr.msg,true);} // панель остаётся: условия не потеряны, причина названа
+    }))
     .catch(e=>{ if(btn){btn.disabled=false;btn.textContent='Сохранить';} alert('Не удалось сохранить: '+((e&&e.message)||e)+'\n\nПроверьте правила БД: запись config/allowedEmails, config/sheetAccess и config/names должна быть разрешена админу.'); });
+};
+// ── ЗАПИСЬ ВЕТКИ ЗАПРОСОВ ЦФО: план - чистая функция (тест), запись - одна на панель и окно ──
+// action: 'unchanged' - писать нечего; 'unread' - ветка не прочитана при открытии, НЕ писать (иначе
+// пустой список уехал бы поверх записей); 'confirm-empty' - все записи удаляются, нужно подтверждение
+// с числом; 'write' - писать.
+function _accessQueriesPlan(queries,loadedJson,readOk){
+  const cur=JSON.stringify(queries);let loadedN=0;try{loadedN=JSON.parse(loadedJson||'[]').length;}catch(e){}
+  if(cur===loadedJson)return {action:'unchanged',n:queries.length,loadedN};
+  if(!readOk)return {action:'unread',n:queries.length,loadedN,reason:'ветка config/cfoQueries не была прочитана при открытии панели - запись пропущена, чтобы не затереть облако. Закройте панель и откройте заново.'};
+  if(!queries.length&&loadedN>0)return {action:'confirm-empty',n:0,loadedN};
+  return {action:'write',n:queries.length,loadedN};
+}
+window._accessQueriesSave=function(tb){ // Promise<{ok, n, msg, unchanged?, cancelled?}>
+  const queries=_accessQueriesCollect(tb),plan=_accessQueriesPlan(queries,window._accessQueriesLoaded,!!window._accessQueriesRead);
+  if(plan.action==='unchanged')return Promise.resolve({ok:true,unchanged:true,n:plan.n,msg:'Запросы ЦФО: без изменений (записей '+plan.n+').'});
+  if(plan.action==='unread')return Promise.resolve({ok:false,n:plan.n,msg:'⚠ Запросы ЦФО НЕ сохранены: '+plan.reason});
+  if(plan.action==='confirm-empty'&&!confirm('Удалить ВСЕ записи запросов ЦФО ('+plan.loadedN+')?\n\nВетка config/cfoQueries станет пустой: у всех людей пропадут правила и коды листов.'))return Promise.resolve({ok:false,cancelled:true,n:0,msg:'Запросы ЦФО: удаление '+plan.loadedN+' записей отменено, ветка не тронута.'});
+  if(!_fbCloudOn())return Promise.resolve({ok:false,n:plan.n,msg:'⚠ Запросы ЦФО НЕ сохранены: облако не настроено (режим без Firebase).'});
+  try{window._fbSetWarned=window._fbSetWarned||{};delete window._fbSetWarned['config/cfoQueries'];}catch(e){} // отказ показывается КАЖДЫЙ раз: сохранение ручное, «один раз за сессию» прятало бы повтор
+  return _fbSetSafe('config/cfoQueries',queries,'Запросы ЦФО (персональные листы)').then(ok=>{
+    if(ok){window._accessQueriesLoaded=JSON.stringify(queries);return {ok:true,n:queries.length,msg:'✓ Запросы ЦФО: сохранено записей '+queries.length+'.'};}
+    return {ok:false,n:queries.length,msg:'⚠ Запросы ЦФО НЕ сохранены: облако отказало в записи config/cfoQueries - заведите правило записи для админа (текст отказа - в сообщении и консоли).'};
+  });
 };
 // Админ-панель «Доступ»: кто что видит (config/allowedEmails + config/sheetAccess)
 window.showAccessPanel=async function(){
@@ -15871,12 +15908,18 @@ window.showAccessPanel=async function(){
   fbApp();const db=firebase.database();
   let allowed=[],sheetAcc=[],names=[],titles=[],queries=[];
   try{
-    const [ae,sa,nm,cq]=await Promise.all([db.ref('config/allowedEmails').once('value'),db.ref('config/sheetAccess').once('value'),db.ref('config/names').once('value'),db.ref('config/cfoQueries').once('value')]);
+    const [ae,sa,nm]=await Promise.all([db.ref('config/allowedEmails').once('value'),db.ref('config/sheetAccess').once('value'),db.ref('config/names').once('value')]);
     const aev=ae.val(); allowed=aev?(Array.isArray(aev)?aev:Object.values(aev)):[];
     const sav=sa.val(); sheetAcc=sav?(Array.isArray(sav)?sav:Object.values(sav)):[];
     const nmv=nm.val(); names=nmv?(Array.isArray(nmv)?nmv:Object.values(nmv)):[];
-    const cqv=cq.val(); queries=cqv?(Array.isArray(cqv)?cqv:Object.values(cqv)):[]; // условия персональных листов (конструктор запроса ЦФО)
   }catch(e){}
+  // ⚠ Запросы ЦФО (config/cfoQueries) читаются ОТДЕЛЬНО и с таймаутом, и «прочитали пусто» отличается от
+  //   «не прочитали»: без этого панель, открытая до ответа облака (или при отказе чтения), уезжала бы при
+  //   сохранении ПУСТЫМ списком поверх записей - тот же класс, что чинили гейтом _planEditorOpen у
+  //   planOwners/planNotes. Не прочитано - ветка при сохранении НЕ пишется, панель говорит почему.
+  window._accessQueriesRead=false;window._accessQueriesReadErr='';
+  try{const cqv=await _snapRead('config/cfoQueries',15000);queries=cqv?(Array.isArray(cqv)?cqv:Object.values(cqv)):[];window._accessQueriesRead=true;}
+  catch(e){window._accessQueriesReadErr=(e&&e.message)||String(e);console.warn('[access] config/cfoQueries не прочитана:',window._accessQueriesReadErr);}
   const nameOf=em=>{const h=names.find(x=>x&&String(x.email||'').trim().toLowerCase()===String(em).trim().toLowerCase());return h?String(h.name||''):'';};
   try{
     const sid=localStorage.getItem('fin_sheetId')||'',key=localStorage.getItem('fin_apiKey')||'';
@@ -15927,6 +15970,7 @@ window.showAccessPanel=async function(){
           <button onclick="accessSavePanel(this)" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Сохранить</button>
         </div>
       </div>
+      <div id="acc-status" style="font-size:11px;margin-top:10px;color:var(--text3)"></div>
       <p style="font-size:10px;color:var(--text3);margin:12px 0 0">Изменения вступают в силу при следующем входе пользователя (или после «↻ Обновить данные»). Запись доступна только админу - настройте правила БД, если будет ошибка сохранения.</p>
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <span style="font-size:11px;color:var(--text3)">Завершить все активные сессии (все вернутся на экран входа)</span>
@@ -15939,7 +15983,13 @@ window.showAccessPanel=async function(){
   document.body.appendChild(overlay);
   // условия персональных листов - на строках (tr._cfoq); снимок «как было» нужен, чтобы при сохранении не писать ветку без изменений
   const tbq=document.getElementById('acc-tbody'); if(tbq){_accessQueriesAttach(tbq,queries); window._accessQueriesLoaded=JSON.stringify(_accessQueriesCollect(tbq));}
+  _accessStatusSet(window._accessQueriesRead?'Запросы ЦФО: в облаке записей '+queries.length+'.':'⚠ Запросы ЦФО НЕ прочитаны ('+(window._accessQueriesReadErr||'нет ответа')+'): при сохранении ветка config/cfoQueries не пишется, чтобы не затереть облако. Закройте панель и откройте заново.',!window._accessQueriesRead);
 };
+window._accessStatusSet=function(msg,isErr){const el=document.getElementById('acc-status');if(!el)return;el.textContent=msg||'';el.style.color=isErr?'var(--outcome)':'var(--text3)';};
+// всплывающее подтверждение после закрытия панели: что ушло в облако (молчаливая потеря видна сразу)
+window._accessToast=function(msg,isErr){try{const old=document.getElementById('accessToast');if(old)old.remove();const t=document.createElement('div');t.id='accessToast';
+  t.style.cssText='position:fixed;left:50%;bottom:30px;transform:translateX(-50%);z-index:100002;background:'+(isErr?'#7a2a27':'#2b3145')+';color:#fff;padding:9px 15px;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35);font-size:12px;font-family:var(--sans);max-width:min(92vw,640px)';
+  t.textContent=msg;document.body.appendChild(t);setTimeout(()=>{if(t.isConnected)t.remove();},isErr?9000:5000);}catch(e){}};
 
 // ===== КОНСТРУКТОР ПЕРСОНАЛЬНОГО ЗАПРОСА ЦФО (панель «Управление доступом», 23.09.2026) =====
 // Персональные листы RawData_<Фамилия> в таблице собираются формулой QUERY по RawData. Админ
@@ -16244,8 +16294,8 @@ window.cfoQueryOpen=function(tr){
         <button type="button" id="cfoq-copy" onclick="cfoqCopy()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Скопировать</button>
         <span id="cfoq-total" style="font-size:12px;margin-left:auto"></span></div>
       <textarea id="cfoq-out" readonly rows="5" style="${inp};resize:vertical;background:var(--surface2)"></textarea>
-      <p style="font-size:11px;color:var(--text3);margin:8px 0 0;line-height:1.6"><span id="cfoq-sheetnote"></span> Дашборд в таблицу не пишет - только отдаёт текст. Условия и код листа сохраняются кнопкой «Сохранить» панели доступа. Порядок правил - только для чтения, на результат не влияет.</p>
-      <div style="display:flex;justify-content:flex-end;margin-top:12px"><button type="button" onclick="document.getElementById('cfoQueryOverlay').remove()" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Готово</button></div>
+      <p style="font-size:11px;color:var(--text3);margin:8px 0 0;line-height:1.6"><span id="cfoq-sheetnote"></span> Дашборд в таблицу не пишет - только отдаёт текст. Кнопка «Готово» СРАЗУ пишет условия и код листа в облако (и кнопка «Сохранить» панели тоже); крестик и клик вне окна закрывают БЕЗ сохранения. Порядок правил - только для чтения, на результат не влияет.</p>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px"><span id="cfoq-save-status" style="font-size:11px;color:var(--text2);flex:1;text-align:right"></span><button type="button" id="cfoq-done" onclick="cfoqDone()" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Готово</button></div>
     </div>
   </div>`;
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
@@ -16386,6 +16436,19 @@ window.cfoqRefresh=function(){
     else if(c.err){el.textContent='⚠ итог недоступен: '+c.err;el.style.color='var(--orange)';el.title=c.err;}
     else{const share=c.m?c.n/c.m:0,warn=share>CFOQ_WARN_SHARE;el.innerHTML='видит <b style="font-family:var(--mono)">'+fmtN(c.n)+'</b> строк из '+fmtN(c.m)+' ('+Math.round(share*100)+'%)'+(warn?' - человек увидит почти все данные, проверьте правила':'');el.style.color=warn?'var(--outcome)':(c.n?'var(--text2)':'var(--outcome)');el.title='';}
   }
+};
+// «Готово» = сохранить и закрыть. Раньше окно только закрывалось, а человек был уверен, что сохранил;
+// теперь либо запись ушла (и окно говорит «сохранено записей N»), либо окно остаётся открытым с причиной.
+window.cfoqDone=function(){
+  const ov=document.getElementById('cfoQueryOverlay'),tb=document.getElementById('acc-tbody');if(!ov)return;
+  if(!tb){ov.remove();return;}
+  const btn=document.getElementById('cfoq-done'),st=document.getElementById('cfoq-save-status');
+  if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
+  _accessQueriesSave(tb).then(r=>{
+    _accessStatusSet(r.msg,!r.ok);
+    if(r.ok){if(st){st.textContent=r.msg;st.style.color='var(--income)';}setTimeout(()=>{if(ov.isConnected)ov.remove();},r.unchanged?0:700);}
+    else{if(btn){btn.disabled=false;btn.textContent='Готово';}if(st){st.textContent=r.msg+(r.cancelled?'':' Окно оставлено открытым: условия не потеряны, но в облаке их нет.');st.style.color='var(--outcome)';}}
+  });
 };
 window.cfoqCopy=function(){
   const out=document.getElementById('cfoq-out'),cp=document.getElementById('cfoq-copy');if(!out||!cp||cp.disabled)return;
