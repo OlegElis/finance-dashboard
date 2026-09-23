@@ -5139,16 +5139,17 @@ window.bankDDFilter=function(input,ddId){
 // `fn` - префикс обработчиков: список зовёт `${fn}Change()` и `${fn}SelectAll(bool)` (как на вкладках).
 // opts: labelFn(v) - подпись значения; search - поле поиска; bad(v) - причина, по которой значение
 // НЕЛЬЗЯ выбрать (пусто = можно): такое значение показывается красным, чекбокс выключен, причина в title.
+// noAll - без «Выбрать все»/«Снять все»; onChangeJs - свой обработчик смены галочки вместо `${fn}Change()`.
 function _ddMultiHtml(id,fn,items,selArr,opts){
   opts=opts||{};
   const search=opts.search?`<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><input type="text" oninput="bankDDFilter(this,'${id}')" placeholder="Поиск..." style="width:100%;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);box-sizing:border-box"></div>`:'';
-  const head=`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button type="button" onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button type="button" onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`;
+  const head=opts.noAll?'':`<div style="display:flex;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border)"><button type="button" onclick="${fn}SelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Выбрать все</button><button type="button" onclick="${fn}SelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);cursor:pointer;font-family:var(--sans)">Снять все</button></div>`;
   const sel=(selArr||[]).map(String);
   const list=`<div class="bank-dd-list" style="max-height:240px;overflow-y:auto">`+(items.length?items.map(v=>{
     const why=opts.bad?String(opts.bad(v)||''):'';
     const lab=_htmlEsc(opts.labelFn?opts.labelFn(v):v);
     if(why)return `<label title="${_htmlEsc(why)}" style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:not-allowed;font-size:11px;white-space:nowrap;color:var(--outcome)"><input type="checkbox" disabled> <span>${lab}</span><span style="font-size:10px;color:var(--text3)">- не выбрать</span></label>`;
-    return `<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_htmlEsc(v)}" ${sel.includes(String(v))?'checked':''} onchange="${fn}Change()"> <span>${lab}</span></label>`;
+    return `<label style="display:flex;align-items:center;gap:5px;padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap"><input type="checkbox" value="${_htmlEsc(v)}" ${sel.includes(String(v))?'checked':''} onchange="${opts.onChangeJs||(fn+'Change()')}"> <span>${lab}</span></label>`;
   }).join(''):'<div style="padding:8px 10px;font-size:11px;color:var(--text3)">нет данных</div>')+`</div>`;
   return `<div id="${id}" class="${opts.cls||''}" style="display:none;position:absolute;top:100%;left:0;z-index:200;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:${opts.search?'340px;max-width:520px':'130px'};margin-top:2px">${search}${head}${list}</div>`;
 }
@@ -11638,37 +11639,64 @@ function pfRunTests(){
    ok('экран: у расходов и доходов отбор НЕ изменился',/if\(p==null&&Math\.abs\(fa\)<0\.005\)return;/.test(cs));
    ok('экран: утверждённое участвует в правиле, хотя и не показывается',/const baseDirScr=\(d,code\)=>\{const bl=rev\?D\.blPlanIncMD:D\.blPlanMD;/.test(cs));}
 
-  // 30. КОНСТРУКТОР ЗАПРОСА ЦФО (панель доступа, 23.09.2026): формула, экранирование, счётчик
+  // 30. КОНСТРУКТОР ЗАПРОСА ЦФО - ПРАВИЛА-БЛОКИ (панель доступа, 23.09.2026)
   // ⚠ Набор чистый: фикстура строк собирается на месте, RAW и облако не читаются.
-  {const _mk=o=>{const r=new Array(15).fill('');r[0]=45000;Object.keys(o).forEach(k=>r[COL[k]]=o[k]);return r;};
-   const rec={email:'x@y',acc:['БФЛ - Касса'],dirs:['БФЛ','АП'],arts:['300_Акция "Приведи друга"'],subs:[],sides:["O'Neil"],extra:["Col10 CONTAINS 'Аренда'"],excl:["Col10 != 'Вывод прибыли'"]};
-   const ref='=QUERY(RawData!A:O; "SELECT * WHERE Col1 IS NOT NULL AND (Col8 = \'БФЛ - Касса\' OR Col14 = \'БФЛ\' OR Col14 = \'АП\' OR Col9 = \'300_Акция ""Приведи друга""\' OR Col10 CONTAINS \'Аренда\') AND Col10 != \'Вывод прибыли\' ORDER BY Col1 DESC, Col3 DESC")';
-   ok('запрос ЦФО · текст формулы совпадает с эталоном посимвольно',cfoqFormula(rec)===ref,cfoqFormula(rec));
-   ok('запрос ЦФО · двойные кавычки в значении удвоены',cfoqFormula({arts:['a"b']}).indexOf('Col9 = \'a""b\'')>=0);
-   ok('запрос ЦФО · значение с апострофом помечено и в формулу не идёт',!!cfoqBad("O'Neil")&&!cfoqBad('a"b')&&cfoqFormula(rec).indexOf("O'Neil")<0);
-   ok('запрос ЦФО · пустой набор даёт «нет условий», формулы нет',cfoqFormula(cfoqBlank())===''&&cfoqShownText(cfoqBlank())===CFOQ_NONE&&cfoqShownText({excl:["Col10 != 'x'"]})===CFOQ_NONE);
-   ok('запрос ЦФО · номер Col = индекс COL + 1 у всех пяти групп',CFOQ_GROUPS.length===5&&CFOQ_GROUPS.every(g=>g.col===g.idx+1));
-   const rows=[_mk({ACCOUNT:'БФЛ - Касса',ARTICLE_NAME:'Х'}),_mk({ACTIVITY_DIR:'АП',ARTICLE_NAME:'Вывод прибыли'}),_mk({ARTICLE_NAME:'Аренда офиса'}),
-     _mk({ARTICLE_CODE:'300_Акция "Приведи друга"',ARTICLE_NAME:'Х'}),_mk({SECOND_SIDE:"O'Neil",ARTICLE_NAME:'Х'}),_mk({ARTICLE_NAME:'Х'}),_mk({ACTIVITY_DIR:'БФЛ'})];
-   {const r=_mk({ACCOUNT:'БФЛ - Касса',ARTICLE_NAME:'Х'});r[0]='';rows.push(r);} // Col1 пусто - QUERY не отдаёт
-   // прямой перебор ТЕМИ ЖЕ условиями, руками; ⚠ `!=` у пустой ячейки в QUERY - ложь (строка выпадает), перебор это повторяет
-   const isNull=v=>v==null||v==='';
-   const direct=rows.filter(r=>!isNull(r[0])&&(r[7]==='БФЛ - Касса'||r[13]==='БФЛ'||r[13]==='АП'||r[8]==='300_Акция "Приведи друга"'||(!isNull(r[9])&&String(r[9]).includes('Аренда')))&&(!isNull(r[9])&&r[9]!=='Вывод прибыли')).length;
-   const c=cfoqCount(rec,rows);
-   ok('запрос ЦФО · счётчик совпадает с прямым перебором по тем же условиям',c.n===direct&&direct===3,c.n+' vs '+direct);
-   ok('запрос ЦФО · пустой набор - счётчик «условий нет»',cfoqCount(cfoqBlank(),rows).empty===true);
-   ok('запрос ЦФО · неразобранное условие - счётчика НЕТ, а не ноль',cfoqCount({acc:['x'],extra:['Col2 FOO 3']},rows).n===null&&!!cfoqCount({acc:['x'],extra:['Col2 FOO 3']},rows).err);
-   ok('запрос ЦФО · разбор: NOT/скобки/IS NULL/STARTS WITH/LIKE/MATCHES',
-      cfoqParse("NOT (Col8 = 'a' OR Col8 IS NULL)")(_mk({ACCOUNT:'b'}))===true&&cfoqParse("NOT (Col8 = 'a' OR Col8 IS NULL)")(_mk({}))===false
-      &&cfoqParse("Col8 STARTS WITH 'БФ' AND Col6 >= 100")(_mk({ACCOUNT:'БФЛ',OUTCOME:150}))===true&&cfoqParse("Col8 STARTS WITH 'БФ' AND Col6 >= 100")(_mk({ACCOUNT:'БФЛ',OUTCOME:50}))===false
-      &&cfoqParse("Col8 LIKE 'a_c%'")(_mk({ACCOUNT:'abcdef'}))===true&&cfoqParse("Col8 MATCHES 'ab'")(_mk({ACCOUNT:'abc'}))===false);
-   ok('запрос ЦФО · значения без trim, пустые отброшены, по алфавиту',JSON.stringify(cfoqValues(CFOQ_GROUPS[3],rows.concat([_mk({ARTICLE_NAME:'  '}),_mk({ARTICLE_NAME:'Аренда офиса '})])))==='["Аренда офиса","Аренда офиса ","Вывод прибыли","Х"]');
-   ok('запрос ЦФО · нормализация: RTDB-объект вместо массива, пустые строки, email в нижнем регистре',JSON.stringify(cfoqNorm({email:' A@B ',acc:{0:'x',1:''},extra:'  '}))==='{"email":"a@b","acc":["x"],"dirs":[],"arts":[],"subs":[],"sides":[],"extra":[],"excl":[]}');
-   // структура: мультивыбор - общий строитель, шестой копии разметки нет; запись - через _fbSetSafe в config/cfoQueries
-   const qo=String(cfoQueryOpen),asp=String(accessSavePanel);
-   ok('запрос ЦФО · окно берёт мультивыбор из общего _ddMultiHtml, своей копии списка нет',qo.indexOf('_ddMultiHtml(')>=0&&qo.indexOf('bank-dd-'+'list')<0&&qo.indexOf('_barBtnLabel(')>=0);
-   ok('запрос ЦФО · панель доступа пишет config/cfoQueries через _fbSetSafe',asp.indexOf("_fbSetSafe('config/cfoQueries'")>=0);
-   ok('запрос ЦФО · окно показывает «нет условий» из одного источника',qo.indexOf('cfoqShownText(')>=0||String(cfoqRefresh).indexOf('cfoqShownText(')>=0);}
+  {const _mk=o=>{const r=new Array(15).fill('');r[0]=45000;Object.keys(o).forEach(k=>{r[COL[k]]=o[k];});return r;};
+   const AP='АП - Автоправо',BFL='БФЛ',ZP='111_Заработная плата ОП',RA='РА - Реализация автотранспорта',OS='ОС - Оценка',KOP='АП - Касса ОП';
+   const rows=[
+     _mk({ACTIVITY_DIR:AP,ARTICLE_NAME:ZP,ACCOUNT:'x',ANALYTICS:'Общая'}),_mk({ACTIVITY_DIR:AP,ARTICLE_NAME:ZP,ACCOUNT:KOP}),      // АП + ЗП (2)
+     _mk({ACTIVITY_DIR:BFL,ARTICLE_NAME:ZP,ACCOUNT:'x'}),_mk({ACTIVITY_DIR:'САУ',ARTICLE_NAME:ZP,ACCOUNT:'y'}),  // чужие направления с той же подстатьёй
+     _mk({ACTIVITY_DIR:AP,ARTICLE_NAME:'Аренда',ACCOUNT:'x'}),                                                   // АП, другая подстатья
+     _mk({ACTIVITY_DIR:RA,ARTICLE_NAME:'Прочее',ACCOUNT:'x',ANALYTICS:'Общая'}),_mk({ACTIVITY_DIR:OS,ARTICLE_NAME:'Прочее',ACCOUNT:KOP,ANALYTICS:'Общая'}),
+     _mk({ACTIVITY_DIR:BFL,ARTICLE_NAME:'300_Акция "Приведи друга"',ACCOUNT:KOP,ANALYTICS:'Вывод чистой прибыли'}),
+     _mk({ACTIVITY_DIR:BFL,ARTICLE_NAME:'Оклад',ACCOUNT:'z',SECOND_SIDE:"O'Neil"})];
+   {const r=_mk({ACTIVITY_DIR:AP,ARTICLE_NAME:ZP,ACCOUNT:KOP});r[0]='';rows.push(r);} // Col1 пусто - QUERY не отдаёт
+   const cnt=rec=>cfoqCount(rec,rows),set=rec=>{const f=cfoqParse(cfoqWhere(rec));return rows.map((r,i)=>f&&f(r)?i:-1).filter(i=>i>=0);};
+   const R1={dir:[AP],sub:[ZP]},R2={dir:[RA,OS]},R3={acc:[KOP]};
+   // 1. «Автоправо + подстатья» не расползается на другие направления
+   {const s=set({rules:[R1]});
+    ok('правила · АП + подстатья даёт строки только этого направления',s.length===2&&s.every(i=>rows[i][COL.ACTIVITY_DIR]===AP),JSON.stringify(s));
+    ok('правила · в выдаче нет строк другого направления с той же подстатьёй',!s.some(i=>rows[i][COL.ACTIVITY_DIR]!==AP&&rows[i][COL.ARTICLE_NAME]===ZP));
+    ok('правила · поля внутри правила соединены AND',cfoqRuleText(R1)==="Col14 = '"+AP+"' AND Col10 = '"+ZP+"'",cfoqRuleText(R1));}
+   // 2. два правила - объединение, не пересечение
+   {const a=set({rules:[R1]}),b=set({rules:[R3]}),u=set({rules:[R1,R3]});
+    ok('правила · два правила дают объединение',u.length===new Set(a.concat(b)).size&&u.length>Math.max(a.length,b.length),a.length+'+'+b.length+'→'+u.length);
+    ok('правила · значения одного поля - OR, правила - в своих скобках, без «((»',cfoqWhere({rules:[R2,R3]})==="Col1 IS NOT NULL AND ( (Col14 = '"+RA+"' OR Col14 = '"+OS+"') OR (Col8 = '"+KOP+"') )",cfoqWhere({rules:[R2,R3]}));
+    ok('правила · многозначное поле рядом с другим полем берётся в скобки',cfoqRuleText({dir:[RA,OS],acc:[KOP]})==="Col8 = '"+KOP+"' AND (Col14 = '"+RA+"' OR Col14 = '"+OS+"')"&&cfoqRuleText({acc:[KOP],raw:'Col5 > 0 OR Col6 < 0'})==="Col8 = '"+KOP+"' AND (Col5 > 0 OR Col6 < 0)",cfoqRuleText({dir:[RA,OS],acc:[KOP]}));}
+   // 3. исключение вычитает ровно свои строки
+   {const base=set({rules:[R3]}),ex={sub:['Прочее']},withEx=set({rules:[R3],excl:[ex]}),c=cnt({rules:[R3],excl:[ex]});
+    const expected=base.filter(i=>rows[i][COL.ARTICLE_NAME]!=='Прочее');
+    ok('исключения · вычитает ровно свои строки',JSON.stringify(withEx)===JSON.stringify(expected),JSON.stringify(withEx)+' vs '+JSON.stringify(expected));
+    ok('исключения · счётчик «убирает» = строки объединения под исключение',c.perExcl[0]===base.length-expected.length,c.perExcl[0]);
+    ok('исключения · текст AND NOT ( … )',CFOQ_EXCL_MODE!=='not'||/ AND NOT \( \(Col10 = 'Прочее'\) \)$/.test(cfoqWhere({rules:[R3],excl:[ex]})),cfoqWhere({rules:[R3],excl:[ex]}));
+    ok('исключения · пустая ячейка исключением НЕ убирается (NOT, не <>)',CFOQ_EXCL_MODE!=='not'||set({rules:[R3],excl:[{ana:['Вывод чистой прибыли']}]}).length===base.length-1);}
+   // 4-5. экранирование, апостроф, пустой набор
+   ok('формула · двойные кавычки в значении удвоены',cfoqFormula({rules:[{sub:['300_Акция "Приведи друга"']}]}).indexOf("Col10 = '300_Акция \"\"Приведи друга\"\"'")>=0);
+   ok('формула · значение с апострофом помечено, в формулу не идёт, названо в проблемах',!!cfoqBad("O'Neil")&&cfoqFormula({rules:[{side:["O'Neil"],dir:[BFL]}]}).indexOf("O'Neil")<0&&cfoqProblems({rules:[{side:["O'Neil"]}]}).length===1);
+   ok('формула · пустой набор - «нет условий», формулы нет, копировать нечего',cfoqFormula(cfoqBlank())===''&&cfoqShownText(cfoqBlank())===CFOQ_NONE&&cfoqShownText({excl:[R1]})===CFOQ_NONE&&cnt(cfoqBlank()).empty===true);
+   ok('формула · эталон посимвольно (три правила приёмки)',cfoqFormula({rules:[R1,R2,R3]})==='=QUERY(RawData!A:O; "SELECT * WHERE Col1 IS NOT NULL AND ( (Col14 = \''+AP+'\' AND Col10 = \''+ZP+'\') OR (Col14 = \''+RA+'\' OR Col14 = \''+OS+'\') OR (Col8 = \''+KOP+'\') ) ORDER BY Col1 DESC, Col3 DESC")',cfoqFormula({rules:[R1,R2,R3]}));
+   ok('формула · номер Col = индекс COL + 1 у всех семи полей',CFOQ_FIELDS.length===7&&CFOQ_FIELDS.every(f=>f.col===f.idx+1));
+   // 6. счётчик каждого правила = прямой перебор
+   {const c=cnt({rules:[R1,R2,R3]});
+    const d1=rows.filter(r=>r[0]!==''&&r[COL.ACTIVITY_DIR]===AP&&r[COL.ARTICLE_NAME]===ZP).length,d2=rows.filter(r=>r[0]!==''&&(r[COL.ACTIVITY_DIR]===RA||r[COL.ACTIVITY_DIR]===OS)).length,d3=rows.filter(r=>r[0]!==''&&r[COL.ACCOUNT]===KOP).length;
+    ok('счётчик · каждое правило совпадает с прямым перебором',JSON.stringify(c.perRule)===JSON.stringify([d1,d2,d3]),JSON.stringify(c.perRule)+' vs '+JSON.stringify([d1,d2,d3]));
+    ok('счётчик · итог = прямой перебор объединения',c.n===rows.filter(r=>r[0]!==''&&((r[COL.ACTIVITY_DIR]===AP&&r[COL.ARTICLE_NAME]===ZP)||r[COL.ACTIVITY_DIR]===RA||r[COL.ACTIVITY_DIR]===OS||r[COL.ACCOUNT]===KOP)).length,c.n);
+    ok('счётчик · неразобранное raw - счётчика НЕТ, а не ноль',cnt({rules:[{raw:'Col2 FOO 3'}]}).n===null&&!!cnt({rules:[{raw:'Col2 FOO 3'}]}).err&&cnt({rules:[{raw:'Col2 FOO 3'}]}).perRule[0]===null);}
+   // 7. миграция плоской записи: то же множество строк, что у прежней формулы
+   {const flat={email:'x@y',acc:[KOP],dirs:[AP],subs:['Прочее'],extra:["Col10 CONTAINS 'Аренда'"],excl:["Col11 != 'Вывод чистой прибыли'"]};
+    const oldWhere="Col1 IS NOT NULL AND (Col8 = '"+KOP+"' OR Col14 = '"+AP+"' OR Col10 = 'Прочее' OR Col10 CONTAINS 'Аренда') AND Col11 != 'Вывод чистой прибыли'";
+    const f=cfoqParse(oldWhere),oldSet=rows.map((r,i)=>f&&f(r)?i:-1).filter(i=>i>=0),m=cfoqNorm(flat);
+    ok('миграция · плоская запись → 4 правила + 1 исключение, помечена',m.rules.length===4&&m.excl.length===1&&!!m.migrated&&m.excl[0].raw==="NOT (Col11 != 'Вывод чистой прибыли')");
+    ok('миграция · множество строк совпадает с прежней формулой',JSON.stringify(set(m))===JSON.stringify(oldSet)&&oldSet.length>0,JSON.stringify(set(m))+' vs '+JSON.stringify(oldSet));
+    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{dir:{0:AP}},1:{}},excl:null}))==='{"email":"a@b","rules":[{"acc":[],"dir":["'+AP+'"],"art":[],"sub":[],"side":[],"ana":[],"fin":[],"raw":""}],"excl":[]}');
+    ok('миграция · неразобранная запись не глотается: помечена, пишется обратно как была, флаг переживает повторную нормализацию',(()=>{const b=cfoqNorm({email:'q@w',rules:'мусор'}),b2=cfoqNorm(b);return !!b.bad&&b._orig&&b._orig.rules==='мусор'&&cfoqProblems(b).length===1&&b2.bad===b.bad&&b2._orig===b._orig&&cfoqHasCond(b);})());
+    ok('миграция · пометка migrated переживает повторную нормализацию',!!cfoqNorm(cfoqNorm(flat)).migrated);}
+   // структура: мультивыбор - общий строитель без «Выбрать все», шестой копии нет; запись - через _fbSetSafe
+   const qr=String(cfoqRender),qo=String(cfoQueryOpen),asp=String(accessSavePanel);
+   ok('окно · мультивыбор из общего _ddMultiHtml, noAll, своей копии списка нет',qr.indexOf('_ddMultiHtml(')>=0&&qr.indexOf('noAll:true')>=0&&(qr+qo).indexOf('bank-dd-'+'list')<0&&qr.indexOf('_barBtnLabel(')>=0);
+   ok('окно · email простым текстом, не <b>',/<span>\$\{_htmlEsc\(email\|\|/.test(qo));
+   ok('окно · итог и «нет условий» из одного источника',String(cfoqRefresh).indexOf('cfoqShownText(')>=0&&String(cfoqRefresh).indexOf('CFOQ_WARN_SHARE')>=0);
+   ok('панель доступа · пишет config/cfoQueries через _fbSetSafe',asp.indexOf("_fbSetSafe('config/cfoQueries'")>=0);}
 
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] pfRunTests (без данных, с любой вкладки): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли')+'. Живые проверки - отдельно: pfRunLiveTests() с вкладки БДР.');
@@ -15871,62 +15899,126 @@ window.showAccessPanel=async function(){
 };
 
 // ===== КОНСТРУКТОР ПЕРСОНАЛЬНОГО ЗАПРОСА ЦФО (панель «Управление доступом», 23.09.2026) =====
-// Персональные листы RawData_<Фамилия> в таблице собираются формулой QUERY по RawData. Раньше
-// формулу писали руками; теперь админ набирает условия здесь, а дашборд отдаёт ГОТОВЫЙ ТЕКСТ
-// формулы для вставки в первую ячейку листа. ⚠ В Sheets дашборд НЕ пишет - только показывает
-// текст и копирует его в буфер. Хранение - config/cfoQueries: массив записей
-//   {email, acc:[], dirs:[], arts:[], subs:[], sides:[], extra:[], excl:[]}
-// (acc - Col8 «Реквизиты счёта», dirs - Col14 «Направление», arts - Col9 «Статья», subs - Col10
-// «Подстатья», sides - Col12 «ID_SecondSide»; extra - готовые куски условий, вставляются как есть
-// и соединяются OR; excl - исключения, соединяются AND). Читается при открытии панели, пишется
-// в accessSavePanel вместе с allowedEmails/sheetAccess/names. ⚠ Правило записи в RTDB - только
-// ADMIN_EMAIL, как у остальных config/* (ветку надо завести в Firebase Console).
-// ⚠ Номер Col в QUERY = индекс колонки COL + 1 (диапазон RawData!A:O, Col1 = A); стережёт тест.
-// ⚠ Значения сравниваются С ТОЧНОСТЬЮ ДО ПРОБЕЛОВ: QUERY не обрезает хвостовые пробелы, и список
-//   значений собирается без trim - иначе счётчик считал бы одно, а лист отбирал бы другое.
-// ⚠ Двойные кавычки внутри значения удваиваются (формула сама в двойных кавычках; реальный случай -
-//   300_Акция ""Приведи друга""). Апостроф внутри значения ломает QUERY (строка в одинарных
-//   кавычках, экранирования у GViz нет) - такое значение показывается красным и НЕ выбирается.
-const CFOQ_GROUPS=[
-  {k:'acc',  col:8, idx:COL.ACCOUNT,      cat:'Счета',        title:'Реквизиты счёта (Col8)'},
-  {k:'dirs', col:14,idx:COL.ACTIVITY_DIR, cat:'Направления',  title:'Направление деятельности (Col14)'},
-  {k:'arts', col:9, idx:COL.ARTICLE_CODE, cat:'Статьи',       title:'Статья (Col9)'},
-  {k:'subs', col:10,idx:COL.ARTICLE_NAME, cat:'Подстатьи',    title:'Подстатья (Col10)'},
-  {k:'sides',col:12,idx:COL.SECOND_SIDE,  cat:'Контрагенты',  title:'ID_SecondSide (Col12)'}
+// Персональные листы RawData_<Фамилия> в таблице собираются формулой QUERY по RawData. Админ
+// собирает условия здесь, дашборд отдаёт ГОТОВЫЙ ТЕКСТ формулы для первой ячейки листа.
+// ⚠ В Sheets дашборд НЕ пишет - только показывает текст и копирует в буфер.
+// МОДЕЛЬ (с 23.09.2026, ПРАВИЛА-БЛОКИ; плоский OR первой версии оказался непригоден: подстатья
+// применялась ко ВСЕМ направлениям, «всё БФЛ целиком, а из Автоправа только 111_Заработная плата»
+// задать было нельзя): запись человека {email, rules:[ПРАВИЛО], excl:[ПРАВИЛО]},
+//   ПРАВИЛО = {acc:[], dir:[], art:[], sub:[], side:[], ana:[], fin:[], raw:''}
+// - внутри правила ПОЛЯ соединяются AND, значения одного поля - OR;
+// - правила в rules соединяются OR между собой;
+// - raw - готовое выражение, вставляется как есть и внутри правила идёт через AND;
+// - excl - такие же правила, вычитаются из итога: AND NOT ( (e1) OR (e2) ).
+// Номер Col в QUERY = индекс COL + 1 (RawData!A:O, Col1 = A) - стережёт тест.
+// Хранение - config/cfoQueries (массив записей), читается при открытии панели, пишется в
+// accessSavePanel; правило записи в RTDB - только ADMIN_EMAIL, как у остальных config/*.
+// ⚠ МИГРАЦИЯ: в облаке могут лежать записи ПЕРВОГО, плоского формата
+//   {email, acc, dirs, arts, subs, sides, extra, excl:[строки]} - читаются оба (cfoqNorm): каждое
+//   непустое поле становится ОТДЕЛЬНЫМ правилом (это в точности прежний OR), каждая строка «Доп.
+//   условий» - правилом с raw, каждая строка «Исключений» - исключением с raw = NOT (<строка>)
+//   (прежняя строка была условием, которое ДОЛЖНО выполняться, новое исключение описывает, что
+//   УБИРАЕТСЯ - без NOT смысл перевернулся бы). Ничего не теряется молча: неразобранная запись
+//   помечается (bad), показывается в окне и при сохранении пишется обратно КАК БЫЛА.
+// ⚠ Значения сравниваются С ТОЧНОСТЬЮ ДО ПРОБЕЛОВ (QUERY хвостовые пробелы не режет), списки без trim.
+// ⚠ Двойные кавычки внутри значения удваиваются (реальный случай - 300_Акция ""Приведи друга"");
+//   апостроф внутри значения ломает QUERY (строка в одинарных кавычках, экранирования у GViz нет) -
+//   такое значение показывается красным и НЕ выбирается.
+const CFOQ_FIELDS=[
+  {k:'acc', col:8, idx:COL.ACCOUNT,      cat:'Счёт',          title:'Реквизиты счёта (Col8)'},
+  {k:'dir', col:14,idx:COL.ACTIVITY_DIR, cat:'Направление',   title:'Направление деятельности (Col14)'},
+  {k:'art', col:9, idx:COL.ARTICLE_CODE, cat:'Статья',        title:'Статья (Col9)'},
+  {k:'sub', col:10,idx:COL.ARTICLE_NAME, cat:'Подстатья',     title:'Подстатья (Col10)'},
+  {k:'side',col:12,idx:COL.SECOND_SIDE,  cat:'Контрагент',    title:'ID_SecondSide (Col12)'},
+  {k:'ana', col:11,idx:COL.ANALYTICS,    cat:'Аналитика',     title:'Аналитика (Col11)'},
+  {k:'fin', col:15,idx:COL.FIN_OP,       cat:'Фин. операция', title:'Финансовая операция (Col15)'}
 ];
-const CFOQ_NONE='нет условий'; // показывается вместо формулы у пустого набора; кнопка копирования при этом погашена
-function cfoqBlank(){return {email:'',acc:[],dirs:[],arts:[],subs:[],sides:[],extra:[],excl:[]};}
-// нормализация записи из облака: RTDB теряет пустые массивы, а массивы могут приехать объектами
+const CFOQ_NONE='нет условий'; // показывается вместо формулы у пустого набора; кнопка копирования погашена
+const CFOQ_MIN_ROWS=100;       // меньше - «Данные ещё не загружены»: списки и счётчики не по чему строить
+const CFOQ_WARN_SHARE=0.5;     // выше - «человек увидит почти все данные», красным
+// ⚠ РЕЖИМ ИСКЛЮЧЕНИЙ. 'not' - AND NOT ( … ), логические операторы GViz (and/or/not) документированы,
+//   но на ЖИВОЙ таблице конструкция проверяется на приёмке (шаг 4). Если Query её не примет -
+//   переключить на 'neq': исключение по ОДНОМУ полю пишется Col<N> <> 'v' через AND (так написаны
+//   нынешние ручные формулы: Col11 <> 'Вывод чистой прибыли'), многополевые и raw-исключения
+//   запрещены с подписью (cfoqProblems). ⚠ Семантика у режимов РАЗНАЯ на пустой ячейке: NOT (Col11 = 'x')
+//   пустую строку ОСТАВЛЯЕТ, Col11 <> 'x' - ВЫБРАСЫВАЕТ (сравнение с null в GViz ложно); счётчик
+//   считает по тексту формулы, поэтому честен в обоих режимах.
+const CFOQ_EXCL_MODE='not';
+function cfoqRuleBlank(){const r={};CFOQ_FIELDS.forEach(f=>{r[f.k]=[];});r.raw='';return r;}
+function cfoqArr(v){return v==null?[]:(Array.isArray(v)?v:(typeof v==='object'?Object.values(v):[v])).map(x=>String(x==null?'':x)).filter(x=>x.trim()!=='');}
+function cfoqRuleNorm(r){const o=cfoqRuleBlank();r=(r&&typeof r==='object')?r:{raw:r};CFOQ_FIELDS.forEach(f=>{o[f.k]=cfoqArr(r[f.k]);});o.raw=String(r.raw==null?'':r.raw).trim();return o;}
+function cfoqRuleEmpty(r){return CFOQ_FIELDS.every(f=>!r[f.k].length)&&!r.raw;}
+function cfoqBlank(){return {email:'',rules:[],excl:[]};}
+// нормализация записи из облака + миграция плоского формата; RTDB теряет пустые массивы и отдаёт массивы объектами
 function cfoqNorm(rec){
-  const o=cfoqBlank(),r=rec||{};
-  o.email=String(r.email||'').trim().toLowerCase();
-  const arr=v=>v==null?[]:(Array.isArray(v)?v:Object.values(v)).map(x=>String(x==null?'':x)).filter(x=>x.trim()!=='');
-  CFOQ_GROUPS.forEach(g=>{o[g.k]=arr(r[g.k]);});
-  o.extra=arr(r.extra).map(x=>x.trim()).filter(Boolean);
-  o.excl=arr(r.excl).map(x=>x.trim()).filter(Boolean);
+  const o=cfoqBlank();
+  if(rec==null)return o;
+  if(typeof rec!=='object'){o.bad='запись не объект: '+String(rec).slice(0,80);o._orig=rec;return o;}
+  o.email=String(rec.email||'').trim().toLowerCase();
+  if(rec.bad){o.bad=rec.bad;o._orig=rec._orig;return o;} // уже нормализованная неразобранная запись: флаг и оригинал не теряем (идемпотентность)
+  if(rec.migrated)o.migrated=rec.migrated;
+  const list=v=>v==null?[]:(Array.isArray(v)?v:(typeof v==='object'?Object.values(v):[v]));
+  const isNew=rec.rules!=null;
+  const OLD=[['acc','acc'],['dirs','dir'],['arts','art'],['subs','sub'],['sides','side']];
+  const isOld=!isNew&&(OLD.some(([k])=>rec[k]!=null)||rec.extra!=null||rec.excl!=null);
+  try{
+    if(isNew){
+      if(typeof rec.rules!=='object')throw new Error('rules не список');
+      o.rules=list(rec.rules).map(cfoqRuleNorm).filter(r=>!cfoqRuleEmpty(r));
+      o.excl=list(rec.excl).map(cfoqRuleNorm).filter(r=>!cfoqRuleEmpty(r));
+    }else if(isOld){
+      OLD.forEach(([ok,nk])=>{const vals=cfoqArr(rec[ok]);if(vals.length){const r=cfoqRuleBlank();r[nk]=vals;o.rules.push(r);}});
+      cfoqArr(rec.extra).map(s=>s.trim()).filter(Boolean).forEach(s=>{const r=cfoqRuleBlank();r.raw=s;o.rules.push(r);});
+      cfoqArr(rec.excl).map(s=>s.trim()).filter(Boolean).forEach(s=>{const r=cfoqRuleBlank();r.raw='NOT ('+s+')';o.excl.push(r);});
+      o.migrated={rules:o.rules.length,excl:o.excl.length};
+    }
+  }catch(e){o.bad=(e&&e.message)||String(e);o._orig=rec;o.rules=[];o.excl=[];}
   return o;
 }
-function cfoqHasCond(rec){const r=cfoqNorm(rec);return CFOQ_GROUPS.some(g=>r[g.k].length)||r.extra.length>0;}
+function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length);}
 function cfoqEsc(v){return String(v).replace(/"/g,'""');}
 function cfoqBad(v){return /'/.test(String(v))?'В значении есть апостроф: QUERY держит строку в одинарных кавычках и экранировать его нечем - отобрать такое значение через равенство нельзя':'';}
-// текст условия WHERE (без «WHERE»); '' - условий нет
+// текст одного поля: значения через OR; '' - поле не ограничено
+function cfoqFieldText(f,vals){const vs=(vals||[]).filter(v=>!cfoqBad(v));return vs.map(v=>'Col'+f.col+" = '"+cfoqEsc(v)+"'").join(' OR ');}
+// текст правила: поля через AND; многозначное поле и raw берутся в скобки ТОЛЬКО когда в правиле
+// есть что-то ещё (одиночную часть скобки получит уже cfoqRulesText - иначе выходило «((…))»); '' - правило пустое
+function cfoqRuleText(r){r=cfoqRuleNorm(r);const parts=[];CFOQ_FIELDS.forEach(f=>{const vs=r[f.k].filter(v=>!cfoqBad(v));if(vs.length)parts.push({t:cfoqFieldText(f,vs),multi:vs.length>1});});if(r.raw)parts.push({t:r.raw,multi:true});
+  return parts.length>1?parts.map(p=>p.multi?'('+p.t+')':p.t).join(' AND '):(parts.length?parts[0].t:'');}
+function cfoqRulesText(list){return (list||[]).map(cfoqRuleText).filter(Boolean).map(t=>'('+t+')').join(' OR ');}
+// что мешает выдать формулу (пустой список - всё в порядке); подписи показываются в окне
+function cfoqProblems(rec){
+  const r=cfoqNorm(rec),out=[];
+  if(r.bad)out.push('Запись в облаке не разобрана ('+r.bad+'): правила пусты, при сохранении она будет записана обратно как была.');
+  const skipped=(list,name)=>list.forEach((x,i)=>{CFOQ_FIELDS.forEach(f=>{const b=x[f.k].filter(v=>cfoqBad(v));if(b.length)out.push(name+' '+(i+1)+': значение с апострофом пропущено - '+b.join(', '));});});
+  skipped(r.rules,'Правило');skipped(r.excl,'Исключение');
+  if(CFOQ_EXCL_MODE==='neq')r.excl.forEach((e,i)=>{const fs=CFOQ_FIELDS.filter(f=>e[f.k].filter(v=>!cfoqBad(v)).length);if(fs.length!==1||e.raw)out.push('Исключение '+(i+1)+': в режиме без NOT исключение выражается только ОДНИМ полем через <> - оставьте одно поле, без готового выражения.');});
+  return out;
+}
+function cfoqExclText(list){
+  const L=(list||[]).filter(e=>cfoqRuleText(e));
+  if(!L.length)return '';
+  if(CFOQ_EXCL_MODE==='neq'){
+    const parts=[];L.forEach(e=>{const fs=CFOQ_FIELDS.filter(f=>e[f.k].filter(v=>!cfoqBad(v)).length);if(fs.length!==1||e.raw)return;const f=fs[0];e[f.k].filter(v=>!cfoqBad(v)).forEach(v=>parts.push('Col'+f.col+" <> '"+cfoqEsc(v)+"'"));});
+    return parts.map(p=>' AND '+p).join('');
+  }
+  return ' AND NOT ( '+cfoqRulesText(L)+' )';
+}
+// текст условия WHERE (без «WHERE»); '' - правил нет
 function cfoqWhere(rec){
-  const r=cfoqNorm(rec),parts=[];
-  CFOQ_GROUPS.forEach(g=>{r[g.k].forEach(v=>{if(cfoqBad(v))return;parts.push('Col'+g.col+" = '"+cfoqEsc(v)+"'");});});
-  r.extra.forEach(l=>parts.push(l));
-  if(!parts.length)return '';
-  return 'Col1 IS NOT NULL AND ('+parts.join(' OR ')+')'+r.excl.map(l=>' AND '+l).join('');
+  const r=cfoqNorm(rec),rules=cfoqRulesText(r.rules);
+  if(!rules)return '';
+  return 'Col1 IS NOT NULL AND ( '+rules+' )'+cfoqExclText(r.excl);
 }
 function cfoqFormula(rec){const w=cfoqWhere(rec);return w?'=QUERY(RawData!A:O; "SELECT * WHERE '+w+' ORDER BY Col1 DESC, Col3 DESC")':'';}
 function cfoqShownText(rec){return cfoqFormula(rec)||CFOQ_NONE;}
-// ── Разбор условия WHERE для счётчика «попадает N записей» ────────────────────────────────
-// Счётчик - главная проверка окна: человек видит, что запрос не пуст и не забрал лишнего. Чтобы
-// он считал ТО ЖЕ, что посчитает лист, разбирается ВЕСЬ текст WHERE из формулы (а не набор
-// галочек отдельно): «Доп. условия» и «Исключения» вставлены как есть, и приоритет AND/OR у них
-// такой, каким его увидит QUERY. Поддержано подмножество языка GViz: ColN, строки в кавычках,
-// числа, = != <> < <= > >=, IS [NOT] NULL, CONTAINS, STARTS WITH, ENDS WITH, MATCHES, LIKE,
-// NOT / AND / OR, скобки. Не разобралось - счётчика НЕТ и окно называет причину: молча неверное
-// число хуже отсутствующего (правило проекта).
+// ── Разбор условия WHERE для счётчиков ──────────────────────────────────────────────────────
+// Счётчики - главная проверка окна: у каждого правила своё число строк, у исключения - сколько
+// убирает, внизу итог. Чтобы итог считал ТО ЖЕ, что посчитает лист, разбирается ВЕСЬ текст WHERE
+// из формулы (а не галочки отдельно): raw вставлен как есть, приоритет AND/OR/NOT - как у QUERY.
+// Подмножество языка GViz: ColN, строки, числа, = != <> < <= > >=, IS [NOT] NULL, CONTAINS,
+// STARTS WITH, ENDS WITH, MATCHES, LIKE, NOT / AND / OR, скобки. Не разобралось - счётчика НЕТ и
+// окно называет причину: молча неверное число хуже отсутствующего (правило проекта).
+// ⚠ Сравнение с ПУСТОЙ ячейкой ложно (как в GViz): Col10 != 'x' пустую строку ВЫБРАСЫВАЕТ.
 function cfoqParse(where){
   const s=String(where||'').replace(/""/g,'"'); // в формуле кавычки удвоены, лист отдаёт QUERY одинарные
   const T=[];let i=0;
@@ -15940,7 +16032,7 @@ function cfoqParse(where){
     return null;
   }
   let p=0;
-  const peek=()=>T[p],isId=w=>T[p]&&T[p].t==='id'&&T[p].v===w,isOp=w=>T[p]&&T[p].t==='op'&&T[p].v===w;
+  const isId=w=>T[p]&&T[p].t==='id'&&T[p].v===w,isOp=w=>T[p]&&T[p].t==='op'&&T[p].v===w;
   const cell=(row,n)=>{const v=row[n-1];return (v==null||v==='')?null:v;};
   const operand=()=>{const t=T[p];if(!t)throw 0;
     if(t.t==='str'){p++;return row=>t.v;}
@@ -15969,93 +16061,147 @@ function cfoqParse(where){
   const expr=()=>{let L=and();while(isId('or')){p++;const R=and();const l=L;L=row=>l(row)||R(row);}return L;};
   try{const f=expr();if(p!==T.length)return null;return f;}catch(e){return null;}
 }
-// {n, err, empty}: n - число строк под условие; err - почему счётчика нет; empty - условий нет
+const CFOQ_PARSE_ERR='условие не разобрано - проверьте готовые выражения (поддержаны ColN, = != <> < > <= >=, IS [NOT] NULL, CONTAINS, STARTS WITH, ENDS WITH, MATCHES, LIKE, NOT/AND/OR, скобки)';
+// {m, n, empty, err, perRule:[n|null], perExcl:[n|null]}: n - итог по тексту формулы; perRule -
+// строки под каждое правило (с Col1 IS NOT NULL); perExcl - сколько строк из объединения правил
+// убирает исключение; null - текст не разобрался
 function cfoqCount(rec,rows){
-  const w=cfoqWhere(rec);if(!w)return {n:0,empty:true};
-  const f=cfoqParse(w);if(!f)return {n:null,err:'условие не разобрано - проверьте «Доп. условия» и «Исключения» (поддержаны ColN, = != <> < > <= >=, IS [NOT] NULL, CONTAINS, STARTS WITH, ENDS WITH, MATCHES, LIKE, NOT/AND/OR, скобки)'};
-  let n=0;(rows||[]).forEach(r=>{try{if(f(r))n++;}catch(e){}});
-  return {n};
+  const r=cfoqNorm(rec);rows=rows||[];
+  const base=row=>row[0]!=null&&row[0]!=='';
+  const safe=(f,row)=>{try{return !!f(row);}catch(e){return false;}};
+  const res={m:rows.length,n:null,empty:false,err:null,perRule:[],perExcl:[]};
+  const preds=r.rules.map(x=>{const t=cfoqRuleText(x);return t?cfoqParse(t):null;});
+  res.perRule=preds.map(f=>f?rows.reduce((n,row)=>n+(base(row)&&safe(f,row)?1:0),0):null);
+  const union=row=>preds.some(f=>f&&safe(f,row));
+  res.perExcl=r.excl.map(x=>{const t=cfoqRuleText(x);const f=t?cfoqParse(t):null;return f?rows.reduce((n,row)=>n+(base(row)&&union(row)&&safe(f,row)?1:0),0):null;});
+  const w=cfoqWhere(r);
+  if(!w){res.empty=true;return res;}
+  const f=cfoqParse(w);if(!f){res.err=CFOQ_PARSE_ERR;return res;}
+  res.n=rows.reduce((n,row)=>n+(safe(f,row)?1:0),0);
+  return res;
 }
 // уникальные непустые значения колонки из RAW, по алфавиту; без trim (см. ⚠ выше)
-function cfoqValues(g,rows){
-  const seen=new Set();(rows||[]).forEach(r=>{const v=r[g.idx];if(v==null)return;const s=String(v);if(s.trim()==='')return;seen.add(s);});
+function cfoqValues(f,rows){
+  const seen=new Set();(rows||[]).forEach(r=>{const v=r[f.idx];if(v==null)return;const s=String(v);if(s.trim()==='')return;seen.add(s);});
   return [...seen].sort((a,b)=>a.localeCompare(b,'ru'));
 }
 // ── Окно конструктора (из строки панели доступа) ─────────────────────────────────────────
 // Запись живёт на строке таблицы (tr._cfoq): переживает правку email в строке, уходит вместе
 // с удалением строки, сохраняется общей кнопкой «Сохранить» панели.
+const CFOQ_SEC={rules:{title:'Видит',add:'+ Добавить правило',one:'Правило',cnt:'подходит',note:'Правила соединяются ИЛИ: строка попадает в лист, если подходит хотя бы под одно. Внутри правила поля соединяются И.'},
+                excl:{title:'Не видит',add:'+ Добавить исключение',one:'Исключение',cnt:'убирает',note:'Исключения вычитаются из того, что видит: строка убирается, если подходит хотя бы под одно.'}};
 window.cfoqRowMark=function(tr){const b=tr&&tr.querySelector('.acc-query');if(!b)return;const on=tr._cfoq&&cfoqHasCond(tr._cfoq);b.textContent=on?'Запрос •':'Запрос';b.title=on?'Условия заданы - открыть и посмотреть формулу':'Собрать условия персонального листа и получить формулу QUERY';};
+function _cfoqRows(){return (typeof RAW==='undefined')?[]:(RAW||[]);}
+function _cfoqRec(){const tr=window._cfoqTr;return tr?tr._cfoq:null;}
 window.cfoQueryOpen=function(tr){
   if(!tr||document.getElementById('cfoQueryOverlay'))return;
   const email=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();
   const name=(tr.querySelector('.acc-name').value||'').trim();
   const sheet=tr.querySelector('.acc-sheet').value;
   const rec=cfoqNorm(tr._cfoq||cfoqBlank());rec.email=email;tr._cfoq=rec;
-  const rows=(typeof RAW==='undefined')?[]:(RAW||[]);
   window._cfoqTr=tr;
+  const rows=_cfoqRows();
+  window._cfoqVals={};CFOQ_FIELDS.forEach(f=>{window._cfoqVals[f.k]=cfoqValues(f,rows);});
   const inp='width:100%;box-sizing:border-box;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--mono)';
-  // ⚠ Мультивыбор - общий строитель _ddMultiHtml (тот же вид, что на вкладках): кнопка .bar-ctl с
-  //   подписью _barBtnLabel, поиск, «Выбрать все»/«Снять все». Своей копии разметки тут нет.
-  const pickers=CFOQ_GROUPS.map(g=>{
-    const items=cfoqValues(g,rows);
-    return `<div style="position:relative;display:inline-block"><button type="button" id="cfoq-${g.k}-btn" data-cat="${g.cat}" class="bar-ctl" style="text-align:left;min-width:120px" title="${_pesc(g.title)}" onclick="cfoqToggle('${g.k}')">${_barBtnLabel(g.cat,rec[g.k].length)}</button>${_ddMultiHtml('cfoq-'+g.k+'-dd','cfoq_'+g.k,items,rec[g.k],{search:true,cls:'cfoq-dd',bad:cfoqBad})}</div>`;
-  }).join('');
   const sheetNote=(sheet&&sheet!=='__full__')?`Вставить в первую ячейку листа <b>${_htmlEsc(sheet)}</b>.`:'Вкладка у человека не выбрана - формула вставляется в первую ячейку его листа RawData_&lt;Фамилия&gt;.';
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='cfoQueryOverlay';overlay.style.zIndex='9001'; // поверх панели доступа
-  overlay.innerHTML=`<div class="txn-card" style="width:900px;max-width:96vw;overflow:visible">
+  // ⚠ email - простым текстом (не <b>, не ссылка): подпись окна, а не адрес для клика
+  overlay.innerHTML=`<div class="txn-card" style="width:980px;max-width:96vw">
     <div class="txn-card-head"><h3>Запрос ЦФО: ${_htmlEsc(name||email||'(без email)')}</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:14px 20px 18px">
-      <p style="font-size:12px;color:var(--text2);margin:0 0 10px;line-height:1.6">Условия персонального листа для <b>${_htmlEsc(email||'(email не задан)')}</b>. Значения групп соединяются <b>OR</b>, исключения - <b>AND</b>. ${rows.length?'Списки - из загруженных данных ('+rows.length.toLocaleString('ru-RU')+' строк).':'<span style="color:var(--orange)">Данные не загружены - списки пусты, счётчик считать не по чему.</span>'}</p>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">${pickers}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-        <div><div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Доп. условия <span style="font-weight:400;color:var(--text3)">- по одному выражению в строке, вставляются как есть, соединяются OR</span></div>
-          <textarea id="cfoq-extra" rows="3" oninput="cfoqRefresh()" placeholder="например: Col10 CONTAINS 'Аренда'" style="${inp};resize:vertical">${_htmlEsc(rec.extra.join('\n'))}</textarea></div>
-        <div><div style="font-size:11px;color:var(--text2);font-weight:600;margin-bottom:4px">Исключения <span style="font-weight:400;color:var(--text3)">- по одному выражению в строке, соединяются AND</span></div>
-          <textarea id="cfoq-excl" rows="3" oninput="cfoqRefresh()" placeholder="например: Col10 != 'Вывод прибыли'" style="${inp};resize:vertical">${_htmlEsc(rec.excl.join('\n'))}</textarea></div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула</div>
+      <p style="font-size:12px;color:var(--text2);margin:0 0 10px;line-height:1.6">Условия персонального листа для <span>${_htmlEsc(email||'(email не задан)')}</span>. ${rows.length>=CFOQ_MIN_ROWS?'Списки значений - из загруженных данных ('+rows.length.toLocaleString('ru-RU')+' строк).':'<span style="color:var(--orange);font-weight:600">Данные ещё не загружены'+(rows.length?' ('+rows.length+' строк - меньше '+CFOQ_MIN_ROWS+')':'')+' - списки и счётчики недоступны, копирование погашено.</span>'}</p>
+      <div id="cfoq-problems"></div>
+      <div id="cfoq-rules"></div>
+      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула</div>
         <button type="button" id="cfoq-copy" onclick="cfoqCopy()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Скопировать</button>
-        <span id="cfoq-count" style="font-size:11.5px;color:var(--text2);margin-left:auto"></span></div>
+        <span id="cfoq-total" style="font-size:12px;margin-left:auto"></span></div>
       <textarea id="cfoq-out" readonly rows="5" style="${inp};resize:vertical;background:var(--surface2)"></textarea>
-      <p style="font-size:11px;color:var(--text3);margin:8px 0 0;line-height:1.6">${sheetNote} Дашборд в таблицу не пишет - только отдаёт текст. Условия сохраняются кнопкой «Сохранить» панели доступа.</p>
+      <p style="font-size:11px;color:var(--text3);margin:8px 0 0;line-height:1.6">${sheetNote} Дашборд в таблицу не пишет - только отдаёт текст. Условия сохраняются кнопкой «Сохранить» панели доступа. Порядок правил - только для чтения, на результат не влияет.</p>
       <div style="display:flex;justify-content:flex-end;margin-top:12px"><button type="button" onclick="document.getElementById('cfoQueryOverlay').remove()" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Готово</button></div>
     </div>
   </div>`;
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
   overlay.querySelector('.txn-card-close').addEventListener('click',()=>overlay.remove());
   document.body.appendChild(overlay);
+  cfoqRender();
+};
+// полная сборка секций из записи (при открытии, добавлении/удалении/перестановке карточек);
+// смена галочек и raw идёт через cfoqRefresh без пересборки - иначе закрывался бы открытый список
+window.cfoqRender=function(){
+  const rec=_cfoqRec(),box=document.getElementById('cfoq-rules');if(!rec||!box)return;
+  const rows=_cfoqRows(),loaded=rows.length>=CFOQ_MIN_ROWS;
+  const secHtml=sec=>{
+    const S=CFOQ_SEC[sec],list=rec[sec];
+    const cards=list.map((r,i)=>{
+      // ⚠ Мультивыбор - общий строитель _ddMultiHtml (тот же вид, что на вкладках): кнопка .bar-ctl с
+      //   подписью _barBtnLabel и поиск; «Выбрать все» в этом окне не показывается (noAll).
+      const pickers=loaded?CFOQ_FIELDS.map(f=>{const id='cfoq-'+sec+'-'+i+'-'+f.k;
+        return `<div style="position:relative;display:inline-block"><button type="button" id="${id}-btn" data-cat="${f.cat}" class="bar-ctl" style="text-align:left" title="${_pesc(f.title)}" onclick="cfoqToggle('${id}-dd')">${_barBtnLabel(f.cat,r[f.k].length)}</button>${_ddMultiHtml(id+'-dd','',window._cfoqVals[f.k],r[f.k],{search:true,cls:'cfoq-dd',noAll:true,bad:cfoqBad,onChangeJs:"cfoqFieldChange('"+sec+"',"+i+",'"+f.k+"')"})}</div>`;}).join(''):'';
+      return `<div class="cfoq-card" data-sec="${sec}" data-i="${i}" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--surface)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span class="cfoq-grip" title="Перетащить: меняет только порядок показа, на результат не влияет" onpointerdown="cfoqDragStart(event,'${sec}')" style="cursor:grab;color:var(--text3);user-select:none;font-size:14px;line-height:1;touch-action:none">≡</span>
+          <b style="font-size:11px;color:var(--text2)">${S.one} ${i+1}</b>
+          <span id="cfoq-cnt-${sec}-${i}" style="margin-left:auto;font-size:11px;color:var(--text2);font-family:var(--mono)"></span>
+          <button type="button" onclick="cfoqRuleDel('${sec}',${i})" title="Удалить" style="border:none;background:none;color:#d35450;cursor:pointer;font-size:14px;line-height:1">✕</button>
+        </div>
+        ${pickers?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">${pickers}</div>`:''}
+        <div id="cfoq-chips-${sec}-${i}" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:11px;margin-bottom:6px"></div>
+        <input class="cfoq-raw" type="text" value="${_pesc(r.raw)}" oninput="cfoqRawInput('${sec}',${i},this.value)" placeholder="готовое выражение, например Col5 > 0 - соединяется с полями через И" style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--mono)">
+      </div>`;
+    }).join(`<div class="cfoq-or" style="text-align:center;font-size:10px;font-weight:700;color:var(--text3);margin:4px 0;letter-spacing:.06em">ИЛИ</div>`);
+    return `<div style="margin-top:${sec==='excl'?'12px':'0'}">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><b style="font-size:12px;color:var(--text)">${S.title}</b><span style="font-size:10.5px;color:var(--text3);flex:1">${S.note}</span>
+        <button type="button" onclick="cfoqRuleAdd('${sec}')" style="font-size:11px;font-weight:600;padding:4px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans);white-space:nowrap">${S.add}</button></div>
+      <div id="cfoq-list-${sec}" style="display:flex;flex-direction:column">${cards||`<div style="font-size:11px;color:var(--text3);padding:6px 2px">${sec==='rules'?'правил нет - лист будет пустым':'исключений нет'}</div>`}</div>
+    </div>`;
+  };
+  box.innerHTML=secHtml('rules')+secHtml('excl');
   cfoqRefresh();
 };
-window.cfoqToggle=function(k){
-  document.querySelectorAll('.cfoq-dd').forEach(d=>{if(d.id!=='cfoq-'+k+'-dd')d.style.display='none';});
-  const dd=document.getElementById('cfoq-'+k+'-dd');if(!dd)return;dd.style.display=dd.style.display==='block'?'none':'block';
+window.cfoqToggle=function(ddId){
+  document.querySelectorAll('.cfoq-dd').forEach(d=>{if(d.id!==ddId)d.style.display='none';});
+  const dd=document.getElementById(ddId);if(!dd)return;dd.style.display=dd.style.display==='block'?'none':'block';
 };
 // клик вне списка закрывает его (как на вкладках); слушатель свой, чтобы не править общий список id
 document.addEventListener('click',e=>{
   document.querySelectorAll('.cfoq-dd').forEach(dd=>{if(dd.style.display!=='block')return;const btn=document.getElementById(dd.id.replace('-dd','-btn'));if(!dd.contains(e.target)&&e.target!==btn&&!(btn&&btn.contains(e.target)))dd.style.display='none';});
 });
-CFOQ_GROUPS.forEach(g=>{
-  window['cfoq_'+g.k+'Change']=function(){_bankExtraUpdateBtn('cfoq-'+g.k+'-btn','cfoq-'+g.k+'-dd');cfoqRefresh();};
-  // ⚠ своя «выбрать все»: общая _bankExtraSelectAll ставила бы галочку и на ВЫКЛЮЧЕННЫЕ (с апострофом)
-  window['cfoq_'+g.k+'SelectAll']=function(on){const dd=document.getElementById('cfoq-'+g.k+'-dd');if(!dd)return;dd.querySelectorAll('input[type=checkbox]:not(:disabled)').forEach(c=>c.checked=on);_bankExtraUpdateBtn('cfoq-'+g.k+'-btn',dd.id);cfoqRefresh();};
-});
-// читает окно в запись строки и перерисовывает формулу, счётчик и кнопку копирования
+window.cfoqFieldChange=function(sec,i,k){const rec=_cfoqRec();if(!rec||!rec[sec][i])return;const id='cfoq-'+sec+'-'+i+'-'+k;rec[sec][i][k]=_bankExtraGetChecked(id+'-dd');_bankExtraUpdateBtn(id+'-btn',id+'-dd');cfoqRefresh();};
+window.cfoqRawInput=function(sec,i,v){const rec=_cfoqRec();if(!rec||!rec[sec][i])return;rec[sec][i].raw=String(v||'').trim();cfoqRefresh();};
+window.cfoqRuleAdd=function(sec){const rec=_cfoqRec();if(!rec)return;rec[sec].push(cfoqRuleBlank());cfoqRender();};
+window.cfoqRuleDel=function(sec,i){const rec=_cfoqRec();if(!rec)return;rec[sec].splice(i,1);cfoqRender();};
+// перетаскивание за ручку (pointer events, как у пресетов): меняет ТОЛЬКО порядок в массиве, на формулу не влияет по построению
+window.cfoqDragStart=function(e,sec){
+  e.preventDefault();const card=e.target.closest('.cfoq-card');if(!card)return;const wrap=card.parentElement;card.style.opacity='.55';
+  const move=ev=>{const el=document.elementFromPoint(ev.clientX,ev.clientY);const over=el&&el.closest?el.closest('.cfoq-card'):null;if(!over||over===card||over.parentElement!==wrap)return;const rc=over.getBoundingClientRect();wrap.insertBefore(card,ev.clientY<rc.top+rc.height/2?over:over.nextSibling);};
+  const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);card.style.opacity='';
+    const rec=_cfoqRec();if(!rec)return;const order=[...wrap.querySelectorAll(':scope>.cfoq-card')].map(c=>Number(c.dataset.i));
+    if(order.length===rec[sec].length)rec[sec]=order.map(j=>rec[sec][j]);cfoqRender();};
+  document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
+};
+// обновление на месте: чипы, счётчики, итог, формула, кнопка копирования, подписи проблем
 window.cfoqRefresh=function(){
-  const tr=window._cfoqTr;if(!tr||!document.getElementById('cfoQueryOverlay'))return;
-  const rec=cfoqNorm(tr._cfoq||cfoqBlank());
-  CFOQ_GROUPS.forEach(g=>{if(document.getElementById('cfoq-'+g.k+'-dd'))rec[g.k]=_bankExtraGetChecked('cfoq-'+g.k+'-dd');});
-  const lines=id=>String((document.getElementById(id)||{}).value||'').split('\n').map(l=>l.trim()).filter(Boolean);
-  rec.extra=lines('cfoq-extra');rec.excl=lines('cfoq-excl');
-  tr._cfoq=rec;cfoqRowMark(tr);
-  const text=cfoqShownText(rec),has=!!cfoqFormula(rec);
+  const tr=window._cfoqTr,rec=_cfoqRec();if(!tr||!rec||!document.getElementById('cfoQueryOverlay'))return;
+  cfoqRowMark(tr);
+  const rows=_cfoqRows(),loaded=rows.length>=CFOQ_MIN_ROWS,c=cfoqCount(rec,rows),probs=cfoqProblems(rec);
+  const fmtN=n=>n.toLocaleString('ru-RU');
+  ['rules','excl'].forEach(sec=>rec[sec].forEach((r,i)=>{
+    const chips=[];CFOQ_FIELDS.forEach(f=>{if(r[f.k].length)chips.push(`<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text)"><b style="color:var(--text2);font-weight:600">${_htmlEsc(f.cat)}:</b> ${_htmlEsc(r[f.k].join(', '))}</span>`);});
+    if(r.raw)chips.push(`<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);font-family:var(--mono)">${_htmlEsc(r.raw)}</span>`);
+    const el=document.getElementById('cfoq-chips-'+sec+'-'+i);if(el)el.innerHTML=chips.length?chips.join('<i style="font-style:normal;font-size:10px;font-weight:700;color:var(--text3)">И</i>'):'<span style="color:var(--text3)">условий нет - '+(sec==='rules'?'правило':'исключение')+' не участвует</span>';
+    const cnt=document.getElementById('cfoq-cnt-'+sec+'-'+i);if(cnt){const n=(sec==='rules'?c.perRule:c.perExcl)[i];cnt.textContent=!loaded?'':(n==null?(cfoqRuleText(r)?'⚠ не разобрано':''):CFOQ_SEC[sec].cnt+' '+fmtN(n)+' строк');cnt.style.color=n==null&&cfoqRuleText(r)?'var(--orange)':'var(--text2)';}
+  }));
+  const pb=document.getElementById('cfoq-problems');if(pb)pb.innerHTML=probs.length?`<div style="font-size:11px;color:var(--outcome);margin:0 0 8px;line-height:1.5">${probs.map(p=>'⚠ '+_htmlEsc(p)).join('<br>')}</div>`+(rec.migrated?'':''):(rec.migrated?`<div style="font-size:11px;color:var(--text2);margin:0 0 8px">Запись переведена из прежнего плоского формата: правил ${rec.migrated.rules}, исключений ${rec.migrated.excl} - каждое прежнее поле стало отдельным правилом (тот же ИЛИ). Сохраните панель, чтобы записать в новом виде.</div>`:'');
+  const text=cfoqShownText(rec),has=!!cfoqFormula(rec)&&!probs.some(p=>/только ОДНИМ полем|не разобрана/.test(p));
   const out=document.getElementById('cfoq-out');if(out){out.value=text;out.style.color=has?'var(--text)':'var(--text3)';}
-  const cp=document.getElementById('cfoq-copy');if(cp){cp.disabled=!has;cp.style.opacity=has?'1':'.5';cp.style.cursor=has?'pointer':'not-allowed';cp.textContent='Скопировать';}
-  const rows=(typeof RAW==='undefined')?[]:(RAW||[]);
-  const c=cfoqCount(rec,rows),el=document.getElementById('cfoq-count');
+  const canCopy=has&&loaded;
+  const cp=document.getElementById('cfoq-copy');if(cp){cp.disabled=!canCopy;cp.style.opacity=canCopy?'1':'.5';cp.style.cursor=canCopy?'pointer':'not-allowed';cp.textContent='Скопировать';cp.title=canCopy?'':(!loaded?'Данные ещё не загружены':'Формулы нет');}
+  const el=document.getElementById('cfoq-total');
   if(el){
-    if(c.empty){el.textContent='условий нет - лист будет пустым';el.style.color='var(--text3)';}
-    else if(c.err){el.textContent='⚠ счётчик недоступен: '+c.err;el.style.color='var(--orange)';el.title=c.err;}
-    else{el.textContent='под эти условия попадает '+c.n.toLocaleString('ru-RU')+' записей из '+rows.length.toLocaleString('ru-RU')+' в RAW';el.style.color=c.n?'var(--text2)':'var(--outcome)';el.title='';}
+    if(!loaded){el.textContent='данные ещё не загружены';el.style.color='var(--orange)';el.title='';}
+    else if(c.empty){el.textContent='правил нет - лист будет пустым';el.style.color='var(--text3)';el.title='';}
+    else if(c.err){el.textContent='⚠ итог недоступен: '+c.err;el.style.color='var(--orange)';el.title=c.err;}
+    else{const share=c.m?c.n/c.m:0,warn=share>CFOQ_WARN_SHARE;el.innerHTML='видит <b style="font-family:var(--mono)">'+fmtN(c.n)+'</b> строк из '+fmtN(c.m)+' ('+Math.round(share*100)+'%)'+(warn?' - человек увидит почти все данные, проверьте правила':'');el.style.color=warn?'var(--outcome)':(c.n?'var(--text2)':'var(--outcome)');el.title='';}
   }
 };
 window.cfoqCopy=function(){
@@ -16069,10 +16215,13 @@ window._accessQueriesAttach=function(tb,queries){
   const by={};(queries||[]).forEach(q=>{const r=cfoqNorm(q);if(r.email)by[r.email]=r;});
   [...tb.querySelectorAll('tr')].forEach(tr=>{const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();if(by[em])tr._cfoq=by[em];cfoqRowMark(tr);});
 };
-// панель доступа: собрать записи со строк для записи в облако (только с условиями, по одному на email)
+// панель доступа: собрать записи со строк для записи в облако (только с условиями, по одному на email).
+// ⚠ Неразобранная запись (bad) пишется обратно КАК БЫЛА - ничего не теряем молча.
 window._accessQueriesCollect=function(tb){
   const out=[],seen={};
-  [...tb.querySelectorAll('tr')].forEach(tr=>{const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();if(!em||seen[em]||!tr._cfoq||!cfoqHasCond(tr._cfoq))return;seen[em]=1;const r=cfoqNorm(tr._cfoq);r.email=em;out.push(r);});
+  [...tb.querySelectorAll('tr')].forEach(tr=>{const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();if(!em||seen[em]||!tr._cfoq||!cfoqHasCond(tr._cfoq))return;seen[em]=1;
+    const r=cfoqNorm(tr._cfoq);if(r.bad&&r._orig&&typeof r._orig==='object'){out.push(Object.assign({},r._orig,{email:em}));return;}
+    out.push({email:em,rules:r.rules,excl:r.excl});});
   return out;
 };
 
