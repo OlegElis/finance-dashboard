@@ -11714,15 +11714,20 @@ function pfRunTests(){
     const f=cfoqParse(oldWhere),oldSet=rows.map((r,i)=>f&&f(r)?i:-1).filter(i=>i>=0),m=cfoqNorm(flat);
     ok('миграция · плоская запись → 4 правила + 1 исключение, помечена',m.rules.length===4&&m.excl.length===1&&!!m.migrated&&m.excl[0].raw==="NOT (Col11 != 'Вывод чистой прибыли')");
     ok('миграция · множество строк совпадает с прежней формулой',JSON.stringify(set(m))===JSON.stringify(oldSet)&&oldSet.length>0,JSON.stringify(set(m))+' vs '+JSON.stringify(oldSet));
-    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{dir:{0:AP}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[Object.assign(cfoqRuleBlank(),{dir:[AP]})],excl:[]}));
+    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[]}));
+    ok('миграция · правило прежнего вида (фиксированные ключи) → conds, то же множество строк',(()=>{const oldR={dir:[AP],sub:[ZP],offer:'x'},newR={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:'offer',text:'x'}]};const n=cfoqRuleNorm(oldR);return n.conds.length===3&&n.conds.map(c=>c.field).join()==='offer,sub,dir'&&JSON.stringify(set({rules:[oldR]}))===JSON.stringify(set({rules:[newR]}))&&JSON.stringify(set({rules:[R1]}))===JSON.stringify(set({rules:[{conds:[{field:'sub',values:[ZP]},{field:'dir',values:[AP]}]}]}));})());
+    ok('условия · неизвестное поле и пустое условие отбрасываются при нормализации',cfoqRuleNorm({conds:[{field:'nope',values:['x']},{field:'dir',values:[]},{field:'dir',values:[AP]}]}).conds.length===1);
+    ok('условия · занятое в правиле поле второй раз не предлагается, своё - остаётся',(()=>{const r={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:''}]};const o2=cfoqFieldOptions(r,2).map(f=>f.k),o0=cfoqFieldOptions(r,0).map(f=>f.k);return o2.indexOf('dir')<0&&o2.indexOf('sub')<0&&o2.length===CFOQ_FIELDS.length-2&&o0.indexOf('dir')>=0&&o0.indexOf('sub')<0;})());
+    ok('условия · оператор следует из типа поля',cfoqOp(cfoqField('dir'))==='равно одному из'&&cfoqOp(cfoqField('offer'))==='содержит'&&cfoqOp(cfoqField('yearDDS'))==='равно одному из');
     ok('миграция · неразобранная запись не глотается: помечена, пишется обратно как была, флаг переживает повторную нормализацию',(()=>{const b=cfoqNorm({email:'q@w',rules:'мусор'}),b2=cfoqNorm(b);return !!b.bad&&b._orig&&b._orig.rules==='мусор'&&cfoqProblems(b).length===1&&b2.bad===b.bad&&b2._orig===b._orig&&cfoqHasCond(b);})());
     ok('миграция · пометка migrated переживает повторную нормализацию',!!cfoqNorm(cfoqNorm(flat)).migrated);}
    // структура: мультивыбор - общий строитель без «Выбрать все», шестой копии нет; запись - через _fbSetSafe
    const qr=String(cfoqRender),qo=String(cfoQueryOpen),asp=String(accessSavePanel);
-   ok('окно · мультивыбор из общего _ddMultiHtml, noAll, своей копии списка нет',qr.indexOf('_ddMultiHtml(')>=0&&qr.indexOf('noAll:true')>=0&&(qr+qo).indexOf('bank-dd-'+'list')<0&&qr.indexOf('_barBtnLabel(')>=0);
-   ok('окно · карточка - один компонент для «Видит» и «Не видит» (полоса по секции), поля сеткой, ширина 1100',(qr.match(/const cards=list\.map/g)||[]).length===1&&qr.indexOf("sec==='rules'?'var(--accent)':'var(--outcome)'")>=0&&qr.indexOf('grid-template-columns:repeat(auto-fill')>=0&&qo.indexOf('width:1100px;max-width:96vw')>=0);
-   ok('окно · подсказка про год только в «Видит»',/const yr=sec==='rules'&&CFOQ_FIELDS\.some\(f=>f\.t==='year'/.test(String(cfoqRefresh))&&String(cfoqRefresh).indexOf('доступ ограничен годом')>=0);
-   ok('окно · текстовые поля - ввод строки с подписью «содержит»',qr.indexOf("f.t==='text'")>=0&&qr.indexOf('содержит…')>=0&&String(cfoqRefresh).indexOf("f.t==='text'?' содержит':''")>=0);
+   ok('окно · мультивыбор из общего _ddMultiHtml, noAll, своей копии списка нет; подпись кнопки - сами значения',qr.indexOf('_ddMultiHtml(')>=0&&qr.indexOf('noAll:true')>=0&&(qr+qo).indexOf('bank-dd-'+'list')<0&&qr.indexOf('cfoqValLabel(')>=0&&cfoqValLabel({field:'dir',values:['a','b']})==='a, b ▾'&&cfoqValLabel({field:'dir',values:[]})==='выберите значения ▾');
+   ok('окно · карточка - один компонент для «Видит» и «Не видит» (полоса по секции), строки-условия, ширина 1100',(qr.match(/const cards=list\.map/g)||[]).length===1&&(qr.match(/const condHtml=/g)||[]).length===1&&qr.indexOf("sec==='rules'?'var(--accent)':'var(--outcome)'")>=0&&qr.indexOf('class="cfoq-cond"')>=0&&qr.indexOf('+ Добавить условие')>=0&&qo.indexOf('width:1100px;max-width:96vw')>=0);
+   ok('окно · строка условия: селект поля из cfoqFieldOptions, оператор текстом (cfoqOp), между строками «И»',qr.indexOf('cfoqFieldOptions(r,j)')>=0&&qr.indexOf('cfoqOp(f)')>=0&&qr.indexOf('class="cfoq-and"')>=0&&qr.indexOf('<select class="bar-ctl cfoq-field"')>=0);
+   ok('окно · подсказка про год только в «Видит»',/const yr=sec==='rules'&&\(r\.conds\|\|\[\]\)\.some/.test(String(cfoqRefresh))&&String(cfoqRefresh).indexOf('доступ ограничен годом')>=0);
+   ok('окно · текстовые поля - ввод строки, оператор «содержит»',qr.indexOf("f.t==='text'")>=0&&qr.indexOf('cfoqCondInput(')>=0&&String(cfoqOp).indexOf('содержит')>=0);
    ok('окно · email простым текстом, не <b>',/<span>\$\{_htmlEsc\(email\|\|/.test(qo));
    ok('окно · итог и «нет условий» из одного источника',String(cfoqRefresh).indexOf('cfoqShownText(')>=0&&String(cfoqRefresh).indexOf('CFOQ_WARN_SHARE')>=0);
    ok('панель доступа · пишет config/cfoQueries через _fbSetSafe',asp.indexOf("_fbSetSafe('config/cfoQueries'")>=0);}
@@ -15934,8 +15939,9 @@ window.showAccessPanel=async function(){
 // МОДЕЛЬ (с 23.09.2026, ПРАВИЛА-БЛОКИ; плоский OR первой версии оказался непригоден: подстатья
 // применялась ко ВСЕМ направлениям, «всё БФЛ целиком, а из Автоправа только 111_Заработная плата»
 // задать было нельзя): запись человека {email, rules:[ПРАВИЛО], excl:[ПРАВИЛО]},
-//   ПРАВИЛО = {acc:[], dir:[], art:[], sub:[], side:[], ana:[], fin:[], raw:''}
-// - внутри правила ПОЛЯ соединяются AND, значения одного поля - OR;
+//   ПРАВИЛО = {conds:[{field, values:[], text:''}], raw:''} - СТРОКИ-УСЛОВИЯ (третья редакция того же дня;
+//   вторая держала 13 постоянных полей в карточке - шумно, и «поле уже занято» было не выразить)
+// - внутри правила УСЛОВИЯ соединяются AND, значения одного условия - OR;
 // - правила в rules соединяются OR между собой;
 // - raw - готовое выражение, вставляется как есть и внутри правила идёт через AND;
 // - excl - такие же правила, вычитаются из итога: AND NOT ( (e1) OR (e2) ).
@@ -15993,11 +15999,30 @@ const CFOQ_WARN_SHARE=0.5;     // выше - «человек увидит по�
 //   пустую строку ОСТАВЛЯЕТ, Col11 <> 'x' - ВЫБРАСЫВАЕТ (сравнение с null в GViz ложно); счётчик
 //   считает по тексту формулы, поэтому честен в обоих режимах.
 const CFOQ_EXCL_MODE='not';
-function cfoqRuleBlank(){const r={};CFOQ_FIELDS.forEach(f=>{r[f.k]=f.t==='text'?'':[];});r.raw='';return r;}
+function cfoqField(k){return CFOQ_FIELDS.find(f=>f.k===k)||null;}
+function cfoqOp(f){return f.t==='text'?'содержит':'равно одному из';} // оператор однозначно следует из поля - показывается текстом, без выпадающего
 function cfoqArr(v){return v==null?[]:(Array.isArray(v)?v:(typeof v==='object'?Object.values(v):[v])).map(x=>String(x==null?'':x)).filter(x=>x.trim()!=='');}
-function cfoqRuleNorm(r){const o=cfoqRuleBlank();r=(r&&typeof r==='object')?r:{raw:r};CFOQ_FIELDS.forEach(f=>{o[f.k]=f.t==='text'?String(r[f.k]==null?'':r[f.k]).trim():cfoqArr(r[f.k]);});o.raw=String(r.raw==null?'':r.raw).trim();return o;}
-function cfoqRuleEmpty(r){return CFOQ_FIELDS.every(f=>!r[f.k].length)&&!r.raw;}
-function cfoqFieldVals(f,r){return f.t==='text'?(r[f.k]?[r[f.k]]:[]):r[f.k];} // значения поля списком (текстовое - одно)
+// ── МОДЕЛЬ ПРАВИЛА (с 23.09.2026, третья редакция): СТРОКИ-УСЛОВИЯ, а не 13 постоянных полей ──
+//   ПРАВИЛО = {conds:[{field, values:[], text:''}], raw:''}; строка условия = поле · оператор · значения.
+//   Оператор следует из типа поля: справочники и годы - «равно одному из» (values через OR), текстовые -
+//   «содержит» (text → CONTAINS). Поле, уже занятое в правиле, второй раз не выбирается (cfoqFieldOptions).
+//   ⚠ ПРЕЖНИЙ вид правила с фиксированными ключами (acc/dir/…/yearDDS/offer) читается и превращается
+//   в conds в порядке колонок - множество строк то же (тест), поведение прежних записей не меняется.
+function cfoqRuleBlank(){return {conds:[],raw:''};}
+function cfoqCondBlank(field){return {field:field||'',values:[],text:''};}
+function cfoqCondNorm(c){const o=cfoqCondBlank();if(!c||typeof c!=='object')return o;const f=cfoqField(String(c.field||''));if(!f)return o;o.field=f.k;if(f.t==='text')o.text=String(c.text==null?'':c.text).trim();else o.values=cfoqArr(c.values);return o;}
+function cfoqCondVals(c){const f=cfoqField(c&&c.field);if(!f)return [];return f.t==='text'?(c.text?[c.text]:[]):(c.values||[]);} // значения условия списком (текстовое - одно)
+function cfoqCondEmpty(c){return !cfoqCondVals(c).length;}
+function cfoqRuleNorm(r){
+  const o=cfoqRuleBlank();r=(r&&typeof r==='object')?r:{raw:r};
+  if(r.conds!=null){const list=Array.isArray(r.conds)?r.conds:(typeof r.conds==='object'?Object.values(r.conds):[]);o.conds=list.map(cfoqCondNorm).filter(c=>c.field&&!cfoqCondEmpty(c));}
+  else CFOQ_FIELDS.forEach(f=>{if(r[f.k]==null)return;const c=cfoqCondNorm(f.t==='text'?{field:f.k,text:r[f.k]}:{field:f.k,values:r[f.k]});if(!cfoqCondEmpty(c))o.conds.push(c);}); // прежний вид - в порядке колонок
+  o.raw=String(r.raw==null?'':r.raw).trim();return o;
+}
+function cfoqRuleEmpty(r){return !(r.conds||[]).some(c=>!cfoqCondEmpty(c))&&!r.raw;}
+// поля, доступные условию j правила r: все, кроме занятых ДРУГИМИ условиями того же правила -
+// два условия по одной колонке через И дают пустой лист, и человек не понял бы, почему он пуст
+function cfoqFieldOptions(r,j){const used=new Set((r.conds||[]).map((c,k)=>k===j?'':(c.field||'')).filter(Boolean));return CFOQ_FIELDS.filter(f=>!used.has(f.k));}
 function cfoqBlank(){return {email:'',rules:[],excl:[]};}
 // нормализация записи из облака + миграция плоского формата; RTDB теряет пустые массивы и отдаёт массивы объектами
 function cfoqNorm(rec){
@@ -16017,7 +16042,7 @@ function cfoqNorm(rec){
       o.rules=list(rec.rules).map(cfoqRuleNorm).filter(r=>!cfoqRuleEmpty(r));
       o.excl=list(rec.excl).map(cfoqRuleNorm).filter(r=>!cfoqRuleEmpty(r));
     }else if(isOld){
-      OLD.forEach(([ok,nk])=>{const vals=cfoqArr(rec[ok]);if(vals.length){const r=cfoqRuleBlank();r[nk]=vals;o.rules.push(r);}});
+      OLD.forEach(([ok,nk])=>{const vals=cfoqArr(rec[ok]);if(vals.length){const r=cfoqRuleBlank();r.conds.push(cfoqCondNorm({field:nk,values:vals}));o.rules.push(r);}});
       cfoqArr(rec.extra).map(s=>s.trim()).filter(Boolean).forEach(s=>{const r=cfoqRuleBlank();r.raw=s;o.rules.push(r);});
       cfoqArr(rec.excl).map(s=>s.trim()).filter(Boolean).forEach(s=>{const r=cfoqRuleBlank();r.raw='NOT ('+s+')';o.excl.push(r);});
       o.migrated={rules:o.rules.length,excl:o.excl.length};
@@ -16032,27 +16057,27 @@ function cfoqBad(v){return /'/.test(String(v))?'В значении есть а�
 function cfoqYearText(f,vals,mode){mode=mode||CFOQ_YEAR_MODE[f.k];return (vals||[]).map(v=>mode==='text'?'Col'+f.col+" ENDS WITH '"+cfoqEsc(v)+"'":'year(Col'+f.col+') = '+String(v).replace(/\D/g,'')).join(' OR ');}
 // текст одного поля: значения через OR; текстовое - CONTAINS; '' - поле не ограничено
 function cfoqFieldText(f,vals){const vs=(vals||[]).filter(v=>!cfoqBad(v));if(f.t==='year')return cfoqYearText(f,vs);if(f.t==='text')return vs.map(v=>'Col'+f.col+" CONTAINS '"+cfoqEsc(v)+"'").join(' OR ');return vs.map(v=>'Col'+f.col+" = '"+cfoqEsc(v)+"'").join(' OR ');}
-// текст правила: поля через AND; многозначное поле и raw берутся в скобки ТОЛЬКО когда в правиле
-// есть что-то ещё (одиночную часть скобки получит уже cfoqRulesText - иначе выходило «((…))»); '' - правило пустое
-function cfoqRuleText(r){r=cfoqRuleNorm(r);const parts=[];CFOQ_FIELDS.forEach(f=>{const vs=cfoqFieldVals(f,r).filter(v=>!cfoqBad(v));if(vs.length)parts.push({t:cfoqFieldText(f,vs),multi:vs.length>1});});if(r.raw)parts.push({t:r.raw,multi:true});
+function cfoqCondText(c){const f=cfoqField(c&&c.field);return f?cfoqFieldText(f,cfoqCondVals(c)):'';}
+// текст правила: условия через AND в порядке строк; многозначное условие и raw берутся в скобки ТОЛЬКО когда
+// в правиле есть что-то ещё (одиночную часть скобки получит уже cfoqRulesText - иначе выходило «((…))»); '' - правило пустое
+function cfoqRuleText(r){r=cfoqRuleNorm(r);const parts=[];r.conds.forEach(c=>{const vs=cfoqCondVals(c).filter(v=>!cfoqBad(v));if(vs.length)parts.push({t:cfoqFieldText(cfoqField(c.field),vs),multi:vs.length>1});});if(r.raw)parts.push({t:r.raw,multi:true});
   return parts.length>1?parts.map(p=>p.multi?'('+p.t+')':p.t).join(' AND '):(parts.length?parts[0].t:'');}
 function cfoqRulesText(list){return (list||[]).map(cfoqRuleText).filter(Boolean).map(t=>'('+t+')').join(' OR ');}
+// единственное «живое» условие исключения для режима neq: ровно одно условие-справочник, без raw; иначе null
+function _cfoqNeqCond(e){const cs=(e.conds||[]).filter(c=>cfoqCondVals(c).filter(v=>!cfoqBad(v)).length);if(cs.length!==1||e.raw)return null;const f=cfoqField(cs[0].field);return f&&f.t==='multi'?{f,vals:cs[0].values.filter(v=>!cfoqBad(v))}:null;}
 // что мешает выдать формулу (пустой список - всё в порядке); подписи показываются в окне
 function cfoqProblems(rec){
   const r=cfoqNorm(rec),out=[];
   if(r.bad)out.push('Запись в облаке не разобрана ('+r.bad+'): правила пусты, при сохранении она будет записана обратно как была.');
-  const skipped=(list,name)=>list.forEach((x,i)=>{CFOQ_FIELDS.forEach(f=>{const b=cfoqFieldVals(f,x).filter(v=>cfoqBad(v));if(b.length)out.push(name+' '+(i+1)+': значение с апострофом пропущено - '+b.join(', '));});});
+  const skipped=(list,name)=>list.forEach((x,i)=>{x.conds.forEach(c=>{const b=cfoqCondVals(c).filter(v=>cfoqBad(v));if(b.length)out.push(name+' '+(i+1)+', '+cfoqField(c.field).cat+': значение с апострофом пропущено - '+b.join(', '));});});
   skipped(r.rules,'Правило');skipped(r.excl,'Исключение');
-  if(CFOQ_EXCL_MODE==='neq')r.excl.forEach((e,i)=>{const fs=CFOQ_FIELDS.filter(f=>cfoqFieldVals(f,e).filter(v=>!cfoqBad(v)).length);if(fs.length!==1||e.raw||fs[0].t!=='multi')out.push('Исключение '+(i+1)+': в режиме без NOT исключение выражается только ОДНИМ полем-справочником через <> - оставьте одно поле из списка, без года, текста и готового выражения.');});
+  if(CFOQ_EXCL_MODE==='neq')r.excl.forEach((e,i)=>{if(!_cfoqNeqCond(e))out.push('Исключение '+(i+1)+': в режиме без NOT исключение выражается только ОДНИМ условием-справочником через <> - оставьте одно условие из списка, без года, текста и готового выражения.');});
   return out;
 }
 function cfoqExclText(list){
   const L=(list||[]).filter(e=>cfoqRuleText(e));
   if(!L.length)return '';
-  if(CFOQ_EXCL_MODE==='neq'){
-    const parts=[];L.forEach(e=>{const fs=CFOQ_FIELDS.filter(f=>cfoqFieldVals(f,e).filter(v=>!cfoqBad(v)).length);if(fs.length!==1||e.raw||fs[0].t!=='multi')return;const f=fs[0];e[f.k].filter(v=>!cfoqBad(v)).forEach(v=>parts.push('Col'+f.col+" <> '"+cfoqEsc(v)+"'"));});
-    return parts.map(p=>' AND '+p).join('');
-  }
+  if(CFOQ_EXCL_MODE==='neq'){const parts=[];L.forEach(e=>{const n=_cfoqNeqCond(e);if(!n)return;n.vals.forEach(v=>parts.push('Col'+n.f.col+" <> '"+cfoqEsc(v)+"'"));});return parts.map(p=>' AND '+p).join('');}
   return ' AND NOT ( '+cfoqRulesText(L)+' )';
 }
 // текст условия WHERE (без «WHERE»); '' - правил нет
@@ -16127,10 +16152,10 @@ function cfoqFieldPred(f,vals){
   if(f.t==='text'){const t=vs[0];return row=>{const v=row[f.idx];return v!=null&&v!==''&&String(v).includes(t);};}
   const set=new Set(vs.map(String));return row=>{const v=row[f.idx];return v!=null&&v!==''&&set.has(String(v));};
 }
-// предикат правила: поля через AND, raw - разбором; null - raw не разобрался; false - правило пустое
+// предикат правила: условия через AND, raw - разбором; null - raw не разобрался; false - правило пустое
 function cfoqRulePred(r){
   r=cfoqRuleNorm(r);const ps=[];
-  CFOQ_FIELDS.forEach(f=>{const p=cfoqFieldPred(f,cfoqFieldVals(f,r));if(p)ps.push(p);});
+  r.conds.forEach(c=>{const p=cfoqFieldPred(cfoqField(c.field),cfoqCondVals(c));if(p)ps.push(p);});
   if(r.raw){const p=cfoqParse(r.raw);if(!p)return null;ps.push(row=>{try{return !!p(row);}catch(e){return false;}});}
   if(!ps.length)return false;
   return row=>ps.every(p=>p(row));
@@ -16151,7 +16176,7 @@ function cfoqCount(rec,rows){
   // исключения по режиму формулы: 'not' - строка убирается, если подходит хотя бы под одно;
   // 'neq' - Col<N> <> 'v' через AND: пустая ячейка ВЫБРАСЫВАЕТСЯ (как в QUERY), недопустимые исключения в формулу не идут
   let keep;
-  if(CFOQ_EXCL_MODE==='neq'){const ks=[];r.excl.forEach(e=>{const fs=CFOQ_FIELDS.filter(f=>cfoqFieldVals(f,e).filter(v=>!cfoqBad(v)).length);if(fs.length!==1||e.raw||fs[0].t!=='multi')return;const f=fs[0],set=new Set(e[f.k].filter(v=>!cfoqBad(v)).map(String));ks.push(row=>{const v=row[f.idx];return v!=null&&v!==''&&!set.has(String(v));});});keep=row=>ks.every(k=>k(row));}
+  if(CFOQ_EXCL_MODE==='neq'){const ks=[];r.excl.forEach(e=>{const n=_cfoqNeqCond(e);if(!n)return;const set=new Set(n.vals.map(String));ks.push(row=>{const v=row[n.f.idx];return v!=null&&v!==''&&!set.has(String(v));});});keep=row=>ks.every(k=>k(row));}
   else keep=row=>!epreds.some(f=>f&&f(row));
   res.n=rows.reduce((n,row)=>n+(base(row)&&union(row)&&keep(row)?1:0),0);
   return res;
@@ -16166,7 +16191,7 @@ function cfoqValues(f,rows){
 // ── Окно конструктора (из строки панели доступа) ─────────────────────────────────────────
 // Запись живёт на строке таблицы (tr._cfoq): переживает правку email в строке, уходит вместе
 // с удалением строки, сохраняется общей кнопкой «Сохранить» панели.
-const CFOQ_SEC={rules:{title:'Видит',add:'+ Добавить правило',one:'Правило',cnt:'подходит',note:'Правила соединяются ИЛИ: строка попадает в лист, если подходит хотя бы под одно. Внутри правила поля соединяются И.'},
+const CFOQ_SEC={rules:{title:'Видит',add:'+ Добавить правило',one:'Правило',cnt:'подходит',note:'Правила соединяются ИЛИ: строка попадает в лист, если подходит хотя бы под одно. Внутри правила условия соединяются И.'},
                 excl:{title:'Не видит',add:'+ Добавить исключение',one:'Исключение',cnt:'убирает',note:'Исключения вычитаются из того, что видит: строка убирается, если подходит хотя бы под одно.'}};
 window.cfoqRowMark=function(tr){const b=tr&&tr.querySelector('.acc-query');if(!b)return;const on=tr._cfoq&&cfoqHasCond(tr._cfoq);b.textContent=on?'Запрос •':'Запрос';b.title=on?'Условия заданы - открыть и посмотреть формулу':'Собрать условия персонального листа и получить формулу QUERY';};
 function _cfoqRows(){return (typeof RAW==='undefined')?[]:(RAW||[]);}
@@ -16183,7 +16208,7 @@ window.cfoQueryOpen=function(tr){
   const inp='width:100%;box-sizing:border-box;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--mono)';
   const sheetNote=(sheet&&sheet!=='__full__')?`Вставить в первую ячейку листа <b>${_htmlEsc(sheet)}</b>.`:'Вкладка у человека не выбрана - формула вставляется в первую ячейку его листа RawData_&lt;Фамилия&gt;.';
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='cfoQueryOverlay';overlay.style.zIndex='9001'; // поверх панели доступа
-  // ⚠ email - простым текстом (не <b>, не ссылка): подпись окна, а не адрес для клика
+  // ⚠ email - простым текстом (не <b>, не ссылка): подпись окна, а не адрес для клика. Ширина - как у панели доступа (1100 / 96vw)
   overlay.innerHTML=`<div class="txn-card" style="width:1100px;max-width:96vw">
     <div class="txn-card-head"><h3>Запрос ЦФО: ${_htmlEsc(name||email||'(без email)')}</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:14px 20px 18px">
@@ -16203,23 +16228,38 @@ window.cfoQueryOpen=function(tr){
   document.body.appendChild(overlay);
   cfoqRender();
 };
-// полная сборка секций из записи (при открытии, добавлении/удалении/перестановке карточек);
-// смена галочек и raw идёт через cfoqRefresh без пересборки - иначе закрывался бы открытый список
+// подпись кнопки значений условия: сами значения (это и есть смысл строки), пусто - приглашение
+function cfoqValLabel(c){const vs=cfoqCondVals(c);return (vs.length?vs.join(', '):'выберите значения')+' ▾';}
+// полная сборка секций из записи (при открытии, добавлении/удалении/перестановке карточек и строк, смене поля);
+// смена галочек и текста идёт через cfoqRefresh без пересборки - иначе закрывался бы открытый список
 window.cfoqRender=function(){
   const rec=_cfoqRec(),box=document.getElementById('cfoq-rules');if(!rec||!box)return;
   const rows=_cfoqRows(),loaded=rows.length>=CFOQ_MIN_ROWS;
+  const AND=`<div class="cfoq-and" style="font-size:10px;font-weight:700;color:var(--text3);padding:1px 0 1px 6px;letter-spacing:.06em">И</div>`;
+  // ⚠ СТРОКА УСЛОВИЯ = [поле] [оператор] [значения] [✕] (доп. 7-9, 23.09.2026). Поле выбирается селектом
+  //   из списка в порядке колонок RawData БЕЗ уже занятых в этом правиле; оператор - текстом, он следует из
+  //   поля; значения - общий мультивыбор _ddMultiHtml (справочники, годы) или строка (текстовые, CONTAINS).
+  //   Новая строка добавляется ПУСТОЙ: сначала поле, потом появляется выбор значений под это поле.
+  const condHtml=(sec,r,i,c,j)=>{
+    const f=cfoqField(c.field),id='cfoq-'+sec+'-'+i+'-'+j;
+    const opts=cfoqFieldOptions(r,j);
+    const sel=`<select class="bar-ctl cfoq-field" onchange="cfoqCondField('${sec}',${i},${j},this.value)" title="Поле - колонка RawData" style="width:100%;min-width:0"><option value=""${f?'':' selected'}>- поле -</option>${opts.map(o=>`<option value="${o.k}"${f&&f.k===o.k?' selected':''}>${_htmlEsc(o.cat)} (Col${o.col})</option>`).join('')}</select>`;
+    let val='';
+    if(!f)val=`<span style="font-size:11px;color:var(--text3)">сначала выберите поле</span>`;
+    else if(!loaded)val=`<span style="font-size:11px;color:var(--text)">${_htmlEsc(cfoqCondVals(c).join(', ')||'-')}</span>`;
+    else if(f.t==='text')val=`<input type="text" id="${id}-inp" class="bar-ctl" value="${_pesc(c.text)}" oninput="cfoqCondInput('${sec}',${i},${j},this.value)" placeholder="текст…" title="${_pesc(f.title)}" style="width:100%;box-sizing:border-box;text-align:left">`;
+    else val=`<div style="position:relative;min-width:0"><button type="button" id="${id}-btn" class="bar-ctl" style="width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_pesc(cfoqCondVals(c).join(', ')||f.title)}" onclick="cfoqToggle('${id}-dd')">${_htmlEsc(cfoqValLabel(c))}</button>${_ddMultiHtml(id+'-dd','',window._cfoqVals[f.k]||[],c.values,{search:true,cls:'cfoq-dd',noAll:true,bad:cfoqBad,onChangeJs:"cfoqValChange('"+sec+"',"+i+","+j+")"})}</div>`;
+    return `<div class="cfoq-cond" data-j="${j}" style="display:grid;grid-template-columns:minmax(150px,240px) 110px minmax(0,1fr) 22px;gap:6px;align-items:center">
+      ${sel}<span class="cfoq-op" style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f?cfoqOp(f):''}</span>${val}
+      <button type="button" onclick="cfoqCondDel('${sec}',${i},${j})" title="Убрать условие" style="border:none;background:none;color:#d35450;cursor:pointer;font-size:13px;line-height:1;padding:0">✕</button>
+    </div>`;
+  };
   const secHtml=sec=>{
     const S=CFOQ_SEC[sec],list=rec[sec];
+    // карточка - ОДИН компонент для обеих секций: отличается только цвет полосы слева и участие в формуле
     const cards=list.map((r,i)=>{
-      // ⚠ Мультивыбор - общий строитель _ddMultiHtml (тот же вид, что на вкладках): кнопка .bar-ctl с
-      //   подписью _barBtnLabel и поиск; «Выбрать все» в этом окне не показывается (noAll).
-      // ⚠ Тринадцать полей - СЕТКОЙ в несколько колонок (доп. 9): все видны без прокрутки вбок, на узком
-      //   экране сетка переносится; у ячеек min-width:0, у кнопок ellipsis - горизонтального скролла нет.
-      //   Текстовые поля (ID_Offer, Назначение) - ввод строки с подписью «содержит», тот же класс .bar-ctl.
-      const pickers=loaded?CFOQ_FIELDS.map(f=>{const id='cfoq-'+sec+'-'+i+'-'+f.k;
-        if(f.t==='text')return `<div style="min-width:0"><input type="text" id="${id}-inp" class="bar-ctl" value="${_pesc(r[f.k])}" oninput="cfoqTextInput('${sec}',${i},'${f.k}',this.value)" placeholder="${_pesc(f.cat)} содержит…" title="${_pesc(f.title)}" style="width:100%;box-sizing:border-box;text-align:left"></div>`;
-        return `<div style="position:relative;min-width:0"><button type="button" id="${id}-btn" data-cat="${f.cat}" class="bar-ctl" style="width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_pesc(f.title)}" onclick="cfoqToggle('${id}-dd')">${_barBtnLabel(f.cat,r[f.k].length)}</button>${_ddMultiHtml(id+'-dd','',window._cfoqVals[f.k],r[f.k],{search:true,cls:'cfoq-dd',noAll:true,bad:cfoqBad,onChangeJs:"cfoqFieldChange('"+sec+"',"+i+",'"+f.k+"')"})}</div>`;}).join(''):'';
-      // карточка - ОДИН компонент для обеих секций: отличается только цвет полосы слева и участие в формуле
+      const conds=(r.conds||[]).map((c,j)=>condHtml(sec,r,i,c,j)).join(AND);
+      const canAdd=loaded&&!(r.conds||[]).some(c=>!c.field)&&cfoqFieldOptions(r,-1).length>0;
       return `<div class="cfoq-card" data-sec="${sec}" data-i="${i}" style="border:1px solid var(--border);border-left:3px solid ${sec==='rules'?'var(--accent)':'var(--outcome)'};border-radius:8px;padding:8px 10px;background:var(--surface)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <span class="cfoq-grip" title="Перетащить: меняет только порядок показа, на результат не влияет" onpointerdown="cfoqDragStart(event,'${sec}')" style="cursor:grab;color:var(--text3);user-select:none;font-size:14px;line-height:1;touch-action:none">≡</span>
@@ -16227,10 +16267,10 @@ window.cfoqRender=function(){
           <span id="cfoq-cnt-${sec}-${i}" style="margin-left:auto;font-size:11px;color:var(--text2);font-family:var(--mono)"></span>
           <button type="button" onclick="cfoqRuleDel('${sec}',${i})" title="Удалить" style="border:none;background:none;color:#d35450;cursor:pointer;font-size:14px;line-height:1">✕</button>
         </div>
-        ${pickers?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;margin-bottom:6px">${pickers}</div>`:''}
-        <div id="cfoq-chips-${sec}-${i}" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:11px;margin-bottom:6px"></div>
+        <div id="cfoq-conds-${sec}-${i}" style="display:flex;flex-direction:column;gap:4px;margin-bottom:6px">${conds||`<div style="font-size:11px;color:var(--text3)">условий нет - ${sec==='rules'?'правило':'исключение'} не участвует</div>`}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><button type="button" onclick="cfoqCondAdd('${sec}',${i})" ${canAdd?'':'disabled'} title="${canAdd?'Добавить строку условия - соединяется с остальными через И':(loaded?'Сначала выберите поле в пустой строке':'Данные ещё не загружены')}" style="font-size:11px;font-weight:600;padding:3px 10px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2);cursor:${canAdd?'pointer':'not-allowed'};opacity:${canAdd?'1':'.5'};font-family:var(--sans)">+ Добавить условие</button></div>
         <div id="cfoq-hint-${sec}-${i}" style="font-size:10.5px;color:var(--orange);margin:-2px 0 6px;display:none"></div>
-        <input class="cfoq-raw" type="text" value="${_pesc(r.raw)}" oninput="cfoqRawInput('${sec}',${i},this.value)" placeholder="готовое выражение, например Col5 > 0 - соединяется с полями через И" style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--mono)">
+        <input class="cfoq-raw" type="text" value="${_pesc(r.raw)}" oninput="cfoqRawInput('${sec}',${i},this.value)" placeholder="готовое выражение, например Col5 > 0 - соединяется с условиями через И" style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:var(--mono)">
       </div>`;
     }).join(`<div class="cfoq-or" style="text-align:center;font-size:10px;font-weight:700;color:var(--text3);margin:4px 0;letter-spacing:.06em">ИЛИ</div>`);
     return `<div style="margin-top:${sec==='excl'?'12px':'0'}">
@@ -16253,10 +16293,14 @@ window.cfoqToggle=function(ddId){
 document.addEventListener('click',e=>{
   document.querySelectorAll('.cfoq-dd').forEach(dd=>{if(dd.style.display!=='block')return;const btn=document.getElementById(dd.id.replace('-dd','-btn'));if(!dd.contains(e.target)&&e.target!==btn&&!(btn&&btn.contains(e.target)))dd.style.display='none';});
 });
-window.cfoqFieldChange=function(sec,i,k){const rec=_cfoqRec();if(!rec||!rec[sec][i])return;const id='cfoq-'+sec+'-'+i+'-'+k;rec[sec][i][k]=_bankExtraGetChecked(id+'-dd');_bankExtraUpdateBtn(id+'-btn',id+'-dd');cfoqRefresh();};
+const _cfoqCond=(sec,i,j)=>{const rec=_cfoqRec();const r=rec&&rec[sec][i];return r&&r.conds&&r.conds[j]?r.conds[j]:null;};
+window.cfoqCondAdd=function(sec,i){const rec=_cfoqRec();if(!rec||!rec[sec][i])return;rec[sec][i].conds=rec[sec][i].conds||[];rec[sec][i].conds.push(cfoqCondBlank());cfoqRender();};
+window.cfoqCondDel=function(sec,i,j){const rec=_cfoqRec();if(!rec||!rec[sec][i])return;rec[sec][i].conds.splice(j,1);cfoqRender();};
+window.cfoqCondField=function(sec,i,j,k){const c=_cfoqCond(sec,i,j);if(!c)return;c.field=cfoqField(k)?k:'';c.values=[];c.text='';cfoqRender();}; // смена поля сбрасывает значения - они были про другую колонку
+window.cfoqValChange=function(sec,i,j){const c=_cfoqCond(sec,i,j);if(!c)return;c.values=_bankExtraGetChecked('cfoq-'+sec+'-'+i+'-'+j+'-dd');cfoqRefresh();};
+window.cfoqCondInput=function(sec,i,j,v){const c=_cfoqCond(sec,i,j);if(!c)return;c.text=String(v||'').trim();cfoqRefresh();};
 window.cfoqRawInput=function(sec,i,v){const rec=_cfoqRec();if(!rec||!rec[sec][i])return;rec[sec][i].raw=String(v||'').trim();cfoqRefresh();};
-window.cfoqTextInput=function(sec,i,k,v){const rec=_cfoqRec();if(!rec||!rec[sec][i])return;rec[sec][i][k]=String(v||'').trim();cfoqRefresh();};
-window.cfoqRuleAdd=function(sec){const rec=_cfoqRec();if(!rec)return;rec[sec].push(cfoqRuleBlank());cfoqRender();};
+window.cfoqRuleAdd=function(sec){const rec=_cfoqRec();if(!rec)return;const r=cfoqRuleBlank();r.conds.push(cfoqCondBlank());rec[sec].push(r);cfoqRender();}; // новое правило открывается с одной пустой строкой
 window.cfoqRuleDel=function(sec,i){const rec=_cfoqRec();if(!rec)return;rec[sec].splice(i,1);cfoqRender();};
 // перетаскивание за ручку (pointer events, как у пресетов): меняет ТОЛЬКО порядок в массиве, на формулу не влияет по построению
 window.cfoqDragStart=function(e,sec){
@@ -16267,23 +16311,21 @@ window.cfoqDragStart=function(e,sec){
     if(order.length===rec[sec].length)rec[sec]=order.map(j=>rec[sec][j]);cfoqRender();};
   document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
 };
-// обновление на месте: чипы, счётчики, итог, формула, кнопка копирования, подписи проблем
+// обновление на месте: подписи значений, счётчики, подсказка про год, итог, формула, кнопка копирования, проблемы
 window.cfoqRefresh=function(){
   const tr=window._cfoqTr,rec=_cfoqRec();if(!tr||!rec||!document.getElementById('cfoQueryOverlay'))return;
   cfoqRowMark(tr);
   const rows=_cfoqRows(),loaded=rows.length>=CFOQ_MIN_ROWS,c=cfoqCount(rec,rows),probs=cfoqProblems(rec);
-  CFOQ_FIELDS.filter(f=>f.t==='year').forEach(f=>{const bad=(window._cfoqUnparsed||{})[f.k]||0;if(bad&&rec.rules.concat(rec.excl).some(r=>r[f.k].length))probs.push('У '+bad.toLocaleString('ru-RU')+' строк дата в колонке «'+f.cat.replace('Год ','')+'» не распознана (parseDate) - под условие по году они не попадают, а лист их судьбу решит сам.');});
+  CFOQ_FIELDS.filter(f=>f.t==='year').forEach(f=>{const bad=(window._cfoqUnparsed||{})[f.k]||0;if(bad&&rec.rules.concat(rec.excl).some(r=>(r.conds||[]).some(x=>x.field===f.k&&x.values.length)))probs.push('У '+bad.toLocaleString('ru-RU')+' строк дата в колонке «'+f.cat.replace('Год ','')+'» не распознана (parseDate) - под условие по году они не попадают, а лист их судьбу решит сам.');});
   const fmtN=n=>n.toLocaleString('ru-RU');
   ['rules','excl'].forEach(sec=>rec[sec].forEach((r,i)=>{
-    const chips=[];CFOQ_FIELDS.forEach(f=>{const vs=cfoqFieldVals(f,r);if(vs.length)chips.push(`<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);color:var(--text)"><b style="color:var(--text2);font-weight:600">${_htmlEsc(f.cat)}${f.t==='text'?' содержит':''}:</b> ${_htmlEsc(vs.join(', '))}</span>`);});
+    (r.conds||[]).forEach((x,j)=>{const b=document.getElementById('cfoq-'+sec+'-'+i+'-'+j+'-btn');if(b){b.textContent=cfoqValLabel(x);b.title=cfoqCondVals(x).join(', ')||(cfoqField(x.field)||{}).title||'';}});
     // ⚠ ПОДСКАЗКА ПРО ГОД - предупреждение, не запрет (доп. 11), ТОЛЬКО в «Видит»: год в «Не видит» ограничивает историю и не протухает
-    const hint=document.getElementById('cfoq-hint-'+sec+'-'+i);if(hint){const yr=sec==='rules'&&CFOQ_FIELDS.some(f=>f.t==='year'&&r[f.k].length);hint.style.display=yr?'block':'none';hint.textContent=yr?'⚠ доступ ограничен годом - в следующем году человек перестанет видеть новые строки':'';}
-    if(r.raw)chips.push(`<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--surface2);border:1px solid var(--border);font-family:var(--mono)">${_htmlEsc(r.raw)}</span>`);
-    const el=document.getElementById('cfoq-chips-'+sec+'-'+i);if(el)el.innerHTML=chips.length?chips.join('<i style="font-style:normal;font-size:10px;font-weight:700;color:var(--text3)">И</i>'):'<span style="color:var(--text3)">условий нет - '+(sec==='rules'?'правило':'исключение')+' не участвует</span>';
+    const hint=document.getElementById('cfoq-hint-'+sec+'-'+i);if(hint){const yr=sec==='rules'&&(r.conds||[]).some(x=>{const f=cfoqField(x.field);return f&&f.t==='year'&&x.values.length;});hint.style.display=yr?'block':'none';hint.textContent=yr?'⚠ доступ ограничен годом - в следующем году человек перестанет видеть новые строки':'';}
     const cnt=document.getElementById('cfoq-cnt-'+sec+'-'+i);if(cnt){const n=(sec==='rules'?c.perRule:c.perExcl)[i];cnt.textContent=!loaded?'':(n==null?(cfoqRuleText(r)?'⚠ не разобрано':''):CFOQ_SEC[sec].cnt+' '+fmtN(n)+' строк');cnt.style.color=n==null&&cfoqRuleText(r)?'var(--orange)':'var(--text2)';}
   }));
-  const pb=document.getElementById('cfoq-problems');if(pb)pb.innerHTML=probs.length?`<div style="font-size:11px;color:var(--outcome);margin:0 0 8px;line-height:1.5">${probs.map(p=>'⚠ '+_htmlEsc(p)).join('<br>')}</div>`+(rec.migrated?'':''):(rec.migrated?`<div style="font-size:11px;color:var(--text2);margin:0 0 8px">Запись переведена из прежнего плоского формата: правил ${rec.migrated.rules}, исключений ${rec.migrated.excl} - каждое прежнее поле стало отдельным правилом (тот же ИЛИ). Сохраните панель, чтобы записать в новом виде.</div>`:'');
-  const text=cfoqShownText(rec),has=!!cfoqFormula(rec)&&!probs.some(p=>/только ОДНИМ полем|не разобрана/.test(p));
+  const pb=document.getElementById('cfoq-problems');if(pb)pb.innerHTML=probs.length?`<div style="font-size:11px;color:var(--outcome);margin:0 0 8px;line-height:1.5">${probs.map(p=>'⚠ '+_htmlEsc(p)).join('<br>')}</div>`:(rec.migrated?`<div style="font-size:11px;color:var(--text2);margin:0 0 8px">Запись переведена из прежнего плоского формата: правил ${rec.migrated.rules}, исключений ${rec.migrated.excl} - каждое прежнее поле стало отдельным правилом (тот же ИЛИ). Сохраните панель, чтобы записать в новом виде.</div>`:'');
+  const text=cfoqShownText(rec),has=!!cfoqFormula(rec)&&!probs.some(p=>/только ОДНИМ условием|не разобрана/.test(p));
   const out=document.getElementById('cfoq-out');if(out){out.value=text;out.style.color=has?'var(--text)':'var(--text3)';}
   const canCopy=has&&loaded;
   const cp=document.getElementById('cfoq-copy');if(cp){cp.disabled=!canCopy;cp.style.opacity=canCopy?'1':'.5';cp.style.cursor=canCopy?'pointer':'not-allowed';cp.textContent='Скопировать';cp.title=canCopy?'':(!loaded?'Данные ещё не загружены':'Формулы нет');}
