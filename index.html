@@ -11714,7 +11714,7 @@ function pfRunTests(){
     const f=cfoqParse(oldWhere),oldSet=rows.map((r,i)=>f&&f(r)?i:-1).filter(i=>i>=0),m=cfoqNorm(flat);
     ok('миграция · плоская запись → 4 правила + 1 исключение, помечена',m.rules.length===4&&m.excl.length===1&&!!m.migrated&&m.excl[0].raw==="NOT (Col11 != 'Вывод чистой прибыли')");
     ok('миграция · множество строк совпадает с прежней формулой',JSON.stringify(set(m))===JSON.stringify(oldSet)&&oldSet.length>0,JSON.stringify(set(m))+' vs '+JSON.stringify(oldSet));
-    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[]}));
+    ok('миграция · новый формат читается как есть, пустые правила отброшены',JSON.stringify(cfoqNorm({email:'A@B',rules:{0:{conds:{0:{field:'dir',values:{0:AP}}}},1:{}},excl:null}))===JSON.stringify({email:'a@b',rules:[{conds:[{field:'dir',values:[AP],text:''}],raw:''}],excl:[],sheetCode:''}));
     ok('миграция · правило прежнего вида (фиксированные ключи) → conds, то же множество строк',(()=>{const oldR={dir:[AP],sub:[ZP],offer:'x'},newR={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:'offer',text:'x'}]};const n=cfoqRuleNorm(oldR);return n.conds.length===3&&n.conds.map(c=>c.field).join()==='offer,sub,dir'&&JSON.stringify(set({rules:[oldR]}))===JSON.stringify(set({rules:[newR]}))&&JSON.stringify(set({rules:[R1]}))===JSON.stringify(set({rules:[{conds:[{field:'sub',values:[ZP]},{field:'dir',values:[AP]}]}]}));})());
     ok('условия · неизвестное поле и пустое условие отбрасываются при нормализации',cfoqRuleNorm({conds:[{field:'nope',values:['x']},{field:'dir',values:[]},{field:'dir',values:[AP]}]}).conds.length===1);
     ok('условия · занятое в правиле поле второй раз не предлагается, своё - остаётся',(()=>{const r={conds:[{field:'dir',values:[AP]},{field:'sub',values:[ZP]},{field:''}]};const o2=cfoqFieldOptions(r,2).map(f=>f.k),o0=cfoqFieldOptions(r,0).map(f=>f.k);return o2.indexOf('dir')<0&&o2.indexOf('sub')<0&&o2.length===CFOQ_FIELDS.length-2&&o0.indexOf('dir')>=0&&o0.indexOf('sub')<0;})());
@@ -11730,7 +11730,16 @@ function pfRunTests(){
    ok('окно · текстовые поля - ввод строки, оператор «содержит»',qr.indexOf("f.t==='text'")>=0&&qr.indexOf('cfoqCondInput(')>=0&&String(cfoqOp).indexOf('содержит')>=0);
    ok('окно · email простым текстом, не <b>',/<span>\$\{_htmlEsc\(email\|\|/.test(qo));
    ok('окно · итог и «нет условий» из одного источника',String(cfoqRefresh).indexOf('cfoqShownText(')>=0&&String(cfoqRefresh).indexOf('CFOQ_WARN_SHARE')>=0);
-   ok('панель доступа · пишет config/cfoQueries через _fbSetSafe',asp.indexOf("_fbSetSafe('config/cfoQueries'")>=0);}
+   ok('панель доступа · пишет config/cfoQueries через _fbSetSafe',asp.indexOf("_fbSetSafe('config/cfoQueries'")>=0);
+   // 9. КОД ЛИСТА-ПРИЁМНИКА (23.09.2026)
+   ok('код листа · в алфавите нет похожих символов, 27 знаков',!/[0O1IL5S8B]/.test(CFOQ_CODE_ALPHABET)&&CFOQ_CODE_ALPHABET.length===27&&new Set(CFOQ_CODE_ALPHABET).size===27&&/^[A-Z0-9]+$/.test(CFOQ_CODE_ALPHABET));
+   ok('код листа · формат RawData_ + 8 знаков алфавита',(()=>{const c=cfoqCodeGen(new Set());return CFOQ_CODE_RE.test(c)&&c.length===CFOQ_CODE_PREFIX.length+CFOQ_CODE_LEN&&![...c.slice(CFOQ_CODE_PREFIX.length)].some(ch=>'0O1IL5S8B'.indexOf(ch)>=0);})());
+   ok('код листа · повторная генерация даёт другой код',(()=>{const a=cfoqCodeGen(new Set()),b=cfoqCodeGen(new Set([a]));return a!==b&&CFOQ_CODE_RE.test(b);})());
+   ok('код листа · уникальность: занятый код пропускается (подменённый источник случайности)',(()=>{let n=0;const rnd=()=>(n++<CFOQ_CODE_LEN?0:1/CFOQ_CODE_ALPHABET.length);const A=CFOQ_CODE_PREFIX+CFOQ_CODE_ALPHABET[0].repeat(CFOQ_CODE_LEN),B=CFOQ_CODE_PREFIX+CFOQ_CODE_ALPHABET[1].repeat(CFOQ_CODE_LEN);return cfoqCodeGen(new Set([A]),rnd)===B&&cfoqCodeGen(new Set(),()=>0)===A;})());
+   ok('код листа · не подобрать - null, а не дубль',cfoqCodeGen(new Set([CFOQ_CODE_PREFIX+CFOQ_CODE_ALPHABET[0].repeat(CFOQ_CODE_LEN)]),()=>0)===null);
+   ok('код листа · запись без sheetCode читается: «код не задан», кнопка генерации, окно не ломается',(()=>{const r=cfoqNorm({email:'a@b',rules:[{conds:[{field:'dir',values:['x']}]}]});const h=cfoqSheetHtml(r);return r.sheetCode===''&&h.indexOf('код не задан')>=0&&h.indexOf('cfoqCodeIssue(false)')>=0&&cfoqSheetNote(r).indexOf('не задан')>=0&&!cfoqHasCond({email:'a@b'});})());
+   ok('код листа · с кодом: код в блоке, копирование и перевыпуск с подтверждением, подпись под формулой по коду',(()=>{const r=cfoqNorm({email:'a@b',sheetCode:'RawData_ACDEFGHJ'});const h=cfoqSheetHtml(r);return r.sheetCode==='RawData_ACDEFGHJ'&&h.indexOf('RawData_ACDEFGHJ')>=0&&h.indexOf('Скопировать имя')>=0&&h.indexOf('cfoqCodeIssue(true)')>=0&&/confirm\(/.test(String(cfoqCodeIssue))&&String(cfoqCodeIssue).indexOf('IMPORTRANGE')>=0&&cfoqSheetNote(r).indexOf('RawData_ACDEFGHJ')>=0&&cfoqHasCond(r);})());
+   ok('код листа · код сохраняется в записи и не печатается вне окна (нет console.log с sheetCode, панель доступа кода не знает)',(()=>{const src=[cfoqRender,cfoqRefresh,cfoQueryOpen,cfoqCodeIssue,_accessQueriesCollect,_accessQueriesAttach,cfoqRowMark,_accessRowHtml,showAccessPanel].map(String).join('\n');return src.indexOf('sheetCode:r.sheetCode')>=0&&!/console\.log\([^)]*sheetCode/.test(src)&&String(_accessRowHtml).indexOf('sheetCode')<0&&String(showAccessPanel).indexOf('sheetCode')<0&&String(cfoqRowMark).indexOf('sheetCode')<0;})());}
 
   const bad=R.filter(r=>!r.pass);
   console.log('[БДР] pfRunTests (без данных, с любой вкладки): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли')+'. Живые проверки - отдельно: pfRunLiveTests() с вкладки БДР.');
@@ -16023,13 +16032,30 @@ function cfoqRuleEmpty(r){return !(r.conds||[]).some(c=>!cfoqCondEmpty(c))&&!r.r
 // поля, доступные условию j правила r: все, кроме занятых ДРУГИМИ условиями того же правила -
 // два условия по одной колонке через И дают пустой лист, и человек не понял бы, почему он пуст
 function cfoqFieldOptions(r,j){const used=new Set((r.conds||[]).map((c,k)=>k===j?'':(c.field||'')).filter(Boolean));return CFOQ_FIELDS.filter(f=>!used.has(f.k));}
-function cfoqBlank(){return {email:'',rules:[],excl:[]};}
+function cfoqBlank(){return {email:'',rules:[],excl:[],sheetCode:''};}
+// ── КОД ЛИСТА-ПРИЁМНИКА (23.09.2026): персональные листы называются НЕ RawData_<Фамилия> (имя угадывается
+//   по чужой фамилии), а RawData_<8 знаков> - код известен только админу и хранится в записи человека
+//   (sheetCode) рядом с правилами. Алфавит без похожих символов (0/O, 1/I/L, 5/S, 8/B), руками не вводится -
+//   только кнопкой; уникальность - сверка со ВСЕМИ записями. ⚠ Код нигде не печатается рядом с ФИО, кроме
+//   самого окна: ни в console.log, ни в заголовках, ни в подписях панели доступа.
+const CFOQ_CODE_ALPHABET='ACDEFGHJKMNPQRTUVWXYZ234679';
+const CFOQ_CODE_LEN=8,CFOQ_CODE_PREFIX='RawData_';
+const CFOQ_CODE_RE=new RegExp('^'+CFOQ_CODE_PREFIX+'['+CFOQ_CODE_ALPHABET+']{'+CFOQ_CODE_LEN+'}$');
+function _cfoqRnd(){try{const a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]/4294967296;}catch(e){return Math.random();}}
+// existing - множество занятых кодов; rnd - источник [0,1) (подменяется тестом); null - не удалось за 200 попыток
+function cfoqCodeGen(existing,rnd){
+  rnd=rnd||_cfoqRnd;const ex=existing instanceof Set?existing:new Set(existing||[]);
+  for(let t=0;t<200;t++){let c=CFOQ_CODE_PREFIX;for(let i=0;i<CFOQ_CODE_LEN;i++)c+=CFOQ_CODE_ALPHABET[Math.min(CFOQ_CODE_ALPHABET.length-1,Math.floor(rnd()*CFOQ_CODE_ALPHABET.length))];if(!ex.has(c))return c;}
+  return null;
+}
+function cfoqCodeNorm(v){v=String(v==null?'':v).trim();return v;} // как записано: чужой формат не «чиним», окно его покажет
 // нормализация записи из облака + миграция плоского формата; RTDB теряет пустые массивы и отдаёт массивы объектами
 function cfoqNorm(rec){
   const o=cfoqBlank();
   if(rec==null)return o;
   if(typeof rec!=='object'){o.bad='запись не объект: '+String(rec).slice(0,80);o._orig=rec;return o;}
   o.email=String(rec.email||'').trim().toLowerCase();
+  o.sheetCode=cfoqCodeNorm(rec.sheetCode); // записи без кода читаются: '' → «код не задан»
   if(rec.bad){o.bad=rec.bad;o._orig=rec._orig;return o;} // уже нормализованная неразобранная запись: флаг и оригинал не теряем (идемпотентность)
   if(rec.migrated)o.migrated=rec.migrated;
   const list=v=>v==null?[]:(Array.isArray(v)?v:(typeof v==='object'?Object.values(v):[v]));
@@ -16050,7 +16076,7 @@ function cfoqNorm(rec){
   }catch(e){o.bad=(e&&e.message)||String(e);o._orig=rec;o.rules=[];o.excl=[];}
   return o;
 }
-function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length);}
+function cfoqHasCond(rec){const r=cfoqNorm(rec);return !!(r.bad||r.rules.length||r.excl.length||r.sheetCode);} // код листа - тоже повод хранить запись
 function cfoqEsc(v){return String(v).replace(/"/g,'""');}
 function cfoqBad(v){return /'/.test(String(v))?'В значении есть апостроф: QUERY держит строку в одинарных кавычках и экранировать его нечем - отобрать такое значение через равенство нельзя':'';}
 // текст ГОДА по режиму (mode задаётся параметром ради тестов обеих веток; по умолчанию - константа)
@@ -16200,26 +16226,25 @@ window.cfoQueryOpen=function(tr){
   if(!tr||document.getElementById('cfoQueryOverlay'))return;
   const email=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();
   const name=(tr.querySelector('.acc-name').value||'').trim();
-  const sheet=tr.querySelector('.acc-sheet').value;
   const rec=cfoqNorm(tr._cfoq||cfoqBlank());rec.email=email;tr._cfoq=rec;
   window._cfoqTr=tr;
   const rows=_cfoqRows();
   window._cfoqVals={};window._cfoqUnparsed={};CFOQ_FIELDS.forEach(f=>{if(f.t!=='text')window._cfoqVals[f.k]=cfoqValues(f,rows);});
   const inp='width:100%;box-sizing:border-box;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--mono)';
-  const sheetNote=(sheet&&sheet!=='__full__')?`Вставить в первую ячейку листа <b>${_htmlEsc(sheet)}</b>.`:'Вкладка у человека не выбрана - формула вставляется в первую ячейку его листа RawData_&lt;Фамилия&gt;.';
   const overlay=document.createElement('div');overlay.className='txn-card-overlay';overlay.id='cfoQueryOverlay';overlay.style.zIndex='9001'; // поверх панели доступа
   // ⚠ email - простым текстом (не <b>, не ссылка): подпись окна, а не адрес для клика. Ширина - как у панели доступа (1100 / 96vw)
   overlay.innerHTML=`<div class="txn-card" style="width:1100px;max-width:96vw">
     <div class="txn-card-head"><h3>Запрос ЦФО: ${_htmlEsc(name||email||'(без email)')}</h3><button class="txn-card-close">✕</button></div>
     <div style="padding:14px 20px 18px">
       <p style="font-size:12px;color:var(--text2);margin:0 0 10px;line-height:1.6">Условия персонального листа для <span>${_htmlEsc(email||'(email не задан)')}</span>. ${rows.length>=CFOQ_MIN_ROWS?'Списки значений - из загруженных данных ('+rows.length.toLocaleString('ru-RU')+' строк).':'<span style="color:var(--orange);font-weight:600">Данные ещё не загружены'+(rows.length?' ('+rows.length+' строк - меньше '+CFOQ_MIN_ROWS+')':'')+' - списки и счётчики недоступны, копирование погашено.</span>'}</p>
+      <div id="cfoq-sheet" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin:0 0 10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)"></div>
       <div id="cfoq-problems"></div>
       <div id="cfoq-rules"></div>
       <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px"><div style="font-size:11px;color:var(--text2);font-weight:600">Формула</div>
         <button type="button" id="cfoq-copy" onclick="cfoqCopy()" style="font-size:11px;font-weight:600;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text2);cursor:pointer;font-family:var(--sans)">Скопировать</button>
         <span id="cfoq-total" style="font-size:12px;margin-left:auto"></span></div>
       <textarea id="cfoq-out" readonly rows="5" style="${inp};resize:vertical;background:var(--surface2)"></textarea>
-      <p style="font-size:11px;color:var(--text3);margin:8px 0 0;line-height:1.6">${sheetNote} Дашборд в таблицу не пишет - только отдаёт текст. Условия сохраняются кнопкой «Сохранить» панели доступа. Порядок правил - только для чтения, на результат не влияет.</p>
+      <p style="font-size:11px;color:var(--text3);margin:8px 0 0;line-height:1.6"><span id="cfoq-sheetnote"></span> Дашборд в таблицу не пишет - только отдаёт текст. Условия и код листа сохраняются кнопкой «Сохранить» панели доступа. Порядок правил - только для чтения, на результат не влияет.</p>
       <div style="display:flex;justify-content:flex-end;margin-top:12px"><button type="button" onclick="document.getElementById('cfoQueryOverlay').remove()" style="font-size:12px;font-weight:700;padding:7px 16px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Готово</button></div>
     </div>
   </div>`;
@@ -16227,6 +16252,29 @@ window.cfoQueryOpen=function(tr){
   overlay.querySelector('.txn-card-close').addEventListener('click',()=>overlay.remove());
   document.body.appendChild(overlay);
   cfoqRender();
+};
+// блок «Лист-приёмник» и подпись под формулой - чистые функции от записи (тест: запись без кода не ломает окно)
+function cfoqSheetHtml(rec){
+  const code=cfoqNorm(rec).sheetCode;
+  const btn=(label,js,title,accent)=>`<button type="button" onclick="${js}" title="${_pesc(title||'')}" style="font-size:11px;font-weight:600;padding:4px 10px;border:1px solid ${accent?'var(--accent)':'var(--border)'};border-radius:5px;background:${accent?'var(--accent)':'var(--surface)'};color:${accent?'#fff':'var(--text2)'};cursor:pointer;font-family:var(--sans)">${label}</button>`;
+  if(!code)return `<b style="color:var(--text)">Лист-приёмник:</b> <span style="color:var(--outcome)">код не задан</span> ${btn('Сгенерировать код','cfoqCodeIssue(false)','Имя листа RawData_ + 8 знаков без похожих символов; сверяется со всеми записями',true)} <span style="font-size:10.5px;color:var(--text3)">имя листа в файле-приёмнике - код, а не фамилия: его не угадать по чужой фамилии</span>`;
+  const okFmt=CFOQ_CODE_RE.test(code);
+  return `<b style="color:var(--text)">Лист-приёмник:</b> <code style="font-family:var(--mono);font-size:12px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 6px">${_htmlEsc(code)}</code>${okFmt?'':' <span style="color:var(--orange);font-size:10.5px" title="Ожидается RawData_ и 8 знаков из алфавита без похожих символов">⚠ не по шаблону</span>'} ${btn('Скопировать имя',"cfoqCopyText('cfoq-code-copy',cfoqNorm(_cfoqRec()).sheetCode)",'Скопировать имя листа в буфер').replace('<button ','<button id="cfoq-code-copy" ')} ${btn('Перевыпустить код','cfoqCodeIssue(true)','Старый лист перестанет обновляться, в файле человека нужно поправить IMPORTRANGE')}`;
+}
+function cfoqSheetNote(rec){const code=cfoqNorm(rec).sheetCode;return code?`Вставить в первую ячейку листа <b>${_htmlEsc(code)}</b>.`:'Код листа не задан - сгенерируйте его выше, формула вставляется в первую ячейку листа с этим именем.';}
+// все занятые коды - со строк панели доступа (записи живут на строках), плюс снимок загруженного
+function _cfoqAllCodes(){const out=new Set();try{const tb=document.getElementById('acc-tbody');if(tb)[...tb.querySelectorAll('tr')].forEach(tr=>{const c=tr._cfoq&&cfoqCodeNorm(tr._cfoq.sheetCode);if(c)out.add(c);});JSON.parse(window._accessQueriesLoaded||'[]').forEach(q=>{const c=cfoqCodeNorm(q&&q.sheetCode);if(c)out.add(c);});}catch(e){}return out;}
+window.cfoqCodeIssue=function(reissue){
+  const rec=_cfoqRec();if(!rec)return;
+  if(reissue&&!confirm('Перевыпустить код листа?\n\nСтарый лист перестанет обновляться, в файле человека нужно поправить IMPORTRANGE.'))return;
+  const c=cfoqCodeGen(_cfoqAllCodes());if(!c){alert('Не удалось подобрать свободный код - попробуйте ещё раз');return;}
+  rec.sheetCode=c;cfoqRefresh();
+};
+window.cfoqCopyText=function(btnId,text){
+  const cp=document.getElementById(btnId);if(!cp||!text)return;const was=cp.textContent;
+  const done=()=>{cp.textContent='✓ Скопировано';setTimeout(()=>{if(cp.isConnected)cp.textContent=was;},1500);};
+  const fallback=()=>{try{const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();done();}catch(e){alert('Не удалось скопировать - выделите текст вручную');}};
+  try{if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(text).then(done,fallback);else fallback();}catch(e){fallback();}
 };
 // подпись кнопки значений условия: сами значения (это и есть смысл строки), пусто - приглашение
 function cfoqValLabel(c){const vs=cfoqCondVals(c);return (vs.length?vs.join(', '):'выберите значения')+' ▾';}
@@ -16315,6 +16363,8 @@ window.cfoqDragStart=function(e,sec){
 window.cfoqRefresh=function(){
   const tr=window._cfoqTr,rec=_cfoqRec();if(!tr||!rec||!document.getElementById('cfoQueryOverlay'))return;
   cfoqRowMark(tr);
+  const sh=document.getElementById('cfoq-sheet');if(sh){const h=cfoqSheetHtml(rec);if(sh.getAttribute('data-sig')!==h){sh.innerHTML=h;sh.setAttribute('data-sig',h);}}
+  const sn=document.getElementById('cfoq-sheetnote');if(sn)sn.innerHTML=cfoqSheetNote(rec);
   const rows=_cfoqRows(),loaded=rows.length>=CFOQ_MIN_ROWS,c=cfoqCount(rec,rows),probs=cfoqProblems(rec);
   CFOQ_FIELDS.filter(f=>f.t==='year').forEach(f=>{const bad=(window._cfoqUnparsed||{})[f.k]||0;if(bad&&rec.rules.concat(rec.excl).some(r=>(r.conds||[]).some(x=>x.field===f.k&&x.values.length)))probs.push('У '+bad.toLocaleString('ru-RU')+' строк дата в колонке «'+f.cat.replace('Год ','')+'» не распознана (parseDate) - под условие по году они не попадают, а лист их судьбу решит сам.');});
   const fmtN=n=>n.toLocaleString('ru-RU');
@@ -16354,7 +16404,7 @@ window._accessQueriesCollect=function(tb){
   const out=[],seen={};
   [...tb.querySelectorAll('tr')].forEach(tr=>{const em=(tr.querySelector('.acc-email').value||'').trim().toLowerCase();if(!em||seen[em]||!tr._cfoq||!cfoqHasCond(tr._cfoq))return;seen[em]=1;
     const r=cfoqNorm(tr._cfoq);if(r.bad&&r._orig&&typeof r._orig==='object'){out.push(Object.assign({},r._orig,{email:em}));return;}
-    out.push({email:em,rules:r.rules,excl:r.excl});});
+    out.push({email:em,rules:r.rules,excl:r.excl,sheetCode:r.sheetCode});});
   return out;
 };
 
