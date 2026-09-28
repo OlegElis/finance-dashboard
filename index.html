@@ -4251,9 +4251,9 @@ function renderBank(f){
     <div class="kpi-card red" ${_flowTip(totOut,_prvWin?_prvWin.out:0,'Списания')}><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}${_dArrow(_prvWin?_pctD(totOut,_prvWin.out):null,false)}</div><div class="kpi-sub">${_flowSub}</div></div>
     <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
     <div class="kpi-card orange" style="cursor:pointer" onclick="showAccInventory()" ${_accTip}><div class="kpi-label">Счетов</div><div class="kpi-value">${_accVal}</div><div class="kpi-sub">${_accSub} ⚙</div></div>
-    <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
-    <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" ${_runwayTip}><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Денежные средства</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
     ${_crCard}
+    <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" ${_runwayTip}><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
   </div>`;
 
@@ -4588,13 +4588,13 @@ function _bankCreditsCard(list,tot,today){
   const col=(mism||tot.remaining!==0)?'var(--outcome)':'var(--text3)';
   const dsF=d=>`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
   const tip=_tipAttr([['привлечено',fmt(tot.drawn)],['остаток',fmt(tot.remaining)],['платежи 30 дн.',fmt(tot.pay30)],['проценты до конца года',fmt(tot.intYear)]],
-    null,'Кредиты и займы · на '+dsF(today),[['по всем договорам, фильтры вкладки не применяются','']].concat(mism?[['⚠ график не сходится (договоров)',String(tot.mismatch)]]:[]));
+    null,'Кредиты и займы · на '+dsF(today),[['по всем договорам, фильтры вкладки не применяются','']].concat(mism?[[_crMismatchLabel(tot),'']]:[]));
   // Две подписи по ОДНОЙ строке каждая (внутренняя ширина карточки при 1600 - 133px, замер 28.09.2026): слитная
   // «N действующих · 30 дн.: X» переносилась и поднимала весь ряд KPI на 36px. Дата - в заголовке подсказки.
   // ⚠ Сторож - ТРЕТЬЕЙ строкой и только в тревоге: ряд вырастает на 12px ровно пока данные битые, и это цена видимости.
   const sub1=`${nAct} ${_plurRu(nAct,'действующий','действующих','действующих')} ↗`;
   const sub2=`30 дн.: ${fmt(tot.pay30)}`;
-  const sub3=mism?`<div class="kpi-sub" style="color:var(--outcome);font-weight:700">⚠ график не сходится: ${tot.mismatch}</div>`:'';
+  const sub3=mism?`<div class="kpi-sub" style="color:var(--outcome);font-weight:700">${_crMismatchLabel(tot)}</div>`:'';
   return `<div class="kpi-card" style="border-left:3px solid ${col};cursor:pointer" onclick="switchTab('credits')" ${tip}><div class="kpi-label">Кредиты и займы</div><div class="kpi-value" style="color:${col}">${fmt(tot.remaining)}</div><div class="kpi-sub">${sub1}</div><div class="kpi-sub">${sub2}</div>${sub3}</div>`;
 }
 // Cash Runway popup
@@ -15470,10 +15470,21 @@ function _creditsTotals(list,today){
   const tk=_crDayKey(today);
   const k30=_crDayKey(new Date(today.getFullYear(),today.getMonth(),today.getDate()+30));
   const kYE=today.getFullYear()*10000+1231;
-  let remaining=0,pay30=0,intYear=0,drawn=0,mism=0;
-  list.forEach(g=>{remaining+=g.remaining;drawn+=g.drawn;if(g.mismatch)mism++;
+  // mismatch - число договоров с расхождением; mismatchSum - Σ модулей расхождения; mismatchNoSchedule - из них те,
+  // где графика нет ВОВСЕ (привлечено > 0, платежей тела ни одного). Подпись сторожа строит _crMismatchLabel отсюда,
+  // карточка Банка и KPI вкладки сами ничего не считают.
+  let remaining=0,pay30=0,intYear=0,drawn=0,mism=0,mismSum=0,mismNo=0;
+  list.forEach(g=>{remaining+=g.remaining;drawn+=g.drawn;if(g.mismatch){mism++;mismSum+=Math.abs(g.diff);if(g.drawn>0.005&&Math.abs(g.bodyAll)<0.005)mismNo++;}
     g.schedule.forEach(p=>{if(p.dk>tk&&p.dk<=k30)pay30+=p.total;if(p.dk>tk&&p.dk<=kYE)intYear+=p.int;});});
-  return{remaining:_crKop(remaining),pay30:_crKop(pay30),intYear:_crKop(intYear),drawn:_crKop(drawn),n:list.length,mismatch:mism};
+  return{remaining:_crKop(remaining),pay30:_crKop(pay30),intYear:_crKop(intYear),drawn:_crKop(drawn),n:list.length,mismatch:mism,mismatchSum:_crKop(mismSum),mismatchNoSchedule:mismNo};
+}
+// Подпись сторожа словами, ОДНА на карточку Банка и KPI «Договоров» вкладки кредитов (голое число читалось как код ошибки):
+// один договор без графика - «график погашения не заведён»; один с графиком - «график расходится на <модуль>»;
+// несколько - «графики не сходятся: N договоров». Пустая строка - сторож молчит.
+function _crMismatchLabel(tot){
+  if(!tot||!(tot.mismatch>0))return'';
+  if(tot.mismatch===1)return tot.mismatchNoSchedule===1?'⚠ график погашения не заведён':'⚠ график расходится на '+fmt(tot.mismatchSum);
+  return '⚠ графики не сходятся: '+tot.mismatch+' '+_plurRu(tot.mismatch,'договор','договора','договоров');
 }
 // Остаток основного долга на КОНЕЦ каждого месяца - от первого привлечения до последнего платежа тела по графику.
 // Будущие платежи входят как запланированные: линия доходит до полного погашения. Строки без даты не входят.
@@ -15526,7 +15537,7 @@ function renderCredits(f){
     <div class="kpi-card red"><div class="kpi-label">Остаток долга</div><div class="kpi-value negative">${fmt(tot.remaining)}</div><div class="kpi-sub">привлечено ${fmt(tot.drawn)} · на ${dsF(today)}</div></div>
     <div class="kpi-card orange"><div class="kpi-label">Платёж в ближайшие 30 дней</div><div class="kpi-value">${fmt(tot.pay30)}</div><div class="kpi-sub">тело + проценты · по ${dsF(d30)}</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Проценты до конца года</div><div class="kpi-value">${fmt(tot.intYear)}</div><div class="kpi-sub">к уплате по 31.12.${today.getFullYear()}</div></div>
-    <div class="kpi-card ${tot.mismatch?'red':'green'}"><div class="kpi-label">Договоров</div><div class="kpi-value">${shown.length}</div><div class="kpi-sub">${nAct} действ. · ${shown.length-nAct} закрыт.${tot.mismatch?` · <span style="color:var(--outcome);font-weight:700">⚠ ${tot.mismatch} с расхождением</span>`:''}</div></div>
+    <div class="kpi-card ${tot.mismatch?'red':'green'}"><div class="kpi-label">Договоров</div><div class="kpi-value">${shown.length}</div><div class="kpi-sub">${nAct} действ. · ${shown.length-nAct} закрыт.${tot.mismatch?` · <span style="color:var(--outcome);font-weight:700">${_crMismatchLabel(tot)}</span>`:''}</div></div>
   </div>`;
   const series=_creditsSeries(shown);window._crSeries=series;
   const chartCard=series.labels.length?`<div class="table-wrap" style="margin-top:10px;padding:10px 14px">
@@ -15699,7 +15710,23 @@ function creditsRunTests(){
   ok('карточка · пустой набор: не падает, показывает 0,00 и 0 действующих',!cardErr&&cardE&&cardE.includes('>'+fmt(0)+'<')&&cardE.includes('0 действующих')&&cardE.includes('var(--text3)'),cardErr?String(cardErr):cardE&&cardE.slice(0,120));
   const cardF=_bankCreditsCard(L,T,today);
   ok('карточка · остаток = _creditsTotals.remaining, красный, клик ведёт на credits',cardF.includes('>'+fmt(T.remaining)+'<')&&cardF.includes("switchTab('credits')")&&cardF.includes('color:var(--outcome)'),cardF.slice(0,160));
-  ok('карточка · сторож виден: «график не сходится: 3», подсказка называет «по всем договорам»',cardF.includes('график не сходится: '+T.mismatch)&&cardF.includes('data-tip=')&&cardF.includes('по всем договорам, фильтры вкладки не применяются'));
+  ok('карточка · сторож виден словами: «графики не сходятся: 3 договора», подсказка называет «по всем договорам»',cardF.includes('графики не сходятся: '+T.mismatch+' договора')&&cardF.includes('data-tip=')&&cardF.includes('по всем договорам, фильтры вкладки не применяются'));
+  // ── Сторож словами (28.09.2026): mismatchSum / mismatchNoSchedule в _creditsTotals, подпись - _crMismatchLabel ──
+  ok('ИТОГО · mismatchSum = Σ модулей (1000 C + 1000 D + 100 без договора), mismatchNoSchedule = 1 (только C)',T.mismatchSum===2100&&T.mismatchNoSchedule===1,[T.mismatchSum,T.mismatchNoSchedule].join('/'));
+  const T1=_creditsTotals(_creditsCalc(_creditsPick([mk({id:'X',d:'01.01.2026',inc:1000,sub:DRAW})]),today),today);
+  ok('набор «привлечено 1000, платежей тела нет»: mismatchNoSchedule=1, mismatchSum=1000',T1.mismatch===1&&T1.mismatchNoSchedule===1&&T1.mismatchSum===1000,[T1.mismatch,T1.mismatchNoSchedule,T1.mismatchSum].join('/'));
+  ok('  подпись: «график погашения не заведён»',_crMismatchLabel(T1)==='⚠ график погашения не заведён',_crMismatchLabel(T1));
+  const T2=_creditsTotals(_creditsCalc(_creditsPick([mk({id:'Y',d:'01.01.2026',inc:1000,sub:DRAW}),mk({id:'Y',d:'01.03.2026',out:-900,sub:BODY})]),today),today);
+  ok('набор «привлечено 1000, платежи тела 900»: mismatchNoSchedule=0, mismatchSum=100',T2.mismatch===1&&T2.mismatchNoSchedule===0&&T2.mismatchSum===100,[T2.mismatch,T2.mismatchNoSchedule,T2.mismatchSum].join('/'));
+  ok('  подпись: «график расходится на 100,00»',_crMismatchLabel(T2)==='⚠ график расходится на '+fmt(100),_crMismatchLabel(T2));
+  ok('несколько договоров: «графики не сходятся: 3 договора», слово есть, голого числа нет',_crMismatchLabel(T)==='⚠ графики не сходятся: 3 договора'&&/договор/.test(_crMismatchLabel(T)),_crMismatchLabel(T));
+  ok('сторож молчит без расхождений: пустая подпись',_crMismatchLabel(_creditsTotals([A],today))===''&&_crMismatchLabel(_creditsTotals([],today))==='');
+  ok('KPI «Договоров» на вкладке кредитов использует ту же подпись _crMismatchLabel, голого «с расхождением» нет',/_crMismatchLabel\(/.test(src)&&!/с расхождением/.test(src));
+  ok('Банк · карточка берёт подпись сторожа из _crMismatchLabel, а не считает сама',/_crMismatchLabel\(/.test(String(_bankCreditsCard))&&!/mismatchSum|bodyAll|\.diff/.test(String(_bankCreditsCard)));
+  // Порядок карточек в kpiHtml: «Денежные средства» → «Кредиты и займы» → «Cash Runway» (задача Олега 28.09.2026)
+  {const k=srcB.indexOf('<div class="kpi-grid">'),iDs=srcB.indexOf('>Денежные средства<',k),iCr=srcB.indexOf('${_crCard}',k),iRw=srcB.indexOf('>Cash Runway<',k);
+    ok('Банк · порядок карточек: «Денежные средства» раньше «Кредиты и займы», а те раньше «Cash Runway»',k>0&&iDs>k&&iCr>iDs&&iRw>iCr,[k,iDs,iCr,iRw].join('/'));
+    ok('Банк · подписи «Сальдо» у KPI-карточки больше нет (величина saldo не тронута)',srcB.indexOf('>Сальдо<',k)<0&&/fmt\(saldo\)/.test(srcB));}
   ok('карточка · действующих = число g.active, 30 дн. = pay30',cardF.includes(L.filter(g=>g.active).length+' действующих')&&cardF.includes('30 дн.: '+fmt(T.pay30)));
   // Попап - на подставных данных: строка печатает ровно pay30 из ИТОГО. Состояние _cashRunwayData возвращается.
   {const keep=window._cashRunwayData,fmt2=v=>_z0(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
