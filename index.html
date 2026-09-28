@@ -582,6 +582,16 @@
     #tabBank>*{flex-shrink:0;}
     /* блок двух колонок забирает остаток высоты; прокрутка - внутри тел карточек, страница не скроллит */
     #tabBank>.kpi-grid{margin:8px 0 0;} /* низ гасим: в флекс-колонке margin не схлопываются, 6 снизу + 6 сверху давали зазор 12 */
+    /* ⚠ Ряд KPI Банка - ВОСЕМЬ карточек (28.09.2026), высота ряда - инвариант: 86px при 1600, ≤100 при 1280 (как при семи).
+       Числа в mono по 20px восемь карточек не держат: 13 знаков («46 050 000,00») - 153px, а карточка при 1600 - 169px
+       с полями 16px; флекс отдавал широким числам их min-content, две крайние карточки сжимались до 90-100px, и в них
+       переносилось всё (ряд 135px). Текстом не лечится - числа не сократить. Решение: карточка - контейнер запроса
+       (container-type:inline-size, значит её min-content от содержимого НЕ зависит и флекс делит ряд ПОРОВНУ),
+       а кегль числа - от ширины карточки (cqw): 13 знаков влезают всегда, при 1600 это 17-20px, при 1280 - 14-15px.
+       Число не переносится (nowrap) - перенос «265 дн.» на две строки и был второй причиной роста ряда.
+       Боковые поля - плавно от 10px (1280) до 16px (1600 и шире), порога в media нет. Только у Банка. Держит creditsRunTests(). */
+    #tabBank>.kpi-grid .kpi-card{container-type:inline-size;padding-left:clamp(10px,calc(1.875vw - 14px),16px);padding-right:clamp(10px,calc(1.875vw - 14px),16px);}
+    #tabBank>.kpi-grid .kpi-value{font-size:clamp(13px,12cqw,20px);white-space:nowrap;} /* 12cqw: 13 знаков + «⚠» сторожа кредитов влезают в поле карточки (при 1600 - 16px, 13 знаков 125px из 137) */
     /* ⚠ Тот же зазор «бар → содержимое», что у Банка (8px), для остальных вкладок с пресетами:
        общий `.kpi-grid{margin-top:6px}` не трогаем - он на восемнадцати вкладках. */
     #tabOpiu>.kpi-grid,#tabDds>.kpi-grid,#tabOsv>.kpi-grid,#tabFot>.kpi-grid{margin-top:8px;}
@@ -4139,13 +4149,16 @@ function renderBank(f){
     if(f.dateTo)return 'по '+dm(f.dateTo)+'.'+yr(f.dateTo);
     return 'весь период'; // режим 2 без дат (даты очистили руками) - подпись обязана быть, иначе режимы неразличимы
   })();
+  // _fnsT запоминает АРГУМЕНТЫ подсказки: с 28.09.2026 отдельной карточки «Доля оформленного» нет, её строки
+  // вливаются в подсказку «Поступлений» (второй секцией). Расчёт ниже не тронут - изменился только вывод.
+  const _fnsT=(...a)=>({attr:_tipAttr(...a),args:a});
   const fnsCard=(()=>{
     // Фильтр ФНС на карточку влиять не должен: под «Да» она всегда показывала бы 100%.
-    if(f.fns)return{val:'-',arr:'',sub:'фильтр ФНС активен',tip:_tipAttr([],null,'Фильтр ФНС активен: доля считается по всем счетам, снимите фильтр')};
+    if(f.fns)return{val:'-',arr:'',sub:'фильтр ФНС активен',tip:_fnsT([],null,'Фильтр ФНС активен: доля считается по всем счетам, снимите фильтр')};
     if(_mode1){
       const C=_cmpWin.cur,B=_cmpWin.prv,full=(C.m1===1&&C.m2===12);
       const cur=_chanOf(_winRows(C.y,C.m1,C.m2)),prv=_chanOf(_winRows(B.y,B.m1,B.m2));
-      if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений за '+_spanLbl(C.y,C.m1,C.m2),tip:_tipAttr([],null,'За '+_spanLbl(C.y,C.m1,C.m2)+' поступлений нет - доля не определена')};
+      if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений за '+_spanLbl(C.y,C.m1,C.m2),tip:_fnsT([],null,'За '+_spanLbl(C.y,C.m1,C.m2)+' поступлений нет - доля не определена')};
       const lblCur=_spanLbl(C.y,C.m1,C.m2),lblPrv=_spanLbl(B.y,B.m1,B.m2);
       const sh=cur.da/cur.all,shP=prv.all?prv.da/prv.all:null;
       const dpp=shP!=null?(sh-shP)*100:null;
@@ -4156,15 +4169,15 @@ function renderBank(f){
         sub:_mln(cur.da)+' из '+_mln(cur.all)+subCmp,
         // Сравнение - первым блоком, каналы - вторым (after). «Всего» с процентом НЕ добавляем: 100% там по построению,
         // информации не несёт, а с округлёнными долями спорит (25,8 + 46,9 + 27,2 = 99,9).
-        tip:shP!=null?_tipAttr(cmp,['изменение','',_ppFmt(dpp)],'',[],_chanRows(cur))
-                     :_tipAttr(_chanRows(cur),null,lblCur+' · за прошлый год данных нет')};
+        tip:shP!=null?_fnsT(cmp,['изменение','',_ppFmt(dpp)],'',[],_chanRows(cur))
+                     :_fnsT(_chanRows(cur),null,lblCur+' · за прошлый год данных нет')};
     }
     const cur=_chanOf(data); // режим 2: период задан - берём срез вкладки как есть
-    if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений'+(_perLbl?' · '+_perLbl:''),tip:_tipAttr([],null,'За выбранный период поступлений нет')};
+    if(!cur.all)return{val:'-',arr:'',sub:'нет поступлений'+(_perLbl?' · '+_perLbl:''),tip:_fnsT([],null,'За выбранный период поступлений нет')};
     // Сравнения НЕТ сознательно: сдвиг произвольного отрезка на год попадает в другие условия и вводит в заблуждение.
     return{val:_pct1(cur.da/cur.all),arr:'',
       sub:_mln(cur.da)+' из '+_mln(cur.all)+(_perLbl?' · '+_perLbl:''),
-      tip:_tipAttr(_chanRows(cur),['всего',_rub(cur.all)],_perLbl)};
+      tip:_fnsT(_chanRows(cur),['всего',_rub(cur.all)],_perLbl)};
   })();
 
   // ═══ ПОДПИСИ ПОД ЦИФРАМИ ═══
@@ -4207,17 +4220,21 @@ function renderBank(f){
   // Порог 0,5% - шум показываем нейтрально; светофор считает рост расхода ухудшением, поэтому знак «хорошо»
   // передаётся флагом, а не выводится из знака числа.
   const _pctD=(cur,prv)=>(prv&&Math.abs(prv)>=0.005)?((Math.abs(cur)-Math.abs(prv))/Math.abs(prv)*100):null;
+  // ⚠ С 28.09.2026 стрелка стоит в ПОДПИСИ периода («за янв-сен 2026 ↑ +12%»), а не у числа: у восьми карточек число
+  //   со стрелкой не влезало в строку и переносилось - ряд рос на 23px. В подписи процент ЦЕЛЫЙ (одна десятая
+  //   с «+150,0%» - 138px при 133 доступных), точный с десятой - строкой в подсказке (_flowTip).
+  const _pct1D=d=>(d>0?'+':d<0?'−':'')+Math.abs(Math.round(d*10)/10).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
   const _dArrow=(d,goodUp)=>{
     if(d==null)return '';
     d=Math.round(d*10)/10;
     const small=Math.abs(d)<0.5,up=d>0;
     const sym=small?'→':(up?'↑':'↓');
     const col=small?'var(--text3)':((up===!!goodUp)?'var(--income)':'var(--outcome)');
-    const txt=(d>0?'+':d<0?'−':'')+Math.abs(d).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
-    return ` <span style="font-size:11px;font-weight:600;color:${col};font-family:var(--sans)">${sym} ${txt}</span>`;
+    const txt=(d>0?'+':d<0?'−':'')+Math.abs(Math.round(d)).toLocaleString('ru-RU')+'%';
+    return ` <span style="font-size:10px;font-weight:600;color:${col};font-family:var(--sans)">${sym} ${txt}</span>`;
   };
-  const _flowTip=(cur,prv,name)=>_prvWin?_tipAttr([[_flowLbl,fmt(cur)],[_prvLbl,fmt(prv)]],['изменение',fmt(cur-prv)],name+': тот же отрезок год назад')
-    :_tipAttr([[_flowLbl,fmt(cur)]],null,name+' · сравнения нет: отрезок год назад перекрывается с выбранным');
+  const _flowTip=(cur,prv,name,after)=>_prvWin?_tipAttr([[_flowLbl,fmt(cur)],[_prvLbl,fmt(prv)]],['изменение',fmt(cur-prv)],name+': тот же отрезок год назад',[['к прошлому отрезку',_pctD(cur,prv)==null?'-':_pct1D(_pctD(cur,prv))]],after)
+    :_tipAttr([[_flowLbl,fmt(cur)]],null,name+' · сравнения нет: отрезок год назад перекрывается с выбранным',[],after);
   // 7 KPI-карточек (крупные цифры). «Счетов» = ВИДИМОЕ число (скрытые без движения не считаем). Числа совпадают с «Итого Общий итог».
   const nAcc=gDa.length+gNet.length+gAlloc.length;
   // ══ «Счетов» - ИНВЕНТАРНАЯ величина из справочника, а не из среза ══════════
@@ -4234,27 +4251,42 @@ function renderBank(f){
   const _accDirOn=_accOkNames.length>0;
   const _accClosed=_accOkNames.filter(k=>_accRec(_accounts[k]).active===0).length;
   const _accByVid={};_accOkNames.forEach(k=>{const v=_accRec(_accounts[k]).vid;_accByVid[v]=(_accByVid[v]||0)+1;});
-  const _accTip=_accDirOn
-    ?_tipAttr(ACC_VIDS.filter(v=>_accByVid[v]).map(v=>[v,String(_accByVid[v])]),['закрытых',String(_accClosed)],'Счета в справочнике (подтверждённые)')
-    :_tipAttr([['видно в срезе',String(nAcc)],['подтверждено в справочнике','0']],null,'Справочник счетов не заполнен - показано число счетов текущего среза');
+  // С 28.09.2026 «Счетов» и «Лимиты счетов» - ОДНА карточка «Счета и лимиты»: подсказки обеих слиты (счета - строки,
+  // лимиты - подвал), клик открывает попап лимитов, инвентаризация - кнопкой внутри него.
+  const _accTipArgs=_accDirOn
+    ?[ACC_VIDS.filter(v=>_accByVid[v]).map(v=>[v,String(_accByVid[v])]),['закрытых',String(_accClosed)],'Счета в справочнике (подтверждённые)']
+    :[[['видно в срезе',String(nAcc)],['подтверждено в справочнике','0']],null,'Справочник счетов не заполнен - показано число счетов текущего среза'];
   const _accVal=_accDirOn
     ?`${_accOkNames.length}${_accClosed?`<span style="font-size:12px;color:var(--text3);font-weight:400"> · ${_accClosed} ${_plurRu(_accClosed,'закрыт','закрыты','закрыто')}</span>`:''}`
     :String(nAcc);
   const _accSub=_accDirOn?'в справочнике':`${_flowSub} · справочник не заполнен`;
+  const _accLimTip=_tipAttr(_accTipArgs[0],_accTipArgs[1],_accTipArgs[2],[['счетов: '+_accSub,''],['лимиты: '+kassaLabel+' · '+kassaHint,''],['клик - лимиты; инвентаризация счетов - кнопкой в окне','']]);
+  // Подпись лимитов КОРОТКАЯ (внутренняя ширина карточки при 1600 - 133px): полные kassaLabel + kassaHint - в подсказке.
+  const _limSub=kassaList.length===0?'лимиты: нет счетов':kassaOver>0?('⚠ лимит +'+fmt(kassaTotalOver)):kassaWithLimit===0?'лимиты не заданы':'лимиты в норме';
   // ⚠ Порядок карточек: сначала ПОТОК (за период), потом ЗАПАС (на дату). Величины разной природы
   //   не перемешивать - иначе подписи придётся читать у каждой, чтобы понять, что с чем сравнивать.
   // ⚠ «Счетов» стоит в ПОТОКЕ, и это не оплошность: величина зависит от периода (замер на одних данных -
   //   4 при текущем годе, 5 при всём учёте, 3 в пустом месяце), потому что счёт попадает в своды
   //   при движении за период ИЛИ ненулевом остатке. В блоке запаса под подписью «на дату» она врала.
+  // ═══ РЯД KPI - РОВНО ВОСЕМЬ КАРТОЧЕК (состав Олега 28.09.2026), у каждой не больше ДВУХ подписей ═══
+  // Поступления · Списания · Сальдо периода · Денежные средства · Кредиты и займы · Капитал · Cash Runway · Счета и лимиты.
+  // ⚠ Высота ряда - инвариант: 86px при 1600 (как до 28.09). Внутренняя ширина карточки при 1600 - 133px, поэтому
+  //   каждая подпись обязана влезать в одну строку; не влезает - сокращается ТЕКСТ, а не растёт карточка (тест).
+  // «Доля оформленного» - второй подписью у Поступлений (расчёт fnsCard прежний, строки его подсказки - второй секцией).
+  // «Сальдо периода» - ПОТОК (поступления минус списания, перемещений нет), «Денежные средства» - ЗАПАС.
+  // «Капитал» = деньги минус тело долга; ⚠ деньги слушают фильтры счетов/направлений, долг - нет, подпись это называет.
+  const _fnsA=fnsCard.tip.args;
+  const _incAfter=[['Доля оформленного',fnsCard.val,'']].concat(_fnsA[2]?[[_fnsA[2],'','']]:[],_fnsA[0]||[],_fnsA[1]?[_fnsA[1]]:[],_fnsA[4]||[]);
+  const _capFiltered=!!((f.accounts&&f.accounts.length)||(f.activityDirs&&f.activityDirs.length));
   const kpiHtml=`<div class="kpi-grid">
-    <div class="kpi-card green" ${_flowTip(totInc,_prvWin?_prvWin.inc:0,'Поступления')}><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}${_dArrow(_prvWin?_pctD(totInc,_prvWin.inc):null,true)}</div><div class="kpi-sub">${_flowSub}</div></div>
-    <div class="kpi-card red" ${_flowTip(totOut,_prvWin?_prvWin.out:0,'Списания')}><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}${_dArrow(_prvWin?_pctD(totOut,_prvWin.out):null,false)}</div><div class="kpi-sub">${_flowSub}</div></div>
-    <div class="kpi-card" style="border-left:3px solid var(--text3)" ${fnsCard.tip}><div class="kpi-label">Доля оформленного</div><div class="kpi-value">${fnsCard.val}${fnsCard.arr}</div><div class="kpi-sub">${fnsCard.sub}</div></div>
-    <div class="kpi-card orange" style="cursor:pointer" onclick="showAccInventory()" ${_accTip}><div class="kpi-label">Счетов</div><div class="kpi-value">${_accVal}</div><div class="kpi-sub">${_accSub} ⚙</div></div>
+    <div class="kpi-card green" ${_flowTip(totInc,_prvWin?_prvWin.inc:0,'Поступления',_incAfter)}><div class="kpi-label">Поступления</div><div class="kpi-value positive">${fmt(totInc)}</div><div class="kpi-sub">${_flowSub}${_dArrow(_prvWin?_pctD(totInc,_prvWin.inc):null,true)}</div><div class="kpi-sub">оформлено ${fnsCard.val}${fnsCard.arr.replace(' п.п.','')}</div></div>
+    <div class="kpi-card red" ${_flowTip(totOut,_prvWin?_prvWin.out:0,'Списания')}><div class="kpi-label">Списания</div><div class="kpi-value negative">${fmt(totOut)}</div><div class="kpi-sub">${_flowSub}${_dArrow(_prvWin?_pctD(totOut,_prvWin.out):null,false)}</div></div>
+    ${_bankNetFlowCard(totInc,totOut,_flowSub,_flowLbl)}
     <div class="kpi-card blue"><div class="kpi-label">Денежные средства</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
     ${_crCard}
+    ${_bankCapitalCard(saldo,_crTot,_capFiltered,_asOfLbl)}
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" ${_runwayTip}><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
-    <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
+    <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" ${_accLimTip}><div class="kpi-label">Счета и лимиты</div><div class="kpi-value">${_accVal}</div><div class="kpi-sub" style="color:${kassaColor}">${_limSub} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
   </div>`;
 
   // Пометка «спр.»: признак ФНС этого счёта взят из справочника и ОТЛИЧАЕТСЯ от строк, то есть счёт стоит
@@ -4591,11 +4623,29 @@ function _bankCreditsCard(list,tot,today){
     null,'Кредиты и займы · на '+dsF(today),[['по всем договорам, фильтры вкладки не применяются','']].concat(mism?[[_crMismatchLabel(tot),'']]:[]));
   // Две подписи по ОДНОЙ строке каждая (внутренняя ширина карточки при 1600 - 133px, замер 28.09.2026): слитная
   // «N действующих · 30 дн.: X» переносилась и поднимала весь ряд KPI на 36px. Дата - в заголовке подсказки.
-  // ⚠ Сторож - ТРЕТЬЕЙ строкой и только в тревоге: ряд вырастает на 12px ровно пока данные битые, и это цена видимости.
+  // ⚠ Сторож - ЗНАКОМ ⚠ у значения (третьей подписи нет: высота ряда - инвариант), текст _crMismatchLabel - в подсказке.
   const sub1=`${nAct} ${_plurRu(nAct,'действующий','действующих','действующих')} ↗`;
   const sub2=`30 дн.: ${fmt(tot.pay30)}`;
-  const sub3=mism?`<div class="kpi-sub" style="color:var(--outcome);font-weight:700">${_crMismatchLabel(tot)}</div>`:'';
-  return `<div class="kpi-card" style="border-left:3px solid ${col};cursor:pointer" onclick="switchTab('credits')" ${tip}><div class="kpi-label">Кредиты и займы</div><div class="kpi-value" style="color:${col}">${fmt(tot.remaining)}</div><div class="kpi-sub">${sub1}</div><div class="kpi-sub">${sub2}</div>${sub3}</div>`;
+  const warn=mism?`&nbsp;<span style="font-size:13px;vertical-align:2px" title="${_htmlEsc(_crMismatchLabel(tot))}">⚠</span>`:'';
+  return `<div class="kpi-card" style="border-left:3px solid ${col};cursor:pointer" onclick="switchTab('credits')" ${tip}><div class="kpi-label">Кредиты и займы</div><div class="kpi-value" style="color:${col}">${fmt(tot.remaining)}${warn}</div><div class="kpi-sub">${sub1}</div><div class="kpi-sub">${sub2}</div></div>`;
+}
+// «Сальдо периода» - ПОТОК: поступления минус списания за период. out приходит со знаком минус (как в сводах), поэтому
+// net = inc + out. Перемещения сюда не попадают: totInc/totOut уже без них (bankSplit/isMoveRow). ⚠ Не остаток -
+// подсказка говорит это словами, чтобы не путали с «Денежными средствами».
+function _bankNetFlowCard(inc,out,flowSub,flowLbl){
+  const net=inc+out;
+  const tip=_tipAttr([['поступления',fmt(inc)],['списания',fmt(out)]],['разница',fmt(net)],'Сальдо периода · '+flowLbl,[['это ПОТОК за период, не остаток; остаток - в «Денежных средствах»','']]);
+  return `<div class="kpi-card ${net>=0?'green':'red'}" ${tip}><div class="kpi-label">Сальдо периода</div><div class="kpi-value ${net>=0?'positive':'negative'}">${fmt(net)}</div><div class="kpi-sub">${flowSub}</div></div>`;
+}
+// «Капитал» = деньги (saldo, слушает фильтры вкладки) МИНУС тело долга (_creditsTotals().remaining, по всем договорам).
+// Своего расчёта долга нет. ⚠ Под фильтром счетов или направлений подпись предупреждает: деньги срезаны, долг взят целиком.
+function _bankCapitalCard(saldo,tot,filtered,asOfLbl){
+  const cap=saldo-tot.remaining;
+  const tip=_tipAttr([['деньги',fmt(saldo)],['долг (тело)',fmt(-tot.remaining)]],['разница',fmt(cap)],'Капитал · '+asOfLbl,
+    filtered?[['фильтр счетов/направлений активен: деньги срезаны им, долг взят полностью','']]:[['долг - по всем договорам','']]);
+  // Подпись при фильтре КОРОТКАЯ («фильтр - долг целиком», 133px при 1600), полная фраза - в подсказке.
+  const sub1=filtered?`<span style="color:var(--orange);font-weight:600">фильтр - долг целиком</span>`:'деньги минус долг';
+  return `<div class="kpi-card blue" ${tip}><div class="kpi-label">Капитал</div><div class="kpi-value ${cap>=0?'positive':'negative'}">${fmt(cap)}</div><div class="kpi-sub">${sub1}</div><div class="kpi-sub">${asOfLbl}</div></div>`;
 }
 // Cash Runway popup
 window.showCashRunwayPopup=function(){
@@ -4731,6 +4781,10 @@ window.showKassaLimitsPopup=function(){
         </table>
       </div>
       <p style="font-size:10px;color:var(--text3);margin:12px 0 0;font-style:italic">Изменения применяются сразу. Закройте окно, чтобы обновить карточку в шапке.</p>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:flex;align-items:center;gap:12px">
+        <button class="btn-secondary" style="font-size:11px;padding:5px 12px;cursor:pointer" onclick="this.closest('.txn-card-overlay').remove();showAccInventory()">⚙ Инвентаризация счетов</button>
+        <span style="font-size:10px;color:var(--text3)">справочник счетов: вид, ФНС, активен / закрыт (с 28.09.2026 открывается отсюда - карточка «Счета и лимиты» ведёт в лимиты)</span>
+      </div>
     </div>
   </div>`;
   overlay.querySelector('.txn-card-close').addEventListener('click',close);
@@ -15709,7 +15763,8 @@ function creditsRunTests(){
   let cardE=null,cardErr=null;try{cardE=_bankCreditsCard([],_creditsTotals([],today),today);}catch(e){cardErr=e;}
   ok('карточка · пустой набор: не падает, показывает 0,00 и 0 действующих',!cardErr&&cardE&&cardE.includes('>'+fmt(0)+'<')&&cardE.includes('0 действующих')&&cardE.includes('var(--text3)'),cardErr?String(cardErr):cardE&&cardE.slice(0,120));
   const cardF=_bankCreditsCard(L,T,today);
-  ok('карточка · остаток = _creditsTotals.remaining, красный, клик ведёт на credits',cardF.includes('>'+fmt(T.remaining)+'<')&&cardF.includes("switchTab('credits')")&&cardF.includes('color:var(--outcome)'),cardF.slice(0,160));
+  ok('карточка · остаток = _creditsTotals.remaining, красный, клик ведёт на credits',cardF.includes('>'+fmt(T.remaining)+'&nbsp;')&&cardF.includes("switchTab('credits')")&&cardF.includes('color:var(--outcome)'),cardF.slice(0,160));
+  ok('карточка · сторож - знаком ⚠ у значения, третьей подписи нет (не больше двух .kpi-sub)',/⚠<\/span><\/div>/.test(cardF)&&(cardF.match(/class="kpi-sub"/g)||[]).length===2&&!/⚠/.test(cardE),(cardF.match(/class="kpi-sub"/g)||[]).length);
   ok('карточка · сторож виден словами: «графики не сходятся: 3 договора», подсказка называет «по всем договорам»',cardF.includes('графики не сходятся: '+T.mismatch+' договора')&&cardF.includes('data-tip=')&&cardF.includes('по всем договорам, фильтры вкладки не применяются'));
   // ── Сторож словами (28.09.2026): mismatchSum / mismatchNoSchedule в _creditsTotals, подпись - _crMismatchLabel ──
   ok('ИТОГО · mismatchSum = Σ модулей (1000 C + 1000 D + 100 без договора), mismatchNoSchedule = 1 (только C)',T.mismatchSum===2100&&T.mismatchNoSchedule===1,[T.mismatchSum,T.mismatchNoSchedule].join('/'));
@@ -15727,6 +15782,38 @@ function creditsRunTests(){
   {const k=srcB.indexOf('<div class="kpi-grid">'),iDs=srcB.indexOf('>Денежные средства<',k),iCr=srcB.indexOf('${_crCard}',k),iRw=srcB.indexOf('>Cash Runway<',k);
     ok('Банк · порядок карточек: «Денежные средства» раньше «Кредиты и займы», а те раньше «Cash Runway»',k>0&&iDs>k&&iCr>iDs&&iRw>iCr,[k,iDs,iCr,iRw].join('/'));
     ok('Банк · подписи «Сальдо» у KPI-карточки больше нет (величина saldo не тронута)',srcB.indexOf('>Сальдо<',k)<0&&/fmt\(saldo\)/.test(srcB));}
+  // ── Ряд из восьми карточек (состав Олега 28.09.2026): рендер Банка на ПОДСТАВНОМ RAW, состояние возвращается ──
+  {const ROW8=['Поступления','Списания','Сальдо периода','Денежные средства','Кредиты и займы','Капитал','Cash Runway','Счета и лимиты'];
+    const B=(o)=>{const r=new Array(15).fill('');r[COL.DATE_DDS]=o.d;r[COL.DATE_OPIU]=o.d;r[COL.TYPE]=o.t||(o.inc?'Поступление':'Списание');r[COL.OFFER_ID]=o.id||'';
+      r[COL.INCOME]=o.inc||0;r[COL.OUTCOME]=o.out||0;r[COL.FNS]=o.fns||'Нет';r[COL.ACCOUNT]=o.acc||'Тест - р/с';r[COL.ARTICLE_CODE]=o.ac||'112_Расходы';r[COL.ARTICLE_NAME]=o.sub||'112_Прочее';
+      r[COL.SECOND_SIDE]='Контрагент';r[COL.ACTIVITY_DIR]=o.dir||'БФЛ';r[COL.FIN_OP]=o.fin||'001_Операционная деятельность';return r;};
+    const bankRows=[B({d:'10.02.2026',inc:1000,ac:'120_Выручка',sub:'120_Оплата услуг',fns:'Да'}),B({d:'15.02.2026',out:-300}),
+      B({d:'20.02.2026',t:'Перемещение',inc:-200}),B({d:'20.02.2026',t:'Перемещение',inc:200,acc:'Тест - Касса'}), // пара перемещения: в поток не входит
+      B({d:'01.03.2026',inc:500,id:'КД-Т',ac:'130_Заёмные средства',sub:DRAW,fin:'002_Финансовая деятельность'}),B({d:'01.04.2026',out:-100,id:'КД-Т',ac:'130_Заёмные средства',sub:BODY,fin:'002_Финансовая деятельность'}),
+      B({d:'01.12.2026',out:-400,id:'КД-Т',ac:'130_Заёмные средства',sub:BODY,fin:'002_Финансовая деятельность'})];
+    // ожидания (будущие оплаты включены, как по умолчанию): поступления 1500 (1000 + привлечение 500), списания -800 (300 + тело 100 + тело 400 в декабре),
+    // сальдо периода 700; деньги 700 (перемещения ±200 в сумме 0); долг 400 (500 - 100 уплаченных, декабрь ещё впереди); капитал 300
+    const el=document.getElementById('tabBank'),keepRAW=RAW,keepHtml=el?el.innerHTML:'',keepTF=JSON.parse(JSON.stringify(_tabFilters.bank||{}));
+    const fixF={dateFrom:'',dateTo:'',accounts:[],activityDirs:[],fns:'',includeFuture:true,preset:''};
+    let cards=[],lab=[],err=null,txt=k=>{const c=cards.find(x=>x.querySelector('.kpi-label').textContent===k);return c?c.textContent:'';};
+    let filtLab='';
+    try{RAW=bankRows;renderBank(Object.assign({},fixF));cards=el?[...el.querySelectorAll('.kpi-grid .kpi-card')]:[];lab=cards.map(c=>c.querySelector('.kpi-label').textContent);
+      const capOK=txt('Капитал'),netOK=txt('Сальдо периода'),incOK=txt('Поступления'),dsOK=txt('Денежные средства');
+      renderBank(Object.assign({},fixF,{accounts:['Тест - р/с']}));const c2=[...el.querySelectorAll('.kpi-grid .kpi-card')].find(x=>x.querySelector('.kpi-label').textContent==='Капитал');filtLab=c2?[...c2.querySelectorAll('.kpi-sub')][0].textContent:'';
+      ok('Банк · в ряду ровно восемь карточек и порядок: '+ROW8.join(' · '),lab.length===8&&lab.join('|')===ROW8.join('|'),lab.join(' | '));
+      ok('Банк · «Сальдо периода» = поступления минус списания (1500 - 800 = 700), перемещения ±200 не вошли',netOK.includes(fmt(700))&&incOK.includes(fmt(1500))&&!netOK.includes(fmt(900))&&!netOK.includes(fmt(500)),netOK.replace(/\s+/g,' ').slice(0,80));
+      ok('Банк · «Капитал» = деньги минус remaining (700 - 400 = 300)',dsOK.includes(fmt(700))&&capOK.includes(fmt(300))&&capOK.includes('деньги минус долг'),capOK.replace(/\s+/g,' ').slice(0,80));
+      ok('Банк · доля оформленного печатается на «Поступлениях» («оформлено …»), отдельной карточки нет',incOK.includes('оформлено')&&!lab.includes('Доля оформленного')&&!lab.includes('Счетов')&&!lab.includes('Лимиты счетов'),incOK.replace(/\s+/g,' ').slice(0,80));
+      ok('Банк · у каждой карточки не больше двух подписей',cards.every(c=>c.querySelectorAll('.kpi-sub').length<=2),cards.map(c=>c.querySelectorAll('.kpi-sub').length).join(','));
+    }catch(e){err=e;}
+    finally{RAW=keepRAW;_tabFilters.bank=keepTF;if(el){if(RAW&&RAW.length&&activeTab==='bank')renderBank(getFilters());else el.innerHTML=keepHtml;}}
+    ok('Банк · рендер на подставном наборе не упал',!err,err&&String(err));
+    ok('Банк · под фильтром счетов у «Капитала» предупреждающая подпись «фильтр - долг целиком»',/фильтр/.test(filtLab)&&/целиком/.test(filtLab),filtLab);
+    const srcCap=String(_bankCapitalCard),srcNet=String(_bankNetFlowCard);
+    ok('Банк · «Капитал» без своего разбора 130_: нет 130_/_crKind/RAW, remaining берётся из tot',!/130_|CR_CODE|_crKind|RAW/.test(srcCap)&&/tot\.remaining/.test(srcCap));
+    ok('Банк · «Сальдо периода» - чистая функция от totInc/totOut, без RAW и перемещений внутри',!/RAW|isMoveRow/.test(srcNet)&&/inc\+out/.test(srcNet));
+    ok('Банк · инвентаризация счетов доступна из попапа лимитов (showAccInventory внутри showKassaLimitsPopup)',/showAccInventory\(/.test(String(window.showKassaLimitsPopup)));
+    ok('Банк · в kpiHtml нет ни одной третьей подписи и ни одной карточки «Доля оформленного»/«Счетов»/«Лимиты счетов»',!/>Доля оформленного<|>Счетов<|>Лимиты счетов</.test(srcB));}
   ok('карточка · действующих = число g.active, 30 дн. = pay30',cardF.includes(L.filter(g=>g.active).length+' действующих')&&cardF.includes('30 дн.: '+fmt(T.pay30)));
   // Попап - на подставных данных: строка печатает ровно pay30 из ИТОГО. Состояние _cashRunwayData возвращается.
   {const keep=window._cashRunwayData,fmt2=v=>_z0(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
