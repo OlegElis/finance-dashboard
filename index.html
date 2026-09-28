@@ -3997,12 +3997,24 @@ function renderBank(f){
   const _runwayTip=_tipAttr([['Расход за 90 дней',fmt(-out90)],['Возвраты за 90 дней',fmt(ret90)]],
     ['База расчёта',fmt(-base90)],'Cash Runway · база расчёта',[['нажмите для подробностей','']]);
 
+  // ═══ КРЕДИТЫ И ЗАЙМЫ (карточка + строка в попапе Runway) ═══
+  // Расчёта здесь НЕТ: те же примитивы, что у вкладки «Кредиты и займы» (_creditsCalc/_creditsTotals),
+  // иначе долг на двух вкладках однажды разошёлся бы. ⚠ Фильтры вкладки Банк к набору НЕ применяются
+  // (решение Олега 28.09.2026): долг - по ВСЕМ договорам, в подсказке это сказано словами.
+  // ⚠ Платежи по кредитам идут по финансовой деятельности (002_) и в средний операционный расход
+  //   Runway не входят - в попапе они показаны отдельной строкой, формула Runway не трогается
+  //   (сопоставимость с историей). Разметку карточки строит _bankCreditsCard (тест гоняет её на пустом наборе).
+  const _crToday=new Date();_crToday.setHours(0,0,0,0);
+  const _crList=_creditsCalc(_creditsPick(RAW),_crToday);
+  const _crTot=_creditsTotals(_crList,_crToday);
+  const _crCard=_bankCreditsCard(_crList,_crTot,_crToday);
+
   // Данные для попапа
   // ⚠ Месяц с отрицательным нетто (возвраты перекрыли расход) показываем ЗЕЛЁНЫМ: цвет = знак значения.
   //   Порядок строк - по ключу месяца, а не по величине, поэтому такой месяц остаётся на своём месте.
   const runwayMonthRows=Object.entries(monthlyOut).sort((a,b)=>a[0].localeCompare(b[0]))
     .map(([mk,v])=>{const[yr,mo]=mk.split('-');return`<tr><td style="padding:3px 10px;font-size:11px;color:var(--text2)">${MONTHS_FULL[+mo-1]} ${yr}</td><td style="padding:3px 10px;font-size:11px;text-align:right;color:${v>=0?'var(--outcome)':'var(--income)'}">${fmt(-v)}</td></tr>`;}).join('');
-  window._cashRunwayData={currentBalance,avgMonthlyOut,cashRunwayDays,runwayMonthRows,monthCount:monthKeys.length,out90,ret90,base90,periodStart,periodEnd};
+  window._cashRunwayData={currentBalance,avgMonthlyOut,cashRunwayDays,runwayMonthRows,monthCount:monthKeys.length,out90,ret90,base90,periodStart,periodEnd,creditsPay30:_crTot.pay30};
 
   // Лимиты по всем реквизитам (счета ООО/ИП, карты ФЛ, кассы и т.д.)
   const kassaList=[...gDa,...gNet].filter(a=>a.raw!==''); // {name, inc, out, total} - реквизиты с движением (gAlloc = без реквизитов)
@@ -4241,6 +4253,7 @@ function renderBank(f){
     <div class="kpi-card orange" style="cursor:pointer" onclick="showAccInventory()" ${_accTip}><div class="kpi-label">Счетов</div><div class="kpi-value">${_accVal}</div><div class="kpi-sub">${_accSub} ⚙</div></div>
     <div class="kpi-card blue"><div class="kpi-label">Сальдо</div><div class="kpi-value ${saldo>=0?'positive':'negative'}">${fmt(saldo)}</div><div class="kpi-sub">${_asOfLbl}</div></div>
     <div class="kpi-card" style="border-left:3px solid ${runwayColor};cursor:pointer" onclick="showCashRunwayPopup()" ${_runwayTip}><div class="kpi-label">Cash Runway</div><div class="kpi-value" style="color:${runwayColor}">${runwayLabel}</div><div class="kpi-sub" style="color:${runwayColor}">${runwayHint} ↗</div><div class="kpi-sub">${_asOfLbl}</div></div>
+    ${_crCard}
     <div class="kpi-card" style="border-left:3px solid ${kassaColor};cursor:pointer" onclick="showKassaLimitsPopup()" title="Лимиты по реквизитам - нажмите для настройки"><div class="kpi-label">Лимиты счетов</div><div class="kpi-value" style="color:${kassaColor};font-size:16px">${kassaLabel}</div><div class="kpi-sub" style="color:${kassaColor}">${kassaHint} ⚙</div><div class="kpi-sub">${_asOfLbl}</div></div>
   </div>`;
 
@@ -4565,6 +4578,25 @@ function _runwayView(d){
     color:n>90?'var(--income)':n>30?'#e87c25':'var(--outcome)',
     hint:n>90?'Устойчиво':n>30?'Внимание':'Критично'};
 }
+// Карточка «Кредиты и займы» на Банке: остаток основного долга по ВСЕМ договорам (фильтры вкладки не применяются).
+// list/tot - результат _creditsCalc/_creditsTotals, своего расчёта тут нет. Цвет = знак: нулевой долг серый, ненулевой
+// красный. ⚠ Сторож вкладки кредитов (Σ тела ≠ привлечено) обязан быть виден и ЗДЕСЬ - иначе расхождение живёт
+// только на вкладке, куда заходят реже. Клик ведёт на вкладку credits тем же switchTab, что и остальная навигация.
+function _bankCreditsCard(list,tot,today){
+  const nAct=(list||[]).filter(g=>g.active).length;
+  const mism=tot.mismatch>0;
+  const col=(mism||tot.remaining!==0)?'var(--outcome)':'var(--text3)';
+  const dsF=d=>`${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}`;
+  const tip=_tipAttr([['привлечено',fmt(tot.drawn)],['остаток',fmt(tot.remaining)],['платежи 30 дн.',fmt(tot.pay30)],['проценты до конца года',fmt(tot.intYear)]],
+    null,'Кредиты и займы · на '+dsF(today),[['по всем договорам, фильтры вкладки не применяются','']].concat(mism?[['⚠ график не сходится (договоров)',String(tot.mismatch)]]:[]));
+  // Две подписи по ОДНОЙ строке каждая (внутренняя ширина карточки при 1600 - 133px, замер 28.09.2026): слитная
+  // «N действующих · 30 дн.: X» переносилась и поднимала весь ряд KPI на 36px. Дата - в заголовке подсказки.
+  // ⚠ Сторож - ТРЕТЬЕЙ строкой и только в тревоге: ряд вырастает на 12px ровно пока данные битые, и это цена видимости.
+  const sub1=`${nAct} ${_plurRu(nAct,'действующий','действующих','действующих')} ↗`;
+  const sub2=`30 дн.: ${fmt(tot.pay30)}`;
+  const sub3=mism?`<div class="kpi-sub" style="color:var(--outcome);font-weight:700">⚠ график не сходится: ${tot.mismatch}</div>`:'';
+  return `<div class="kpi-card" style="border-left:3px solid ${col};cursor:pointer" onclick="switchTab('credits')" ${tip}><div class="kpi-label">Кредиты и займы</div><div class="kpi-value" style="color:${col}">${fmt(tot.remaining)}</div><div class="kpi-sub">${sub1}</div><div class="kpi-sub">${sub2}</div>${sub3}</div>`;
+}
 // Cash Runway popup
 window.showCashRunwayPopup=function(){
   const d=window._cashRunwayData;
@@ -4596,6 +4628,9 @@ window.showCashRunwayPopup=function(){
           <span style="font-weight:700;color:${d.base90>=0?'var(--outcome)':'var(--income)'};text-align:right">${fmt2(-d.base90)}</span>
           <span style="color:var(--text3)">Среднемесячный расход:</span>
           <span style="font-weight:700;color:var(--outcome);text-align:right">${fmt2(-d.avgMonthlyOut)}</span>
+          <span style="color:var(--text3)">Обязательные платежи по кредитам, 30 дн.:</span>
+          <span style="font-weight:700;color:var(--outcome);text-align:right">${fmt2(-(d.creditsPay30||0))}</span>
+          <span style="grid-column:1/-1;font-size:11px;color:var(--text3);line-height:1.4">Платежи по кредитам идут по финансовой деятельности (002_) и в средний операционный расход Runway не входят - показаны справочно, по всем договорам.</span>
           <span style="color:var(--text3)">Формула:</span>
           <span style="font-weight:600;text-align:right;color:var(--text2)">${fmt2(d.currentBalance)} ÷ ${fmt2(d.avgMonthlyOut)} × 30</span>
         </div>
@@ -15651,6 +15686,27 @@ function creditsRunTests(){
   const src=String(renderCredits);
   ok('рендерер не считает сам: числа только из _creditsCalc/_creditsTotals/_creditsSeries',/_creditsCalc\(/.test(src)&&/_creditsTotals\(/.test(src)&&/_creditsSeries\(/.test(src)&&!/RAW\.forEach|RAW\.reduce/.test(src));
   ok('данные из ячеек идут в разметку через _htmlEsc',/_htmlEsc/.test(src));
+  // ── Карточка «Кредиты и займы» на Банке и строка в попапе Runway (28.09.2026) ──
+  // Структурно: у Банка своей копии расчёта долга нет - ни обхода RAW по 130_, ни _crKind; числа приходят из _creditsCalc/_creditsTotals.
+  const srcB=String(renderBank);
+  ok('Банк · карточка зовёт _creditsCalc/_creditsTotals, своего разбора 130_ нет',/_creditsCalc\(/.test(srcB)&&/_creditsTotals\(/.test(srcB)&&!/130_|CR_CODE|_crKind\(/.test(srcB));
+  ok('Банк · pay30 для попапа Runway кладётся из того же _creditsTotals (creditsPay30)',/creditsPay30:_crTot\.pay30/.test(srcB));
+  const srcP=String(window.showCashRunwayPopup);
+  ok('попап Runway · печатает creditsPay30 и не считает кредиты сам',/creditsPay30/.test(srcP)&&/002_/.test(srcP)&&!/_creditsCalc|_creditsTotals|RAW/.test(srcP));
+  ok('попап Runway · формула не тронута (баланс ÷ средний расход × 30)',/currentBalance\)\} ÷ \$\{fmt2\(d\.avgMonthlyOut\)\} × 30/.test(srcP));
+  // Пустой набор: карточка показывает 0, не падает; полный набор: остаток, сторож и переход на вкладку.
+  let cardE=null,cardErr=null;try{cardE=_bankCreditsCard([],_creditsTotals([],today),today);}catch(e){cardErr=e;}
+  ok('карточка · пустой набор: не падает, показывает 0,00 и 0 действующих',!cardErr&&cardE&&cardE.includes('>'+fmt(0)+'<')&&cardE.includes('0 действующих')&&cardE.includes('var(--text3)'),cardErr?String(cardErr):cardE&&cardE.slice(0,120));
+  const cardF=_bankCreditsCard(L,T,today);
+  ok('карточка · остаток = _creditsTotals.remaining, красный, клик ведёт на credits',cardF.includes('>'+fmt(T.remaining)+'<')&&cardF.includes("switchTab('credits')")&&cardF.includes('color:var(--outcome)'),cardF.slice(0,160));
+  ok('карточка · сторож виден: «график не сходится: 3», подсказка называет «по всем договорам»',cardF.includes('график не сходится: '+T.mismatch)&&cardF.includes('data-tip=')&&cardF.includes('по всем договорам, фильтры вкладки не применяются'));
+  ok('карточка · действующих = число g.active, 30 дн. = pay30',cardF.includes(L.filter(g=>g.active).length+' действующих')&&cardF.includes('30 дн.: '+fmt(T.pay30)));
+  // Попап - на подставных данных: строка печатает ровно pay30 из ИТОГО. Состояние _cashRunwayData возвращается.
+  {const keep=window._cashRunwayData,fmt2=v=>_z0(v).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
+    window._cashRunwayData={currentBalance:0,avgMonthlyOut:0,cashRunwayDays:null,runwayMonthRows:'',monthCount:0,out90:0,ret90:0,base90:0,periodStart:null,periodEnd:null,creditsPay30:T.pay30};
+    let txt='',err=null;try{window.showCashRunwayPopup();const ov=[...document.querySelectorAll('.txn-card-overlay')].pop();txt=ov?ov.textContent:'';if(ov)ov.remove();}catch(e){err=e;}
+    window._cashRunwayData=keep;
+    ok('попап Runway · строка «Обязательные платежи по кредитам, 30 дн.» = -pay30 из ИТОГО',!err&&txt.includes('Обязательные платежи по кредитам, 30 дн.')&&txt.includes(fmt2(-T.pay30)),err?String(err):txt.slice(0,80));}
   const bad=R.filter(r=>!r.pass);
   console.log('[Кредиты] creditsRunTests (подставной набор, с любой вкладки): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
   bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
