@@ -11174,7 +11174,10 @@ function pfRunTests(){
         fcMonth:(c,m)=>{let t=null;S.pairSet[c].forEach(d=>{const v=S.fcMonthD(d,c,m);if(v!=null)t=(t||0)+v;});return t;},factMonth:(c,m)=>{let t=0;S.pairSet[c].forEach(d=>{t+=S.factMonthD(d,c,m);});return t;},
         factMonthOwn:(c,m)=>{let t=0;S.pairSet[c].forEach(d=>{if(S.cxDir(d,c)&&!S.primDir(d,c))return;t+=S.factMonthD(d,c,m);});return t;}};codes.forEach(c=>{S.pairSet[c]=new Set(pairs[c]);});return S;};
      const SAU='САУ - Союз Арбитражных управляющих';
-     const inc=mkSec('inc',['120_Поступление от ОП'],{'120_Поступление от ОП':['АП']},{'АП|120_Поступление от ОП|9':100000,'АП|120_Поступление от ОП|10':100000},{'АП|120_Поступление от ОП|9':304000,'АП|120_Поступление от ОП|10':12500},null);
+     // утверждённый план (baseline) в фикстуре: у 120 за сен 90 000 (отличается от текущего 100 000), за окт 100 000 (совпадает)
+     const BL={'АП|120_Поступление от ОП|9':90000,'АП|120_Поступление от ОП|10':100000};
+     const withBl=S=>{S.blMonthD=(d,c,m)=>BL[d+'|'+c+'|'+m]==null?null:BL[d+'|'+c+'|'+m];S.blMonth=(c,m)=>{let t=null;S.pairSet[c].forEach(d=>{const v=S.blMonthD(d,c,m);if(v!=null)t=(t||0)+v;});return t;};return S;};
+     const inc=withBl(mkSec('inc',['120_Поступление от ОП'],{'120_Поступление от ОП':['АП']},{'АП|120_Поступление от ОП|9':100000,'АП|120_Поступление от ОП|10':100000},{'АП|120_Поступление от ОП|9':304000,'АП|120_Поступление от ОП|10':12500},null));
      const exp=mkSec('exp',['223_Аренда','244_Офисная мебель','250_Связь'],{'244_Офисная мебель':['БФЛ','АП'],'223_Аренда':[SAU],'250_Связь':['АП',SAU]},{'АП|244_Офисная мебель|9':3950,'БФЛ|244_Офисная мебель|9':500,[SAU+'|223_Аренда|9']:0,'АП|250_Связь|9':10,[SAU+'|250_Связь|9']:0},{'АП|244_Офисная мебель|9':4687,'БФЛ|244_Офисная мебель|9':3900,'АП|250_Связь|9':10,[SAU+'|250_Связь|9']:7},{'БФЛ|244_Офисная мебель':'co'});
      const D={fio:'Петров Пётр Петрович',dirLabel:'Все направления',people:[{fio:'Петров Пётр Петрович',own:true,inc,exp}]};
      const withOwn=fn=>{const sv=_planOwners,sc2=_planCoOwners;try{_planOwners={'БФЛ||244_Офисная мебель':'Иванов Иван Иванович'};_planCoOwners={'БФЛ||244_Офисная мебель':['Петров Пётр Петрович']};return fn();}finally{_planOwners=sv;_planCoOwners=sc2;}};
@@ -11198,6 +11201,11 @@ function pfRunTests(){
      ok('чат: режим направления - без приветствия, первая строка «Направление: …»',Td.indexOf('Направление: БФЛ')===0&&!/здравствуйте/i.test(Td));
      const Tf=_chatTextBuild(D,{months:[9],plan:true,fact:true,dev:true,greet:false,intro:'В.',mode:'cfo',dirsLabel:'БФЛ, АП'});
      ok('чат: фильтр направлений активен - строка «Направления: …» после вводной',Tf.split('\n')[1]==='Направления: БФЛ, АП',Tf.slice(0,60));
+     // доработка 8: план - текущий, утверждённый - только показ
+     ok('чат: план и отклонение - от ТЕКУЩЕГО при отличном утверждённом; без галочки baseline в тексте не упоминается',!/утв/.test(T)&&Ls[3]==='АП · 120 Поступление от ОП   сен 100 000 / 304 000 · сверх плана 204 000 · окт 100 000 / 12 500 · недобор 87 500'&&!/_chatDev\([^)]*bl/.test(String(_chatTextBuild)));
+     const Tb=withOwn(()=>_chatTextBuild(D,{months:[9,10],plan:true,fact:true,dev:true,greet:false,intro:'В.',mode:'cfo',showBl:true}));
+     ok('чат: галочка «показывать утверждённый» - «(утв. N)» только где отличается (сен), вводная со строкой про скобки, отклонение по-прежнему от текущего',Tb.split('\n')[1]==='План - текущий; в скобках - утверждённый, если отличается.'&&Tb.indexOf('АП · 120 Поступление от ОП   сен 100 000 (утв. 90 000) / 304 000 · сверх плана 204 000 · окт 100 000 / 12 500 · недобор 87 500')>=0&&Tb.indexOf('ИТОГО доходы   сен 100 000 (утв. 90 000) / 304 000 · сверх плана 204 000 · окт 100 000 / 12 500')>=0&&(Tb.match(/утв\. /g)||[]).length===2,Tb.slice(0,260));
+     ok('чат: без утверждённого у секции расходов скобок нет и при галочке',(()=>{const R2=Tb.slice(Tb.indexOf('РАСХОДЫ'));return !/утв/.test(R2);})());
      ok('чат: без выбранных месяцев (только «НОВЫЙ =») нулевой отбор не применяется - все пары блоками',(()=>{const t=_chatTextBuild(D,{months:[],plan:true,fact:true,dev:true,greet:false,intro:'',newMonth:11,mode:'cfo'});return t.indexOf('САУ · 223 Аренда')>=0&&!/Нулевые/.test(t);})());}
     ok('экран: комплексная пара - план свой, факт общий с пометкой, в сумму направления только у основного, цвет и доля по паре',/faOwn=\(cxd&&!S\.primDir\(d,code\)\)\?0:fa;/.test(sr)&&/DD\.f\+=faOwn;/.test(sr)&&/👥 факт общий/.test(sr)&&/pb=s\.pa!=null\?s\.pa:s\.p,sc=col\(s\.f,pb\);/.test(sr));}
    // ⚠ Область направлений - параметр вызывающего, а не свойство примитива.
@@ -18937,6 +18945,10 @@ function _chatTextBuild(D,o){
   else if(o.greet!==false){const g=_fioGreet(D.fio);L.push(g?(g+', здравствуйте!'):'Здравствуйте!');}
   if(o.intro)L.push(String(o.intro).trim());
   if(o.dirsLabel)L.push('Направления: '+o.dirsLabel); // фильтр направлений активен (доработка 6)
+  if(o.showBl)L.push('План - текущий; в скобках - утверждённый, если отличается.'); // доработка 8
+  // ⚠ «План» в тексте - ВСЕГДА ТЕКУЩИЙ (fcMonth*, config/plans): отклонения, «в плане», «вне плана», ИТОГО - от него. Утверждённый
+  //   (blMonth*, baseline) в расчёт не входит никогда - только показ «(утв. N)» при включённой галочке и только где отличается.
+  const blNote=(p,bl)=>(o.showBl&&bl!=null&&p!=null&&Math.round(bl)!==Math.round(p))?(' (утв. '+_chatNum(bl)+')'):'';
   const monLbl=ms=>ms.map(m=>CHAT_MONS[m-1]).join(', ');
   const nums=(plan,fact,isInc,cx,pAll)=>{const parts=[];if(o.plan!==false)parts.push(_chatNum(plan));if(o.fact!==false)parts.push(_chatNum(fact));let t=parts.join(' / ');
     if(o.dev!==false){const dv=cx?('общий; по паре '+_chatNum(pAll)+', '+_chatDev(pAll,fact,isInc)):_chatDev(plan,fact,isInc);t+=' ('+dv+')';}else if(cx)t+=' (общий)';return t;};
@@ -18945,13 +18957,13 @@ function _chatTextBuild(D,o){
     return '  '+CHAT_MONS[m-1]+'  '+parts.join(' · ');};
   // число строки: «П / Ф · отклонение»; noFlat - в строках направлений «в плане» не печатается, при плане 0 и факте > 0 - «вне плана»
   // noFlat ('dir') - строка направления: «в плане» и «плана нет» не печатаются, при плане 0 и факте > 0 - «вне плана»; 'cx' - комплексная: без отклонения, с «(общий)»
-  const numStr=(p,f,isInc,kind)=>{const parts=[];if(o.plan!==false)parts.push(_chatNum(p));if(o.fact!==false)parts.push(_chatNum(f));let t=parts.join(' / ');
+  const numStr=(p,f,isInc,kind,bl)=>{const parts=[];if(o.plan!==false)parts.push(_chatNum(p)+blNote(p,bl));if(o.fact!==false)parts.push(_chatNum(f));let t=parts.join(' / ');
     if(kind==='cx')return t+' (общий)';
     if(o.dev!==false){let dv;if(kind==='dir'){dv=!p?(f>0.005?'вне плана':''):_chatDev(p,f,isInc);if(dv==='в плане')dv='';}else dv=_chatDev(p,f,isInc);if(dv)t+=' · '+dv;}return t;};
   // строки чисел по месяцам: 1-3 месяца - одной строкой «сен П / Ф · откл · окт …» (в заголовок/строку), 4+ - по строке на месяц под ней
   const monthRows=(get,isInc,kind,indent,head)=>{if(!months.length)return [head];
-    if(short)return [head+'   '+months.map(m=>{const x=get(m);return CHAT_MONS[m-1]+' '+numStr(x.p,x.f,isInc,kind);}).join(' · ')];
-    return [head].concat(months.map(m=>{const x=get(m);return indent+CHAT_MONS[m-1]+'  '+numStr(x.p,x.f,isInc,kind);}));};
+    if(short)return [head+'   '+months.map(m=>{const x=get(m);return CHAT_MONS[m-1]+' '+numStr(x.p,x.f,isInc,kind,x.bl);}).join(' · ')];
+    return [head].concat(months.map(m=>{const x=get(m);return indent+CHAT_MONS[m-1]+'  '+numStr(x.p,x.f,isInc,kind,x.bl);}));};
   const zeros=[]; // пары с нулевым планом и фактом во всех выбранных месяцах - одной строкой внизу (доработка 1)
   const newLine=ind=>o.newMonth?[ind+'НОВЫЙ '+CHAT_MONS[o.newMonth-1]+' = ']:[];
   // ── ГРУППИРОВКА ПО ПОДСТАТЬЕ (правка Олега 03.10.2026): заголовок подстатьи = Σ по направлениям этого человека, под ним
@@ -18963,7 +18975,7 @@ function _chatTextBuild(D,o){
     const groups=[];
     sec.codes.forEach(code=>{const dirs=[];
       [...sec.pairSet[code]].sort((a,b)=>a.localeCompare(b,'ru')).forEach(d=>{const cx=!!(sec.cxDir&&sec.cxDir(d,code));
-        const get=m=>({p:sec.fcMonthD(d,code,m),f:sec.factMonthD(d,code,m)});
+        const get=m=>({p:sec.fcMonthD(d,code,m),f:sec.factMonthD(d,code,m),bl:o.showBl&&sec.blMonthD?sec.blMonthD(d,code,m):null});
         const zero=months.length>0&&months.every(m=>{const x=get(m);return !(x.p)&&Math.abs(x.f)<0.005;});
         if(zero){zeros.push(_regCode(d)+' '+_chatSubName(code));return;}
         dirs.push({d,cx,get});});
@@ -18977,7 +18989,7 @@ function _chatTextBuild(D,o){
         if(x.cx){const who=' · планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', ');rows.push(...monthRows(x.get,isInc,'cx','    ',_regCode(x.d)+' 👥 · '+_chatCode(g.code)).map((l,i)=>i===0&&short?l+who:l));if(!short)rows.push('   '+who.slice(3));}
         else rows.push(...monthRows(x.get,isInc,null,'  ',_regCode(x.d)+' · '+_chatCode(g.code)));
         rows.push(...newLine('  '));return;}
-      const sum=m=>{let p=null,f=0;g.dirs.forEach(x=>{const v=x.get(m);if(v.p!=null)p=(p||0)+v.p;f+=v.f;});return{p,f};};
+      const sum=m=>{let p=null,f=0,bl=null;g.dirs.forEach(x=>{const v=x.get(m);if(v.p!=null)p=(p||0)+v.p;f+=v.f;if(v.bl!=null)bl=(bl||0)+v.bl;});return{p,f,bl};};
       rows.push(...monthRows(sum,isInc,null,'  ',_chatCode(g.code)));
       g.dirs.forEach(x=>{
         if(x.cx){const who=' · планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', ');rows.push(...monthRows(x.get,isInc,'cx','    ','  '+_regCode(x.d)+' 👥').map((l,i)=>i===0&&short?l+who:l));if(!short)rows.push('   '+who.slice(3));}
@@ -18986,7 +18998,7 @@ function _chatTextBuild(D,o){
     if(!rows.length)return [];
     const out=[title].concat(rows);
     if(months.length&&(o.plan!==false||o.fact!==false)){
-      out.push(...monthRows(m=>{let p=null,f=0;sec.codes.forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);});return{p,f};},isInc,null,'  ','ИТОГО '+(isInc?'доходы':'расходы')+(short?'':':')));
+      out.push(...monthRows(m=>{let p=null,f=0,bl=null;sec.codes.forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);if(o.showBl&&sec.blMonth){const w=sec.blMonth(c,m);if(w!=null)bl=(bl||0)+w;}});return{p,f,bl};},isInc,null,'  ','ИТОГО '+(isInc?'доходы':'расходы')+(short?'':':')));
       out.push(...newLine('  '));} // доработка 5: своя строка у ИТОГО
     return out;};
   const person=PD=>{zeros.length=0;const out=[].concat(section(PD.inc,'ДОХОДЫ',true),section(PD.exp,'РАСХОДЫ',false));
@@ -18995,8 +19007,8 @@ function _chatTextBuild(D,o){
   if(o.mode==='mgr'&&people.length>1){
     people.forEach((PD,i)=>{L.push('');L.push(String(i?PD.fio:(PD.fio+' (свои подстатьи)')).toUpperCase());L.push(...person(PD));});
     if(months.length){L.push('');L.push('ИТОГО ПО БЛОКУ:');
-      months.forEach(m=>{const S=(k)=>{let p=null,f=0;people.forEach(PD=>{const sec=PD[k];if(!sec)return;sec.codes.forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);});});return{p,f};};
-        const I=S('inc'),E=S('exp');L.push('  '+CHAT_MONS[m-1]+'  доходы: план '+_chatNum(I.p)+' · факт '+_chatNum(I.f)+' · расходы: план '+_chatNum(E.p)+' · факт '+_chatNum(E.f));});}
+      months.forEach(m=>{const S=(k)=>{let p=null,f=0,bl=null;people.forEach(PD=>{const sec=PD[k];if(!sec)return;sec.codes.forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);if(o.showBl&&sec.blMonth){const w=sec.blMonth(c,m);if(w!=null)bl=(bl||0)+w;}});});return{p,f,bl};};
+        const I=S('inc'),E=S('exp');L.push('  '+CHAT_MONS[m-1]+'  доходы: план '+_chatNum(I.p)+blNote(I.p,I.bl)+' · факт '+_chatNum(I.f)+' · расходы: план '+_chatNum(E.p)+blNote(E.p,E.bl)+' · факт '+_chatNum(E.f));});}
   }else if(people.length)L.push(...person(people[0]));
   return L.join('\n');
 }
@@ -19043,6 +19055,7 @@ window.pfChatOpen=function(){
       <label><input type="checkbox" id="pfchat-dev" checked> отклонение</label>
       <label><input type="checkbox" id="pfchat-new" onchange="pfChatIntroReset()"> строка «НОВЫЙ =» для сбора плана на</label><select id="pfchat-newm" style="${inp};padding:3px 6px" onchange="pfChatIntroReset()">${nmOpts}</select>
       <label><input type="checkbox" id="pfchat-greet" checked> приветствие по имени-отчеству</label>
+      <label title="План в тексте всегда текущий; утверждённый печатается в скобках «(утв. N)» только там, где отличается"><input type="checkbox" id="pfchat-bl"> показывать утверждённый</label>
     </div>
     <label style="${lbl}">Вводная строка <span style="font-weight:400;color:var(--text3)">(меняется здесь, без кода)</span></label>
     <textarea id="pfchat-intro" rows="3" oninput="this.dataset.edited='1'" style="${inp};width:100%;box-sizing:border-box;resize:vertical"></textarea>
@@ -19077,7 +19090,7 @@ window.pfChatBuild=function(){
   const who=[...document.querySelectorAll('.pfchat-who:checked')].map(c=>c.value);
   const g=id=>{const e=document.getElementById(id);return !!(e&&e.checked);};
   const dsel=mode==='dir'?[]:[...document.querySelectorAll('.pfchat-dir:checked')].map(c=>c.value);const dAll=document.querySelectorAll('.pfchat-dir').length;const dirsF=(dsel.length&&dsel.length<dAll)?dsel:[]; // пусто или все - без ограничения
-  const o={months,plan:g('pfchat-plan'),fact:g('pfchat-fact'),dev:g('pfchat-dev'),newMonth:g('pfchat-new')?+(document.getElementById('pfchat-newm')||{}).value||0:0,greet:g('pfchat-greet'),intro:(document.getElementById('pfchat-intro')||{}).value||'',mode,dirsLabel:dirsF.length?dirsF.map(_regCode).join(', '):''};
+  const o={months,plan:g('pfchat-plan'),fact:g('pfchat-fact'),dev:g('pfchat-dev'),newMonth:g('pfchat-new')?+(document.getElementById('pfchat-newm')||{}).value||0:0,greet:g('pfchat-greet'),intro:(document.getElementById('pfchat-intro')||{}).value||'',mode,dirsLabel:dirsF.length?dirsF.map(_regCode).join(', '):'',showBl:g('pfchat-bl')};
   if(!who.length){out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите, кому собрать текст.</div>';return;}
   if(!months.length&&!o.newMonth){out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите хотя бы один месяц (или строку «НОВЫЙ =»).</div>';return;}
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
