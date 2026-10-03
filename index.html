@@ -10802,6 +10802,7 @@ function pfRunTests(){
    ok('редактор: автосумма направления считает и строки data-owner',/tr\.hasAttribute\('data-side'\)\|\|tr\.hasAttribute\('data-owner'\)/.test(String(window.planSumDir)));
    ok('редактор: отказы словами - 111/консалтинг не комплексные, без основного соисполнителей нет, основного при соисполнителях не снять',/_slPlanSide\(c\)\)\{alert\(/.test(String(window.planCoOwnerToggle))&&/!_ownerOf\(d,c\)\)\{alert\(/.test(String(window.planCoOwnerToggle))&&/!fio&&_coOwnersOf\(d,c\)\.length\)\{alert\(/.test(String(window.planOwnerPick)));
    ok('редактор: соисполнители пишутся сразу (_coOwnersSave) и ждутся в planSave наравне с владельцами',/_coOwnersSave\(\)/.test(String(window.planCoOwnerCb))&&/_coOwnersSave\(\)\]/.test(String(window.planSave))&&/okP&&okO&&okN&&okC/.test(String(window.planSave)));
+   ok('печать планов: фильтр по любому ответственному пары, пометка «комплексная» в строке направления, строки ответственных теми же planMS/planYS',(function(){const pp=String(window.planPrintOwners);return /const ow=_ownersOf\(d,code\);return ow\.length\?ow\.some\(o=>_ownP\.has\(o\)\):_ownP\.has\('__none__'\);/.test(pp)&&/cxl=_complexLabel\(d,code\)/.test(pp)&&/if\(_slPlanSide\(code\)\|\|cxl\|\|sidesOf\(d,lvl,code\)\.some\(sl=>_planSlotParts\(sl\)\.owner\)\)sidesOf\(d,lvl,code\)\.forEach/.test(pp);})());
    ok('редактор: списки ФИО (datalist и фильтр) включают соисполнителей',/Object\.values\(_planCoOwners\|\|\{\}\)\.flatMap\(_coOwnersNormList\)/.test(pm)&&/Object\.values\(_planCoOwners\|\|\{\}\)\.flatMap\(_coOwnersNormList\)/.test(String(window.showPlansPanel)));
   ok('редактор не гейтит третий уровень предикатом ФАКТА',pm.indexOf('_slFactSide')<0);
   // сводная БДР: показ третьего уровня - по факту, «известен ли план стороны» - по планированию
@@ -11053,7 +11054,7 @@ function pfRunTests(){
   // ⚠ Печать плана (planPrintOwners) держала ТРЕТЬЮ копию правила «у каких подстатей есть сторона»
   //   и к сентябрю 2026 разошлась в обе стороны. Цифры кода подстатьи в этой функции = копия вернулась.
   const pp=String(planPrintOwners);
-  ok('печать плана зовёт общий предикат',/if\(_slPlanSide\(code\)\)sidesOf\(/.test(pp));
+  ok('печать плана зовёт общий предикат',/if\(_slPlanSide\(code\)\|\|cxl\|\|sidesOf\(d,lvl,code\)\.some\(sl=>_planSlotParts\(sl\)\.owner\)\)sidesOf\(/.test(pp)); // ИЗМЕНЁН 03.10.2026: строки корзин печатаются и у комплексной пары (ответственные), предикат сторон тот же
   ok('печать плана не разбирает код подстатьи сама',!/111|223/.test(pp),(pp.match(/111|223/g)||[]).join());
   ok('это ПЛАНИРОВАНИЕ по стороне, а не факт',pp.indexOf('_slFactSide')<0);
   // ⚠ Расчёт секции выписки живёт ОДИН раз - в _cfoStmtData. Внутри cfoStatementGen после выноса
@@ -18775,7 +18776,7 @@ window.planPrintOwners=function(){
   const _selP=window._planSubartSel, _ownP=window._planOwnerSel;
   // план по направлению (сумма сотрудников) и по конкретному сотруднику/объекту - по месяцу и за год (%/%ЧП → рубли через ctx)
   const dirsWithPlan=(lvl,code)=>allDirs.filter(d=>_planRecords.some(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code));
-  const dirsForCode=(lvl,code)=>dirsWithPlan(lvl,code).filter(d=>{if(!_ownP||!_ownP.size)return true;const o=String(_planOwners[_ownerKey(d,code)]||'').trim();return o?_ownP.has(o):_ownP.has('__none__');});
+  const dirsForCode=(lvl,code)=>dirsWithPlan(lvl,code).filter(d=>{if(!_ownP||!_ownP.size)return true;const ow=_ownersOf(d,code);return ow.length?ow.some(o=>_ownP.has(o)):_ownP.has('__none__');}); // комплексная пара - по любому из её ответственных (03.10.2026)
   const sidesOf=(d,lvl,code)=>[...new Set(_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code).map(_planSlot))].sort((a,b)=>a.localeCompare(b,'ru'));
   const planMD=(d,lvl,code,m)=>{let tot=null;_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code&&p.month===m).forEach(r=>{tot=(tot||0)+cvtD(d,r,m);});return tot;};
   const planYD=(d,lvl,code)=>{const all=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code);if(!all.length)return null;const sides=[...new Set(all.map(_planSlot))];let tot=null;sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvtD(d,y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(d,r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
@@ -18794,8 +18795,8 @@ window.planPrintOwners=function(){
   const codeRows=(lvl,code)=>{
     let html=rowH(m=>codeM(lvl,code,m),()=>codeY(lvl,code),esc(code),'codeR');
     dirsForCode(lvl,code).forEach(d=>{
-      const ow=String(_planOwners[_ownerKey(d,code)]||'').trim();
-      html+=rowH(m=>planMD(d,lvl,code,m),()=>planYD(d,lvl,code),'↳ '+esc(d)+(ow?' · <i>'+esc(ow)+'</i>':''),'dirR');
+      const ow=String(_planOwners[_ownerKey(d,code)]||'').trim(),cxl=_complexLabel(d,code);
+      html+=rowH(m=>planMD(d,lvl,code,m),()=>planYD(d,lvl,code),'↳ '+esc(d)+(ow?' · <i>'+esc(ow)+'</i>':'')+(cxl?' · <i>'+esc(cxl)+'</i>':''),'dirR');
       // ⚠ Признак третьего уровня - ОБЩИЙ предикат _slPlanSide, и это ПЛАНИРОВАНИЕ по стороне: лист
       //   печатает записи _planRecords, то есть план, а не факт. Здесь жила ТРЕТЬЯ копия правила -
       //   свой разбор кода подстатьи по трём цифрам, - и к сентябрю 2026 она разошлась в ОБЕ стороны:
@@ -18804,7 +18805,9 @@ window.planPrintOwners=function(){
       //   планируют - и он не печатался вовсе.
       // ⚠ Кодов подстатей цифрами здесь БОЛЬШЕ НЕТ И БЫТЬ НЕ ДОЛЖНО - это стережёт тест: цифры в этой
       //   функции означают, что правило снова завели копией. Разбор кодов живёт в _slC3/_slPlanSide.
-      if(_slPlanSide(code))sidesOf(d,lvl,code).forEach(side=>{html+=rowH(m=>planMS(d,lvl,code,side,m),()=>planYS(d,lvl,code,side),'• '+esc(_planSlotLabel(side)),'sideR');});
+      // Комплексная пара (03.10.2026): под направлением - строки ответственных «• 👥 ФИО» и «(не распределено)», те же корзины
+      //   (_planSlot) и те же planMS/planYS, что у сторон; строка направления выше - их сумма (planMD по всем записям).
+      if(_slPlanSide(code)||cxl||sidesOf(d,lvl,code).some(sl=>_planSlotParts(sl).owner))sidesOf(d,lvl,code).forEach(side=>{html+=rowH(m=>planMS(d,lvl,code,side,m),()=>planYS(d,lvl,code,side),'• '+esc(_planSlotLabel(side)),'sideR');});
     });
     return html;};
   const sumRow=(label,lvl,list)=>{let cells='',yt=0;
