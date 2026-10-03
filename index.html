@@ -1336,7 +1336,21 @@ function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const d
 //   вызов фильтровал весь массив планов (тысячи записей × стороны × месяцы на каждый рендер).
 //   Индексируется снимок массива на момент вызова _planSideMD - все потребители создают его на
 //   один рендер/расчёт и в его пределах записи не меняют.
-function _planSideMD(recsAll,cvt){const IDX=new Map();(recsAll||[]).forEach(p=>{if(p.level!=='subarticle')return;const k=p.dir+'|'+p.code+'|'+String(p.side||'');let a=IDX.get(k);if(!a)IDX.set(k,a=[]);a.push(p);});
+// ══ КЛЮЧ КОРЗИНЫ ЗАПИСИ ПЛАНА - ОДИН ПРИМИТИВ (03.10.2026, комплексные пары, docs/DECISIONS.md#d-complex-pairs) ═══
+// Читатели берут запись месяца через find ВНУТРИ корзины (бейк утверждённого плана, печать, ячейки редактора):
+// ключ (год, направление, уровень, код, корзина, месяц) обязан быть УНИКАЛЬНЫМ. Корзина = сторона + ответственный
+// комплексной пары - вторая запись с тем же ключом молча терялась бы в утверждённом плане. У всех прежних записей
+// owner пуст → _planSlot = прежняя сторона, ни одно число не двигается (стенд-инвариант). Разделитель \u0001 не
+// встречается ни в ФИО, ни в ID_SecondSide; владелец тримируется, как в _ownerOf.
+// ⚠ Литералов «корзина по String(p.side||'')» вне этого примитива быть не должно - держит тест pfRunTests.
+const _planSlot=p=>String(p.side||'')+(p.owner?'\u0001'+String(p.owner).trim():'');
+const _planSlotParts=slot=>{const i=String(slot||'').indexOf('\u0001');return i<0?{side:String(slot||''),owner:''}:{side:String(slot).slice(0,i),owner:String(slot).slice(i+1)};};
+const _planSlotLabel=slot=>{const q=_planSlotParts(slot);return q.owner?('👥 '+q.owner):(q.side||'(не распределено)');}; // строка корзины на печати планов
+// Индекс плана ПО ОТВЕТСТВЕННОМУ комплексной пары (как _planSideMD по стороне): dir|code|owner → план месяца.
+// Сторона у комплексных пар запрещена (111/консалтинг - не комплексные), поэтому owner - единственная ось корзины.
+function _planOwnerMD(recsAll,cvt){const IDX=new Map();(recsAll||[]).forEach(p=>{if(p.level!=='subarticle')return;const k=p.dir+'|'+p.code+'|'+String(p.owner||'').trim();let a=IDX.get(k);if(!a)IDX.set(k,a=[]);a.push(p);});
+  return (d,code,owner,m)=>{const recs=IDX.get(d+'|'+code+'|'+String(owner||'').trim())||[];if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};}
+function _planSideMD(recsAll,cvt){const IDX=new Map();(recsAll||[]).forEach(p=>{if(p.level!=='subarticle')return;const k=p.dir+'|'+p.code+'|'+_planSlot(p);let a=IDX.get(k);if(!a)IDX.set(k,a=[]);a.push(p);});
   return (d,code,side,m)=>{const recs=IDX.get(d+'|'+code+'|'+side)||[];if(!recs.length)return null;let v=null,hit=false;recs.forEach(r=>{if(r.month===m){v=(v||0)+cvt(d,r,m);hit=true;}});if(!hit&&!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)v=(v||0)+cvt(d,yr,0)/12;}return v;};}
 // стороны кода: факт ∪ baseline ∪ прогноз (∪ справочник объектов аренды - ветка МЁРТВАЯ, см. ниже); hasUn - есть план/факт без стороны
 // ⚠ Ветка _slRent(code) → config/rentObjects НЕДОСТИЖИМА с 05.09.2026: 223 убран из третьего уровня
@@ -9887,7 +9901,7 @@ function registryRender(q){
 function _planIncBaseMonth(dir,year,m){
   const recs=(_planRecords||[]).filter(p=>p.dir===dir&&p.year===year&&p.level==='income');
   if(!recs.length)return 0;
-  const byCode={};recs.forEach(p=>{const k=p.code+'|'+(p.side||'');(byCode[k]=byCode[k]||[]).push(p);});
+  const byCode={};recs.forEach(p=>{const k=p.code+'|'+_planSlot(p);(byCode[k]=byCode[k]||[]).push(p);});
   let s=0;
   Object.values(byCode).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)s+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)s+=yr.value/12;}});
   return s;
@@ -11113,6 +11127,17 @@ function pfRunTests(){
    ok('комплексные пары: форма RTDB (объект с числовыми ключами) читается как массив',_coOwnersNormList({0:'А',1:'Б'}).join('|')==='А|Б'&&_coOwnersNormList(null).length===0);
    ok('комплексные пары: _ownerOf не подменён - основной остаётся строкой',(function(){const sv=_planOwners,sc=_planCoOwners;try{_planOwners={'БФЛ||244':'Иванов'};_planCoOwners={'БФЛ||244':['Петров']};return _ownerOf('БФЛ','244')==='Иванов'&&typeof _ownerOf('БФЛ','244')==='string';}finally{_planOwners=sv;_planCoOwners=sc;}})());
    ok('комплексные пары: миграция переименования правит соисполнителей и owner ТЕКУЩЕГО плана, baseline не трогает',/_planCoOwners/.test(String(accessSavePanel))&&/p\.owner=renameMap/.test(String(accessSavePanel))&&!/_plansBaseline/.test(String(accessSavePanel)));
+   // ── Ключ корзины записи плана - _planSlot (шаг 2): уникальность ключа держат ВСЕ читатели ──
+   ok('_planSlot: без owner - прежняя сторона, с owner - сторона + \\u0001 + ФИО (тримировано)',_planSlot({side:'Иванов'})==='Иванов'&&_planSlot({})===''&&_planSlot({owner:' Петров '})==='\u0001Петров'&&_planSlot({side:'X',owner:'Y'})==='X\u0001Y');
+   ok('_planSlotParts/_planSlotLabel: обратный разбор и подпись',_planSlotParts('X\u0001Y').owner==='Y'&&_planSlotParts('X\u0001Y').side==='X'&&_planSlotParts('').owner===''&&_planSlotLabel('')==='(не распределено)'&&_planSlotLabel('ООО Р')==='ООО Р'&&_planSlotLabel('\u0001Петров')==='👥 Петров');
+   ok('корзин по String(p.side||\'\') вне _planSlot в файле нет (map/filter/склейка)',!/String\(p\.side\|\|''\)===sd\b/.test(top)&&!/new Set\(\w+\.map\(p=>String\(p\.side\|\|''\)\)\)/.test(top)&&!/\+'\|'\+\(p\.side\|\|''\)/.test(top)&&(top.match(/_planSlot\(/g)||[]).length>=25,(top.match(/_planSlot\(/g)||[]).length);
+   ok('_planOwnerMD: план месяца по ответственному, годовая запись /12, чужой owner - null',(function(){const F=_planOwnerMD([{dir:'БФЛ',level:'subarticle',code:'244',owner:'А',month:3,mode:'money',value:100},{dir:'БФЛ',level:'subarticle',code:'244',owner:'Б',month:0,mode:'money',value:1200},{dir:'БФЛ',level:'subarticle',code:'244',month:3,mode:'money',value:7}],(d,r,m)=>r.value);return F('БФЛ','244','А',3)===100&&F('БФЛ','244','Б',3)===100&&F('БФЛ','244','В',3)===null&&F('БФЛ','244','',3)===7;})());
+   ok('бейк утверждённого плана: owner переносится в запечённую запись, у прежних записей поля owner нет',/if\(s\.owner\)o\.owner=String\(s\.owner\)\.trim\(\);out\.push\(o\)/.test(String(_baselineBakeMonth)));
+   ok('_planStage: читает data-owner и пишет rec.owner; сторож потери записей с owner стоит',/owner=String\(tr\.getAttribute\('data-owner'\)\|\|''\)\.trim\(\)/.test(String(_planStage))&&/if\(owner\)rec\.owner=owner;/.test(String(_planStage))&&/_lostOwn\.length/.test(String(_planStage)));
+   ok('pfFoldOwners: ядро сворачивает записи ответственных в безымянную (прибавляя к существующей), смешанные режимы - отказ, baseline не зовёт',(function(){const Y=2026,R=[{dir:'БФЛ',year:Y,month:3,level:'subarticle',code:'244',mode:'money',value:10},{dir:'БФЛ',year:Y,month:3,level:'subarticle',code:'244',mode:'money',value:20,owner:'А'},{dir:'БФЛ',year:Y,month:3,level:'subarticle',code:'244',mode:'money',value:30.005,owner:'Б'},{dir:'АП',year:Y,month:4,level:'subarticle',code:'244',mode:'money',value:1,owner:'А'},{dir:'АП',year:2025,month:4,level:'subarticle',code:'244',mode:'money',value:9,owner:'А'}];
+     const F=_pfFoldOwnersCore(R,Y,null);const b=F.records.find(p=>p.dir==='БФЛ'&&p.month===3),a=F.records.find(p=>p.dir==='АП'&&p.month===4&&p.year===Y);
+     const mix=_pfFoldOwnersCore([{dir:'БФЛ',year:Y,month:3,level:'subarticle',code:'244',mode:'money',value:1,owner:'А'},{dir:'БФЛ',year:Y,month:3,level:'subarticle',code:'244',mode:'pct',value:0.1,owner:'Б'}],Y,null);
+     return F.records.length===3&&b&&b.value===60.01&&!b.owner&&a&&a.value===1&&!a.owner&&F.records.some(p=>p.year===2025&&p.owner==='А')&&F.folded===3&&mix.records===null&&mix.bad.length===1&&!/_plansBaseline/.test(String(window.pfFoldOwners));})());
    // ⚠ Все три потребителя берут код владения ОДНОЙ функцией - вот где раньше расходился ключ.
    ok('сводная берёт код владения примитивом',/const sn=_ownCodeOf\(r\);/.test(String(renderPlanFact))&&/if\(sp&&sn\)\{const K=_ownerKey\(rd,sn\);\(expByDirSub/.test(String(renderPlanFact)));
    ok('выписка ЦФО берёт код владения примитивом и строку без подстатьи не отбрасывает',/const an=_ownCodeOf\(r\); if\(!an\)return;/.test(String(_cfoStmtData))
@@ -12725,8 +12750,8 @@ function renderPlanFact(f){
   const ownDirsOf=sub=>dirsToAgg.filter(d=>_dirSubPass(d,sub)); // owner-passing направления подстатьи
   const _pdFactMap=kind=>kind==='inc'?_pdInc:kind==='vyv'?_pdVyv:_pdExp;
   const _factSubMap=kind=>kind==='inc'?incSubN:kind==='vyv'?vyvodSubN:factSubN;
-  const _pdPlanMonth=(recsFn,cvt,lvl,d,sub,mo)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const r2=rs.filter(p=>String(p.side||'')===sd);let hit=false;r2.forEach(r=>{if(r.month===mo){tot=(tot||0)+cvt(r,mo);hit=true;}});if(hit)return;if(!r2.some(p=>p.month>=1)){const yr=r2.find(p=>p.month===0);if(yr)tot=(tot||0)+cvt(yr,0)/12;}});return tot;};
-  const _pdPlanYear=(recsFn,cvt,lvl,d,sub)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const r2=rs.filter(p=>String(p.side||'')===sd);const yr=r2.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else{for(let mm=1;mm<=12;mm++){const r=r2.find(p=>p.month===mm);if(r)v=(v||0)+cvt(r,mm);}}if(v!=null)tot=(tot||0)+v;});return tot;};
+  const _pdPlanMonth=(recsFn,cvt,lvl,d,sub,mo)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(_planSlot))];sides.forEach(sd=>{const r2=rs.filter(p=>_planSlot(p)===sd);let hit=false;r2.forEach(r=>{if(r.month===mo){tot=(tot||0)+cvt(r,mo);hit=true;}});if(hit)return;if(!r2.some(p=>p.month>=1)){const yr=r2.find(p=>p.month===0);if(yr)tot=(tot||0)+cvt(yr,0)/12;}});return tot;};
+  const _pdPlanYear=(recsFn,cvt,lvl,d,sub)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(_planSlot))];sides.forEach(sd=>{const r2=rs.filter(p=>_planSlot(p)===sd);const yr=r2.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else{for(let mm=1;mm<=12;mm++){const r=r2.find(p=>p.month===mm);if(r)v=(v||0)+cvt(r,mm);}}if(v!=null)tot=(tot||0)+v;});return tot;};
   const _subFactP=(kind,sub)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];if(!a)return 0;if(isYear){let s=0;for(let mm=1;mm<=12;mm++)s+=a[mm];return s;}return a[+period]||0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[_ownerKey(d,sub)];if(a){if(isYear){for(let mm=1;mm<=12;mm++)s+=a[mm];}else s+=a[+period]||0;}});return s;};
   const _subFactM=(kind,sub,mo)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];return a?(a[mo]||0):0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[_ownerKey(d,sub)];if(a)s+=a[mo]||0;});return s;};
   const _subPlanP=(recsFn,cvt,planOfFn,lvl,sub)=>{if(!selOwn.size)return planOfFn(lvl,sub);let tot=null;ownDirsOf(sub).forEach(d=>{const v=isYear?_pdPlanYear(recsFn,cvt,lvl,d,sub):_pdPlanMonth(recsFn,cvt,lvl,d,sub,+period);if(v!=null)tot=(tot||0)+v;});return tot;};
@@ -12782,8 +12807,8 @@ function renderPlanFact(f){
   const planMonth=(rl,code,m)=>{const ck=rl+'|'+code+'|'+m;if(_pmCache.has(ck))return _pmCache.get(ck);
     let tot=null;
     dirsToAgg.forEach(d=>{const recs=recsOf(d,rl,code);if(!recs.length)return;
-      const sides=[...new Set(recs.map(p=>String(p.side||'')))];
-      sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);
+      const sides=[...new Set(recs.map(_planSlot))];
+      sides.forEach(sd=>{const rs=recs.filter(p=>_planSlot(p)===sd);
         let hitM=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hitM=true;}});
         if(hitM)return;
         if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;} // только годовой план - равномерно
@@ -12791,7 +12816,7 @@ function renderPlanFact(f){
     _pmCache.set(ck,tot);return tot;};
   const planYear=(rl,code)=>{const ck=rl+'|'+code;if(_pyCache.has(ck))return _pyCache.get(ck);
     let tot=null;
-    dirsToAgg.forEach(d=>{const all=recsOf(d,rl,code);if(!all.length)return;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvtD(yr,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(r,m);}}if(v!=null)tot=(tot||0)+v;});});
+    dirsToAgg.forEach(d=>{const all=recsOf(d,rl,code);if(!all.length)return;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvtD(yr,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(r,m);}}if(v!=null)tot=(tot||0)+v;});});
     _pyCache.set(ck,tot);return tot;};
   const planOf=(rl,code)=>isYear?planYear(rl,code):planMonth(rl,code,+period);
   // Планы хранятся ТОЛЬКО на уровне подстатьи (level='subarticle'/'income'). Статья = сумма подстатей по первым 3 цифрам кода.
@@ -12841,7 +12866,7 @@ function renderPlanFact(f){
     // income-база от снимка R (аналог _planIncBaseMonth, но по записям baseline, а не по _planRecords)
     const incBaseM=(d,m)=>{const k=d+'|'+m;if(_ibCache.has(k))return _ibCache.get(k);
       const rc=R.filter(p=>p.dir===d&&p.level==='income');let v=0;
-      if(rc.length){const byCode={};rc.forEach(p=>{const kk=p.code+'|'+(p.side||'');(byCode[kk]=byCode[kk]||[]).push(p);});Object.values(byCode).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)v+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)v+=yr.value/12;}});}
+      if(rc.length){const byCode={};rc.forEach(p=>{const kk=p.code+'|'+_planSlot(p);(byCode[kk]=byCode[kk]||[]).push(p);});Object.values(byCode).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)v+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)v+=yr.value/12;}});}
       _ibCache.set(k,v);return v;};
     const revBaseMonthD=(d,m)=>{const k=d+'|'+m;if(_rbCache.has(k))return _rbCache.get(k);const r=(PLVL.get(d+'|revenue')||[]).find(p=>p.month===m);let v;if(r&&r.value>0)v=r.value;else{const ip=incBaseM(d,m);v=ip>0?ip:(((revByMonthD[d]||[])[m])||0);}_rbCache.set(k,v);return v;};
     const revBaseYearD=d=>{const yr=(PLVL.get(d+'|revenue')||[]).find(p=>p.month===0);if(yr&&yr.value>0)return yr.value;let s=0;for(let m=1;m<=12;m++)s+=revBaseMonthD(d,m);return s;};
@@ -12852,8 +12877,8 @@ function renderPlanFact(f){
     const planMonth=(rl,code,m)=>{const ck=rl+'|'+code+'|'+m;if(_pmCache.has(ck))return _pmCache.get(ck);
       let tot=null;
       dirsToAgg.forEach(d=>{const recs2=recsOf(d,rl,code);if(!recs2.length)return;
-        const sides=[...new Set(recs2.map(p=>String(p.side||'')))];
-        sides.forEach(sd=>{const rs=recs2.filter(p=>String(p.side||'')===sd);
+        const sides=[...new Set(recs2.map(_planSlot))];
+        sides.forEach(sd=>{const rs=recs2.filter(p=>_planSlot(p)===sd);
           let hitM=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hitM=true;}});
           if(hitM)return;
           if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}
@@ -12861,7 +12886,7 @@ function renderPlanFact(f){
       _pmCache.set(ck,tot);return tot;};
     const planYear=(rl,code)=>{const ck=rl+'|'+code;if(_pyCache.has(ck))return _pyCache.get(ck);
       let tot=null;
-      dirsToAgg.forEach(d=>{const all=recsOf(d,rl,code);if(!all.length)return;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs2=all.filter(p=>String(p.side||'')===sd);const yr=recs2.find(p=>p.month===0);let v=null;if(yr)v=cvtD(yr,0);else{for(let m=1;m<=12;m++){const r=recs2.find(p=>p.month===m);if(r)v=(v||0)+cvtD(r,m);}}if(v!=null)tot=(tot||0)+v;});});
+      dirsToAgg.forEach(d=>{const all=recsOf(d,rl,code);if(!all.length)return;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs2=all.filter(p=>_planSlot(p)===sd);const yr=recs2.find(p=>p.month===0);let v=null;if(yr)v=cvtD(yr,0);else{for(let m=1;m<=12;m++){const r=recs2.find(p=>p.month===m);if(r)v=(v||0)+cvtD(r,m);}}if(v!=null)tot=(tot||0)+v;});});
       _pyCache.set(ck,tot);return tot;};
     const planOf=(rl,code)=>isYear?planYear(rl,code):planMonth(rl,code,+period);
     const _subCodes=lvl=>{const s={};R.forEach(p=>{if(p.level===lvl)s[p.code]=1;});return Object.keys(s);};
@@ -14024,15 +14049,15 @@ function renderPlanFact(f){
     const planDirSubFrom=(recSet,cvt,d,sub)=>{
       const all=recSet.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub); if(!all.length)return null;
       if(!isYear){let tot=null;all.filter(p=>p.month===+period).forEach(r=>{tot=(tot||0)+cvt(r,+period);});return tot;}
-      const sides=[...new Set(all.map(p=>String(p.side||'')))];let tot=null;
-      sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else recs.forEach(r=>{if(r.month>=1)v=(v||0)+cvt(r,r.month);});if(v!=null)tot=(tot||0)+v;});
+      const sides=[...new Set(all.map(_planSlot))];let tot=null;
+      sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else recs.forEach(r=>{if(r.month>=1)v=(v||0)+cvt(r,r.month);});if(v!=null)tot=(tot||0)+v;});
       return tot;
     };
     const planDirSub=(d,sub)=>planDirSubFrom(plans,cvtD,d,sub);
     const basePlanDirSub=(d,sub)=>PB?planDirSubFrom(PB.R,PB.cvtD,d,sub):null;
     // baseline-план (d,подстатья) за КОНКРЕТНЫЙ месяц - для остатка лимита (аналог planMonth по одному направлению)
-    const basePlanDirSubM=(d,sub,m)=>{if(!PB)return null;const all=PB.R.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
-    const planDirSubM=(d,sub,m)=>{const all=plans.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(p=>String(p.side||'')))];sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;}; // прогноз (напр./подстатья) помесячно - для devBase остатка незамороженного месяца
+    const basePlanDirSubM=(d,sub,m)=>{if(!PB)return null;const all=PB.R.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
+    const planDirSubM=(d,sub,m)=>{const all=plans.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;}; // прогноз (напр./подстатья) помесячно - для devBase остатка незамороженного месяца
     const subsExp=new Set();Object.keys(expByDirSub).forEach(K=>subsExp.add(K.split('||')[1]));
     plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))subsExp.add(p.code);});
     if(PB)PB.R.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))subsExp.add(p.code);}); // подстатьи из baseline тоже дают строку ЦФО
@@ -17647,12 +17672,12 @@ function _baselineBakeMonth(year,m){
   const netM=(d,mo)=>Math.max(0,(ctx[d]?ctx[d].rev[mo]:0)-(ctx[d]?ctx[d].npExp[mo]:0));
   const netYrD=d=>{let s=0;for(let mo=1;mo<=12;mo++)s+=netM(d,mo);return s;};
   const cvt=(d,r,mo)=>r.mode==='pct'?r.value*(mo?baseM(d,mo):revYrD(d)):r.mode==='pct_profit'?r.value*(mo?netM(d,mo):netYrD(d)):r.value;
-  const groups={};(_planRecords||[]).forEach(p=>{if(p.year!==year||PLAN_LEVELS.indexOf(p.level)<0)return;const k=p.dir+'|'+p.level+'|'+p.code+'|'+String(p.side||'');(groups[k]=groups[k]||[]).push(p);});// запекаем только валидные уровни: без фильтра снимок тащил в config/plansBaseline записи, которых нет в модели, и удаление из config/plans их оттуда уже не убирало
+  const groups={};(_planRecords||[]).forEach(p=>{if(p.year!==year||PLAN_LEVELS.indexOf(p.level)<0)return;const k=p.dir+'|'+p.level+'|'+p.code+'|'+_planSlot(p);(groups[k]=groups[k]||[]).push(p);});// запекаем только валидные уровни: без фильтра снимок тащил в config/plansBaseline записи, которых нет в модели, и удаление из config/plans их оттуда уже не убирало
   const out=[];
   Object.keys(groups).forEach(k=>{const rs=groups[k];const mr=rs.find(p=>p.month===m);let val=null;
     if(mr)val=cvt(mr.dir,mr,m); else{const yr=rs.find(p=>p.month===0);if(yr)val=cvt(yr.dir,yr,0)/12;}
     if(val==null)return;const s=rs[0];
-    out.push({dir:s.dir,year:year,month:m,level:s.level,code:s.code,side:s.side||'',mode:'money',value:val});});
+    const o={dir:s.dir,year:year,month:m,level:s.level,code:s.code,side:s.side||'',mode:'money',value:val};if(s.owner)o.owner=String(s.owner).trim();out.push(o);});
   return out;
 }
 // факт расходов месяца m (все направления, без «вывода прибыли») + число операций - для factAtApproval/предупреждения
@@ -17755,6 +17780,35 @@ function _coOwnersSave(){
   try{localStorage.setItem('finPlanCoOwners',JSON.stringify(_planCoOwners));}catch(e){_lsWarn('finPlanCoOwners',e)}
   return _fbSetSafe('config/planCoOwners',_rtdbEncObj(_planCoOwners),'Соисполнители комплексных пар'); // ключи кодируем, как у planOwners (слэш в подстатьях)
 }
+// Свёртка планов ответственных комплексной пары в безымянные записи (пара перестала быть комплексной, а записи с owner
+// остались - иначе первое «Сохранить» снесло бы их по presentKeys, см. сторож в _planStage). По образцу pfFold223Sides:
+// ТОЛЬКО текущий план (baseline не трогаем никогда), сухой прогон по умолчанию, запись - {dry:false} админом после архива.
+// Смешанные режимы (₽ и %) в одной ячейке - ОТКАЗ. Чистое ядро _pfFoldOwnersCore(records,year,pairs) - для тестов.
+function _pfFoldOwnersCore(records,year,pairs){ // pairs: Set ключей dir||code, которые сворачиваем; null = все пары с owner
+  const kept=[],cells={},bad=[];
+  (records||[]).forEach(p=>{const own=String(p.owner||'').trim();
+    if(p.year!==year||!own||(pairs&&!pairs.has(_ownerKey(p.dir,p.code)))){kept.push(p);return;}
+    const k=[p.dir,p.level,p.code,String(p.side||''),p.month].join('|');const c=cells[k]||(cells[k]={dir:p.dir,level:p.level,code:p.code,side:String(p.side||''),month:p.month,modes:{},sum:0,n:0,owners:new Set()});
+    c.modes[p.mode||'money']=1;c.n++;c.sum+=(+p.value||0);c.owners.add(own);});
+  const out=kept.slice();let folded=0;
+  Object.values(cells).forEach(c=>{const modes=Object.keys(c.modes);if(modes.length>1){bad.push(c);return;}const mode=modes[0];
+    const ex=out.find(p=>p.year===year&&p.dir===c.dir&&p.level===c.level&&p.code===c.code&&String(p.side||'')===c.side&&p.month===c.month&&!String(p.owner||'').trim()&&(p.mode||'money')===mode);
+    const v=Math.round(c.sum*100)/100;
+    if(ex)ex.value=Math.round(((+ex.value||0)+v)*100)/100;else{const r={dir:c.dir,year:year,month:c.month,level:c.level,code:c.code,mode:mode,value:v};if(c.side)r.side=c.side;out.push(r);}
+    folded+=c.n;});
+  return{records:bad.length?null:out,cells:Object.values(cells),bad:bad,folded:folded};
+}
+window.pfFoldOwners=function(opts){
+  opts=opts||{};const dry=opts.dry!==false,year=+opts.year||new Date().getFullYear();
+  const pairs=opts.pairs?new Set(opts.pairs):null;
+  const R=_pfFoldOwnersCore(_planRecords||[],year,pairs);
+  console.log('[pfFoldOwners] '+(dry?'СУХОЙ ПРОГОН':'ЗАПИСЬ')+': год '+year+', ячеек '+R.cells.length+', записей с owner '+R.folded+(pairs?', пар '+pairs.size:', все пары'));
+  R.cells.forEach(c=>console.log('  '+c.dir+' · '+c.code+(c.side?' · '+c.side:'')+' · мес '+c.month+' · '+[...c.owners].join(', ')+' → '+(Math.round(c.sum*100)/100)+' ('+Object.keys(c.modes).join('+')+')'));
+  if(R.bad.length){console.warn('[pfFoldOwners] ⚠ ОТКАЗ: смешаны режимы (₽ и %) в одной ячейке - свернуть нельзя. Разберите руками:');R.bad.forEach(c=>console.warn('   '+c.dir+' · '+c.code+' · мес '+c.month+' · режимы: '+Object.keys(c.modes).join(', ')));return R;}
+  if(dry||!R.folded)return R;
+  if(!_isAdmin()){console.warn('[pfFoldOwners] запись только администратору');return R;}
+  _planRecords=R.records;return _plansSave().then(ok=>{console.log('[pfFoldOwners] запись '+(ok?'подтверждена':'ОТКАЗАНА'));return R;});
+};
 function startOwnersSync(){
   if(window._ownersSyncStarted)return; window._ownersSyncStarted=true;
   try{
@@ -18117,11 +18171,16 @@ function _planStage(){
   const _sideRowKeys=new Set(); rows.forEach(tr=>{if(String(tr.getAttribute('data-side')||''))_sideRowKeys.add((tr.getAttribute('data-dir')||selDir)+''+tr.getAttribute('data-level')+''+tr.getAttribute('data-code'));});
   const _lostSide=_planRecords.filter(p=>p.year===year&&String(p.side||'').trim()&&presentKeys.has(String(p.dir)+''+p.level+''+p.code)&&!_sideRowKeys.has(String(p.dir)+''+p.level+''+p.code));
   if(_lostSide.length)console.warn('[plans] сохранение удаляет '+_lostSide.length+' записей СО СТОРОНОЙ по ключам, для которых форма не показала ни одной строки стороны: их суммы исчезнут с экрана, оставшись в итоге подстатьи. Коды: '+[...new Set(_lostSide.map(p=>p.code))].join(', ')+'. Свернуть стороны в безымянную - pfFold223Sides({dry:true}).');
-  _planRecords=_planRecords.filter(p=>!(p.year===year&&presentKeys.has(String(p.dir)+''+p.level+''+p.code)));
+  // ⚠ Тот же сторож для ОТВЕТСТВЕННЫХ комплексных пар (03.10.2026): записи с owner под ключом, для которого форма не
+  //   нарисовала ни одной строки ответственного, будут снесены этим же фильтром - молчаливая потеря плана соисполнителя.
+  const _ownRowKeys=new Set(); rows.forEach(tr=>{if(String(tr.getAttribute('data-owner')||''))_ownRowKeys.add((tr.getAttribute('data-dir')||selDir)+'\u0001'+tr.getAttribute('data-level')+'\u0001'+tr.getAttribute('data-code'));});
+  const _lostOwn=_planRecords.filter(p=>p.year===year&&String(p.owner||'').trim()&&presentKeys.has(String(p.dir)+'\u0001'+p.level+'\u0001'+p.code)&&!_ownRowKeys.has(String(p.dir)+'\u0001'+p.level+'\u0001'+p.code));
+  if(_lostOwn.length)console.warn('[plans] сохранение удаляет '+_lostOwn.length+' записей С ОТВЕТСТВЕННЫМ (комплексные пары) по ключам, для которых форма не показала строк ответственных. Коды: '+[...new Set(_lostOwn.map(p=>p.code))].join(', ')+'. Свернуть планы ответственных в безымянные - pfFoldOwners().');
+  _planRecords=_planRecords.filter(p=>!(p.year===year&&presentKeys.has(String(p.dir)+'\u0001'+p.level+'\u0001'+p.code)));
   rows.forEach(tr=>{
     const cb=tr.querySelector('input.plan-onoff'); if(cb&&!cb.checked)return; // строка исключена из плана (галочка снята) - не сохраняем; прежний план уже вычищен по presentKeys
     if(offDirs.has((tr.getAttribute('data-key')||'')+'|'+(tr.getAttribute('data-dir')||selDir)))return; // сотрудник в выключенном направлении 111-ФОТ
-    const rdir=tr.getAttribute('data-dir')||selDir,code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level'),side=tr.getAttribute('data-side')||'';
+    const rdir=tr.getAttribute('data-dir')||selDir,code=tr.getAttribute('data-code'),rlevel=tr.getAttribute('data-level'),side=tr.getAttribute('data-side')||'',owner=String(tr.getAttribute('data-owner')||'').trim();
     if(PLAN_LEVELS.indexOf(rlevel)<0){console.warn('[plans] строка с уровнем «'+rlevel+'» не сохраняется - планируем только на подстатьях (level: '+PLAN_LEVELS.join('/')+'); код: '+code);return;} // гейт на ЗАПИСЬ: строк-статей в форме нет, но при правке рендера они не должны просочиться в config/plans
     const mb=tr.querySelector('.plan-mode');const mode=rlevel==='revenue'?'money':(mb?mb.getAttribute('data-mode'):'money');
     tr.querySelectorAll('input.plan-val').forEach(inp=>{
@@ -18130,7 +18189,7 @@ function _planStage(){
       if(raw===''||isNaN(parseFloat(raw)))return;
       let val=parseFloat(raw); if(mode!=='money')val=val/100;
       // явный 0 СОХРАНЯЕМ как план (план = 0, напр. 0 расходов/0 дивидендов); «нет плана» = пустая ячейка (отсечена выше по raw==='')
-      const rec={dir:rdir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val}; if(side)rec.side=side; // side - сотрудник (111-ФОТ); без side - план на всю подстатью
+      const rec={dir:rdir,year,month:+inp.getAttribute('data-month'),level:rlevel,code,mode,value:val}; if(side)rec.side=side; if(owner)rec.owner=owner; // side - сотрудник (111-ФОТ); owner - ответственный комплексной пары; без обоих - план на всю подстатью
       _planRecords.push(rec);
     });
     // ответственный/примечание пишутся СРАЗУ через onchange (planOwnerPick/planNotePick). Здесь - только страховочная ДОзапись непустого значения; НИКОГДА не удаляем (сброшенный ре-рендером селект не должен затирать сохранённого владельца - это и был баг). Ключ тримируем, чтобы совпасть с чтением таблицы (dir||sub из RAW через trim).
@@ -18154,9 +18213,9 @@ function _planRenderMatrix(){
   const EIDX=new Map(); // dir|level|code → записи
   const ECELL=new Map(); // dir|level|code|month|side → запись
   const ELVL=new Map(); // dir|level → записи (revenue-планы без привязки к code)
-  _planRecords.forEach(p=>{if(p.year!==year)return;const g=p.dir+'|'+p.level+'|'+p.code;let a=EIDX.get(g);if(!a)EIDX.set(g,a=[]);a.push(p);ECELL.set(g+'|'+p.month+'|'+String(p.side||''),p);const k2=p.dir+'|'+p.level;let b=ELVL.get(k2);if(!b)ELVL.set(k2,b=[]);b.push(p);});
+  _planRecords.forEach(p=>{if(p.year!==year)return;const g=p.dir+'|'+p.level+'|'+p.code;let a=EIDX.get(g);if(!a)EIDX.set(g,a=[]);a.push(p);ECELL.set(g+'|'+p.month+'|'+_planSlot(p),p);const k2=p.dir+'|'+p.level;let b=ELVL.get(k2);if(!b)ELVL.set(k2,b=[]);b.push(p);});
   const eRecs=(d,rl,code)=>EIDX.get(d+'|'+rl+'|'+code)||[];
-  const cellVal=(rdir,rl,code,m,side)=>{const r=ECELL.get(rdir+'|'+rl+'|'+code+'|'+m+'|'+String(side||''));return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
+  const cellVal=(rdir,rl,code,m,side,owner)=>{const r=ECELL.get(rdir+'|'+rl+'|'+code+'|'+m+'|'+_planSlot({side:side,owner:owner}));return r?(r.mode==='money'?r.value:(+(r.value*100).toFixed(2))):'';};
   const c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   // ⚠ СВОЕЙ КОПИИ ПРАВИЛА ЗДЕСЬ БОЛЬШЕ НЕТ. До 03.09.2026 редактор держал собственные
   //   isFotCode/isRentCode/isConsultCode/isSubLevel, слово в слово повторявшие _slSub наверху, -
@@ -18205,8 +18264,8 @@ function _planRenderMatrix(){
   const netYrD=d=>{const F=FAD[d];if(!F)return 0;let s=0;for(let m=1;m<=12;m++)s+=Math.max(0,F.rev[m]-F.npExp[m]);return s;};
   const netM=(d,m)=>{const F=FAD[d];return F?Math.max(0,(F.rev[m]||0)-(F.npExp[m]||0)):0;};
   const dirYearPlan=(rl,code,d)=>{const all=eRecs(d,rl,code);if(!all.length)return null;const F=FAD[d];const cvt=(r,m)=>r.mode==='pct'?r.value*(m?revM(d,m):revYrD(d)):r.mode==='pct_profit'?r.value*(m?Math.max(0,((F&&F.rev[m])||0)-((F&&F.npExp[m])||0)):netYrD(d)):r.value;
-    const sides=[...new Set(all.map(p=>String(p.side||'')))];let tot=null;
-    sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvt(y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvt(r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
+    const sides=[...new Set(all.map(_planSlot))];let tot=null;
+    sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvt(y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvt(r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
   // ⚠ ИТОГ РАВЕН СУММЕ ПОКАЗАННЫХ СТРОК (правило CLAUDE.md): под фильтром ответственного
   //   складываются только прошедшие направления. Скрытие ПУСТЫХ строк на итог по-прежнему не
   //   влияет - у них вклад нулевой по определению признака, - а фильтр ЦФО влияет и обязан.
@@ -18651,11 +18710,11 @@ window.planPrintOwners=function(){
   // план по направлению (сумма сотрудников) и по конкретному сотруднику/объекту - по месяцу и за год (%/%ЧП → рубли через ctx)
   const dirsWithPlan=(lvl,code)=>allDirs.filter(d=>_planRecords.some(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code));
   const dirsForCode=(lvl,code)=>dirsWithPlan(lvl,code).filter(d=>{if(!_ownP||!_ownP.size)return true;const o=String(_planOwners[_ownerKey(d,code)]||'').trim();return o?_ownP.has(o):_ownP.has('__none__');});
-  const sidesOf=(d,lvl,code)=>[...new Set(_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code).map(p=>String(p.side||'')))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const sidesOf=(d,lvl,code)=>[...new Set(_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code).map(_planSlot))].sort((a,b)=>a.localeCompare(b,'ru'));
   const planMD=(d,lvl,code,m)=>{let tot=null;_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code&&p.month===m).forEach(r=>{tot=(tot||0)+cvtD(d,r,m);});return tot;};
-  const planYD=(d,lvl,code)=>{const all=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code);if(!all.length)return null;const sides=[...new Set(all.map(p=>String(p.side||'')))];let tot=null;sides.forEach(sd=>{const recs=all.filter(p=>String(p.side||'')===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvtD(d,y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(d,r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
-  const planMS=(d,lvl,code,side,m)=>{const r=_planRecords.find(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code&&String(p.side||'')===side&&p.month===m);return r?cvtD(d,r,m):null;};
-  const planYS=(d,lvl,code,side)=>{const recs=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code&&String(p.side||'')===side);if(!recs.length)return null;const y0=recs.find(p=>p.month===0);if(y0)return cvtD(d,y0,0);let v=null;for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(d,r,m);}return v;};
+  const planYD=(d,lvl,code)=>{const all=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code);if(!all.length)return null;const sides=[...new Set(all.map(_planSlot))];let tot=null;sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);const y0=recs.find(p=>p.month===0);let v=null;if(y0)v=cvtD(d,y0,0);else{for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(d,r,m);}}if(v!=null)tot=(tot||0)+v;});return tot;};
+  const planMS=(d,lvl,code,side,m)=>{const r=_planRecords.find(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code&&_planSlot(p)===side&&p.month===m);return r?cvtD(d,r,m):null;};
+  const planYS=(d,lvl,code,side)=>{const recs=_planRecords.filter(p=>p.dir===d&&p.year===year&&p.level===lvl&&p.code===code&&_planSlot(p)===side);if(!recs.length)return null;const y0=recs.find(p=>p.month===0);if(y0)return cvtD(d,y0,0);let v=null;for(let m=1;m<=12;m++){const r=recs.find(p=>p.month===m);if(r)v=(v||0)+cvtD(d,r,m);}return v;};
   const codeM=(lvl,code,m)=>{let s=null;dirsForCode(lvl,code).forEach(d=>{const v=planMD(d,lvl,code,m);if(v!=null)s=(s||0)+v;});return s;};
   const codeY=(lvl,code)=>{let s=null;dirsForCode(lvl,code).forEach(d=>{const v=planYD(d,lvl,code);if(v!=null)s=(s||0)+v;});return s;};
   const codeOk=(code,lvl)=>codeY(lvl,code)!=null&&(!_selP||!_selP.size||_selP.has(code)); // codeY уже учитывает фильтр ответственных (dirsForCode); пустые - отсечены
@@ -18679,7 +18738,7 @@ window.planPrintOwners=function(){
       //   планируют - и он не печатался вовсе.
       // ⚠ Кодов подстатей цифрами здесь БОЛЬШЕ НЕТ И БЫТЬ НЕ ДОЛЖНО - это стережёт тест: цифры в этой
       //   функции означают, что правило снова завели копией. Разбор кодов живёт в _slC3/_slPlanSide.
-      if(_slPlanSide(code))sidesOf(d,lvl,code).forEach(side=>{html+=rowH(m=>planMS(d,lvl,code,side,m),()=>planYS(d,lvl,code,side),'• '+(side?esc(side):'(не распределено)'),'sideR');});
+      if(_slPlanSide(code))sidesOf(d,lvl,code).forEach(side=>{html+=rowH(m=>planMS(d,lvl,code,side,m),()=>planYS(d,lvl,code,side),'• '+esc(_planSlotLabel(side)),'sideR');});
     });
     return html;};
   const sumRow=(label,lvl,list)=>{let cells='',yt=0;
@@ -19187,15 +19246,15 @@ function _cfoStmtData(P){
     (RAW||[]).forEach(r=>{ if(String(r[COL.ACTIVITY_DIR]||'').trim()!==dir)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1, inc=parseNum(r[COL.INCOME]), out=expOf(r); const ac=String(r[COL.ARTICLE_CODE]||'').trim(), an=String(r[COL.ARTICLE_NAME]||'').trim(); if((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&inc>0&&!isOpeningBalance(an))rev[m]+=inc; if(t==='списание'&&out&&!isVyvodRow(r))npExp[m]+=out; });
     ctx[dir]={rev,npExp};});
   // baseline-конвертер %-планов от СНИМКОВОЙ базы выручки (income/revenue из blRecs); pct_profit - от факта
-  const blIncBaseM=(d,m)=>{const rc=blRecs.filter(p=>p.dir===d&&p.level==='income');let v=0;if(rc.length){const byc={};rc.forEach(p=>{const k=p.code+'|'+(p.side||'');(byc[k]=byc[k]||[]).push(p);});Object.values(byc).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)v+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)v+=yr.value/12;}});}return v;};
+  const blIncBaseM=(d,m)=>{const rc=blRecs.filter(p=>p.dir===d&&p.level==='income');let v=0;if(rc.length){const byc={};rc.forEach(p=>{const k=p.code+'|'+_planSlot(p);(byc[k]=byc[k]||[]).push(p);});Object.values(byc).forEach(rs=>{const mr=rs.find(p=>p.month===m);if(mr)v+=mr.value;else{const yr=rs.find(p=>p.month===0);if(yr)v+=yr.value/12;}});}return v;};
   const blRevBaseM=(d,m)=>{const r=blRecs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;const ip=blIncBaseM(d,m);if(ip>0)return ip;return (ctx[d]?ctx[d].rev[m]:0)||0;};
   const blRevBaseY=d=>{const r=blRecs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===0);if(r&&r.value>0)return r.value;let s=0;for(let m=1;m<=12;m++)s+=blRevBaseM(d,m);return s;};
   const blNetM=(d,m)=>Math.max(0,(ctx[d]?ctx[d].rev[m]:0)-(ctx[d]?ctx[d].npExp[m]:0));
   const blNetY=d=>{let s=0;for(let m=1;m<=12;m++)s+=blNetM(d,m);return s;};
   const blCvt=(d,r,m)=>r.mode==='pct'?r.value*(m?blRevBaseM(d,m):blRevBaseY(d)):r.mode==='pct_profit'?r.value*(m?blNetM(d,m):blNetY(d)):r.value;
-  const blPlanMD=(d,code,m)=>{const recs=blRecs.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+blCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+blCvt(d,yr,0)/12;}});return tot;};
+  const blPlanMD=(d,code,m)=>{const recs=blRecs.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(_planSlot))];sides.forEach(sd=>{const rs=recs.filter(p=>_planSlot(p)===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+blCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+blCvt(d,yr,0)/12;}});return tot;};
   // baseline-план ДОХОДОВ (level='income') - зеркало blPlanMD, тот же конвертер blCvt (доходный %-план = % от снимковой выручки)
-  const blPlanIncMD=(d,code,m)=>{const recs=blRecs.filter(p=>p.dir===d&&p.level==='income'&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+blCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+blCvt(d,yr,0)/12;}});return tot;};
+  const blPlanIncMD=(d,code,m)=>{const recs=blRecs.filter(p=>p.dir===d&&p.level==='income'&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(_planSlot))];sides.forEach(sd=>{const rs=recs.filter(p=>_planSlot(p)===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+blCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+blCvt(d,yr,0)/12;}});return tot;};
   // ── ПРОГНОЗ (config/plans, _planRecords) - для НЕзамороженных месяцев в матрице «все месяцы» (зеркало blPlan*, но %-планы от прогнозной базы выручки) ──
   const fcRecs=(_planRecords||[]).filter(p=>p&&p.year===year);
   const fcRevBaseM=(d,m)=>{const r=fcRecs.find(p=>p.dir===d&&p.level==='revenue'&&p.month===m);if(r&&r.value>0)return r.value;const ip=(typeof _planIncBaseMonth==='function')?_planIncBaseMonth(d,year,m):0;if(ip>0)return ip;return (ctx[d]?ctx[d].rev[m]:0)||0;};
@@ -19203,7 +19262,7 @@ function _cfoStmtData(P){
   const fcNetM=(d,m)=>Math.max(0,(ctx[d]?ctx[d].rev[m]:0)-(ctx[d]?ctx[d].npExp[m]:0)); // pct_profit-база = факт (как в blNetM)
   const fcNetY=d=>{let s=0;for(let m=1;m<=12;m++)s+=fcNetM(d,m);return s;};
   const fcCvt=(d,r,m)=>r.mode==='pct'?r.value*(m?fcRevBaseM(d,m):fcRevBaseY(d)):r.mode==='pct_profit'?r.value*(m?fcNetM(d,m):fcNetY(d)):r.value;
-  const fcPlanF=lvl=>(d,code,m)=>{const recs=fcRecs.filter(p=>p.dir===d&&p.level===lvl&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(p=>String(p.side||'')))];sides.forEach(sd=>{const rs=recs.filter(p=>String(p.side||'')===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+fcCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+fcCvt(d,yr,0)/12;}});return tot;};
+  const fcPlanF=lvl=>(d,code,m)=>{const recs=fcRecs.filter(p=>p.dir===d&&p.level===lvl&&p.code===code);if(!recs.length)return null;let tot=null;const sides=[...new Set(recs.map(_planSlot))];sides.forEach(sd=>{const rs=recs.filter(p=>_planSlot(p)===sd);let hit=false;rs.forEach(r=>{if(r.month===m){tot=(tot||0)+fcCvt(d,r,m);hit=true;}});if(hit)return;if(!rs.some(p=>p.month>=1)){const yr=rs.find(p=>p.month===0);if(yr)tot=(tot||0)+fcCvt(d,yr,0)/12;}});return tot;};
   const fcPlanMD=fcPlanF('subarticle'),fcPlanIncMD=fcPlanF('income');
   // ── ФАКТ РАСХОДА и ФАКТ ВЫВОДА ПРИБЫЛИ - ДВА индекса из ОДНОГО прохода ──
   // ⚠ Вывод прибыли (127) здесь РАНЬШЕ ПРОСТО ОТБРАСЫВАЛСЯ, а план 127 в секцию расходов попадал:
