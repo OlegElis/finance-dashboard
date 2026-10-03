@@ -11230,19 +11230,20 @@ function pfRunTests(){
       const lines=Tmo.split('\n');const b0=lines.indexOf('```'),b1=lines.lastIndexOf('```');const tbl=lines.slice(b0+1,b1).filter(l=>l!==''&&!/^[А-Я]+ \d{4}, /.test(l));
       const numRows=tbl.filter(l=>/\d$|%$|-$/.test(l.trim())&&!/^(ДОХОДЫ|РАСХОДЫ|СВОДКА|ОТКЛОНЕНИЯ)/.test(l));
       const PR=(t,w)=>{const n=[...String(t)].length;return n>=w?String(t):String(t)+' '.repeat(w-n);},PL=(t,w)=>{const n=[...String(t)].length;return n>=w?String(t):' '.repeat(w-n)+String(t);};
-      const MR=(n,bl,pl,fa,c4)=>PR(n,18)+' '+PL(bl,9)+' '+PL(pl,9)+' '+PL(fa,9)+' '+PL(c4,8); // ожидания строятся тем же правилом, что строки таблицы
+      const MR=(n,bl,pl,fa,c4)=>(PR(n,18)+' '+PL(bl,9)+' '+PL(pl,9)+' '+PL(fa,9)+' '+PL(c4,8)).replace(/\s+$/,''); // ожидания строятся тем же правилом, что строки таблицы (концевые пробелы срезаны)
       ok('моно: всё, кроме приветствия и вводной, в одном блоке ```; приветствие и вводная снаружи',b0===2&&b1>b0&&lines[0]==='Пётр Петрович, здравствуйте!'&&lines[1]==='В.',lines.slice(0,4).join(' | '));
-      ok('моно: ширина КАЖДОЙ строки таблицы ровно 57 (имя 18 · утв. 9 · текущий 9 · факт 9 · откл. 8 через пробел)',tbl.length>5&&tbl.every(l=>[...l].length===57),tbl.filter(l=>[...l].length!==57).slice(0,3).join(' | '));
-      ok('моно: разделители-пробелы на местах 18, 28, 38, 48 - два числа встык не стоят',numRows.length>3&&numRows.every(l=>{const a=[...l];return a[18]===' '&&a[28]===' '&&a[38]===' '&&a[48]===' ';}),numRows.filter(l=>{const a=[...l];return !(a[18]===' '&&a[28]===' '&&a[38]===' '&&a[48]===' ');}).slice(0,2).join(' | '));
+      ok('моно: ширина строки с числами ровно 57 (имя 18 · утв. 9 · текущий 9 · факт 9 · откл. 8 через пробел), прочие не длиннее; концевых пробелов нет; многоточий нет; эмодзи нет',numRows.length>5&&numRows.every(l=>{const n=[...l].length;return n===57||n<=48;})&&numRows.some(l=>[...l].length===57)&&tbl.every(l=>[...l].length<=57&&!/\s$/.test(l))&&!/…|👥/.test(tbl.join('\n')),tbl.filter(l=>{const n=[...l].length;return n>57||(n>48&&n<57)||/\s$/.test(l)||/…|👥/.test(l);}).slice(0,3).join(' | ')); // строка без пятой колонки (пусто) после срезания концевых пробелов - 48
+      ok('моно: разделители-пробелы на местах 18, 28, 38, 48 - два числа встык не стоят',numRows.length>3&&numRows.every(l=>{const a=[...l];return a[18]===' '&&a[28]===' '&&a[38]===' '&&(a.length<=48||a[48]===' ');}),numRows.filter(l=>{const a=[...l];return !(a[18]===' '&&a[28]===' '&&a[38]===' '&&(a.length<=48||a[48]===' '));}).slice(0,2).join(' | '));
       ok('моно: один месяц - одна таблица; закрытый - «СЕНТЯБРЬ 2026, закрыт» и «откл.», незакрытый - «ОКТЯБРЬ 2026, факт на 15.10» и «исп.»; шапка «утв. текущий факт»',lines.indexOf('СЕНТЯБРЬ 2026, закрыт')>0&&lines.indexOf('ОКТЯБРЬ 2026, факт на 15.10')>0&&tbl.includes(MR('','утв.','текущий','факт','откл.'))&&tbl.includes(MR('','утв.','текущий','факт','исп.')),lines.slice(b0+1,b0+4).join(' | '));
-      ok('моно: утверждённый печатается всегда - значение где есть (сен 90 000), «-» где нет; отклонение от ТЕКУЩЕГО; длинное имя обрезано до 18 с «…»',tbl.includes(MR('АП · 120 Поступле…','90 000','100 000','304 000','+204 000'))&&tbl.includes(MR('  АП','-','3 950','4 687','+737')),tbl.filter(l=>/120|^  АП/.test(l)).join(' | '));
-      ok('моно: подстатья с 2+ направлениями - заголовок без чисел, направления с отступом 2, «итого»; комплексная «БФЛ 👥» с числами по паре (1 500 / 3 900)',tbl.includes(PR('244 Офисная мебель',57))&&tbl.includes(MR('  БФЛ 👥','-','1 500','3 900','+2 400'))&&tbl.includes(MR('  итого','-','5 450','8 587','+3 137')),tbl.filter(l=>/244|БФЛ|итого/.test(l)).join(' | '));
-      ok('моно: незакрытый месяц - «исп.» целым процентом от текущего (окт 120: 12 500 / 100 000 = 13%, утв. совпадает - печатается всё равно), при плане 0 и факте > 0 - «+N»',tbl.includes(MR('АП · 120 Поступле…','100 000','100 000','12 500','13%'))&&(()=>{const D0={fio:'X Y Z',dirLabel:'',year:2026,upTo:new Date(2026,9,15),people:[{fio:'X Y Z',own:true,inc:null,exp:mkSec('exp',['300_Ж'],{'300_Ж':['АП']},{},{'АП|300_Ж|10':500},null)}]};const t=_chatTextBuild(D0,{months:[10],plan:true,fact:true,dev:true,greet:false,intro:'',mode:'cfo',mono:true});return t.split('\n').includes(MR('АП · 300 Ж','-','-','500','+500'));})(),tbl.find(l=>/12 500/.test(l)));
-      ok('моно: расшифровка комплексной «👥 … - общий факт, планируют …» и «Нулевые…» - ПОСЛЕ блока, не внутри',lines.indexOf('👥 244 Офисная мебель БФЛ - общий факт, планируют: Иванов И.И., Петров П.П.')>b1&&lines[lines.length-1]==='Нулевые за сен, окт: САУ Аренда',lines.slice(b1).join(' | '));
+      ok('моно: утверждённый печатается всегда - значение где есть (сен 90 000), «-» где нет; отклонение от ТЕКУЩЕГО; подстатья с одним направлением - заголовок «120 Поступление от ОП» плюс строка «  АП», без «итого»',tbl.includes('120 Поступление от ОП')&&tbl.includes(MR('  АП','90 000','100 000','304 000','+204 000'))&&tbl.includes(MR('  АП','-','3 950','4 687','+737'))&&!tbl.some(l=>/^АП · 120/.test(l))&&tbl.filter(l=>/^  итого/.test(l)).length===4,tbl.filter(l=>/120|^  АП/.test(l)).join(' | '));
+      ok('моно: подстатья с 2+ направлениями - заголовок без чисел и концевых пробелов, направления с отступом 2, «итого»; комплексная - «БФЛ*» с числами по паре (1 500 / 3 900), без эмодзи',tbl.includes('244 Офисная мебель')&&tbl.includes(MR('  БФЛ*','-','1 500','3 900','+2 400'))&&tbl.includes(MR('  итого','-','5 450','8 587','+3 137')),tbl.filter(l=>/244|БФЛ|итого/.test(l)).join(' | '));
+      ok('моно: незакрытый месяц - «исп.» целым процентом от текущего (окт 120: 12 500 / 100 000 = 13%, утв. совпадает - печатается всё равно), при плане 0 и факте > 0 - «+N»',tbl.includes(MR('  АП','100 000','100 000','12 500','13%'))&&(()=>{const D0={fio:'X Y Z',dirLabel:'',year:2026,upTo:new Date(2026,9,15),people:[{fio:'X Y Z',own:true,inc:null,exp:mkSec('exp',['300_Ж'],{'300_Ж':['АП']},{},{'АП|300_Ж|10':500},null)}]};const t=_chatTextBuild(D0,{months:[10],plan:true,fact:true,dev:true,greet:false,intro:'',mode:'cfo',mono:true});return t.split('\n').includes('300 Ж')&&t.split('\n').includes(MR('  АП','-','-','500','+500'));})(),tbl.find(l=>/12 500/.test(l)));
+      ok('моно: сноска комплексной «* … - общий факт, планируют …» и «Нулевые…» - ПОСЛЕ блока, не внутри; направление в «Нулевых» коротко',lines.indexOf('* 244 Офисная мебель БФЛ - общий факт, планируют: Иванов И.И., Петров П.П.')>b1&&lines[lines.length-1]==='Нулевые за сен, окт: САУ Аренда',lines.slice(b1).join(' | '));
+      ok('п. 6: короткое имя направления - часть до « - » и без ведущего «ООО » (везде: таблица, обычный текст, «Нулевые»)',_chatDir('ООО ГУСЭ - Юридическое бюро')==='ГУСЭ'&&_chatDir('ООО СИБСУДЭКС')==='СИБСУДЭКС'&&_chatDir('САУ - Союз Арбитражных управляющих')==='САУ'&&_chatDir('БФЛ')==='БФЛ'&&!/_regCode\(/.test(String(_chatTextBuild)));
       const Tnew=withOwn(()=>_chatTextBuild(Dmo,{months:[9],plan:true,fact:false,dev:false,newMonth:11,greet:false,intro:'',mode:'cfo',mono:true}));
-      ok('моно: режим «НОВЫЙ =» - пятая колонка «НОВЫЙ» пустая, ширина та же',Tnew.split('\n').includes(MR('','утв.','текущий','','НОВЫЙ'))&&Tnew.split('\n').includes(MR('АП · 120 Поступле…','90 000','100 000','','')),Tnew.split('\n').slice(0,5).join(' | '));
+      ok('моно: режим «НОВЫЙ =» - пятая колонка «НОВЫЙ» пустая, ширина та же',Tnew.split('\n').includes(MR('','утв.','текущий','','НОВЫЙ'))&&Tnew.split('\n').includes(MR('  АП','90 000','100 000','','')),Tnew.split('\n').slice(0,5).join(' | '));
       const Tbm=withOwn(()=>_chatTextBuild(Object.assign({},Dm,{year:2026,upTo:new Date(2026,9,15)}),{months:[9],plan:true,fact:true,dev:true,greet:false,intro:'',mode:'mgr',brief:true,mono:true}));
-      ok('моно + кратко: сводка таблицей по людям и ИТОГО, отклонения теми же таблицами; все строки 57',Tbm.split('\n').includes(PR('СВОДКА ПО БЛОКУ',57))&&Tbm.split('\n').includes(PR('Иванов И.',57))&&Tbm.split('\n').includes(MR('  расходы','-','4 460','4 704','+244'))&&/^ОТКЛОНЕНИЯ от 10 000 и 10%/m.test(Tbm)&&Tbm.split('\n').filter(l=>l&&l!=='```'&&!/^[А-Я]+ \d{4}, /.test(l)).every(l=>[...l].length===57),Tbm.split('\n').filter(l=>[...l].length!==57&&l&&l!=='```').slice(0,3).join(' | '));
+      ok('моно + кратко: сводка таблицей по людям и ИТОГО, отклонения теми же таблицами; все строки 57',Tbm.split('\n').includes('СВОДКА ПО БЛОКУ')&&Tbm.split('\n').includes('Иванов И.')&&Tbm.split('\n').includes(MR('  расходы','-','4 460','4 704','+244'))&&/^ОТКЛОНЕНИЯ от 10 000 и 10%/m.test(Tbm)&&Tbm.split('\n').filter(l=>/\d$|%$/.test(l)&&!/^[А-Я]+ \d{4}, /.test(l)).every(l=>{const n=[...l].length;return n===57||n<=48;}),Tbm.split('\n').filter(l=>[...l].length!==57&&l&&l!=='```').slice(0,3).join(' | '));
       ok('моно: вводная по умолчанию - «Откл: от текущего плана, + больше, - меньше.»; в обычном режиме - прежняя; утверждённый в диалоге всегда (галочки нет)',/ Откл: от текущего плана, \+ больше, - меньше\.$/.test(_chatIntroDefault(0,'15.10.2026',true,true))&&/ Формат: план \/ факт\.$/.test(_chatIntroDefault(0,'15.10.2026',true,false))&&/showBl:true/.test(String(window.pfChatBuild))&&!/pfchat-bl\b/.test(String(window.pfChatOpen))&&/o\.mono=o\.wrap!=='plain';/.test(String(window.pfChatBuild))&&/localStorage\.setItem\('finChatDest'/.test(String(window.pfChatDestChange)));
       const Tb24=withOwn(()=>_chatTextBuild(Dmo,{months:[9],plan:true,fact:true,dev:true,greet:true,intro:'В.',mode:'cfo',mono:true,wrap:'b24'}));
       ok('9-доп: Битрикс24 - таблицы в [code]…[/code], приветствие и вводная снаружи; Telegram - в ```',Tb24.split('\n')[2]==='[code]'&&Tb24.indexOf('\n[/code]\n')>0&&Tb24.split('\n')[0]==='Пётр Петрович, здравствуйте!'&&!/```/.test(Tb24),Tb24.split('\n').slice(0,4).join(' | '));}
@@ -18973,6 +18974,7 @@ const _chatDev=(plan,fact,isInc)=>{if(!plan)return fact>0.005?'вне плана
 const _fioInitials=fio=>{const p=String(fio||'').trim().split(/\s+/); // «Черновский Александр Борисович» → «Черновский А.Б.»; 1 слово отдаём как есть (вынесено из сводной 03.10.2026)
   return p.length<2?String(fio||'').trim():p[0]+' '+p.slice(1).map(x=>x.charAt(0).toUpperCase()+'.').join('');};
 const _chatSubName=code=>String(code||'').replace(/^\d{3}_/,''); // подстатья без кода - для строки «Нулевые…»
+const _chatDir=d=>_regCode(d).replace(/^ООО\s+/i,''); // направление коротко: часть до « - » (как в Реестре), затем без ведущего «ООО » (ГУСЭ, СИБСУДЭКС) - п. 6
 const _fioGreet=fio=>{const p=String(fio||'').trim().split(/\s+/);return p.length>=3?(p[1]+' '+p[2]):'';}; // «Фамилия Имя Отчество» → «Имя Отчество»; иначе пусто
 const _chatIntroDefault=(newMonth,upToStr,short,mono)=>(newMonth?('Нужен ваш план на '+CHAT_MONS_FULL[newMonth-1]+'. Впишите сумму после «=» и верните этот же список. Планы согласуйте со своим руководителем - присылайте уже утверждённые им. Свои таблицы с расшифровками ведите как удобно, сюда ставьте только итоговые суммы.')
   :('План-факт на '+upToStr+'. Факт - по операциям до этой даты, план - на месяц целиком.'))+(mono?' Откл: от текущего плана, + больше, - меньше.':(short?' Формат: план / факт.':'')); // решение 6, редактируется в диалоге; mono - таблицы (п. 9), short - 1-3 месяца одной строкой «П / Ф»
@@ -18990,7 +18992,7 @@ function _chatTextBuild(D,o){
   else if(o.greet!==false){const g=_fioGreet(D.fio);L.push(g?(g+', здравствуйте!'):'Здравствуйте!');}
   if(o.intro)L.push(String(o.intro).trim());
   if(o.dirsLabel)L.push('Направления: '+o.dirsLabel); // фильтр направлений активен (доработка 6)
-  if(o.showBl)L.push('План - текущий; в скобках - утверждённый, если отличается.'); // доработка 8
+  if(o.showBl&&!o.mono)L.push('План - текущий; в скобках - утверждённый, если отличается.'); // доработка 8; в моно утверждённый - колонкой, строка не нужна
   // ⚠ «План» в тексте - ВСЕГДА ТЕКУЩИЙ (fcMonth*, config/plans): отклонения, «в плане», «вне плана», ИТОГО - от него. Утверждённый
   //   (blMonth*, baseline) в расчёт не входит никогда - только показ «(утв. N)» при включённой галочке и только где отличается.
   const blNote=(p,bl)=>(o.showBl&&bl!=null&&p!=null&&Math.round(bl)!==Math.round(p))?(' (утв. '+_chatNum(bl)+')'):'';
@@ -19022,7 +19024,7 @@ function _chatTextBuild(D,o){
       [...sec.pairSet[code]].sort((a,b)=>a.localeCompare(b,'ru')).forEach(d=>{const cx=!!(sec.cxDir&&sec.cxDir(d,code));
         const get=m=>({p:sec.fcMonthD(d,code,m),f:sec.factMonthD(d,code,m),bl:o.showBl&&sec.blMonthD?sec.blMonthD(d,code,m):null});
         const zero=months.length>0&&months.every(m=>{const x=get(m);return !(x.p)&&Math.abs(x.f)<0.005;});
-        if(zero){zeros.push(_regCode(d)+' '+_chatSubName(code));return;}
+        if(zero){zeros.push(_chatDir(d)+' '+_chatSubName(code));return;}
         dirs.push({d,cx,get});});
       if(!dirs.length)return;
       let sumP=0;dirs.forEach(x=>{months.forEach(m=>{sumP+=(x.get(m).p||0);});});
@@ -19031,13 +19033,13 @@ function _chatTextBuild(D,o){
     groups.sort((a,b)=>(b.sumP-a.sumP)||a.code.localeCompare(b.code,'ru'));return groups;};
   const renderGroup=(g,isInc)=>{const rows=[];
     if(g.dirs.length===1){const x=g.dirs[0];
-      if(x.cx){const who=' · планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', ');rows.push(...monthRows(x.get,isInc,'cx','    ',_regCode(x.d)+' 👥 · '+_chatCode(g.code)).map((l,i)=>i===0&&short?l+who:l));if(!short)rows.push('   '+who.slice(3));}
-      else rows.push(...monthRows(x.get,isInc,null,'  ',_regCode(x.d)+' · '+_chatCode(g.code)));
+      if(x.cx){const who=' · планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', ');rows.push(...monthRows(x.get,isInc,'cx','    ',_chatDir(x.d)+' 👥 · '+_chatCode(g.code)).map((l,i)=>i===0&&short?l+who:l));if(!short)rows.push('   '+who.slice(3));}
+      else rows.push(...monthRows(x.get,isInc,null,'  ',_chatDir(x.d)+' · '+_chatCode(g.code)));
       rows.push(...newLine('  '));return rows;}
     rows.push(...monthRows(g.sum,isInc,null,'  ',_chatCode(g.code)));
     g.dirs.forEach(x=>{
-      if(x.cx){const who=' · планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', ');rows.push(...monthRows(x.get,isInc,'cx','    ','  '+_regCode(x.d)+' 👥').map((l,i)=>i===0&&short?l+who:l));if(!short)rows.push('   '+who.slice(3));}
-      else rows.push(...monthRows(x.get,isInc,'dir','    ','  '+_regCode(x.d)));
+      if(x.cx){const who=' · планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', ');rows.push(...monthRows(x.get,isInc,'cx','    ','  '+_chatDir(x.d)+' 👥').map((l,i)=>i===0&&short?l+who:l));if(!short)rows.push('   '+who.slice(3));}
+      else rows.push(...monthRows(x.get,isInc,'dir','    ','  '+_chatDir(x.d)));
       rows.push(...newLine('    '));});
     return rows;};
   const secSum=(sec,m)=>{let p=null,f=0,bl=null;(sec?sec.codes:[]).forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);if(o.showBl&&sec.blMonth){const w=sec.blMonth(c,m);if(w!=null)bl=(bl||0)+w;}});return{p,f,bl};}; // ИТОГО секции: факт комплексной пары один раз (как выписка)
@@ -19072,10 +19074,10 @@ function _chatTextBuild(D,o){
   if(o.mono&&people.length){
     o=Object.assign({},o,{showBl:true}); // моно: утверждённый печатается всегда (колонка «утв.»), get()/secSum читают blMonth при showBl
     const W_NAME=18,W_NUM=9,W_DEV=8,W_LINE=W_NAME+1+W_NUM+1+W_NUM+1+W_NUM+1+W_DEV; // 57
-    const cutName=t=>{t=String(t);return [...t].length>W_NAME?[...t].slice(0,W_NAME-1).join('')+'…':t;};
+    const cleanName=t=>String(t).replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE0F}]/gu,'').replace(/\s+$/,''); // п. 3: значков в строках с числами нет - в моношрифте эмодзи занимает два знака и сдвигает числа; п. 4: обрезки «…» нет
     const padR=(t,w)=>{t=String(t);const n=[...t].length;return n>=w?t:t+' '.repeat(w-n);},padL=(t,w)=>{t=String(t);const n=[...t].length;return n>=w?t:' '.repeat(w-n)+t;};
-    const mrow=(name,bl,pl,fa,c4)=>padR(cutName(name),W_NAME)+' '+padL(bl,W_NUM)+' '+padL(pl,W_NUM)+' '+padL(fa,W_NUM)+' '+padL(c4,W_DEV); // разделитель-пробел: два числа встык не стоят
-    const trow=t=>padR(t,W_LINE); // строка-заголовок без чисел: не режется, добивается до 57
+    const mrow=(name,bl,pl,fa,c4)=>(padR(cleanName(name),W_NAME)+' '+padL(bl,W_NUM)+' '+padL(pl,W_NUM)+' '+padL(fa,W_NUM)+' '+padL(c4,W_DEV)).replace(/\s+$/,''); // разделитель-пробел: два числа встык не стоят; концевые пробелы срезаны (п. 5)
+    const trow=t=>String(t).replace(/\s+$/,''); // строка-заголовок без чисел: как есть, без добивки и концевых пробелов (п. 5)
     const year=+D.year||new Date().getFullYear(),cut=D.upTo||new Date();
     const closed=m=>cut>new Date(year,m,0,23,59,59,999);
     const devSign=(pl,f)=>{if(!pl&&!(f>0.005))return '';const d=Math.round(f)-Math.round(pl||0);return d>0?'+'+_chatNum(d):d<0?'-'+_chatNum(-d):'0';};
@@ -19085,12 +19087,11 @@ function _chatTextBuild(D,o){
     const thead=m=>mrow('','утв.',o.plan!==false?'текущий':'',o.fact!==false?'факт':'',hdr4(m)); // шапка повторяет выбранные колонки
     const monthHead=m=>CHAT_MONS_FULL[m-1].toUpperCase()+' '+year+', '+(closed(m)?'закрыт':'факт на '+String(cut.getDate()).padStart(2,'0')+'.'+String(cut.getMonth()+1).padStart(2,'0'));
     const cxNotes=[],zeroSet=new Set();
-    const pairVal=(sec,g,x,m)=>{const v=x.get(m);if(!x.cx)return v;cxNotes.push('👥 '+_chatCode(g.code)+' '+_regCode(x.d)+' - общий факт, планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', '));return{p:sec.fcAllMonthD(x.d,g.code,m),f:v.f,bl:v.bl};};
-    const groupRows=(sec,g,isInc,m)=>{const rows=[];
-      if(g.dirs.length===1){const x=g.dirs[0];rows.push(nrow(_regCode(x.d)+(x.cx?' 👥':'')+' · '+_chatCode(g.code),pairVal(sec,g,x,m),m));return rows;}
-      rows.push(trow(_chatCode(g.code)));let p=null,f=0,bl=null;
-      g.dirs.forEach(x=>{const v=pairVal(sec,g,x,m);rows.push(nrow('  '+_regCode(x.d)+(x.cx?' 👥':''),v,m));if(v.p!=null)p=(p||0)+v.p;f+=v.f;if(v.bl!=null)bl=(bl||0)+v.bl;});
-      rows.push(nrow('  итого',{p,f,bl},m));return rows;};
+    const pairVal=(sec,g,x,m)=>{const v=x.get(m);if(!x.cx)return v;cxNotes.push('* '+_chatCode(g.code)+' '+_chatDir(x.d)+' - общий факт, планируют: '+_ownersOf(x.d,g.code).map(_fioInitials).join(', '));return{p:sec.fcAllMonthD(x.d,g.code,m),f:v.f,bl:v.bl};}; // п. 3: комплексная - «БФЛ*», сноска со звёздочкой после таблиц
+    // п. 4: подстатья ВСЕГДА заголовком без чисел плюс строки направлений, даже при одном направлении
+    const groupRows=(sec,g,isInc,m)=>{const rows=[trow(_chatCode(g.code))];let p=null,f=0,bl=null;
+      g.dirs.forEach(x=>{const v=pairVal(sec,g,x,m);rows.push(nrow('  '+_chatDir(x.d)+(x.cx?'*':''),v,m));if(v.p!=null)p=(p||0)+v.p;f+=v.f;if(v.bl!=null)bl=(bl||0)+v.bl;});
+      if(g.dirs.length>1)rows.push(nrow('  итого',{p,f,bl},m));return rows;};
     const monoSection=(sec,title,isInc,m)=>{zeros.length=0;const gs=groupsOf(sec);zeros.forEach(z=>zeroSet.add(z));const rows=[];gs.forEach(g=>{rows.push(...groupRows(sec,g,isInc,m));});
       if(!rows.length)return [];return [trow(title)].concat(rows,[nrow('ИТОГО',secSum(sec,m),m)]);};
     const B=[];
