@@ -2255,7 +2255,19 @@ EBITDA пересчиталась, ЧП в обоих режимах одина�
    `git log origin/main..HEAD --oneline`, `git status --short` - и ждать отмашки. Без тире, шаг 4 на localhost обязателен, никаких записей
    в Sheets/Firebase из рендера.
 
-**Статус:** записано до кода. Builder - нет. Canvas - нет. Кнопка - нет.
+**Статус (03.10.2026, сессия оборвана по лимиту использования): ШАГ 1 (builder/модель) СДЕЛАН и закоммичен (`2e5ccd1`, не запушен,
+в очереди после коммитов «Текста для чата»); шаги 2-4 НЕ НАЧАТЫ.**
+- Шаг 1: `_chatModelBuild(D,o)` - чистая модель (`people[] → {inc,exp}: {label,kind,groups[{code,title,dirs[{d,label,cx,owners,v{m:{p,f,bl,pa}}}],sum{m}},tot{m},pass,rest}`,
+  `sums{m}`, `zeros`; `blockSums{m}`; `cxNotes[{code,title,dir,owners}]`; `months`, `short`, `closed{m}`, `cutDM/cutDMY`, `anyUtvDiff`, флаги);
+  `_chatModelLines(M,m)` - плоские строки за месяц: `{t:'P',fio,label}`, `{t:'S',label,kind}`, `{t:'H',title}`, `{t:'R',label,cx,utv,cur,fact,kind}`
+  (у комплексной cur - план по паре), `{t:'T',label:'итого'|'ИТОГО'|'доходы'|'расходы',utv,cur,fact}`, `{t:'B',label}`, `{t:'X',text,hdr?,gap?}`;
+  `_chatRenderPlain(M)` и `_chatRenderMono(M)` берут только модель (структурный тест: в рендерах нет `fcMonth/factMonth/blMonth/.codes`),
+  `_chatTextBuild` = builder + рендер. Вывод побайтно прежний: `pfRunTests()` 745/745, стенд-инвариант 22/22.
+- **Шаг 2 (canvas) - для следующей сессии:** `_chatPng(M)` берёт `_chatModelLines(M, последний выбранный месяц)` и шапку из `M` (`who`=`_fioGreet(M.who)`
+  или `M.dirLabel`, `cutDMY`, `CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year`, `M.closed[m]`, `M.cutDM`, `M.anyUtvDiff` для строк 3-4), сноски -
+  `M.cxNotes` + «! - за порогом (от 10 000 и от 10% плана)»; раскладка и палитра - по постановке выше; `pngRunTests()` на фиксированной модели.
+- Шаг 3 (кнопка «Скопировать как картинку» рядом с «💬 Собрать» под «⋯» и/или в диалоге, clipboard.write с откатом в `<a download>`, тосты) и шаг 4 (handoff) - не начаты.
+
 
 ## Где остановились
 
