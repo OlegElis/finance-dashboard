@@ -1331,7 +1331,8 @@ const _slFactSide=c=>_slFot(c)||_slConsult(c); // 111 + консалтинг; 22
 const _slIcon=c=>_slRent(c)?'🏢':'👤';
 const _SL_UNALLOC='(не распределено)';
 // факт по стороне: {dir||ARTICLE_NAME → {сторона → [13 мес]}} - списания sub-level подстатей (вывод прибыли исключён), за год+направления
-function _buildSideFactIdx(year,dirs){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const v=expOf(r);if(!v)return;const an=_ownCodeOf(r);if(!an||!_slFactSide(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year)return;if(isVyvodRow(r))return;const m=d.getMonth()+1,key=_ownerKey(dir,an),sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=v;});return idx;}
+// upTo (необязательный, 03.10.2026) - срез факта по дате ОПиУ, как у индексов факта выписки («Текст для чата»)
+function _buildSideFactIdx(year,dirs,upTo){const idx={};(RAW||[]).forEach(r=>{const dir=String(r[COL.ACTIVITY_DIR]||'').trim();if(dirs.indexOf(dir)<0)return;const t=String(r[COL.TYPE]||'').trim().toLowerCase();if(t!=='списание')return;const v=expOf(r);if(!v)return;const an=_ownCodeOf(r);if(!an||!_slFactSide(an))return;const d=parseDate(r[COL.DATE_OPIU]);if(!d||d.getFullYear()!==year||(upTo&&d>upTo))return;if(isVyvodRow(r))return;const m=d.getMonth()+1,key=_ownerKey(dir,an),sd=String(r[COL.SECOND_SIDE]||'').trim();const SK=(idx[key]=idx[key]||{});(SK[sd]=SK[sd]||new Array(13).fill(0))[m]+=v;});return idx;}
 // план по стороне: записи level='subarticle' с этой стороной, конвертер cvt(d,rec,m). Σ по сторонам = план кода → дочерние строки сходятся к строке-подстатье.
 // ⚠ Индекс dir|code|side строится ОДИН раз при создании (как PIDX в renderPlanFact): раньше каждый
 //   вызов фильтровал весь массив планов (тысячи записей × стороны × месяцы на каждый рендер).
@@ -11162,6 +11163,31 @@ function pfRunTests(){
     ok('выписка: пара у каждого своего ответственного (_ownerHas), план строки свой (ownPlanM через _planOwnerMD), факт общий, в ИТОГО - только у основного',/return noOwn\?!o:_ownerHas\(d,code,person\);/.test(cs)&&/fcOwnMD=_planOwnerMD\(fcRecs,fcCvt\)/.test(cs)&&/const ownPlanM=\(md,d,code,m\)=>\{let v=md\(d,code,person,m\);if\(primDir\(d,code\)\)/.test(cs)&&/sFP\+=factMonthOwn\(code,M\);/.test(cs)&&/sFY\+=factYTDOwn\(code\);/.test(cs));
     ok('выписка: статус комплексной пары - ПО ПАРЕ (Σ планов всех против общего факта), у прочих - как раньше',/cxOf\(code\)\?statusOf\(_pfStatusBase\(blAllMonth\(code,M\),fcAllMonth\(code,M\)\),factMonth\(code,M\),isInc\):statusOf\(_pfStatusBase\(blMonth\(code,M\),fcMonth\(code,M\)\),factMonth\(code,M\),isInc\)/.test(cs));
     ok('печать: у комплексной строки факт с пометкой «общий», бейдж от Σ планов, строка с долей (cxRow/mCxRow); матрица - итоги по своему факту',/cxm=cx\?' <i style="[^"]*">общий<\/i>':''/.test(cg)&&/const cxRow=\(cx,pM,aM,pY,aY\)=>cx\?/.test(cg)&&/totF\[m\]\+=fo;/.test(cg)&&/\+mCxRow\(sec,code\)\+mSubRows\(sec,code\);/.test(cg));
+    // ── «Текст для чата» (03.10.2026) ──
+    ok('чат: _cfoStmtData режет факт по upTo в ДВУХ проходах (расход/вывод и доход) и в индексе сторон, контекст выручки не трогает; anyOwner - все пары; dirs - явная область',(cs.match(/\(upTo&&d>upTo\)/g)||[]).length===2&&(String(_buildSideFactIdx).match(/\(upTo&&d>upTo\)/g)||[]).length===1&&/if\(anyOwner\)return true;/.test(cs)&&/Array\.isArray\(P\.dirs\)\?P\.dirs\.filter/.test(cs)&&/_buildSideFactIdx\(year,dirsScope,upTo\)/.test(cs)&&!/rev\[m\]\+=inc[^\n]*upTo/.test(cs),(cs.match(/\(upTo&&d>upTo\)/g)||[]).length);
+    ok('чат: форматтер и диалог не ходят в RAW и _planRecords - только _cfoStmtData и cfoqCopyText',!/\bRAW\b|_planRecords/.test(String(_chatTextBuild))&&!/\bRAW\b|_planRecords/.test(String(window.pfChatBuild))&&/_cfoStmtData\(\{year,allMonths:true,upTo,dirs:\[w\],anyOwner:true\}\)/.test(String(window.pfChatBuild))&&/_cfoStmtData\(\{year,allMonths:true,upTo,fio:w,withSubs:mode==='mgr',dirs:\[\]\}\)/.test(String(window.pfChatBuild))&&/cfoqCopyText\(/.test(String(window.pfChatBuild))&&/cfoqCopyText\('pfchat-all'/.test(String(window.pfChatCopyAll)));
+    ok('чат: кнопка - четвёртой строкой под «⋯» на БДР, «⚙ Действия» не тронуты (ровно три _actItem держит прежний тест)',/_barMoreRow\('Текст для чата'/.test(src)&&/pfChatOpen\(\)/.test(src));
+    ok('чат: числа - целые рубли, разряды пробелом; отклонение словами, порог ровно ноль',_chatNum(1234567.6)==='1 234 568'&&_chatNum(-15000)==='-15 000'&&_chatNum(0)==='0'&&_chatNum(null)==='-'&&_chatDev(100000,115000,false)==='перерасход 15 000'&&_chatDev(100000,97000,false)==='экономия 3 000'&&_chatDev(100000,100000.4,false)==='в плане'&&_chatDev(100000,304000,true)==='сверх плана 204 000'&&_chatDev(100000,12500,true)==='недобор 87 500'&&_chatDev(null,5,true)==='плана нет');
+    ok('чат: код без подчёркивания, приветствие по имени-отчеству (одно-два слова - общее)',_chatCode('120_Поступление от ОП')==='120 Поступление от ОП'&&_fioGreet('Иванов Иван Иванович')==='Иван Иванович'&&_fioGreet('Иванов И.И.')===''&&/Нужен ваш план на ноябрь/.test(_chatIntroDefault(11,''))&&_chatIntroDefault(0,'15.10.2026')==='План-факт на 15.10.2026. Факт - по операциям до этой даты, план - на месяц целиком.');
+    {const mkSec=(kind,codes,pairs,fc,fa,cx)=>{const K=(d,c,m)=>d+'|'+c+'|'+m;const S={kind,codes,pairSet:{},cxDir:(d,c)=>!!(cx&&cx[d+'|'+c]),primDir:(d,c)=>!(cx&&cx[d+'|'+c]==='co'),
+        fcMonthD:(d,c,m)=>fc[K(d,c,m)]==null?null:fc[K(d,c,m)],factMonthD:(d,c,m)=>fa[K(d,c,m)]||0,fcAllMonthD:(d,c,m)=>(fc[K(d,c,m)]||0)+1000,
+        fcMonth:(c,m)=>{let t=null;S.pairSet[c].forEach(d=>{const v=S.fcMonthD(d,c,m);if(v!=null)t=(t||0)+v;});return t;},factMonth:(c,m)=>{let t=0;S.pairSet[c].forEach(d=>{t+=S.factMonthD(d,c,m);});return t;},
+        factMonthOwn:(c,m)=>{let t=0;S.pairSet[c].forEach(d=>{if(S.cxDir(d,c)&&!S.primDir(d,c))return;t+=S.factMonthD(d,c,m);});return t;}};codes.forEach(c=>{S.pairSet[c]=new Set(pairs[c]);});return S;};
+     const inc=mkSec('inc',['120_Поступление от ОП'],{'120_Поступление от ОП':['АП']},{'АП|120_Поступление от ОП|9':100000,'АП|120_Поступление от ОП|10':100000},{'АП|120_Поступление от ОП|9':304000,'АП|120_Поступление от ОП|10':12500},null);
+     const exp=mkSec('exp',['244_Офисная мебель'],{'244_Офисная мебель':['БФЛ','АП']},{'АП|244_Офисная мебель|9':3950,'БФЛ|244_Офисная мебель|9':500},{'АП|244_Офисная мебель|9':4687,'БФЛ|244_Офисная мебель|9':3900},{'БФЛ|244_Офисная мебель':'co'});
+     const D={fio:'Петров Пётр Петрович',dirLabel:'Все направления',people:[{fio:'Петров Пётр Петрович',own:true,inc,exp}]};
+     const sv=_planOwners,sc2=_planCoOwners;let T='';try{_planOwners={'БФЛ||244_Офисная мебель':'Иванов И.И.'};_planCoOwners={'БФЛ||244_Офисная мебель':['Петров Пётр Петрович']};T=_chatTextBuild(D,{months:[9,10],plan:true,fact:true,dev:true,greet:true,intro:'Вводная.',mode:'cfo'});}finally{_planOwners=sv;_planCoOwners=sc2;}
+     const Ls=T.split('\n');
+     ok('чат: образец 30.09 - приветствие, вводная, ДОХОДЫ, пара «АП · 120 …», строка на месяц с отклонением словами',Ls[0]==='Пётр Петрович, здравствуйте!'&&Ls[1]==='Вводная.'&&Ls[2]==='ДОХОДЫ'&&Ls[3]==='АП · 120 Поступление от ОП'&&Ls[4]==='  сен  план 100 000 · факт 304 000 · сверх плана 204 000'&&Ls[5]==='  окт  план 100 000 · факт 12 500 · недобор 87 500',Ls.slice(0,6).join(' | '));
+     ok('чат: ИТОГО секции по строке на месяц',Ls[6]==='ИТОГО доходы:'&&Ls[7]==='  сен  план 100 000 · факт 304 000 · сверх плана 204 000'&&Ls[8]==='  окт  план 100 000 · факт 12 500 · недобор 87 500',Ls.slice(6,9).join(' | '));
+     ok('чат: комплексная пара у соисполнителя - 👥 с составом, план свой, факт общий, отклонение по паре; в ИТОГО расходов факт пары не входит',T.indexOf('БФЛ · 244 Офисная мебель 👥 комплексная, планируют: Иванов И.И., Петров Пётр Петрович')>=0&&T.indexOf('  сен  план 500 · факт 3 900 (общий) · по паре: план 1 500, перерасход 2 400')>=0&&T.indexOf('АП · 244 Офисная мебель\n  сен  план 3 950 · факт 4 687 · перерасход 737')>=0&&T.indexOf('ИТОГО расходы:\n  сен  план 4 450 · факт 4 687 · перерасход 237')>=0,T.slice(T.indexOf('РАСХОДЫ'),T.indexOf('РАСХОДЫ')+330));
+     const Tn=_chatTextBuild(D,{months:[9],plan:true,fact:false,dev:false,newMonth:11,greet:false,intro:'',mode:'cfo'});
+     ok('чат: режим сбора плана - строка «НОВЫЙ ноя = » под каждой парой, без факта и отклонения, без приветствия при greet:false',Tn.indexOf('ДОХОДЫ')===0&&(Tn.match(/  НОВЫЙ ноя = /g)||[]).length===3&&!/факт/.test(Tn),Tn.slice(0,200));
+     const Dm={fio:'Иванов И.И.',dirLabel:'Все направления',people:[{fio:'Иванов И.И.',own:true,inc,exp},{fio:'Петров П.П.',own:false,inc,exp}]};
+     const Tm=_chatTextBuild(Dm,{months:[9],plan:true,fact:true,dev:true,greet:true,intro:'',mode:'mgr'});
+     ok('чат: руководитель с подчинёнными - блоки по людям заглавными и ИТОГО ПО БЛОКУ по строке на месяц',Tm.indexOf('ИВАНОВ И.И. (СВОИ ПОДСТАТЬИ)')>=0&&Tm.indexOf('\nПЕТРОВ П.П.\n')>=0&&/ИТОГО ПО БЛОКУ:\n  сен  доходы: план 200 000 · факт 608 000 · расходы: план 8 900 · факт 9 374/.test(Tm),Tm.slice(Tm.indexOf('ИТОГО ПО БЛОКУ')));
+     const Td=_chatTextBuild({fio:undefined,dirLabel:'БФЛ',people:[{fio:undefined,own:true,inc,exp}]},{months:[9],plan:true,fact:true,dev:true,greet:true,intro:'',mode:'dir'});
+     ok('чат: режим направления - без приветствия, первая строка «Направление: …»',Td.indexOf('Направление: БФЛ')===0&&!/здравствуйте/i.test(Td));}
     ok('экран: комплексная пара - план свой, факт общий с пометкой, в сумму направления только у основного, цвет и доля по паре',/faOwn=\(cxd&&!S\.primDir\(d,code\)\)\?0:fa;/.test(sr)&&/DD\.f\+=faOwn;/.test(sr)&&/👥 факт общий/.test(sr)&&/pb=s\.pa!=null\?s\.pa:s\.p,sc=col\(s\.f,pb\);/.test(sr));}
    // ⚠ Область направлений - параметр вызывающего, а не свойство примитива.
    const prim=String(_ownerKey)+String(_ownCodeOf)+String(_ownerOf);
@@ -11883,8 +11909,8 @@ function pfRunTests(){
     ok('статус, архив и «Действия» - под «⋯» в самом фильтр-баре, кнопка прижата вправо',
        /<span style="[^"]*margin-left:auto">\$\{_barMore\('pf-more',_pfMoreN,_pfMoreTip,_pfMoreRows\)\}<\/span>\n  <\/div>`;/.test(fb)
        &&fb.indexOf('${baselineStatus}')<0&&fb.indexOf('${backupBadge}')<0&&fb.indexOf('${actionsWrap}')<0&&fb.indexOf('pfReset'+'Btn')<0);
-    ok('под «⋯» у БДР - те же три элемента, бейдж архива остаётся условным',
-       /const _pfMoreRows=_barMoreRow\('[^']+',baselineStatus\)\+\(backupBadge\?_barMoreRow\('[^']+',backupBadge\):''\)\+_barMoreRow\('[^']+',actionsWrap\);/.test(src));
+    ok('под «⋯» у БДР - три прежних элемента плюс четвёртый «Текст для чата» (03.10.2026), бейдж архива остаётся условным',
+       /const _pfMoreRows=_barMoreRow\('[^']+',baselineStatus\)\+\(backupBadge\?_barMoreRow\('[^']+',backupBadge\):''\)\+_barMoreRow\('[^']+',actionsWrap\)\s*\+_barMoreRow\('Текст для чата','<button class=\W{0,2}bar-ctl\W{0,2} onclick=\W{0,2}pfChatOpen\(\)\W{0,2}/.test(src)); // ИЗМЕНЁН 03.10.2026: четвёртая строка - кнопка сводок для чата (решение Олега 3)
     // ⚠ Под панелью три СИГНАЛА (не утверждено, архив устарел, проверка данных) - «⋯» обязана их
     //   называть, иначе красное «⚠ 0/12» и точка проверки данных исчезли бы с экрана молча.
     ok('«⋯» БДР помечается по трём сигналам и называет их в подсказке',
@@ -12282,6 +12308,18 @@ window.barRunTests=function(){
     Object.keys(_presetDefDone).forEach(k=>delete _presetDefDone[k]); Object.assign(_presetDefDone,sv.def);
     try{switchTab(sv.tab);}catch(e){}
   }
+  // ЖИВОЙ ПРОГОН «Текст для чата» (03.10.2026): числа в тексте = числам выписки того же человека и месяца; срез upTo монотонен
+  {const yr=+((_tabFilters.planfact&&_tabFilters.planfact.year))||new Date().getFullYear(),M=Math.min(new Date().getMonth()+1,12);
+    const fios=[...new Set(Object.values(_planOwners||{}).map(v=>String(v||'').trim()).filter(Boolean))];
+    let pick=null;for(const fio of fios){const D=_cfoStmtData({fio,allMonths:true,year:yr,dirs:[]});const S=D.people[0].exp;const code=S.codes.find(c=>[...S.pairSet[c]].some(d=>Math.abs(S.factMonthD(d,c,M))>0.005));if(code){const d=[...S.pairSet[code]].find(d=>Math.abs(S.factMonthD(d,code,M))>0.005);pick={fio,D,S,code,d};break;}}
+    ok('живой прогон чата: нашёлся ЦФО с фактом расхода за '+M+'.'+yr,!!pick,pick?pick.fio:'факта за месяц нет ни у одного ЦФО - проверять не на чем');
+    if(pick){const T=_chatTextBuild(pick.D,{months:[M],plan:true,fact:true,dev:true,greet:false,intro:'',mode:'cfo'});
+      const p=pick.S.fcMonthD(pick.d,pick.code,M),f=pick.S.factMonthD(pick.d,pick.code,M);
+      const line='  '+CHAT_MONS[M-1]+'  план '+_chatNum(p)+' · факт '+_chatNum(f)+(pick.S.cxDir(pick.d,pick.code)?' (общий)':'');
+      ok('живой прогон чата: строка пары «'+pick.d+' · '+pick.code+'» в тексте = числам выписки',T.indexOf(pick.d+' · '+_chatCode(pick.code))>=0&&T.indexOf(line)>=0,line);
+      const Dcut=_cfoStmtData({fio:pick.fio,allMonths:true,year:yr,dirs:[],upTo:new Date(yr,M-1,1)}),Dend=_cfoStmtData({fio:pick.fio,allMonths:true,year:yr,dirs:[],upTo:new Date(yr,M,0)});
+      const Sc=Dcut.people[0].exp,Se=Dend.people[0].exp;
+      ok('живой прогон чата: срез на 1-е число даёт факт ≤ полного, срез на конец месяца - равный, план от среза не меняется',pick.S.codes.every(c=>(Sc.factMonth(c,M)<=pick.S.factMonth(c,M)+0.005)&&Math.abs(Se.factMonth(c,M)-pick.S.factMonth(c,M))<0.005&&(Sc.fcMonth(c,M)==null?pick.S.fcMonth(c,M)==null:Math.abs(Sc.fcMonth(c,M)-pick.S.fcMonth(c,M))<0.005)));}}
   const bad=R.filter(r=>!r.pass);
   // ⚠ Число проверок - не константа: у вкладки без найденного бара пропадают ещё две (кнопка и сводка), и 34
   //   превращаются в 30 молча. Поэтому ожидаемое число считается от состава и печатается рядом с фактом.
@@ -13153,7 +13191,8 @@ function renderPlanFact(f){
   const _pfMoreSig=[hasBaseline?'':'план года не утверждён',backupBadge?'архив настроек давно не скачивали':'',_chkN?('проверка данных: '+_chkN):''].filter(Boolean);
   const _pfMoreN=_pfMoreSig.length;
   const _pfMoreTip='Дополнительно: утверждение плана, архив настроек, действия по планам'+(_pfMoreSig.length?(' · '+_pfMoreSig.join(' · ')):'');
-  const _pfMoreRows=_barMoreRow('Утверждено месяцев',baselineStatus)+(backupBadge?_barMoreRow('Архив настроек',backupBadge):'')+_barMoreRow('Действия по планам',actionsWrap);
+  const _pfMoreRows=_barMoreRow('Утверждено месяцев',baselineStatus)+(backupBadge?_barMoreRow('Архив настроек',backupBadge):'')+_barMoreRow('Действия по планам',actionsWrap)
+    +_barMoreRow('Текст для чата','<button class="bar-ctl" onclick="pfChatOpen()" title="Собрать сводки план-факт по ЦФО или направлениям для мессенджера; ничего не записывает">💬 Собрать</button>'); // четвёртая строка (решение Олега 03.10.2026), «⚙ Действия» не трогаем
   // ── «Сбросить (N)» - ОБЩАЯ кнопка, её ставит _presetBarInject рядом с селектом пресета (13.09.2026) ──
   // ⚠ Своей кнопки у БДР больше нет: правила прежней (кнопка есть всегда, состояние через disabled,
   //   счётчик по _pfBlankState, год и период сбрасываются, но не считаются) переехали в общий контрол
@@ -18857,6 +18896,135 @@ window.planPrintOwners=function(){
   setTimeout(()=>{try{w.focus();w.print();}catch(e){}},450);
 };
 // ===== Персональная выписка для ЦФО (BDR) - только его подстатьи, baseline vs факт, A4 portrait. Отдельно от planPrintOwners (форма сбора плана) =====
+// ══ «ТЕКСТ ДЛЯ ЧАТА» - сводки по ЦФО и направлениям для мессенджера (03.10.2026, docs/DECISIONS.md#d-chat-text) ═══
+// Расчёт - ТОЛЬКО _cfoStmtData (те же секции и аксессоры, что у выписки); здесь - форматирование по образцу рассылки 30.09:
+// плоский текст без таблиц и markdown. Ничего не пишется ни в Firebase, ни в Sheets - чтение и буфер обмена.
+// ⚠ Числа - ЦЕЛЫЕ рубли, разряды пробелом, округление - ПОСЛЕДНЯЯ операция (решение 2). Отклонение - словами, без знака, порог
+//   «в плане» - ровно ноль на целых рублях (решение 5). Несколько месяцев - ПО СТРОКЕ НА МЕСЯЦ (решение 7).
+// ⚠ Строка на КАЖДУЮ пару «направление · подстатья» (решение 4) - через помесячные аксессоры секции fcMonthD/factMonthD.
+// ⚠ Комплексная пара у соисполнителя: план свой, факт общий с пометкой, отклонение ПО ПАРЕ (Σ планов всех); в ИТОГО факт пары
+//   только у основного - те же factMonthOwn/fcMonth, что в ИТОГО выписки.
+const CHAT_MONS=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+const CHAT_MONS_FULL=['январь','февраль','март','апрель','май','июнь','июль','август','сентябрь','октябрь','ноябрь','декабрь'];
+const _chatNum=v=>{if(v==null||isNaN(v))return '-';const n=Math.round(v);return (n<0?'-':'')+String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g,' ');};
+const _chatCode=code=>String(code||'').replace(/^(\d{3})_/,'$1 '); // «120_Поступление» → «120 Поступление»: подчёркивание в Telegram читается как курсив
+const _chatDev=(plan,fact,isInc)=>{if(plan==null)return 'плана нет';const d=Math.round(fact)-Math.round(plan);if(d===0)return 'в плане';const a=_chatNum(Math.abs(d));return isInc?(d>0?'сверх плана '+a:'недобор '+a):(d>0?'перерасход '+a:'экономия '+a);};
+const _fioGreet=fio=>{const p=String(fio||'').trim().split(/\s+/);return p.length>=3?(p[1]+' '+p[2]):'';}; // «Фамилия Имя Отчество» → «Имя Отчество»; иначе пусто
+const _chatIntroDefault=(newMonth,upToStr)=>newMonth?('Нужен ваш план на '+CHAT_MONS_FULL[newMonth-1]+'. Впишите сумму после «=» и верните этот же список. Планы согласуйте со своим руководителем - присылайте уже утверждённые им. Свои таблицы с расшифровками ведите как удобно, сюда ставьте только итоговые суммы.')
+  :('План-факт на '+upToStr+'. Факт - по операциям до этой даты, план - на месяц целиком.'); // решение 6, редактируется в диалоге
+// D - результат _cfoStmtData({allMonths:true,…}); o - {months:[1..12], plan, fact, dev, newMonth:0|1..12, greet, intro, mode:'cfo'|'mgr'|'dir'}
+function _chatTextBuild(D,o){
+  o=o||{};const months=[...new Set((o.months||[]).map(Number).filter(m=>m>=1&&m<=12))].sort((a,b)=>a-b);
+  const L=[];
+  if(o.mode==='dir')L.push('Направление: '+D.dirLabel);
+  else if(o.greet!==false){const g=_fioGreet(D.fio);L.push(g?(g+', здравствуйте!'):'Здравствуйте!');}
+  if(o.intro)L.push(String(o.intro).trim());
+  const monthLine=(m,plan,fact,isInc,cx,pAll)=>{const parts=[];if(o.plan!==false)parts.push('план '+_chatNum(plan));if(o.fact!==false)parts.push('факт '+_chatNum(fact)+(cx?' (общий)':''));
+    if(o.dev!==false)parts.push(cx?('по паре: план '+_chatNum(pAll)+', '+_chatDev(pAll,fact,isInc)):_chatDev(plan,fact,isInc));
+    return '  '+CHAT_MONS[m-1]+'  '+parts.join(' · ');};
+  const section=(sec,title,isInc)=>{if(!sec)return [];const rows=[];
+    sec.codes.forEach(code=>{[...sec.pairSet[code]].sort((a,b)=>a.localeCompare(b,'ru')).forEach(d=>{
+      const cx=!!(sec.cxDir&&sec.cxDir(d,code));let any=false;const ml=[];
+      months.forEach(m=>{const p=sec.fcMonthD(d,code,m),f=sec.factMonthD(d,code,m);if(p!=null||Math.abs(f)>0.005)any=true;ml.push(monthLine(m,p,f,isInc,cx,cx?sec.fcAllMonthD(d,code,m):null));});
+      if(!any&&!o.newMonth)return;
+      rows.push(d+' · '+_chatCode(code)+(cx?' 👥 '+_complexLabel(d,code):''));rows.push(...ml);
+      if(o.newMonth)rows.push('  НОВЫЙ '+CHAT_MONS[o.newMonth-1]+' = ');});});
+    if(!rows.length)return [];
+    const out=[title].concat(rows);
+    if(months.length&&(o.plan!==false||o.fact!==false)){out.push('ИТОГО '+(isInc?'доходы':'расходы')+':');
+      months.forEach(m=>{let p=null,f=0;sec.codes.forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);});out.push(monthLine(m,p,f,isInc,false,null));});}
+    return out;};
+  const person=PD=>[].concat(section(PD.inc,'ДОХОДЫ',true),section(PD.exp,'РАСХОДЫ',false));
+  const people=D.people||[];
+  if(o.mode==='mgr'&&people.length>1){
+    people.forEach((PD,i)=>{L.push('');L.push(String(i?PD.fio:(PD.fio+' (свои подстатьи)')).toUpperCase());L.push(...person(PD));});
+    if(months.length){L.push('');L.push('ИТОГО ПО БЛОКУ:');
+      months.forEach(m=>{const S=(k)=>{let p=null,f=0;people.forEach(PD=>{const sec=PD[k];if(!sec)return;sec.codes.forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);});});return{p,f};};
+        const I=S('inc'),E=S('exp');L.push('  '+CHAT_MONS[m-1]+'  доходы: план '+_chatNum(I.p)+' · факт '+_chatNum(I.f)+' · расходы: план '+_chatNum(E.p)+' · факт '+_chatNum(E.f));});}
+  }else if(people.length)L.push(...person(people[0]));
+  return L.join('\n');
+}
+// ── Диалог: год, месяцы, факт «на дату», адресаты (ЦФО / руководитель с подчинёнными / направления), что печатать, результат ──
+window.pfChatOpen=function(){
+  if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
+  if(document.getElementById('pfChatOverlay'))return;
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const now=new Date(),cy=now.getFullYear(),cm=now.getMonth()+1;
+  const years=[...new Set((RAW||[]).map(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d?d.getFullYear():null;}).filter(Boolean))];if(!years.includes(cy))years.push(cy);years.sort((a,b)=>b-a);
+  const year0=+((_tabFilters.planfact&&_tabFilters.planfact.year))||cy;
+  const people=[...new Set([...Object.values(_planOwners||{}),...Object.values(_planCoOwners||{}).flatMap(_coOwnersNormList)].map(x=>String(x||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const mgrs=people.filter(f=>_cfoSubsOf(f).length>0);
+  const dirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const p2=n=>String(n).padStart(2,'0'),iso=cy+'-'+p2(now.getMonth()+1)+'-'+p2(now.getDate());
+  const defM=new Set([cm,cm>1?cm-1:cm]); // по умолчанию текущий и предыдущий месяц
+  const cbs=CHAT_MONS.map((m,i)=>`<label style="font-size:11px;margin-right:6px;white-space:nowrap"><input type="checkbox" class="pfchat-m" value="${i+1}"${defM.has(i+1)?' checked':''}> ${m}</label>`).join('');
+  const yOpts=years.map(y=>`<option value="${y}"${y===year0?' selected':''}>${y}</option>`).join('');
+  const nmOpts=CHAT_MONS_FULL.map((m,i)=>`<option value="${i+1}"${(i+1)===(cm%12+1)?' selected':''}>${m}</option>`).join('');
+  const lbl='display:block;font-size:11px;font-weight:600;color:var(--text2);margin:10px 0 4px',inp='font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)';
+  const ov=document.createElement('div');ov.id='pfChatOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center';
+  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:720px;max-width:96vw;max-height:92vh;overflow:auto;padding:18px 22px;font-family:var(--sans)">
+    <div style="font-size:15px;font-weight:700;color:var(--text)">💬 Текст для чата</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Сводки план-факт по людям или направлениям для WhatsApp и Telegram. Числа - из выписки ЦФО; ничего не записывается.</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+      <div><label style="${lbl}">Год</label><select id="pfchat-year" style="${inp}">${yOpts}</select></div>
+      <div><label style="${lbl}">Факт на дату</label><input id="pfchat-upto" type="date" value="${iso}" style="${inp}"></div>
+      <div style="flex:1 1 320px"><label style="${lbl}">Месяцы</label><div>${cbs}</div></div>
+    </div>
+    <label style="${lbl}">Кого</label>
+    <div style="font-size:11px;display:flex;gap:14px;flex-wrap:wrap">
+      <label><input type="radio" name="pfchat-mode" value="cfo" checked onchange="pfChatMode()"> ЦФО (ответственные и соисполнители)</label>
+      <label><input type="radio" name="pfchat-mode" value="mgr" onchange="pfChatMode()"> руководитель с подчинёнными</label>
+      <label><input type="radio" name="pfchat-mode" value="dir" onchange="pfChatMode()"> направления</label>
+    </div>
+    <div id="pfchat-who" style="margin-top:6px;max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px"></div>
+    <label style="${lbl}">Что печатать</label>
+    <div style="font-size:11px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <label><input type="checkbox" id="pfchat-plan" checked> план</label>
+      <label><input type="checkbox" id="pfchat-fact" checked> факт</label>
+      <label><input type="checkbox" id="pfchat-dev" checked> отклонение</label>
+      <label><input type="checkbox" id="pfchat-new" onchange="pfChatIntroReset()"> строка «НОВЫЙ =» для сбора плана на</label><select id="pfchat-newm" style="${inp};padding:3px 6px" onchange="pfChatIntroReset()">${nmOpts}</select>
+      <label><input type="checkbox" id="pfchat-greet" checked> приветствие по имени-отчеству</label>
+    </div>
+    <label style="${lbl}">Вводная строка <span style="font-weight:400;color:var(--text3)">(меняется здесь, без кода)</span></label>
+    <textarea id="pfchat-intro" rows="3" oninput="this.dataset.edited='1'" style="${inp};width:100%;box-sizing:border-box;resize:vertical"></textarea>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px">
+      <button onclick="document.getElementById('pfChatOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Закрыть</button>
+      <button id="pfchat-all" onclick="pfChatCopyAll()" style="display:none;font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans)">Скопировать всё</button>
+      <button onclick="pfChatBuild()" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Собрать</button>
+    </div>
+    <div id="pfchat-out" style="margin-top:12px"></div>
+  </div>`;
+  document.body.appendChild(ov);
+  window._pfChatLists={people,mgrs,dirs};
+  pfChatMode();pfChatIntroReset();
+};
+window.pfChatMode=function(){const L=window._pfChatLists||{};const mode=(document.querySelector('input[name="pfchat-mode"]:checked')||{}).value||'cfo';const box=document.getElementById('pfchat-who');if(!box)return;
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const list=mode==='cfo'?L.people:mode==='mgr'?L.mgrs:L.dirs;
+  box.innerHTML=(list&&list.length)?list.map(v=>`<label style="display:inline-block;margin:2px 10px 2px 0;white-space:nowrap"><input type="checkbox" class="pfchat-who" value="${esc(v)}"> ${esc(v)}${mode==='mgr'?' <span style="color:var(--text3)">(+'+_cfoSubsOf(v).length+')</span>':''}</label>`).join(''):'<span style="color:var(--text3)">'+(mode==='mgr'?'руководителей с подчинёнными в config/cfoHierarchy нет':'список пуст')+'</span>';
+  const g=document.getElementById('pfchat-greet');if(g)g.disabled=(mode==='dir');};
+window.pfChatIntroReset=function(){const t=document.getElementById('pfchat-intro');if(!t||t.dataset.edited==='1')return;const nw=document.getElementById('pfchat-new'),nm=document.getElementById('pfchat-newm'),up=document.getElementById('pfchat-upto');
+  const d=up&&up.value?parseDate(up.value):new Date();const ds=d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';
+  t.value=_chatIntroDefault((nw&&nw.checked)?+(nm&&nm.value||0):0,ds);};
+window.pfChatBuild=function(){
+  const out=document.getElementById('pfchat-out');if(!out)return;
+  const mode=(document.querySelector('input[name="pfchat-mode"]:checked')||{}).value||'cfo';
+  const year=+(document.getElementById('pfchat-year')||{}).value||new Date().getFullYear();
+  const months=[...document.querySelectorAll('.pfchat-m:checked')].map(c=>+c.value);
+  const upToV=(document.getElementById('pfchat-upto')||{}).value,upTo=upToV?parseDate(upToV):null;
+  const who=[...document.querySelectorAll('.pfchat-who:checked')].map(c=>c.value);
+  const g=id=>{const e=document.getElementById(id);return !!(e&&e.checked);};
+  const o={months,plan:g('pfchat-plan'),fact:g('pfchat-fact'),dev:g('pfchat-dev'),newMonth:g('pfchat-new')?+(document.getElementById('pfchat-newm')||{}).value||0:0,greet:g('pfchat-greet'),intro:(document.getElementById('pfchat-intro')||{}).value||'',mode};
+  if(!who.length){out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите, кому собрать текст.</div>';return;}
+  if(!months.length&&!o.newMonth){out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите хотя бы один месяц (или строку «НОВЫЙ =»).</div>';return;}
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const blocks=who.map(w=>{const D=mode==='dir'?_cfoStmtData({year,allMonths:true,upTo,dirs:[w],anyOwner:true}):_cfoStmtData({year,allMonths:true,upTo,fio:w,withSubs:mode==='mgr',dirs:[]});return{who:w,text:_chatTextBuild(D,o)};});
+  window._pfChatTexts=blocks.map(b=>b.text);
+  out.innerHTML=blocks.map((b,i)=>`<div style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;color:var(--text)"><span>${esc(b.who)}</span><button id="pfchat-cp-${i}" onclick="cfoqCopyText('pfchat-cp-${i}',window._pfChatTexts[${i}])" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);cursor:pointer;font-family:var(--sans)">Скопировать</button></div><textarea readonly rows="${Math.min(18,Math.max(5,b.text.split('\n').length))}" style="width:100%;box-sizing:border-box;margin-top:4px;font-size:11.5px;line-height:1.35;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font-family:var(--mono);white-space:pre;overflow:auto">${esc(b.text)}</textarea></div>`).join('');
+  const all=document.getElementById('pfchat-all');if(all)all.style.display='';
+};
+window.pfChatCopyAll=function(){cfoqCopyText('pfchat-all',(window._pfChatTexts||[]).join('\n\n'));};
 window.cfoStatementOpen=function(){
   // ⚠ ГЕЙТА АДМИНА ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО (25.08.2026, вместе с открытием меню всем): это
   //   ЧТЕНИЕ, защитой гейт не был (данные читает любой вошедший), а нужен этот экран прежде
@@ -19301,9 +19469,15 @@ function _cfoStmtData(P){
   const M=+P.month||(new Date().getMonth()+1);
   const fio=P.fio,isNoOwn=!!P.isNoOwn,fioLabel=isNoOwn?'(не назначен)':fio;
   const wantDetail=!!P.withDetail;
+  // ── Параметры «Текста для чата» (03.10.2026, docs/DECISIONS.md#d-chat-text): upTo - факт по операциям НЕ ПОЗЖЕ даты (конец дня),
+  //    режет ТОЛЬКО индексы факта (расход/вывод/операции, доход, стороны); контекст выручки для %-планов НЕ режется - план на месяц
+  //    целиком (решение Олега 1). dirs - явная область направлений вместо фильтра вкладки; anyOwner - все пары без разбора владельца
+  //    (режим «направление целиком»). Без этих параметров выписка ПОБАЙТНО прежняя (стенд-инвариант).
+  const upTo=(()=>{const d=P.upTo?(P.upTo instanceof Date?P.upTo:parseDate(P.upTo)):null;return d?new Date(d.getFullYear(),d.getMonth(),d.getDate(),23,59,59,999):null;})();
+  const anyOwner=!!P.anyOwner;
   const pf=_tabFilters.planfact||{};
   const allDirs=[...new Set((RAW||[]).map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
-  const _selD=Array.isArray(pf.dirs)?pf.dirs.filter(d=>allDirs.includes(d)):((pf.dir&&pf.dir!=='__all__'&&allDirs.includes(pf.dir))?[pf.dir]:[]); // мультивыбор; fallback на старый pf.dir
+  const _selD=Array.isArray(P.dirs)?P.dirs.filter(d=>allDirs.includes(d)):(Array.isArray(pf.dirs)?pf.dirs.filter(d=>allDirs.includes(d)):((pf.dir&&pf.dir!=='__all__'&&allDirs.includes(pf.dir))?[pf.dir]:[])); // P.dirs - явная область (чат); иначе мультивыбор вкладки, fallback на старый pf.dir
   const isAll=_selD.length===0||_selD.length>=allDirs.length;
   const dirsScope=_selD.length?_selD:allDirs;
   const dirLabel=isAll?'Все направления':(_selD.length<=3?_selD.join(', '):_selD.length+' направлений');
@@ -19348,18 +19522,18 @@ function _cfoStmtData(P){
   // ⚠ Один проход, а не два: второй проход по 60 тыс. строк ради того же разбора - это вторая
   //   выборка, которая однажды разойдётся с первой условиями отбора.
   const factIdx={},opsIdx={},vyvIdx={},vyvOpsIdx={},vyvSeen={};
-  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=expOf(r); if(!out)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const an=_ownCodeOf(r); if(!an)return; const m=d.getMonth()+1,key=_ownerKey(dir,an);
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t!=='списание')return; const out=expOf(r); if(!out)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year||(upTo&&d>upTo))return; const an=_ownCodeOf(r); if(!an)return; const m=d.getMonth()+1,key=_ownerKey(dir,an);
     const isV=isVyvodRow(r),FI=isV?vyvIdx:factIdx,OI=isV?vyvOpsIdx:opsIdx; if(isV)vyvSeen[an]=1;
     (FI[key]=FI[key]||new Array(13).fill(0))[m]+=out; (OI[key]=OI[key]||[]).push(r); });
   // код вывода = c3 127 ∪ коды, под которыми реально прошли строки вывода (общее правило, см. _vyvodCodeF)
   const isVyvodCode=_vyvodCodeF(vyvSeen);
   // факт ДОХОДОВ: dir||ARTICLE_NAME → [13] месяцев (поступления, тот же критерий что в ОПиУ/БДР; перемещения и начальный остаток исключены). Отдельный проход - расходный factIdx не трогаем
   const factIncIdx={};
-  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; const code=_ownCodeOf(r); if(!code)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year)return; const m=d.getMonth()+1,key=_ownerKey(dir,code); (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
+  (RAW||[]).forEach(r=>{ const dir=String(r[COL.ACTIVITY_DIR]||'').trim(); if(dirsScope.indexOf(dir)<0)return; const t=String(r[COL.TYPE]||'').trim().toLowerCase(); if(t==='перемещение')return; const inc=parseNum(r[COL.INCOME]); if(!(inc>0))return; const ac=String(r[COL.ARTICLE_CODE]||'').trim(),an=String(r[COL.ARTICLE_NAME]||'').trim(); if(!((t==='поступление'||ac.startsWith(REVENUE_PREFIX)||an.startsWith(REVENUE_PREFIX))&&!isOpeningBalance(an)))return; const code=_ownCodeOf(r); if(!code)return; const d=parseDate(r[COL.DATE_OPIU]); if(!d||d.getFullYear()!==year||(upTo&&d>upTo))return; const m=d.getMonth()+1,key=_ownerKey(dir,code); (factIncIdx[key]=factIncIdx[key]||new Array(13).fill(0))[m]+=inc; });
   // ── Задача 5: 3-й уровень выписки - расшифровка sub-level РАСХОДНЫХ подстатей по стороне (ФОТ→сотрудник, аренда→объект, консалтинг→контрагент). Только визуальный разворот поверх посчитанных сумм - ИТОГО не меняет ──
   const _c3=c=>{const x=String(c).match(/\d{3}/);return x?x[0]:'';};
   const isFotCode=_slFot,isConsultCode=_slConsult,isSubLevel=_slFactSide,sideIcon=_slIcon,UNALLOC=_SL_UNALLOC; // общие примитивы 3-го уровня - модульный уровень, не дублируем (вариант A)
-  const sideFactIdx=_buildSideFactIdx(year,dirsScope);
+  const sideFactIdx=_buildSideFactIdx(year,dirsScope,upTo);
   const blPlanSideMD=_planSideMD(blRecs,blCvt),fcPlanSideMD=_planSideMD(fcRecs,fcCvt);
   const blOwnMD=_planOwnerMD(blRecs,blCvt),fcOwnMD=_planOwnerMD(fcRecs,fcCvt); // план ПО ОТВЕТСТВЕННОМУ комплексной пары (03.10.2026)
   const stmtSides=(dirsSet,code)=>_sideUniverse(sideFactIdx,blRecs,fcRecs,dirsSet,code);
@@ -19388,7 +19562,7 @@ function _cfoStmtData(P){
   const sidesWithActivity=(dirsSet,code)=>{const S=stmtSides(dirsSet,code);const list=S.named.slice();if(S.hasUn)list.push('');return list.filter(side=>sideHasActivity(dirsSet,code,side));};
   // жёсткий фильтр по ЦФО: (dir,code) включается ТОЛЬКО если владелец = человек секции (пусто для «не назначен»)
   const ownerOf=_ownerOf; // общий примитив «чей это факт», своей копии нет
-  const ownMatchP=(d,code,person,noOwn)=>{const o=ownerOf(d,code);return noOwn?!o:_ownerHas(d,code,person);}; // комплексная пара - у каждого своего ответственного (03.10.2026)
+  const ownMatchP=(d,code,person,noOwn)=>{if(anyOwner)return true;const o=ownerOf(d,code);return noOwn?!o:_ownerHas(d,code,person);}; // anyOwner - направление целиком (чат) // комплексная пара - у каждого своего ответственного (03.10.2026)
   // ── СЕКЦИЯ ОДНОГО ЧЕЛОВЕКА: только расчёт, без единой строки HTML ──
   // ⚠ Прежняя buildSection собирала в ОДНОМ цикле и суммы, и строки таблицы. Строки уехали
   //   в генератор (secRows), суммы остались здесь - обе стороны обязаны обходить codes в одном
@@ -19411,7 +19585,7 @@ function _cfoStmtData(P){
     //    (печатается с пометкой «общий»); в ИТОГО секции факт пары входит ТОЛЬКО у основного (решение 2 - иначе рубль
     //    посчитался бы столько раз, сколько ответственных); статус - ПО ПАРЕ ЦЕЛИКОМ: общий факт против Σ планов всех
     //    ответственных (решение 3), «мой план против общего факта» не печатается. У некомплексных пар всё как раньше.
-    const cxDir=(d,code)=>!noOwn&&!isInc&&_isComplex(d,code);
+    const cxDir=(d,code)=>!noOwn&&!anyOwner&&!isInc&&_isComplex(d,code); // при anyOwner пара целиком - план всех, комплексности нет
     const primDir=(d,code)=>_ownerOf(d,code)===person;
     const cxOf=code=>{const ds=[...pairSet[code]].filter(d=>cxDir(d,code));if(!ds.length)return null;const ow=new Set();ds.forEach(d=>_ownersOf(d,code).forEach(o=>ow.add(o)));return {dirs:ds,owners:[...ow],label:'комплексная, планируют: '+[...ow].join(', ')};};
     const ownPlanM=(md,d,code,m)=>{let v=md(d,code,person,m);if(primDir(d,code)){const u=md(d,code,'',m);if(u!=null)v=(v||0)+u;}return v;};
@@ -19452,7 +19626,10 @@ function _cfoStmtData(P){
     //   «на что ушло сверх плана» нет: превышение вывода не нарушение, объяснять нечего.
     const overCodes=isVyv?[]:codes.filter(code=>{const pY=(cxOf(code)?fcAllYTD:fcYTD)(code);return pY!=null&&(factYTD(code)-pY)>0;});
     return {kind:isInc?'inc':isVyv?'vyv':'exp',codes,sBP,sPP,sFP,sBY,sPY,sFY,overCodes,pairSet,blYTD,fcYTD,factYTD,blMonth,factMonth,fcMonth,stMonth,stYTD,
-      cxOf,cxDir,primDir,factMonthOwn,factYTDOwn,blAllMonth,fcAllMonth,blAllYTD,fcAllYTD,ownPlanDirM,fcAllDirM};
+      cxOf,cxDir,primDir,factMonthOwn,factYTDOwn,blAllMonth,fcAllMonth,blAllYTD,fcAllYTD,ownPlanDirM,fcAllDirM,
+      // помесячно ПО ОДНОМУ направлению - для «Текста для чата» (строка на каждую пару «направление · подстатья», решение 4)
+      fcMonthD:(d,code,m)=>cxDir(d,code)?ownPlanM(fcOwnMD,d,code,m):fcPlanFF(d,code,m),blMonthD:(d,code,m)=>cxDir(d,code)?ownPlanM(blOwnMD,d,code,m):blPlanF(d,code,m),
+      factMonthD:(d,code,m)=>{const a=FI[_ownerKey(d,code)];return a?(a[m]||0):0;},fcAllMonthD:(d,code,m)=>fcPlanFF(d,code,m)};
   };
   // состав выписки: свои + прямые подчинённые (один уровень, защита от цикла в _cfoSubsOf)
   const subs=isNoOwn?[]:_cfoSubsOf(fio);const wantSubs=!!P.withSubs&&subs.length>0;
@@ -19465,7 +19642,7 @@ function _cfoStmtData(P){
   // ⚠ kind по умолчанию - расход: все прежние вызовы трёхаргументные и обязаны вести себя как прежде.
   const opsOf=(dir,code,m,kind)=>{const a=(kind==='vyv'?vyvOpsIdx:opsIdx)[_ownerKey(dir,code)];if(!a)return [];
     return a.filter(r=>{const d=parseDate(r[COL.DATE_OPIU]);return d&&(d.getMonth()+1)===m;});};
-  return {year,month:M,allMonths,dirsScope,dirLabel,isAll,fio,fioLabel,isNoOwn,wantDetail,
+  return {year,month:M,allMonths,dirsScope,dirLabel,isAll,fio,fioLabel,isNoOwn,wantDetail,upTo,anyOwner,
     people,subs,wantSubs,opsOf,opsIdx,factIdx,factIncIdx,vyvIdx,vyvOpsIdx,isVyvodCode,
     frozen,frozenSet,blMap,blRecs,hasBl,ctx,
     blPlanMD,blPlanIncMD,fcPlanMD,fcPlanIncMD,fcRecs,
