@@ -8718,8 +8718,14 @@ function _regFieldText(r,F){return F.date?_regDs(r[F.c]):String(r[F.c]==null?'':
 // ⚠ Флаг u обязателен: без него \p{L} вообще не компилируется, а \w кириллицу не матчит -
 // на этом уже горели с «Картой ФЛ» в Банке.
 const REG_NONWORD=/[^\p{L}\p{N}]+/gu;
-function _regNorm(s){return ' '+String(s==null?'':s).toLowerCase().replace(REG_NONWORD,' ').trim()+' ';} // обрамляющие пробелы: начало строки - тоже граница слова
-function _regTokNorm(t){return String(t==null?'':t).toLowerCase().replace(REG_NONWORD,' ').trim();}
+// ── Ё = Е (03.10.2026) ────────────────────────────────────────────────────────
+// Замер на живой базе (66 823 строки): «ё» в 1 139 строках, «семенов» → 157, «семёнов» → 28 - один человек,
+// два написания. Свёртка идёт в ОБЕ стороны и в ОДНОМ месте для всех потребителей: нормализация блоба и
+// токена (_regNorm/_regTokNorm), вырез «Совпало» (_regWhySnip) и подсветка (_regHlRe: «е» и «ё» термина
+// становятся классом [её]). ⚠ ё→е сохраняет ДЛИНУ строки - индексы выреза в _regWhySnip остаются верными.
+function _regFoldYo(s){return s.replace(/ё/g,'е');}
+function _regNorm(s){return ' '+_regFoldYo(String(s==null?'':s).toLowerCase()).replace(REG_NONWORD,' ').trim()+' ';} // обрамляющие пробелы: начало строки - тоже граница слова
+function _regTokNorm(t){return _regFoldYo(String(t==null?'':t).toLowerCase()).replace(REG_NONWORD,' ').trim();}
 // word: границы с ОБЕИХ сторон («4» как самостоятельное слово). norm обрамлён пробелами,
 // поэтому хвостовая граница работает и для токена в конце строки.
 function _regHasWord(norm,tn,word){return tn!==''&&norm.indexOf(' '+tn+(word?' ':''))>=0;}
@@ -8781,8 +8787,8 @@ function _regDateHitAny(r,tk){return tk.col!=null?_regDateHit(r,tk,tk.col):(_reg
 // Числом считается токен из цифр и пробелов ПОСЛЕ нормализации: «15 000,50» → «15000 5» (запятая
 // стала пробелом, в блобе сумма лежит ровно так же), поэтому копейки под правило подпадают.
 // ⚠ Копейки в выдаче ОСТАЮТСЯ сознательно: «15 000,00» находит и 15 000,50 - соседняя операция
-// того же порядка полезнее отсечённой. Числовым сравнением не занимаемся: это отдельная ветка
-// для колонок сумм со своим поведением у подсветки и «Совпало».
+// того же порядка полезнее отсечённой. Числовое сравнение есть ТОЛЬКО у ЯВНОГО диапазона («сумма:>N»,
+// «сумма:N-M», «от N до M» - _regRangeHit, с 03.10.2026); голое число диапазоном не становится.
 // ⚠ Русские союзы и предлоги в одну-две буквы в отбор НЕ пускаются. «поступление и сау и остаток»
 // человек пишет как союз, а «и» становилось третьим УСЛОВИЕМ: строка обязана содержать слово,
 // начинающееся на «и» - «ИП Болотов», «Игуменов», «Ивановна». Выдача сужалась по признаку,
@@ -8812,10 +8818,240 @@ function _regPromoteShort(tokens){
   free.forEach(tk=>{tk.hlOnly=false;tk.word=true;tk.promoted=true;}); // promoted - только ради счётчика: word теперь стоит у ВСЕХ числовых, а сказать надо про продвинутые
   return tokens;
 }
+// ── «СУММА:», ДИАПАЗОНЫ, МЕСЯЦ СЛОВАМИ - РАЗБОР ЗАПРОСА ОДИН (03.10.2026) ─────────────
+// Замер на живой базе (66 823 строки): «сумма:15000» → 19 строк - поля «сумма» не было, запрос уходил
+// ТЕКСТОМ «сумма 15000» в назначения, а настоящих операций на 15 000 - 2 746: правдоподобная ложь, тот же
+// класс, что «рав» в «управляющих». «от 10000 до 50000» → 3: «от»/«до» - стоп-слова, оба числа искались
+// целым словом сразу. «сентябрь 2026» → 98 против «09.2026» → 2 780: месяц искался как слово.
+// ⚠ Разбор запроса - ОДНА функция _regParseQuery: её зовут отбор (registryRender), описание набора
+// (_regSetMeta → _regTokDesc) и тесты (regRunTests). Раньше _regSetMeta разбирал запрос СВОЕЙ копией
+// со своими картами алиасов и «пусто» - и о новых формах не узнал бы. Карты теперь одни: REG_ALIAS, REG_EMPTY.
+// ⚠ «сумма:N» - ИЛИ по Поступлению и Списанию, число ЦЕЛЫМ СЛОВОМ (как голое число в сплошном поиске);
+// списание по модулю получается само: минус не буква и не цифра, _regNorm даёт «15000» из «-15000».
+// Ноль в колонке в сравнение не идёт («сумма:0» ничего не находит - нуля как операции не бывает).
+// «поступление:N» и «списание:N» остаются ПРЕФИКСНЫМИ, как любой «поле:значение», - их поведение НЕ менялось,
+// поэтому «сумма:15000» УЖЕ «поступление:15000 ∪ списание:15000»: у объединения лишними идут 150 000 и 1 500 000.
+// ⚠ Явный диапазон - ЕДИНСТВЕННОЕ место числового сравнения в быстрой строке: «сумма:>N» (строго больше),
+// «сумма:<N» (строго меньше), «сумма:N-M» и «от N до M» без поля (границы ВКЛЮЧАЮЩИЕ); то же у
+// «поступление:» и «списание:». Сравнение - _regAmtFail/_regNumFail, ОДНИ на панель фильтров и на запрос.
+// Подсветки у диапазона нет: строку отобрало сравнение, а не слово, красить нечего; в «Совпало» он не идёт.
+// ⚠ Склейка «от N до M» идёт ДО стоп-слов: иначе «от» и «до» выпадали бы из отбора как служебные,
+// а числа шли бы двумя условиями «целым словом».
+// ⚠ Месяц словами: пара «<месяц> <гггг>» → токен-дата dk='my' «мм.гггг», ТОЛЬКО если слово целиком -
+// название месяца (с окончанием) или трёхбуквенное сокращение: «Сенин 2026» не склеивается, «сентябрь»
+// без года - обычное слово. Счётчик называет, как понят запрос («сентябрь 2026» понято как 09.2026).
+const REG_SUM=-1; // «колонка» алиаса «сумма:» - обе колонки сумм разом; в REG_COL_NAMES её нет намеренно
+const REG_ALIAS={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14,'сумма':REG_SUM,'sum':REG_SUM};
+// Маркеры «пустое поле»: поле:пусто / поле:- → записи, где поле НЕ заполнено (у «сумма:» - обе суммы нулевые).
+// ⚠ Тире здесь - ДАННЫЕ (значения «пусто»), а не типографика; правило «дефис, не тире» их не касается.
+const REG_EMPTY=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
+const REG_RE_NUM=/^-?\d+(?:\.\d+)?$/; // число ПОСЛЕ _regNormQuery: разряды склеены, запятая → точка
+// Месяц словами: полное название с окончанием (январ-ь/-я/-е/-ский) или ТОЧНОЕ короткое сокращение.
+// ⚠ «Основа + любые буквы» допустима только у ПОЛНОЙ основы: «мар\p{L}*» склеило бы «Марина 2026».
+const REG_MONTH_RE=[/^(?:янв|январ\p{L}+)$/u,/^(?:фев|феврал\p{L}+)$/u,/^(?:мар|март\p{L}*)$/u,/^(?:апр|апрел\p{L}+)$/u,/^ма[йяе]$/u,/^июн\p{L}*$/u,/^июл\p{L}*$/u,/^(?:авг|август\p{L}*)$/u,/^(?:сен|сент|сентябр\p{L}+)$/u,/^(?:окт|октябр\p{L}+)$/u,/^(?:ноя|нояб|ноябр\p{L}+)$/u,/^(?:дек|декабр\p{L}+)$/u];
+function _regMonthIdx(w){for(let i=0;i<12;i++)if(REG_MONTH_RE[i].test(w))return i;return -1;}
+// ⚠ Ноль в колонке сумм означает «операции этого вида не было», а не сумму 0: у КАЖДОГО списания
+// Поступление=0, у каждого поступления - Списание=0. Пока сравнение по колонке задано, такие строки
+// отбрасываются ВСЕГДА, независимо от границ - иначе «от 0 до 2» по поступлению возвращало
+// 29 268 строк (все списания попадали в границы) вместо 28 настоящих мелких поступлений.
+// Границы включающие (>= и <=), если не сказано «строго» (xlo/xhi - у «>N» и «<N» из строки поиска).
+function _regNumFail(v,lo,hi,xlo,xhi){if(!v)return true;if(lo!=null&&(xlo?v<=lo:v<lo))return true;if(hi!=null&&(xhi?v>=hi:v>hi))return true;return false;}
+// Конвенция КОЛОНКИ поверх сравнения - одна на панель фильтров и на строку поиска.
+// ⚠ У Поступления незаданная нижняя граница = НОЛЬ, а не «минус бесконечность». Отрицательное значение
+// в колонке «Поступление» - это не мелкая сумма, а УХОД по перемещению между своими счетами (учётная схема:
+// перемещение пишется парой в колонке поступлений, уход со счёта - отрицательным поступлением).
+// Без этого «до 2» отдавало 2 642 строки вместо 28: все уходы перемещений «меньше двух рублей».
+// Достать их намеренно по-прежнему можно - нижняя граница задаётся явно отрицательной («от -10000 до -100»).
+// У Списания сравнивается МОДУЛЬ, отрицательных значений не бывает - правило про низ там холостое.
+function _regAmtFail(col,raw,lo,hi,xlo,xhi){let v=parseNum(raw)||0;if(col===COL.OUTCOME)v=Math.abs(v);else if(lo==null){lo=0;xlo=false;}return _regNumFail(v,lo,hi,xlo,xhi);}
+function _regRangeHit(r,tk){const cols=tk.col===REG_SUM?[COL.INCOME,COL.OUTCOME]:[tk.col];for(let k=0;k<cols.length;k++)if(!_regAmtFail(cols[k],r[cols[k]],tk.lo,tk.hi,tk.xlo,tk.xhi))return true;return false;}
+const _regFmtN=n=>n.toLocaleString('ru-RU',{maximumFractionDigits:2});
+function _regAmtName(col){return col===REG_SUM?'сумма':(col===COL.INCOME?'поступление':'списание (по модулю)');}
+function _regMkRange(col,lo,hi,xlo,xhi,val){
+  const nm=_regAmtName(col);
+  const desc=lo!=null&&hi!=null?nm+' от '+_regFmtN(lo)+' до '+_regFmtN(hi):(lo!=null?nm+' больше '+_regFmtN(lo):nm+' меньше '+_regFmtN(hi));
+  return{col:col,range:true,lo:lo,hi:hi,xlo:!!xlo,xhi:!!xhi,val:val,desc:desc};
+}
+// Значение после «поле:» - диапазон? «>N», «<N», «N-M» (у N-M без знака: минус внутри спутался бы с разделителем)
+function _regRangeTok(col,v){
+  v=String(v).replace(/,/g,'.');let m;
+  if((m=/^>(-?\d+(?:\.\d+)?)$/.exec(v)))return _regMkRange(col,+m[1],null,true,false,v);
+  if((m=/^<(-?\d+(?:\.\d+)?)$/.exec(v)))return _regMkRange(col,null,+m[1],false,true,v);
+  if((m=/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$/.exec(v)))return _regMkRange(col,+m[1],+m[2],false,false,v);
+  return null;
+}
+// РАЗБОР ЗАПРОСА. Возвращает {q, tokens, note}: q - нормализованный запрос (то, что реально искали),
+// tokens - условия отбора, note - хвост счётчика «найдено N» (служебные слова, продвинутые короткие,
+// диапазоны, понятые месяцы). Формы токена: {col,empty} · {col?,val,tn,word?,hlOnly?,stop?,promoted?} ·
+// {val,dk,src?} (дата) · {col,range,lo,hi,xlo,xhi,val,desc} (диапазон) · {col:REG_SUM,val,tn,word} («сумма:N»).
+function _regParseQuery(q){
+  q=_regNormQuery(String(q||'').trim().toLowerCase()); // «15 000,00» → «15000»: в блобе лежит сырое значение из Sheets
+  const words=q?q.split(/\s+/).filter(Boolean):[],tokens=[],notes=[];
+  for(let i=0;i<words.length;i++){const t=words[i];
+    // «от N до M» без поля - склейка ДО стоп-слов
+    if(t==='от'&&i+3<words.length&&words[i+2]==='до'&&REG_RE_NUM.test(words[i+1])&&REG_RE_NUM.test(words[i+3])){
+      const tk=_regMkRange(REG_SUM,+words[i+1],+words[i+3],false,false,words.slice(i,i+4).join(' '));tokens.push(tk);notes.push(tk.desc);i+=3;continue;}
+    // «<месяц> <гггг>» - дата-токен мм.гггг
+    const mi=_regMonthIdx(t);
+    if(mi>=0&&i+1<words.length&&/^(?:19|20)\d{2}$/.test(words[i+1])){
+      const val=String(mi+1).padStart(2,'0')+'.'+words[i+1],src=t+' '+words[i+1];
+      tokens.push({val:val,dk:'my',src:src});notes.push('«'+src+'» понято как '+val);i++;continue;}
+    // «поле:значение»
+    const ci=t.indexOf(':');
+    if(ci>0){const k=t.slice(0,ci);
+      if(REG_ALIAS[k]!=null){const col=REG_ALIAS[k],v=t.slice(ci+1);
+        if(v==='')continue; // «поле:» без значения - токен отбрасывается, как и раньше
+        if(REG_EMPTY.has(v)){tokens.push({col:col,empty:true});continue;}
+        if(col===REG_SUM||col===COL.INCOME||col===COL.OUTCOME){const rt=_regRangeTok(col,v);if(rt){tokens.push(rt);notes.push(rt.desc);continue;}}
+        if(col===REG_SUM){tokens.push({col:col,val:v,tn:_regTokNorm(v),word:true});continue;}
+        tokens.push(_regFreeTok(_regDateTok({col:col,val:v})));continue;}}
+    tokens.push(_regFreeTok(_regDateTok({val:t})));
+  }
+  _regPromoteShort(tokens); // весь запрос из коротких чисел - ищем их как отдельные слова, а не отдаём всю базу
+  // Короткие числа и служебные слова в отборе не участвуют - говорим об этом прямо, иначе человек считает,
+  // что уточнил запрос, а список не сузился и объяснения нет.
+  const _uniqNames=a=>{const o=[];a.forEach(tk=>{const v='«'+tk.val+'»';if(o.indexOf(v)<0)o.push(v);});return o;}; // «и» в запросе дважды - в примечании один раз
+  const hlSkip=tokens.filter(tk=>tk.hlOnly),hlNames=_uniqNames(hlSkip);
+  const stopN=hlSkip.filter(tk=>tk.stop).length; // причина у служебного слова и у короткого числа разная - счётчик обязан их различать
+  const skipWhy=stopN&&stopN<hlSkip.length?' - служебные слова и короткие числа'
+    :(stopN?(hlNames.length>1?' - служебные слова':' - служебное слово'):' - слишком коротко'); // число согласуем по ИМЕНАМ, а не по токенам: «и» дважды - это одно имя
+  const wordToks=_uniqNames(tokens.filter(tk=>tk.promoted)); // ⚠ по promoted, а НЕ по word: word стоит у любого числового токена, и примечание вылезало бы на каждый поиск суммы
+  const all=[];
+  if(hlNames.length)all.push(hlNames.join(', ')+' в поиске не участву'+(hlNames.length>1?'ют':'ет')+skipWhy);
+  else if(wordToks.length)all.push(wordToks.join(', ')+(wordToks.length>1?' искались как отдельные слова':' искалось как отдельное слово'));
+  notes.forEach(n=>all.push(n));
+  return{q:q,tokens:tokens,note:all.length?(' · '+all.join(' · ')):''};
+}
+// ОТБОР ПО ТОКЕНАМ - чистая функция от строки, её блоба и разобранного запроса; фильтры панели
+// (даты, мультивыборы, диапазоны полей) остаются в registryRender. Один потребитель в бою и тесты.
+function _regRowPass(r,blob,tokens){
+  for(let t=0;t<tokens.length;t++){const tk=tokens[t];
+    if(tk.empty){
+      if(tk.col===REG_SUM){if((parseNum(r[COL.INCOME])||0)||(parseNum(r[COL.OUTCOME])||0))return false;}
+      else if(String(r[tk.col]==null?'':r[tk.col]).trim()!=='')return false;}
+    else if(tk.hlOnly)continue; // короткое число / служебное слово: в отборе не участвует, только подсвечивается
+    else if(tk.range){if(!_regRangeHit(r,tk))return false;}
+    else if(tk.col===REG_SUM){const vi=parseNum(r[COL.INCOME])||0,vo=parseNum(r[COL.OUTCOME])||0;
+      if(!((vi&&_regHasWord(_regNorm(vi),tk.tn,true))||(vo&&_regHasWord(_regNorm(vo),tk.tn,true))))return false;}
+    else if(tk.dk){if(!_regDateHitAny(r,tk))return false;} // запрос-дата: сверяем с дд.мм.гггг, а не ищем подстроку
+    else if(tk.col!=null){const F=REG_FIELD_BY_COL[tk.col];const fv=_regNorm(F?_regFieldText(r,F):String(r[tk.col]==null?'':r[tk.col]));if(!_regHasWord(fv,tk.tn))return false;} /* через _regFieldText: «дата:» ищет по дд.мм.гггг, а не по серийному числу - как и сплошной поиск */
+    else if(!_regHasWord(blob,tk.tn,tk.word))return false;
+  }
+  return true;
+}
+// Описание одного токена словами - для строки «фильтр» в преамбуле CSV, печати и книги (_regSetMeta).
+function _regTokDesc(tk){const CN=REG_COL_NAMES;
+  if(tk.empty)return (tk.col===REG_SUM?'Сумма':CN[tk.col])+' пусто';
+  if(tk.range)return tk.desc;
+  if(tk.col===REG_SUM)return 'Сумма (поступление или списание по модулю) равна "'+tk.val+'"';
+  if(tk.hlOnly)return '"'+tk.val+'" не участвует в отборе';
+  if(tk.col!=null)return CN[tk.col]+' содержит "'+tk.val+'"';
+  return 'любое поле содержит "'+tk.val+'"'+(tk.src?' («'+tk.src+'»)':'');
+}
+// Регулярка подсветки - ОДНА на все термины (правила те же, что у отбора: с начала слова; у слова-токена
+// граница и справа); «е»/«ё» термина - класс [её], чтобы «семенов» красил «Семёнов» и наоборот.
+// Граница захватывается первой группой и возвращается на место ($1), чтобы не съесть символ.
+function _regHlRe(term,word){return new RegExp('(^|[^\\p{L}\\p{N}])('+String(term).replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/[её]/g,'[её]')+')'+(word?'(?![\\p{L}\\p{N}])':''),'giu');}
+// ── ТЕСТЫ ПОИСКА РЕЕСТРА: подставной набор, с любой вкладки, RAW и DOM не нужны ──────────
+// Держат: ё в обе стороны (отбор, вырез, подсветка); «сумма:N» = поступление:N ∪ списание:N по модулю
+// без префиксных лишних; строгость «>»/«<» и включающие границы у «N-M» и «от N до M»; ноль не входит;
+// «сентябрь 2026» ≡ «сен 2026» ≡ «09.2026», «сентябрь» без года - слово, «Сенин 2026» не склеивается;
+// примечания счётчика; прежние запросы («тойота рав 4», «15 000,00», «08.2025», «id:1822», «и»);
+// структуру: один разбор, один отбор, одно сравнение на панель и строку.
+function regRunTests(){
+  const {R,ok}=_pfTestBed();
+  const mk=o=>{const r=new Array(15).fill('');r[COL.DATE_DDS]=o.d||'';r[COL.DATE_OPIU]=o.d||'';r[COL.TYPE]=o.t||(o.inc?'Поступление':'Списание');r[COL.OFFER_ID]=o.id||'';
+    r[COL.INCOME]=o.inc||0;r[COL.OUTCOME]=o.out||0;r[COL.ACCOUNT]=o.acc||'ИП - р/с';r[COL.ARTICLE_CODE]=o.ac||'';r[COL.ARTICLE_NAME]=o.sub||'';
+    r[COL.SECOND_SIDE]=o.side||'';r[COL.PURPOSE]=o.p||'';r[COL.ACTIVITY_DIR]=o.dir||'БФЛ';return r;};
+  const rows=[
+    mk({d:'15.09.2026',inc:15000,side:'Семёнов Иван',p:'оплата по договору'}),            // 0
+    mk({d:'01.08.2025',out:-15000,side:'Семенов Пётр'}),                                   // 1
+    mk({d:'05.09.2026',inc:150000,side:'ООО Ромашка'}),                                    // 2
+    mk({d:'10.10.2026',out:-1500000,side:'ООО Ромашка'}),                                  // 3
+    mk({d:'01.09.2026',inc:10000,side:'Сенин Олег'}),                                      // 4  нижняя граница
+    mk({d:'20.09.2026',out:-50000,p:'сентябрь аренда'}),                                   // 5  верхняя граница
+    mk({d:'01.03.2026',inc:50000.5}),                                                      // 6  чуть выше
+    mk({d:'02.03.2026',out:-9999.99}),                                                     // 7  чуть ниже
+    mk({d:'03.03.2026',p:'заёмные средства',t:'Списание'}),                                // 8  обе суммы нулевые
+    mk({d:'15.09.2026',inc:15000.5}),                                                      // 9  копейки
+    mk({d:'04.04.2026',out:-20000,p:'заемные средства возврат',id:'1822'}),                // 10
+    mk({d:'05.04.2026',inc:20000,id:'18224'}),                                             // 11
+    mk({d:'12.09.2026',inc:100,side:'Тойота Рав 4'}),                                      // 12
+    mk({d:'01.09.2026',inc:-70000,t:'Перемещение'}),                                       // 13 уход по перемещению
+    mk({d:'01.09.2026',inc:70000,t:'Перемещение'})                                         // 14
+  ];
+  const blobs=rows.map(_regBlobOf);
+  const find=q=>{const P=_regParseQuery(q);const o=[];rows.forEach((r,i)=>{if(_regRowPass(r,blobs[i],P.tokens))o.push(i);});return o;};
+  const S=a=>a.join(','),nb=t=>String(t).replace(/\u00a0/g,' ');
+  const union=(a,b)=>{const o=a.slice();b.forEach(x=>{if(o.indexOf(x)<0)o.push(x);});return o.sort((x,y)=>x-y);};
+  // ё
+  ok('ё · «семенов» и «семёнов» находят оба написания',S(find('семенов'))==='0,1'&&S(find('семёнов'))==='0,1',S(find('семенов'))+' | '+S(find('семёнов')));
+  ok('ё · «заемные» и «заёмные» - тот же набор',S(find('заемные'))==='8,10'&&S(find('заёмные'))==='8,10',S(find('заемные'))+' | '+S(find('заёмные')));
+  ok('ё · подсветка: «семенов» красит «Семёнов», «семёнов» - «Семенов»',_regHlRe('семенов',false).test('Семёнов Иван')&&_regHlRe('семёнов',false).test('Семенов Пётр'));
+  const snip=_regWhySnip('x'.repeat(30)+' Семёнов Иван '+'y'.repeat(30),['семенов'],false);
+  ok('ё · вырез «Совпало» находит «Семёнов» по токену «семенов»',snip.indexOf('Семёнов')>=0,snip);
+  // сумма:N
+  const sum=find('сумма:15000'),un=union(find('поступление:15000'),find('списание:15000'));
+  ok('сумма:15000 · поступление 15 000, списание -15 000 и копейки 15 000,50',S(sum)==='0,1,9',S(sum));
+  ok('сумма:15000 · = поступление:15000 ∪ списание:15000 без префиксных лишних (150 000, 1 500 000)',S(un.filter(i=>i!==2&&i!==3))===S(sum)&&S(un)==='0,1,2,3,9',S(un));
+  ok('списание:15000 · префикс НЕ тронут: находит и 1 500 000',S(find('списание:15000'))==='1,3',S(find('списание:15000')));
+  ok('сумма:0 · ноль - не операция, ничего не находит',S(find('сумма:0'))==='',S(find('сумма:0')));
+  ok('сумма:пусто · строка без обеих сумм',S(find('сумма:пусто'))==='8',S(find('сумма:пусто')));
+  // диапазоны
+  ok('сумма:>10000 · строго больше: 10 000 не входит, уход по перемещению не входит',S(find('сумма:>10000'))==='0,1,2,3,5,6,9,10,11,14',S(find('сумма:>10000')));
+  ok('сумма:<10000 · строго меньше: 10 000 и ноль не входят, отрицательное поступление не входит',S(find('сумма:<10000'))==='7,12',S(find('сумма:<10000')));
+  ok('сумма:10000-50000 · границы входят, 50 000,50 и 9 999,99 - нет',S(find('сумма:10000-50000'))==='0,1,4,5,9,10,11',S(find('сумма:10000-50000')));
+  ok('«от 10000 до 50000» · тот же набор, что сумма:10000-50000',S(find('от 10000 до 50000'))===S(find('сумма:10000-50000')),S(find('от 10000 до 50000')));
+  ok('«от 10 000 до 50 000» · разряды с пробелами склеиваются',S(find('от 10 000 до 50 000'))===S(find('сумма:10000-50000')),S(find('от 10 000 до 50 000')));
+  {const P=_regParseQuery('от 10000 до 50000');ok('«от N до M» · один токен-диапазон, стоп-слов «от»/«до» в разборе нет',P.tokens.length===1&&P.tokens[0].range&&!P.tokens.some(t=>t.stop),JSON.stringify(P.tokens));}
+  ok('«от 10000 до 50000 семенов» · диапазон И слово',S(find('от 10000 до 50000 семенов'))==='0,1',S(find('от 10000 до 50000 семенов')));
+  ok('поступление:>10000 · только колонка Поступление, строго',S(find('поступление:>10000'))==='0,2,6,9,11,14',S(find('поступление:>10000')));
+  ok('списание:10000-50000 · модуль списания, границы входят',S(find('списание:10000-50000'))==='1,5,10',S(find('списание:10000-50000')));
+  ok('REG_STOP · «от» и «до» остаются служебными словами вне диапазона',REG_STOP.has('от')&&REG_STOP.has('до'));
+  // панель и строка - одно сравнение
+  ok('_regAmtFail · Поступление: незаданный низ = 0, отрицательное не проходит; ноль не проходит',_regAmtFail(COL.INCOME,-70000,null,2)===true&&_regAmtFail(COL.INCOME,1,null,2)===false&&_regAmtFail(COL.INCOME,0,null,2)===true);
+  ok('_regAmtFail · Списание по модулю, границы включающие',_regAmtFail(COL.OUTCOME,-5,1,10)===false&&_regAmtFail(COL.OUTCOME,-10,1,10)===false&&_regAmtFail(COL.OUTCOME,-11,1,10)===true);
+  ok('_regNumFail · строгость: xlo/xhi исключают границу',_regNumFail(10,10,null,true)===true&&_regNumFail(10,10,null,false)===false&&_regNumFail(10,null,10,false,true)===true);
+  // месяцы
+  const m09=S(find('09.2026'));
+  ok('«09.2026» · восемь строк сентября',m09==='0,2,4,5,9,12,13,14',m09);
+  ok('«сентябрь 2026» ≡ «сен 2026» ≡ «сентября 2026» ≡ «09.2026»',S(find('сентябрь 2026'))===m09&&S(find('сен 2026'))===m09&&S(find('сентября 2026'))===m09,S(find('сентябрь 2026'))+' | '+S(find('сен 2026')));
+  ok('«сентябрь» без года - обычное слово (назначение «сентябрь аренда»)',S(find('сентябрь'))==='5',S(find('сентябрь')));
+  {const P=_regParseQuery('сенин 2026');ok('«Сенин 2026» · не склеивается: два слова, даты нет, примечания нет',P.tokens.length===2&&!P.tokens.some(t=>t.dk)&&P.note.indexOf('понято')<0,JSON.stringify(P.tokens)+P.note);}
+  {const P=_regParseQuery('марина 2026');ok('«Марина 2026» · «мар» только целиком - не склеивается',P.tokens.length===2&&!P.tokens.some(t=>t.dk),JSON.stringify(P.tokens));}
+  ok('«мая 2026», «июнь 2025», «дек 2024» · склеиваются в мм.гггг',_regParseQuery('мая 2026').tokens[0].val==='05.2026'&&_regParseQuery('июнь 2025').tokens[0].val==='06.2025'&&_regParseQuery('дек 2024').tokens[0].val==='12.2024');
+  // примечания счётчика
+  ok('примечание · «сентябрь 2026» понято как 09.2026',_regParseQuery('сентябрь 2026').note===' · «сентябрь 2026» понято как 09.2026',_regParseQuery('сентябрь 2026').note);
+  ok('примечание · сумма больше 10 000',nb(_regParseQuery('сумма:>10000').note)===' · сумма больше 10 000',nb(_regParseQuery('сумма:>10000').note));
+  ok('примечание · сумма от 10 000 до 50 000 (и у «от N до M», и у N-M)',nb(_regParseQuery('от 10000 до 50000').note)===' · сумма от 10 000 до 50 000'&&nb(_regParseQuery('сумма:10000-50000').note)===' · сумма от 10 000 до 50 000',nb(_regParseQuery('от 10000 до 50000').note));
+  ok('примечание · списание:<5000 называет модуль',nb(_regParseQuery('списание:<5000').note)===' · списание (по модулю) меньше 5 000',nb(_regParseQuery('списание:<5000').note));
+  ok('примечание · прежнее: «и» - служебное слово',_regParseQuery('семенов и').note===' · «и» в поиске не участвует - служебное слово',_regParseQuery('семенов и').note);
+  ok('примечание · прежнее: «и» одно - искалось как отдельное слово',_regParseQuery('и').note===' · «и» искалось как отдельное слово',_regParseQuery('и').note);
+  // прежние запросы - поведение не изменилось
+  ok('«тойота рав 4» · одна строка',S(find('тойота рав 4'))==='12',S(find('тойота рав 4')));
+  ok('«15 000,00» · целым словом: 15 000 и 15 000,50, без 150 000',S(find('15 000,00'))==='0,1,9',S(find('15 000,00')));
+  ok('«08.2025» · месяц по дате',S(find('08.2025'))==='1',S(find('08.2025')));
+  ok('«id:1822» · префиксом: 1822 и 18224; голое «1822» - только целиком',S(find('id:1822'))==='10,11'&&S(find('1822'))==='10',S(find('id:1822'))+' | '+S(find('1822')));
+  ok('«и» · продвинуто до слова, в наборе такого слова нет',S(find('и'))==='',S(find('и')));
+  ok('«поступление:пусто» · прежний маркер пустого поля через REG_EMPTY',S(find('тип:пусто'))===''&&S(find('id:пусто')).split(',').length===13,S(find('id:пусто')));
+  // описание набора (_regSetMeta → _regTokDesc)
+  ok('_regTokDesc · сумма, диапазон, месяц, поле, свободное слово',_regTokDesc(_regParseQuery('сумма:15000').tokens[0]).indexOf('Сумма')===0&&nb(_regTokDesc(_regParseQuery('сумма:>10000').tokens[0]))==='сумма больше 10 000'&&_regTokDesc(_regParseQuery('сентябрь 2026').tokens[0])==='любое поле содержит "09.2026" («сентябрь 2026»)'&&_regTokDesc(_regParseQuery('счёт:касса').tokens[0])==='Реквизиты счёта содержит "касса"'&&_regTokDesc(_regParseQuery('сбер').tokens[0])==='любое поле содержит "сбер"');
+  // структура: один разбор, один отбор, одно сравнение
+  const rr=String(registryRender),sm=String(_regSetMeta);
+  ok('registryRender · зовёт _regParseQuery и _regRowPass, своих карт и numFail не держит',rr.indexOf('_regParseQuery(')>=0&&rr.indexOf('_regRowPass(')>=0&&rr.indexOf('_regAmtFail(')>=0&&rr.indexOf('const ALIAS=')<0&&rr.indexOf('const EMPTY=')<0&&rr.indexOf('const numFail=')<0);
+  ok('_regSetMeta · описывает набор через _regParseQuery/_regTokDesc, своей копии разбора нет',sm.indexOf('_regParseQuery(')>=0&&sm.indexOf('_regTokDesc')>=0&&sm.indexOf('const AL=')<0&&sm.indexOf('const EMP=')<0);
+  ok('подсветка · regex строит _regHlRe (е/ё одним классом), термины собирает hlAdd для каждого токена отбора',rr.indexOf('_regHlRe(')>=0&&String(_regHlRe).indexOf('[её]')>=0&&/tk\.range\)return;hlAdd\(tk\.val,tk\.word\);/.test(rr)); // ⚠ хвост строки за комментарием // уже съедался правкой: сборка терминов молча пустела, подсветки не было
+  const bad=R.filter(r=>!r.pass);
+  console.log('[Реестр] regRunTests (подставной набор, с любой вкладки): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
+  bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
+  return{total:R.length,failed:bad.length,tests:R};
+}
+
 // Кэш «поисковых блобов» (по строке на запись), строится один раз на загрузку данных
+function _regBlobOf(r){let s='';for(let k=0;k<REG_SEARCH_FIELDS.length;k++)s+=' '+_regFieldText(r,REG_SEARCH_FIELDS[k]);return _regNorm(s);} // _regNorm: знаки препинания → пробелы, чтобы поиск шёл по началу слова
 function _buildRegBlobs(){
   if(window._regBlobs&&window._regBlobs._n===RAW.length)return window._regBlobs;
-  const blobs=RAW.map(r=>{let s='';for(let k=0;k<REG_SEARCH_FIELDS.length;k++)s+=' '+_regFieldText(r,REG_SEARCH_FIELDS[k]);return _regNorm(s);}); // _regNorm: знаки препинания → пробелы, чтобы поиск шёл по началу слова
+  const blobs=RAW.map(_regBlobOf);
   blobs._n=RAW.length;window._regBlobs=blobs;return blobs;
 }
 // В каких колонках сработал запрос - для объяснения «где совпало». Читает ТУ ЖЕ REG_SEARCH_FIELDS,
@@ -8835,7 +9071,7 @@ function _regWhy(r,toks){
 // Кусок значения вокруг совпадения - чтобы в подсказке было видно не только ГДЕ, но и ЧТО совпало
 // (в длинном назначении платежа само название колонки на вопрос не отвечает).
 function _regWhySnip(text,toks,word){
-  const s=String(text==null?'':text),low=s.toLowerCase();let p=-1,L=0;
+  const s=String(text==null?'':text),low=_regFoldYo(s.toLowerCase());let p=-1,L=0; // ё свёрнута, как в токене; длина прежняя - индексы выреза верны
   for(let i=0;i<toks.length;i++){
     let k;
     if(word){const m=new RegExp('(^|[^\\p{L}\\p{N}])('+toks[i].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')(?![\\p{L}\\p{N}])','u').exec(low);k=m?m.index+m[1].length:-1;} // слово-токен: вырез вокруг ТОГО совпадения, которое дало отбор, а не вокруг первой подстроки
@@ -9063,7 +9299,8 @@ function renderRegistry(f){
   // Прицельный синтаксис «поле:значение» существовал, но о нём никто не знал - выносим в подсказку у поля.
   // Многострочный список → единый компонент (_tipAttr), а не нативный title.
   const qHint=_tipAttr([
-    ['08.01.2026','день'],['08.2025','весь месяц'],['2025','год и всё, где есть эти цифры']
+    ['08.01.2026','день'],['08.2025','весь месяц'],['сентябрь 2026','то же, что 09.2026'],['2025','год и всё, где есть эти цифры'],
+    ['сумма:15000','ровно столько: поступление или списание'],['сумма:>10000','больше (строго); сумма:<N - меньше'],['от 10000 до 50000','в границах, они входят']
   ],null,'Как искать',
     [['поле:пусто','незаполненные ячейки'],['несколько слов','все условия сразу']],
     [['тип:списание','Тип'],['id:12345','ID Offer'],['счёт:касса','Реквизиты счёта'],
@@ -9228,11 +9465,9 @@ function _regSetMeta(){
   let sumOutRaw=0,sumInRaw=0;
   rows.forEach(r=>{sumOutRaw+=parseNum(r[COL.OUTCOME])||0; sumInRaw+=parseNum(r[COL.INCOME])||0;});
   // фильтр - человекочитаемо из фактического запроса поиска
-  const AL={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
   const CN=REG_COL_NAMES; // одна карта имён на чипы и на описание фильтра
-  const EMP=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
-  const q=_regNormQuery((_tabFilters.registry&&_tabFilters.registry.q||'').trim()); // описываем то, что реально искали, а не то, что набрали
-  const parts=(q?q.split(/\s+/):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci).toLowerCase();if(AL[k]!=null){const v=t.slice(ci+1);return EMP.has(v.toLowerCase())?(CN[AL[k]]+' пусто'):(CN[AL[k]]+' содержит "'+v+'"');}}return 'любое поле содержит "'+t+'"';});
+  const P=_regParseQuery((_tabFilters.registry&&_tabFilters.registry.q)||''); // ТОТ ЖЕ разбор, что у отбора: описываем то, что реально искали, а не то, что набрали
+  const parts=P.tokens.map(_regTokDesc);
   // мультивыбор-фильтры полей
   const selF=(_tabFilters.registry&&_tabFilters.registry.sel)||{};
   Object.keys(selF).forEach(c=>{const arr=selF[c]||[];if(!arr.length)return;const vals=arr.map(v=>v===''?'(пусто)':v).join(', ');parts.push((CN[+c]||('поле '+c))+' ∈ ['+vals+']');});
@@ -9518,15 +9753,8 @@ window.registryPrint=function(){
 };
 function registryRender(q){
   const scroll=document.getElementById('regScroll'); if(!scroll)return;
-  q=_regNormQuery(String(q||'').trim().toLowerCase()); // «15 000,00» → «15000»: в блобе лежит сырое значение из Sheets
+  const P=_regParseQuery(q); q=P.q; const tokens=P.tokens; // разбор ОДИН на отбор, описание набора и тесты (_regParseQuery)
   const srt=(_tabFilters.registry&&_tabFilters.registry.sort)||null; // объявляем ДО сборки набора: _regSortIdx зовётся раньше шапки
-  // Прицельный поиск по полю: «поле:значение». Алиасы полей → индекс COL.
-  const ALIAS={'ддс':0,'дата':0,'опиу':1,'тип':2,'id':3,'оффер':3,'offer':3,'офер':3,'поступление':4,'приход':4,'доход':4,'списание':5,'расход':5,'фнс':6,'счет':7,'счёт':7,'реквизит':7,'реквизиты':7,'статья':8,'подстатья':9,'аналитика':10,'контрагент':11,'кто':11,'назначение':12,'назн':12,'направление':13,'напр':13,'финоп':14,'операция':14,'фин':14};
-  const dstr=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
-  // Маркеры «пустое поле»: поле:пусто / поле:- → ищем записи, где это поле НЕ заполнено
-  const EMPTY=new Set(['пусто','пустое','пусты','пустые','пуст','нет','empty','-','—','–']);
-  const tokens=(q?q.split(/\s+/).filter(Boolean):[]).map(t=>{const ci=t.indexOf(':');if(ci>0){const k=t.slice(0,ci);if(ALIAS[k]!=null){const v=t.slice(ci+1);if(EMPTY.has(v))return{col:ALIAS[k],empty:true};return _regFreeTok(_regDateTok({col:ALIAS[k],val:v}));}}return _regFreeTok(_regDateTok({val:t}));}).filter(tk=>tk.empty||tk.val!=='');
-  _regPromoteShort(tokens); // весь запрос из коротких чисел - ищем их как отдельные слова, а не отдаём всю базу
   // мультивыбор по полям: sel[col]=массив значений ('' = пусто); в одном поле - ИЛИ, между полями - И
   const sel=(_tabFilters.registry&&_tabFilters.registry.sel)||{};
   const selSets=[];Object.keys(sel).forEach(c=>{const a=sel[c];if(a&&a.length)selSets.push({col:+c,set:new Set(a)});});
@@ -9543,48 +9771,22 @@ function registryRender(q){
   const _rn=v=>{const n=parseFloat(String(v==null?'':v).replace(/\s/g,'').replace(',','.'));return isNaN(n)?null:n;};
   const rInc=(_tabFilters.registry&&_tabFilters.registry.inc)||{},rOut=(_tabFilters.registry&&_tabFilters.registry.out)||{};
   const incFrom=_rn(rInc.from),incTo=_rn(rInc.to),outFrom=_rn(rOut.from),outTo=_rn(rOut.to);
-  // ⚠ Незаданная нижняя граница = НОЛЬ, а не «минус бесконечность». Отрицательное значение в колонке
-  // «Поступление» - это не мелкая сумма, а УХОД по перемещению между своими счетами (учётная схема:
-  // перемещение пишется парой в колонке поступлений, уход со счёта - отрицательным поступлением).
-  // Без этого «до 2» отдавало 2 642 строки вместо 28: все уходы перемещений «меньше двух рублей».
-  // Достать их намеренно по-прежнему можно - нижняя граница задаётся явно отрицательной («от -10000 до -100»).
-  // Для колонки «Списание» правило холостое: там сравнивается модуль, отрицательных значений не бывает.
-  const incLo=incFrom!=null?incFrom:0,outLo=outFrom!=null?outFrom:0;
-  // ⚠ Ноль в колонке сумм означает «операции этого вида не было», а не сумму 0: у КАЖДОГО списания
-  // Поступление=0, у каждого поступления - Списание=0. Пока диапазон по колонке задан, такие строки
-  // отбрасываются ВСЕГДА, независимо от границ - иначе «от 0 до 2» по поступлению возвращало
-  // 29 268 строк (все списания попадали в границы) вместо 28 настоящих мелких поступлений.
-  // Сами границы остаются включающими (>= и <=) для всех ненулевых значений.
-  const numFail=(v,lo,hi)=>{if(!v)return true;if(lo!=null&&v<lo)return true;if(hi!=null&&v>hi)return true;return false;};
+// сравнение и конвенции колонок (ноль = «операции нет», низ Поступления = 0, модуль у Списания) - _regAmtFail, общий со строкой поиска
   const blobs=_buildRegBlobs();
   const idx=[];
   for(let i=0;i<RAW.length;i++){
     let ok=true;
     if(dateFail(RAW[i],COL.DATE_DDS,dfDDS)||dateFail(RAW[i],COL.DATE_OPIU,dfOP))ok=false;
-    if(ok&&(incFrom!=null||incTo!=null)&&numFail(parseNum(RAW[i][COL.INCOME])||0,incLo,incTo))ok=false;
-    if(ok&&(outFrom!=null||outTo!=null)&&numFail(Math.abs(parseNum(RAW[i][COL.OUTCOME])||0),outLo,outTo))ok=false;
+    if(ok&&(incFrom!=null||incTo!=null)&&_regAmtFail(COL.INCOME,RAW[i][COL.INCOME],incFrom,incTo))ok=false;
+    if(ok&&(outFrom!=null||outTo!=null)&&_regAmtFail(COL.OUTCOME,RAW[i][COL.OUTCOME],outFrom,outTo))ok=false;
     if(ok)for(let s=0;s<selSets.length;s++){const sc=selSets[s];const v=String(RAW[i][sc.col]==null?'':RAW[i][sc.col]).trim();if(!sc.set.has(v)){ok=false;break;}}
-    if(ok)for(let t=0;t<tokens.length;t++){const tk=tokens[t];
-      if(tk.empty){if(String(RAW[i][tk.col]==null?'':RAW[i][tk.col]).trim()!==''){ok=false;break;}}
-      else if(tk.hlOnly){continue;} // короткое число: в отборе не участвует, только подсвечивается
-      else if(tk.dk){if(!_regDateHitAny(RAW[i],tk)){ok=false;break;}} // запрос-дата: сверяем с дд.мм.гггг, а не ищем подстроку
-      else if(tk.col!=null){const F=REG_FIELD_BY_COL[tk.col];const fv=_regNorm(F?_regFieldText(RAW[i],F):String(RAW[i][tk.col]==null?'':RAW[i][tk.col]));if(!_regHasWord(fv,tk.tn)){ok=false;break;}} /* через _regFieldText: «дата:» ищет по дд.мм.гггг, а не по серийному числу - как и сплошной поиск */
-      else if(!_regHasWord(blobs[i],tk.tn,tk.word)){ok=false;break;} }
+    if(ok&&!_regRowPass(RAW[i],blobs[i],tokens))ok=false; // отбор по токенам - чистая функция, та же, что в regRunTests
     if(ok)idx.push(i);
   }
   window._regRows=_regSortIdx(idx,srt).map(i=>RAW[i]); // сортировка поверх фильтра, до обрезки в 500
   const total=idx.length, limit=window._regLimit||500, show=Math.min(limit,total);
   const anyFilter=tokens.length||selSets.length||(dfDDS.years&&dfDDS.years.length)||(dfDDS.months&&dfDDS.months.length)||dfDDS.from||dfDDS.to||(dfOP.years&&dfOP.years.length)||(dfOP.months&&dfOP.months.length)||dfOP.from||dfOP.to||incFrom!=null||incTo!=null||outFrom!=null||outTo!=null;
-  // Короткие числа в отборе не участвуют - говорим об этом прямо, иначе человек считает,
-  // что уточнил запрос, а список не сузился и объяснения нет.
-  const _uniqNames=a=>{const o=[];a.forEach(tk=>{const v='«'+tk.val+'»';if(o.indexOf(v)<0)o.push(v);});return o;}; // «и» в запросе дважды - в примечании один раз
-  const hlSkip=tokens.filter(tk=>tk.hlOnly),hlNames=_uniqNames(hlSkip);
-  const stopN=hlSkip.filter(tk=>tk.stop).length; // причина у служебного слова и у короткого числа разная - счётчик обязан их различать
-  const skipWhy=stopN&&stopN<hlSkip.length?' - служебные слова и короткие числа'
-    :(stopN?(hlNames.length>1?' - служебные слова':' - служебное слово'):' - слишком коротко'); // число согласуем по ИМЕНАМ, а не по токенам: «и» дважды - это одно имя
-  const wordToks=_uniqNames(tokens.filter(tk=>tk.promoted)); // ⚠ по promoted, а НЕ по word: word стоит у любого числового токена, и примечание вылезало бы на каждый поиск суммы
-  const cntNote=hlNames.length?(' · '+hlNames.join(', ')+' в поиске не участву'+(hlNames.length>1?'ют':'ет')+skipWhy)
-    :(wordToks.length?(' · '+wordToks.join(', ')+(wordToks.length>1?' искались как отдельные слова':' искалось как отдельное слово')):'');
+  const cntNote=P.note; // служебные слова, продвинутые короткие, диапазоны, понятые месяцы - из разбора
   const cnt=document.getElementById('regCount'); if(cnt)cnt.textContent=(anyFilter?('найдено '+total.toLocaleString('ru-RU')+' из '+RAW.length.toLocaleString('ru-RU')):('всего '+total.toLocaleString('ru-RU')))+cntNote;
   // ⚠ Синхронизация селекта пресетов отсюда УБРАНА 07.09.2026 вместе с полосой: контрола на вкладке
   //   больше нет, а имя активного пресета показывает заголовок отчёта (_presetTitleMark) и гасит
@@ -9620,7 +9822,7 @@ function registryRender(q){
   // структура нужна числовым вариантам («15 000,00»), а полная нормализация склеила бы их в «15000 00».
   const hlTrim=t=>String(t==null?'':t).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu,'');
   const hlAdd=(t,word)=>{const v=hlTrim(t);if(v&&!hlTerms.some(x=>x.t===v))hlTerms.push({t:v,word:!!word});}; // пустой термин дал бы регулярку, matching всё подряд
-  tokens.forEach(tk=>{if(!tk.val||tk.hlOnly)return;hlAdd(tk.val,tk.word);
+  tokens.forEach(tk=>{if(!tk.val||tk.hlOnly||tk.range)return;hlAdd(tk.val,tk.word); // диапазон не подсвечивается: строку отобрало сравнение, а не слово
     if(tk.dk)return; // «10.2025» - это октябрь, а не число 10,2025: варианты дали бы подсветку «10,20» на суммах
     if(!/^-?\d+(\.\d+)?$/.test(tk.val))return;
     const n=parseFloat(tk.val);if(!isFinite(n)||String(n)!==tk.val)return;
@@ -9633,7 +9835,7 @@ function registryRender(q){
   // Граница захватывается первой группой и возвращается на место ($1), чтобы не съесть символ.
   // ⚠ У продвинутого короткого токена граница нужна и СПРАВА - тем же правилом, что в отборе:
   // иначе он подсветил бы четвёрку внутри «45408», по которой строка не отбиралась.
-  const hlRes=hlTerms.map(x=>new RegExp('(^|[^\\p{L}\\p{N}])('+x.t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')'+(x.word?'(?![\\p{L}\\p{N}])':''),'giu')); // RegExp один раз на рендер, а не на каждую из ~7500 ячеек
+  const hlRes=hlTerms.map(x=>_regHlRe(x.t,x.word)); // RegExp один раз на рендер, а не на каждую из ~7500 ячеек; е/ё - одним классом
   const hl=s=>{let o=esc(s);hlRes.forEach(re=>{o=o.replace(re,'$1<mark style="background:#fde68a;color:#23272f;padding:0 1px;border-radius:2px">$2</mark>');});return o;};
   const ds=v=>{const d=parseDate(v);return d?(String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear()):'';};
   const dsO=v=>{const d=parseDate(v);if(!d)return '';const M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];return M[d.getMonth()]+' '+d.getFullYear();};
