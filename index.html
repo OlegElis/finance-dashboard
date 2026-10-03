@@ -19280,6 +19280,7 @@ function pngRunTests(){
   ok('png ИТОГО секции: без отступа, жирным; перед каждым человеком и перед ИТОГО ПО БЛОКУ - линия',rI.length===3&&rI.every(r=>r.seg[0].x===0&&r.seg[0].bold)&&Lo.rows.filter(r=>r.rule).length>=5&&texts.some(t=>t==='ИТОГО ПО БЛОКУ'),rI.length+' / '+Lo.rows.filter(r=>r.rule).length);
   const last=texts[texts.length-1];
   ok('png сноски после линии: звёздочка комплексной, последняя - «! - за порогом (от 10 000 и от 10% плана)»',last==='! - за порогом (от 10 000 и от 10% плана)'&&texts.some(t=>/^\* 244 Офисная мебель БФЛ - общий факт/.test(t)));
+  ok('png кнопка: pfChatPng берёт те же параметры диалога, модель - _chatModelBuild, clipboard.write в try, откат - <a download> с именем «план-факт_{Фамилия}_{ГГГГ-ММ}.png», тосты; ничего не пишет',(()=>{const b=String(window.pfChatPng),q=String(window._chatPngParams);return /_chatPng\(_chatModelBuild\(D,Pz\.o\)\)/.test(b)&&/navigator\.clipboard\.write\(\[new ClipboardItem\(\{'image\/png':blob\}\)\]\)/.test(b)&&/a\.download=name/.test(b)&&/'план-факт_'/.test(b)&&/буфер недоступен, файл скачан/.test(b)&&/картинка в буфере/.test(b)&&!/_fbSetSafe|localStorage\.setItem/.test(b+q)&&/pfchat-brief/.test(q)&&/anyOwner:true/.test(b)&&/withSubs:Pz\.mode==='mgr'/.test(b);})());
   ok('png модель без месяцев - раскладки нет (отказ, не пустая картинка)',_chatPngLayout(Object.assign({},M,{months:[]}))===null);
   const probe=document.createElement('canvas').getContext('2d');probe.font=(P.FS*P.S)+'px '+P.FONT;const CW=probe.measureText('0').width;
   const W=Math.round(P.COLS*CW+2*P.PAD*P.S);
@@ -19342,6 +19343,7 @@ window.pfChatOpen=function(){
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px">
       <button onclick="document.getElementById('pfChatOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Закрыть</button>
       <button id="pfchat-all" onclick="pfChatCopyAll()" style="display:none;font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans)">Скопировать всё</button>
+      <button onclick="pfChatPng()" title="Картинка план-факта за последний из выбранных месяцев - в буфер обмена (при недоступности буфера - файл); те же параметры, что у текста" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans)">🖼 Картинка в буфер</button>
       <button onclick="pfChatBuild()" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Собрать</button>
     </div>
     <div id="pfchat-out" style="margin-top:12px"></div>
@@ -19387,6 +19389,35 @@ window.pfChatBuild=function(){
   const all=document.getElementById('pfchat-all');if(all)all.style.display='';
 };
 window.pfChatCopyAll=function(){cfoqCopyText('pfchat-all',(window._pfChatTexts||[]).join('\n\n'));};
+// ── «Скопировать как картинку» (03.10.2026): те же параметры, что у текста; модель та же (_chatModelBuild), рендер - _chatPng.
+//    navigator.clipboard.write в try; при отказе (Firefox, http без secure context) - файл «план-факт_{Фамилия}_{ГГГГ-ММ}.png» через
+//    <a download> и тост «буфер недоступен, файл скачан». Несколько адресатов - первый в буфер, остальные файлами. Ничего не пишется.
+window._chatToast=function(msg){let t=document.getElementById('chatToast');if(!t){t=document.createElement('div');t.id='chatToast';t.style.cssText='position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:100002;background:#1c2026;color:#fff;font:12px var(--sans);padding:8px 14px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:.96';document.body.appendChild(t);}
+  t.textContent=msg;t.style.display='';clearTimeout(window._chatToastT);window._chatToastT=setTimeout(()=>{t.style.display='none';},2600);};
+window._chatPngParams=function(){const mode=(document.querySelector('input[name="pfchat-mode"]:checked')||{}).value||'cfo';
+  const year=+(document.getElementById('pfchat-year')||{}).value||new Date().getFullYear();
+  const months=[...document.querySelectorAll('.pfchat-m:checked')].map(c=>+c.value);
+  const upToV=(document.getElementById('pfchat-upto')||{}).value,upTo=upToV?parseDate(upToV):null;
+  const who=[...document.querySelectorAll('.pfchat-who:checked')].map(c=>c.value);
+  const g=id=>{const e=document.getElementById(id);return !!(e&&e.checked);};
+  const dsel=mode==='dir'?[]:[...document.querySelectorAll('.pfchat-dir:checked')].map(c=>c.value);const dAll=document.querySelectorAll('.pfchat-dir').length;const dirsF=(dsel.length&&dsel.length<dAll)?dsel:[];
+  return{mode,year,months,upTo,who,dirsF,brief:g('pfchat-brief'),o:{months,plan:true,fact:true,dev:true,greet:true,intro:'',mode,showBl:true,mono:true,brief:g('pfchat-brief'),dirsLabel:dirsF.length?dirsF.map(_regCode).join(', '):''}};};
+window.pfChatPng=async function(){
+  const out=document.getElementById('pfchat-out');const Pz=_chatPngParams();
+  if(!Pz.who.length){if(out)out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите, кому собрать картинку.</div>';return;}
+  if(!Pz.months.length){if(out)out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите хотя бы один месяц.</div>';return;}
+  const bm=Math.max(...Pz.months),stamp=Pz.year+'-'+String(bm).padStart(2,'0');
+  const dl=(blob,name)=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);};
+  let copied=0,saved=0;
+  for(let i=0;i<Pz.who.length;i++){const w=Pz.who[i];
+    const D=Pz.mode==='dir'?_cfoStmtData({year:Pz.year,allMonths:true,upTo:Pz.upTo,dirs:[w],anyOwner:true}):_cfoStmtData({year:Pz.year,allMonths:true,upTo:Pz.upTo,fio:w,withSubs:Pz.mode==='mgr',dirs:Pz.dirsF});
+    let blob;try{blob=await _chatPng(_chatModelBuild(D,Pz.o));}catch(e){_chatToast('картинка не собралась: '+(e&&e.message||e));return;}
+    const name='план-факт_'+String(w).split(/\s+/)[0].replace(/[\\\/:*?"<>|]/g,'')+'_'+stamp+'.png';
+    if(i===0){let okc=false;try{if(navigator.clipboard&&navigator.clipboard.write&&window.ClipboardItem){await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);okc=true;}}catch(e){okc=false;}
+      if(okc)copied++;else{dl(blob,name);saved++;}}
+    else{dl(blob,name);saved++;}}
+  _chatToast(copied&&!saved?'картинка в буфере':(copied?'первая картинка в буфере, остальные скачаны файлами':'буфер недоступен, файл скачан'+(saved>1?' ('+saved+')':'')));
+};
 window.cfoStatementOpen=function(){
   // ⚠ ГЕЙТА АДМИНА ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО (25.08.2026, вместе с открытием меню всем): это
   //   ЧТЕНИЕ, защитой гейт не был (данные читает любой вошедший), а нужен этот экран прежде
