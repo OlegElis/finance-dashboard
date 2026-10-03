@@ -10793,6 +10793,16 @@ function pfRunTests(){
   const pm=String(_planRenderMatrix);
   ok('редактор зовёт _slPlanSide и своей копии правила не держит',
      /isSubLevel=_slPlanSide/.test(pm)&&!/isSubLevel=code=>/.test(pm)&&!/isRentCode=code=>/.test(pm));
+   // ── Комплексные пары в редакторе (шаг 3, 03.10.2026) ──
+   ok('редактор: комплексность пары = список ответственных ИЛИ записи с owner (иначе «Сохранить» снесло бы планы людей)',/const isComplexPair=\(d,code\)=>_isComplex\(d,code\)\|\|eRecs\(d,level,code\)\.some\(p=>String\(p\.owner\|\|''\)\.trim\(\)!==''\)/.test(pm));
+   ok('редактор: один контрол ответственного (ownerCtl) у обычной строки и у строки-автосуммы, с кнопкой 👥 и пометкой _complexLabel',(pm.match(/ownerCtl\(/g)||[]).length===2&&/class="plan-co-btn" onclick="planCoOwnerToggle\(this\)"/.test(pm)&&/_complexLabel\(d,code\)/.test(pm),(pm.match(/ownerCtl\(/g)||[]).length);
+   ok('редактор: codeBlock решает по КАЖДОМУ направлению - комплексная пара рисуется dirHeaderFot + строки ответственных + «(не распределено)», некомплексная - прежним rowHtml',/if\(rl==='revenue'\|\|!isComplexPair\(d,code\)\)return rowHtml\(d,rl,code,d,rl==='revenue',true,key\);/.test(pm)&&/o\.named\.forEach\(n=>\{h\+=empRowHtml\(d,code,'',n,key,n\);\}\);if\(o\.unalloc\)h\+=empRowHtml\(d,code,'','\(не распределено\)',key,''\);/.test(pm));
+   ok('редактор: строка ответственного несёт data-owner (а не data-side), ячейки без факта, читает cellVal с owner',/data-owner="\$\{esc\(owner\)\}"/.test(pm)&&/cellVal\(rdir,level,code,i\+1,side,owner\)/.test(pm)&&/owner\?0:factSideOf\(rdir,code,side,i\+1\)/.test(pm));
+   ok('редактор: фильтр «Ответств.» пропускает пару по ЛЮБОМУ из её ответственных',/const ow=_ownersOf\(d,code\); return ow\.length\?ow\.some\(o=>os\.has\(o\)\):os\.has\('__none__'\);/.test(pm));
+   ok('редактор: автосумма направления считает и строки data-owner',/tr\.hasAttribute\('data-side'\)\|\|tr\.hasAttribute\('data-owner'\)/.test(String(window.planSumDir)));
+   ok('редактор: отказы словами - 111/консалтинг не комплексные, без основного соисполнителей нет, основного при соисполнителях не снять',/_slPlanSide\(c\)\)\{alert\(/.test(String(window.planCoOwnerToggle))&&/!_ownerOf\(d,c\)\)\{alert\(/.test(String(window.planCoOwnerToggle))&&/!fio&&_coOwnersOf\(d,c\)\.length\)\{alert\(/.test(String(window.planOwnerPick)));
+   ok('редактор: соисполнители пишутся сразу (_coOwnersSave) и ждутся в planSave наравне с владельцами',/_coOwnersSave\(\)/.test(String(window.planCoOwnerCb))&&/_coOwnersSave\(\)\]/.test(String(window.planSave))&&/okP&&okO&&okN&&okC/.test(String(window.planSave)));
+   ok('редактор: списки ФИО (datalist и фильтр) включают соисполнителей',/Object\.values\(_planCoOwners\|\|\{\}\)\.flatMap\(_coOwnersNormList\)/.test(pm)&&/Object\.values\(_planCoOwners\|\|\{\}\)\.flatMap\(_coOwnersNormList\)/.test(String(window.showPlansPanel)));
   ok('редактор не гейтит третий уровень предикатом ФАКТА',pm.indexOf('_slFactSide')<0);
   // сводная БДР: показ третьего уровня - по факту, «известен ли план стороны» - по планированию
   ok('сводная: гейт раскрытия 3-го уровня - _slFactSide',/_isSub=\(kind==='exp'\)&&_slFactSide\(sub\)/.test(src));
@@ -18255,6 +18265,19 @@ function _planRenderMatrix(){
     //   (config/rentObjects) ЖИВ и нужен - его читает _sideUniverse для расшифровки ФАКТА в сводной
     //   БДР и в выписке ЦФО. Убрать его оттуда нельзя (решение Олега 03.09.2026).
     return {named:Object.keys(named).sort((a,b)=>a.localeCompare(b,'ru')),unalloc};};
+  // ── КОМПЛЕКСНАЯ ПАРА в редакторе (03.10.2026, docs/DECISIONS.md#d-complex-pairs) ──
+  // Комплексной пару делает список ответственных (_isComplex) ЛИБО уже лежащие записи с owner: иначе пара,
+  // переставшая быть комплексной при живых записях людей, отрисовалась бы обычной строкой (cellVal без owner -
+  // пусто), и «Сохранить» снесло бы их по presentKeys - та же молчаливая потеря, что у сторон (см. _planStage).
+  const isComplexPair=(d,code)=>_isComplex(d,code)||eRecs(d,level,code).some(p=>String(p.owner||'').trim()!=='');
+  const ownerRows=(d,code)=>{const named={};let unalloc=false;_ownersOf(d,code).forEach(n=>{named[n]=1;});
+    eRecs(d,level,code).forEach(p=>{const o=String(p.owner||'').trim();if(o)named[o]=1;else unalloc=true;});
+    return {named:Object.keys(named),unalloc};}; // порядок: основной первым (как в _ownersOf), затем записи «чужих» людей
+  // Контрол ответственного: основной (<select class="plan-owner">) + «👥» соисполнители + пометка «комплексная, планируют: …».
+  // ⚠ У 111/консалтинга кнопка отвечает отказом словами (planCoOwnerToggle), а не прячется: решение 4 - понятная ошибка, не молчание.
+  const ownerCtl=(d,code,ownOpts)=>{const co=_coOwnersOf(d,code),lbl=_complexLabel(d,code),prim=_ownerOf(d,code);
+    const opts=(_cfoList||[]).filter(n=>n!==prim).map(n=>`<label class="pco-opt" style="display:block;font-size:11px;padding:2px 4px;cursor:pointer;white-space:nowrap"><input type="checkbox" class="pco-cb" value="${esc(n)}"${co.includes(n)?' checked':''} onchange="planCoOwnerCb(this)"> ${esc(n)}</label>`).join('');
+    return `<select class="plan-owner" onchange="planOwnerPick(this)" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box;vertical-align:middle">${ownOpts.join('')}</select><span class="plan-co-wrap" style="position:relative;display:inline-block;margin-left:4px;vertical-align:middle"><button type="button" class="plan-co-btn" onclick="planCoOwnerToggle(this)" title="${co.length?('Соисполнители: '+esc(co.join(', '))):'Соисполнители - комплексная пара: несколько ответственных, у каждого свой план, факт общий'}" style="font-size:11px;height:26px;padding:0 6px;border:1px solid ${co.length?'var(--accent)':'var(--border)'};border-radius:4px;background:var(--surface2);color:var(--text2);cursor:pointer">👥${co.length?' '+co.length:''}</button><div class="plan-co-list" style="display:none;position:absolute;top:28px;left:0;z-index:70;width:240px;max-height:260px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(20,25,40,.16);padding:6px"><div style="font-size:10px;color:var(--text3);padding:2px 4px 4px">Соисполнители (основной - в списке слева)</div>${opts||'<div style="font-size:11px;color:var(--text3);padding:2px 4px">нет людей в config/names</div>'}</div></span>${lbl?`<div class="plan-complex" style="font-size:10px;color:var(--text2);white-space:nowrap;margin-top:2px">${esc(lbl)}</div>`:''}`;};
   // ── суммы по группе (подстатья по всем направлениям) для свёрнутого вида: год план (с разрешением %/%ЧП) + год факт ──
   // база %выручки - каскад как в отчёте: план «Выручка» → Σ планов доходов (income) → факт; %ЧП - по факту
   const _revC=new Map(),_ibC=new Map();
@@ -18344,7 +18367,7 @@ function _planRenderMatrix(){
     const note=isExp?(_planNotes[_ownerKey(rdir,code)]||''):'';
     const ownOpts=['<option value="">- не выбран -</option>'].concat((_cfoList||[]).map(n=>`<option value="${esc(n)}"${n===owner?' selected':''}>${esc(n)}</option>`));
     if(owner&&!(_cfoList||[]).includes(owner))ownOpts.push(`<option value="${esc(owner)}" selected>${esc(owner)} (вне ЦФО)</option>`);
-    const ownerCell=isExp?`<td style="padding:2px 3px"><select class="plan-owner" onchange="planOwnerPick(this)" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`:'<td></td>';
+    const ownerCell=isExp?`<td style="padding:2px 3px;white-space:nowrap">${ownerCtl(rdir,code,ownOpts)}</td>`:'<td></td>';
     const noteCell=isExp?`<td style="padding:2px 3px;width:100%"><input class="plan-note" onchange="planNotePick(this)" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`:'<td style="width:100%"></td>';
     const canExp=!!key&&!sub&&!rev; // разворачивать можно доходные/расходные коды (не «выручка всего»)
     const expBtn=canExp?`<button type="button" onclick="planToggleExpand('${jesc(key)}')" title="Развернуть и заполнить по направлениям" style="margin-right:5px;font-size:10px;width:18px;height:18px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:var(--surface2);color:var(--text2);vertical-align:middle">▸</button>`:'';
@@ -18379,7 +18402,7 @@ function _planRenderMatrix(){
   //   такой же рядом не пишем, иначе они разъедутся, как разъехались `bflQtyFlow`/`bflDeptCalc`.
   // ⚠ Пустой ответственный проходит по пункту «__none__» - он в списке предусмотрен.
   const dirOwnPass=(d,code)=>{const os=window._planOwnerSel; if(!os||!os.size)return true;
-    const o=String(_planOwners[_ownerKey(d,code)]||'').trim(); return o?os.has(o):os.has('__none__');};
+    const ow=_ownersOf(d,code); return ow.length?ow.some(o=>os.has(o)):os.has('__none__');}; // комплексная пара проходит по ЛЮБОМУ из своих ответственных
   const dirsOwn=code=>dirsShown.filter(d=>dirOwnPass(d,code));
   // ⚠ dirsShown НЕ РЕЖЕТСЯ: на нём стоят итоги свёрнутых подстатей (subYearPlan/subMonthPlan)
   //   и фильтр ответственных. Скрытие живёт ТОЛЬКО на отрисовке строк, поэтому ни один итог
@@ -18435,18 +18458,18 @@ function _planRenderMatrix(){
       <td style="padding:2px 4px;text-align:center;white-space:nowrap"><button type="button" onclick="planFillCodeFact(this)" title="Заполнить фактом ВСЕ направления подстатьи (пустые месяцы; введённые не меняются)" style="font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button></td>${mc}${totCellIn('','plan-ttl',0,true)}<td></td><td></td>
     </tr>`;};
   // строка сотрудника (3-й уровень, 111-ФОТ): ввод по месяцам/году (только ₽); без ответственного/примечания (они на строке направления)
-  const empRowHtml=(rdir,code,side,label,key)=>{
+  const empRowHtml=(rdir,code,side,label,key,owner)=>{owner=String(owner||'').trim(); // owner - строка ответственного комплексной пары (03.10.2026); факта по людям нет - ячейки без факта
     const pmode=((eRecs(rdir,level,code)[0]||{}).mode)||'money'; // режим берётся у родительской строки: у 3-го уровня своей кнопки режима нет
-    const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,level,code,i+1,side));
-    const moFacts=[...Array(12)].map((_,i)=>factSideOf(rdir,code,side,i+1));
-    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)">${factHint(fv,i+1,mv,false,pmode)}</td>`;}).join('');
-    const yrExpl=cellVal(rdir,level,code,0,side);
+    const moVals=[...Array(12)].map((_,i)=>cellVal(rdir,level,code,i+1,side,owner));
+    const moFacts=[...Array(12)].map((_,i)=>owner?0:factSideOf(rdir,code,side,i+1));
+    const cells=moVals.map((mv,i)=>{const fv=moFacts[i];return`<td style="padding:2px 3px"><input class="plan-val" data-month="${i+1}" data-fact="${fv}" value="${_planFmtNum(mv)}" oninput="planRowYear(this);planSumFromEl(this)" onblur="planFmtInput(this)" ${owner?_tipAttr([['факт','по ответственным не делится - общий у направления']]):_tipAttr([['факт',fmt(fv)]])} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans)">${factHint(fv,i+1,mv,false,pmode)}</td>`;}).join('');
+    const yrExpl=cellVal(rdir,level,code,0,side,owner);
     const autoY=moVals.reduce((s,v)=>{const n=parseFloat(String(v).replace(',','.'));return s+(isNaN(n)?0:n);},0);
-    const yrIsAuto=(yrExpl===''); const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):''); const yrFact=factSideYr(rdir,code,side);
+    const yrIsAuto=(yrExpl===''); const yrShown=yrExpl!==''?yrExpl:(yrIsAuto&&autoY?(+autoY.toFixed(2)):''); const yrFact=owner?0:factSideYr(rdir,code,side);
     const yr=`<td style="padding:2px 3px"><input class="plan-val" data-month="0" data-auto="${yrIsAuto?'1':'0'}" data-fact="${yrFact}" value="${_planFmtNum(yrShown)}" placeholder="авто" oninput="this.dataset.auto='0';this.style.color='var(--text)';planSumFromEl(this)" onblur="planFmtInput(this)" ${_tipAttr([['факт за год',fmt(yrFact)]],null,yrIsAuto?'Авто: сумма месяцев':'Годовой план')} style="width:90px;height:26px;text-align:right;font-size:11px;border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:${yrIsAuto?'var(--text3)':'var(--text)'};font-family:var(--sans)">${factHint(yrFact,0,yrShown,false,pmode)}</td>`;
     const rowEmpty=moVals.every(v=>!_n0(v))&&!_n0(yrExpl)&&moFacts.every(fv=>Math.abs(_n0(fv))<=0.005)&&Math.abs(_n0(yrFact))<=0.005;
-    return `<tr${rowEmpty?' class="plan-row-empty"':''} data-code="${esc(code)}" data-level="${level}" data-dir="${esc(rdir)}" data-side="${esc(side)}" data-key="${esc(level+'|'+code)}">
-      <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">${_slIcon(code)}</span>${esc(label)}</td>
+    return `<tr${rowEmpty?' class="plan-row-empty"':''} data-code="${esc(code)}" data-level="${level}" data-dir="${esc(rdir)}"${owner?` data-owner="${esc(owner)}"`:` data-side="${esc(side)}"`} data-key="${esc(level+'|'+code)}">
+      <td title="${esc(label)}" style="padding:4px 8px 4px 40px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:var(--surface);color:var(--text2)"><span style="color:var(--text3);margin-right:5px">${owner?'👥':_slIcon(code)}</span>${esc(label)}</td>
       <td style="padding:2px 4px;text-align:center;white-space:nowrap"><span style="font-size:11px;color:var(--text3)">₽</span><button type="button" onclick="planFillRowFact(this)" title="Заполнить все месяцы фактом" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--accent);vertical-align:middle">⤓</button><button type="button" onclick="planClearRow(this)" title="Очистить все месяцы строки" style="margin-left:3px;font-size:12px;width:24px;height:24px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer;background:var(--surface2);color:var(--outcome);vertical-align:middle">⌫</button></td>${cells}${yr}<td></td><td></td></tr>`;};
   // строка направления для 111-ФОТ: read-only ИТОГО по сотрудникам (plan-dirtotal, ▸ разворот) + ответственный/примечание (по направлению+коду)
   const dirHeaderFot=(rl,code,d,key)=>{const dkey=key+'|'+d;const dopen=EXP.has(dkey);const hasPlan=!!eRecs(d,rl,code).length;
@@ -18456,9 +18479,9 @@ function _planRenderMatrix(){
     const owner=_planOwners[_ownerKey(d,code)]||'',note=_planNotes[_ownerKey(d,code)]||'';
     const ownOpts=['<option value="">- не выбран -</option>'].concat((_cfoList||[]).map(n=>`<option value="${esc(n)}"${n===owner?' selected':''}>${esc(n)}</option>`));
     if(owner&&!(_cfoList||[]).includes(owner))ownOpts.push(`<option value="${esc(owner)}" selected>${esc(owner)} (вне ЦФО)</option>`);
-    const ownerCell=`<td style="padding:2px 3px"><select class="plan-owner" onchange="planOwnerPick(this)" style="width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 4px;box-sizing:border-box">${ownOpts.join('')}</select></td>`;
+    const ownerCell=`<td style="padding:2px 3px;white-space:nowrap">${ownerCtl(d,code,ownOpts)}</td>`;
     const noteCell=`<td style="padding:2px 3px;width:100%"><input class="plan-note" onchange="planNotePick(this)" value="${esc(note)}" placeholder="Примечание" style="width:100%;min-width:200px;height:26px;font-size:11px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--sans);padding:0 6px;box-sizing:border-box"></td>`;
-    const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer"><span onclick="planToggleExpand('${jesc(dkey)}')" title="${isConsultCode(code)?'Развернуть контрагентов':'Развернуть сотрудников'}" style="display:inline-block;width:16px;color:var(--text2);cursor:pointer">${dopen?'▾':'▸'}</span>${esc(d)}</td>`;
+    const lab=`<td title="${esc(d)}" style="padding:5px 8px 5px 24px;font-size:11px;position:sticky;left:0;background:var(--surface);color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><input type="checkbox" class="plan-onoff" ${hasPlan?'checked':''} onchange="planToggleRow(this)" title="Планировать это направление (снять - исключить из плана, не ставя 0)" style="margin-right:6px;vertical-align:middle;cursor:pointer"><span onclick="planToggleExpand('${jesc(dkey)}')" title="${isConsultCode(code)?'Развернуть контрагентов':isComplexPair(d,code)?'Развернуть ответственных':'Развернуть сотрудников'}" style="display:inline-block;width:16px;color:var(--text2);cursor:pointer">${dopen?'▾':'▸'}</span>${esc(d)}</td>`;
     return `<tr class="plan-dirtotal" data-key="${esc(key)}" data-dir="${esc(d)}" data-code="${esc(code)}" data-level="${rl}">${lab}<td></td>${mc}${yrCell}${ownerCell}${noteCell}</tr>`;};
   const empAddRow=(d,code,key)=>`<tr><td colspan="17" style="padding:3px 8px 6px 40px;position:sticky;left:0;background:var(--surface)"><button type="button" onclick="planAddEmp('${jesc(d)}','${jesc(code)}','${jesc(key)}')" style="font-size:11px;color:var(--text2);border:1px dashed var(--border);border-radius:6px;padding:3px 9px;background:var(--surface2);cursor:pointer">${isConsultCode(code)?'+ добавить контрагента':'+ добавить сотрудника'}</button></td></tr>`;
   const codeBlock=(rl,code,label)=>{const key=rl+'|'+code;const open=EXP.has(key);if(!open)return colHeader(rl,code,label);
@@ -18468,7 +18491,13 @@ function _planRenderMatrix(){
         if(EXP.has(key+'|'+d)){const sd=fotSides(d,code);sd.named.forEach(s=>{html+=empRowHtml(d,code,s,s,key);});if(sd.unalloc)html+=empRowHtml(d,code,'','(не распределено)',key);html+=empAddRow(d,code,key);}});
       return html;
     }
-    return html+dirsForCode(rl,code).map(d=>rowHtml(d,rl,code,d,rl==='revenue',true,key)).join('');};
+    // КОМПЛЕКСНАЯ ПАРА решается ПО КАЖДОМУ направлению (комплексность - свойство пары, а не кода): строка направления -
+    // автосумма (dirHeaderFot), под ней строки ответственных + «(не распределено)»; строки «+ добавить» нет - люди из списка 👥.
+    // Разметка некомплексных направлений ПОБАЙТНО прежняя (стенд-инвариант).
+    return html+dirsForCode(rl,code).map(d=>{if(rl==='revenue'||!isComplexPair(d,code))return rowHtml(d,rl,code,d,rl==='revenue',true,key);
+      let h=dirHeaderFot(rl,code,d,key);
+      if(EXP.has(key+'|'+d)){const o=ownerRows(d,code);o.named.forEach(n=>{h+=empRowHtml(d,code,'',n,key,n);});if(o.unalloc)h+=empRowHtml(d,code,'','(не распределено)',key,'');}
+      return h;}).join('');};
   const subSel=window._planSubartSel, ownerSel=window._planOwnerSel; // мультивыбор подстатей и ответственных (Set); пусто = все
   // ⚠ Через ТОТ ЖЕ примитив: подстатья видна ровно тогда, когда у неё осталась хоть одна строка.
   //   Не осталось ни одной - подстатьи нет вовсе.
@@ -18490,7 +18519,7 @@ function _planRenderMatrix(){
   }
   const cmNow=new Date().getMonth()+1; // текущий месяц - подсвечиваем его колонку (шапка + заливка)
   const ths=MON.map((m,i)=>{const cur=(i+1)===cmNow;return `<th title="${cur?'Текущий месяц':''}" style="padding:6px 4px;font-size:10px;font-weight:${cur?700:600};position:sticky;top:0;z-index:1;background:${cur?'var(--accent)':'var(--surface2)'};color:${cur?'#fff':'var(--text3)'}">${m}${cur?' •':''}</th>`;}).join('');
-  const ownerOpts=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{}).filter(Boolean)])].sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(n=>`<option value="${esc(n)}">`).join('');
+  const ownerOpts=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{}).filter(Boolean),...Object.values(_planCoOwners||{}).flatMap(_coOwnersNormList)])].sort((a,b)=>String(a).localeCompare(String(b),'ru')).map(n=>`<option value="${esc(n)}">`).join('');
   const colg=`<colgroup><col style="width:290px"><col style="width:118px">${'<col style="width:100px">'.repeat(12)}<col style="width:104px"><col style="width:210px"><col></colgroup>`;
   const cmN=2+cmNow; // позиция колонки текущего месяца (Янв=3): label(1) + ₽/%(2) + месяц
   const cmStyle=`<style>#plan-matrix td:nth-child(${cmN}){background:var(--accent-light)}</style>`;
@@ -18550,7 +18579,7 @@ window.planSumDir=function(key,dir){
   const wrap=document.getElementById('plan-matrix'); if(!wrap)return;
   const tot=new Array(13).fill(0);
   let isOff=false; wrap.querySelectorAll('tr.plan-dirtotal').forEach(function(t){if(t.getAttribute('data-key')===key&&t.getAttribute('data-dir')===dir){const c=t.querySelector('input.plan-onoff');if(c&&!c.checked)isOff=true;}}); // направление выключено - итог пустой
-  let hasEmp=false; wrap.querySelectorAll('tr[data-key]').forEach(function(tr){if(tr.getAttribute('data-key')===key&&tr.getAttribute('data-dir')===dir&&tr.hasAttribute('data-side'))hasEmp=true;});
+  let hasEmp=false; wrap.querySelectorAll('tr[data-key]').forEach(function(tr){if(tr.getAttribute('data-key')===key&&tr.getAttribute('data-dir')===dir&&(tr.hasAttribute('data-side')||tr.hasAttribute('data-owner')))hasEmp=true;});
   if(!isOff&&!hasEmp)return; // направление свёрнуто и включено - сохранённый итог уже проставлен при рендере (dirMonthPlan), не затираем живым нулём
   if(!isOff)wrap.querySelectorAll('tr[data-key]').forEach(function(tr){
     if(tr.getAttribute('data-key')!==key||tr.getAttribute('data-dir')!==dir)return;
@@ -18597,8 +18626,22 @@ window._planOwnerSel=window._planOwnerSel||new Set();
 window.planOwnerToggle=function(){const l=document.getElementById('plan-owner-list');if(!l)return;l.style.display=(l.style.display==='none'||!l.style.display)?'block':'none';if(l.style.display==='block'){const q=document.getElementById('plan-owner-q');if(q){planOwnerFilter();q.focus();}}};
 window.planOwnerFilter=function(){const q=String((document.getElementById('plan-owner-q')||{}).value||'').trim().toLowerCase();const l=document.getElementById('plan-owner-list');if(!l)return;l.querySelectorAll('label.powner-opt').forEach(function(o){const t=o.getAttribute('data-l')||'';o.style.display=(!q||t.includes(q))?'':'none';});};
 // ── Назначение владельца/примечания подстатье: пишем СРАЗУ в _planOwners/_planNotes и в облако (не зависим от _planStage/выживания DOM-значения). Ключ тримируем - совпасть с чтением таблицы (dir||sub из RAW). ──
-window.planOwnerPick=function(el){const tr=el&&el.closest&&el.closest('tr');if(!tr)return;const d=String(tr.getAttribute('data-dir')||'').trim(),c=String(tr.getAttribute('data-code')||'').trim();if(!c)return;const k=_ownerKey(d,c),fio=String(el.value||'').trim();if(fio)_planOwners[k]=fio;else delete _planOwners[k];window._planDirty=true;try{_ownersSave();}catch(e){}};
+window.planOwnerPick=function(el){const tr=el&&el.closest&&el.closest('tr');if(!tr)return;const d=String(tr.getAttribute('data-dir')||'').trim(),c=String(tr.getAttribute('data-code')||'').trim();if(!c)return;const k=_ownerKey(d,c),fio=String(el.value||'').trim();if(!fio&&_coOwnersOf(d,c).length){alert('У комплексной пары основной ответственный обязателен: на нём считается факт. Сначала снимите соисполнителей (👥).');el.value=_ownerOf(d,c);return;}if(fio)_planOwners[k]=fio;else delete _planOwners[k];window._planDirty=true;try{_ownersSave();}catch(e){}};
 window.planNotePick=function(el){const tr=el&&el.closest&&el.closest('tr');if(!tr)return;const d=String(tr.getAttribute('data-dir')||'').trim(),c=String(tr.getAttribute('data-code')||'').trim();if(!c)return;const k=_ownerKey(d,c),txt=String(el.value||'').trim();if(txt)_planNotes[k]=txt;else delete _planNotes[k];window._planDirty=true;try{_notesSave();}catch(e){}};
+// ── Соисполнители комплексной пары (03.10.2026): пишем СРАЗУ в _planCoOwners и в облако, как planOwnerPick; матрица
+//   перерисовывается при ЗАКРЫТИИ списка, если состав изменился (строки людей появляются/уходят). ──
+window.planCoOwnerToggle=function(btn){const tr=btn&&btn.closest&&btn.closest('tr');if(!tr)return;const d=String(tr.getAttribute('data-dir')||'').trim(),c=String(tr.getAttribute('data-code')||'').trim();
+  if(_slPlanSide(c)){alert('У подстатей ФОТ (111) и консалтинга планируют по сторонам - сотрудникам и контрагентам. Комплексной такая пара быть не может (решение 03.10.2026).');return;}
+  if(!_ownerOf(d,c)){alert('Сначала назначьте основного ответственного: на нём считается факт комплексной пары.');return;}
+  if(window._planCoOpen){planCoOwnerClose();return;}
+  const list=btn.parentNode.querySelector('.plan-co-list');if(!list)return;
+  list.style.display='block';window._planCoOpen={key:_ownerKey(d,c),was:JSON.stringify(_coOwnersOf(d,c))};};
+window.planCoOwnerClose=function(){const st=window._planCoOpen;window._planCoOpen=null;document.querySelectorAll('.plan-co-list').forEach(l=>{l.style.display='none';});if(!st)return;const i=st.key.indexOf('||'),d=st.key.slice(0,i),c=st.key.slice(i+2);if(JSON.stringify(_coOwnersOf(d,c))!==st.was)planOnControlChange();};
+window.planCoOwnerCb=function(cb){const tr=cb&&cb.closest&&cb.closest('tr');if(!tr)return;const d=String(tr.getAttribute('data-dir')||'').trim(),c=String(tr.getAttribute('data-code')||'').trim();if(!c)return;const k=_ownerKey(d,c);const cur=new Set(_coOwnersOf(d,c));const v=String(cb.value||'').trim();if(cb.checked)cur.add(v);else cur.delete(v);
+  if(cur.size)_planCoOwners[k]=[...cur];else delete _planCoOwners[k];window._planDirty=true;try{_coOwnersSave();}catch(e){}
+  const btn=tr.querySelector('.plan-co-btn');if(btn){btn.textContent='👥'+(cur.size?' '+cur.size:'');btn.style.borderColor=cur.size?'var(--accent)':'var(--border)';btn.title=cur.size?('Соисполнители: '+[...cur].join(', ')):'Соисполнители - комплексная пара: несколько ответственных, у каждого свой план, факт общий';}
+  const lbl=_complexLabel(d,c);let mk=tr.querySelector('.plan-complex');if(mk){mk.textContent=lbl;if(!lbl)mk.remove();}else if(lbl){const w=tr.querySelector('.plan-co-wrap');if(w)w.insertAdjacentHTML('afterend','<div class="plan-complex" style="font-size:10px;color:var(--text2);white-space:nowrap;margin-top:2px">'+_htmlEsc(lbl)+'</div>');}};
+document.addEventListener('mousedown',function(e){if(!window._planCoOpen)return;const t=e.target;if(t&&t.closest&&t.closest('.plan-co-wrap'))return;planCoOwnerClose();},true); // закрытие по клику ВНЕ - mousedown, как у панели «⋯» (change у чекбоксов долетает)
 window.planOwnerCb=function(cb){const s=window._planOwnerSel||(window._planOwnerSel=new Set());if(cb.checked)s.add(cb.value);else s.delete(cb.value);planOwnerUpdateBtn();planOnControlChange();};
 window.planOwnerAll=function(){const s=window._planOwnerSel||(window._planOwnerSel=new Set());s.clear();const l=document.getElementById('plan-owner-list');if(l)l.querySelectorAll('.powner-cb').forEach(function(c){c.checked=false;});planOwnerUpdateBtn();planOnControlChange();};
 window.planOwnerUpdateBtn=function(){const b=document.getElementById('plan-owner-btn');if(!b)return;const s=window._planOwnerSel;b.textContent=(!s||!s.size)?'Все ответственные ▾':('Ответств. '+s.size+' ▾');};
@@ -18640,11 +18683,11 @@ window.planSave=async function(btn){
   if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
   const nP=(_planRecords||[]).length,nO=Object.keys(_planOwners||{}).length,nN=Object.keys(_planNotes||{}).length;
   // сами записи стартуют сразу (localStorage + облако); ждём результат облака, чтобы подтверждение отражало реальность
-  const proms=[_plansSave(),_ownersSave(),_notesSave()].map(p=>Promise.resolve(p).catch(()=>false));
+  const proms=[_plansSave(),_ownersSave(),_notesSave(),_coOwnersSave()].map(p=>Promise.resolve(p).catch(()=>false));
   if(activeTab==='planfact')try{renderActiveTab();}catch(e){}
-  const [okP,okO,okN]=await Promise.all(proms);
+  const [okP,okO,okN,okC]=await Promise.all(proms);
   // окно НЕ закрываем - даём продолжить редактирование; подтверждение на кнопке отражает реальность (сколько и записалось ли в облако)
-  const allOk=okP&&okO&&okN;
+  const allOk=okP&&okO&&okN&&okC;
   if(btn){
     if(allOk){btn.textContent='✓ '+nP+' планов · '+nO+' влад. · '+nN+' прим.';btn.style.background='var(--income)';}
     else{btn.textContent='⚠ НЕ сохранено - правка будет потеряна';btn.style.background='var(--outcome)';} // «(локально сохранено)» убрано: зеркало пишется только при подтверждённой записи, локально её тоже нет
@@ -19736,7 +19779,7 @@ window.showPlansPanel=async function(){
   (_planRecords||[]).forEach(p=>{if(p&&(p.level==='subarticle'||p.level==='income')&&p.code)subSet[p.code]=1;});
   const subCodes=Object.keys(subSet).sort((a,b)=>a.localeCompare(b,'ru'));
   // список ответственных (ФИО) для фильтра: ЦФО + уже назначенные в планах
-  const ownerNames=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{})].map(x=>String(x||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const ownerNames=[...new Set([...(_cfoList||[]),...Object.values(_planOwners||{}),...Object.values(_planCoOwners||{}).flatMap(_coOwnersNormList)].map(x=>String(x||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   window._planSubartSel=new Set(); window._planOwnerSel=new Set(); // сброс мультивыбора подстатей и ответственных при открытии (стартуем со «всех»)
   window._planDirFlt=''; window._planRowQ=''; window._planExpandCmd=null; window._planShowAllDirs=false; // сброс фильтра направления, поиска, команды разворота и показа пустых направлений
   const isAdmin=(()=>{try{return !!(window.firebase&&firebase.auth&&firebase.auth().currentUser&&(firebase.auth().currentUser.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase());}catch(e){return false;}})();
