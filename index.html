@@ -10607,7 +10607,7 @@ function pfRunTests(){
   // ⚠ Открывающей фигурной скобки в регулярках этого набора нет НАМЕРЕННО (и в комментариях тоже):
   //   файл разбирают наивные извлекатели по балансу скобок, и одиночная скобка внутри литерала
   //   уводит их до конца файла - на чём этот комментарий и попался при написании.
-  ok('ЦФО · утверждённое читается РОВНО один раз (только для пары базы)',cnt(/basePlanDirSubM\(d,sub,m\)/g)===1,cnt(/basePlanDirSubM\(d,sub,m\)/g));
+  ok('ЦФО · утверждённое читается РОВНО один раз (только для пары базы)',cnt(/basePlanDirSubM\(d,sub,m,mine\)/g)===1&&cnt(/basePlanDirSubM\(d,sub,m\)/g)===0,cnt(/basePlanDirSubM\(d,sub,m,mine\)/g)); // ИЗМЕНЁН 03.10.2026: вызов получил срез по людям (mine) - комплексные пары; читается по-прежнему один раз
   // ⚠ Приглушение отделено от подавления клика: своду ЦФО нужно первое и нельзя второе
   //   (строки кликабельны - cfoToggleMgr разворачивает подчинённых).
   ok('remTd: приглушением правит отдельный flat',/const remTd=\(planM,factM,applic,kind,src,lbl,main,w,flat\)/.test(src)&&/\(main\|\|flat\|\|!src/.test(src));
@@ -11245,14 +11245,19 @@ function pfRunTests(){
    //   _pdPlanYear), ПОД фильтром «Контрагент» - план ПО СТОРОНЕ этого направления, иначе строка
    //   показывала бы полный план рядом с фактом одного человека (поймано сторожем расклада).
    ok('план направления: без фильтра - _pdPlan*, под фильтром «Контрагент» - план по стороне',
-      /_dSubPlanM=\(kind,sub,d,m\)=>selSide\.size\?_dSidePlanFor\(_fcSideMD,kind,sub,d,m\):_pdPlanMonth\(recsOf,cvtD/.test(src)
+      /_dSubPlanM=\(kind,sub,d,m,people\)=>selSide\.size\?_dSidePlanFor\(_fcSideMD,kind,sub,d,m\):_pdPlanMonth\(_recsOwnF\(recsOf,_cxPeople\(people\)\),cvtD/.test(src) // ИЗМЕНЁН 03.10.2026: записи режутся по людям (_recsOwnF) - комплексные пары; без фильтра и у некомплексных набор тот же
       &&/_dSidePlanFor=\(md,kind,sub,d,m\)=>\{if\(kind==='inc'\|\|!_slPlanSide\(sub\)\)return null;/.test(src));
    ok('план стороны×направления - _fcSideMD/_blSideMD',/_dSidePlanM=\(sub,side,d,m\)=>_sideNoPlan\(sub\)\?null:_fcSideMD\(d,sub,side,m\)/.test(src)&&/_dSideBaseM=\(sub,side,d,m\)=>\(_sideNoPlan\(sub\)\|\|!_blSideMD\)\?null:_blSideMD\(d,sub,side,m\)/.test(src));
    ok('уровень только в своде (dirsToAgg.length>1)',/const _multiDir=dirsToAgg\.length>1;/.test(src)&&(src.match(/_multiDir&&dirExp/g)||[]).length===2);
    ok('живые направления - общий _rowDead, своего порога нет',/_dirsOfSub=\(kind,sub\)=>ownDirsOf\(sub\)\.filter\(d=>!_rowDead\(/.test(src)&&/_dirsOfSide=\(sub,side\)=>ownDirsOf\(sub\)\.filter\(d=>!_rowDead\(/.test(src));
    ok('отбор направлений идёт по ownDirsOf (фильтр ЦФО), а не по dirsToAgg',_dirBlock.indexOf('dirsToAgg.filter')<0);
-   ok('остаток направления - тот же remOfSubBy/sideRemBy, копии нет',/u:remOfSubBy\(kind,sub,\(l,sb,m\)=>_subOneBaseM\(l,sb,m,true,\[d\]\)/.test(src)&&/u:sideRemBy\(sub,side,/.test(src));
-   ok('база по направлению - параметр dirs у _subOneBaseM/_subPlanM, а не вторая функция',/const _subOneBaseM=\(lvl,sub,m,utv,dirs\)=>/.test(src)&&/const _subPlanM=\(recsFn,cvt,planMonthFn,lvl,sub,mo,dirs\)=>\{if\(!dirs&&!selOwn\.size\)/.test(src));
+   ok('остаток направления - тот же remOfSubBy/sideRemBy, копии нет',/u:remOfSubBy\(kind,sub,\(l,sb,m\)=>_subOneBaseM\(l,sb,m,true,\[d\],people\)/.test(src)&&/u:sideRemBy\(sub,side,/.test(src)); // ИЗМЕНЁН 03.10.2026: _subOneBaseM получил параметр people (комплексные пары) - функции те же
+   ok('база по направлению - параметр dirs у _subOneBaseM/_subPlanM, а не вторая функция',/const _subOneBaseM=\(lvl,sub,m,utv,dirs,people\)=>/.test(src)&&/const _subPlanM=\(recsFn,cvt,planMonthFn,lvl,sub,mo,dirs,people\)=>\{if\(!dirs&&!selOwn\.size\)/.test(src)); // ИЗМЕНЁН 03.10.2026: добавлен параметр people (комплексные пары) - те же функции, не вторые
+   // ── Комплексные пары в сводной (шаг 4, 03.10.2026) ──
+   ok('сводная: план пары режется по людям ОДНИМ фильтром записей _recsOwnF, только у комплексных пар; безымянная запись - основному',/const _recOwner=p=>String\(p\.owner\|\|''\)\.trim\(\)\|\|_ownerOf\(p\.dir,p\.code\);/.test(src)&&/const _recsOwnF=\(recsFn,people\)=>!people\?recsFn:\(\(d,lvl,sub\)=>\{const rs=recsFn\(d,lvl,sub\);if\(!rs\.length\|\|!_isComplex\(d,sub\)\)return rs;/.test(src)&&(src.match(/_recsOwnF\(/g)||[]).length>=6,(src.match(/_recsOwnF\(/g)||[]).length);
+   ok('сводная: фильтр ЦФО и владение подстатьи - по ВСЕМ ответственным пары (_ownersOf), не по одному',/const ownersOfSub=sub=>\{const s=new Set\(\);dirsToAgg\.forEach\(d=>\{_ownersOf\(d,sub\)\.forEach\(o=>s\.add\(o\)\);\}\);return s;\};/.test(src)&&/const _dirSubPass=\(d,sub\)=>\{if\(!selOwn\.size\)return true;const ow=_ownersOf\(d,sub\);return ow\.length\?ow\.some\(o=>selOwn\.has\(o\)\):selOwn\.has\(NOOWN\);\};/.test(src));
+   ok('сводная: колонка «Ответственный» у комплексной пары - основной + 👥, список людей через _ownersOf; склейки «+N» по-прежнему нет',/const _cxO=_isComplex\(dirOverride,code\)\?_ownersOf\(dirOverride,code\):null;/.test(src)&&/i\?'планирует':'основной · факт на нём'/.test(src)&&!/os\.length>1/.test(src));
+   ok('свод ЦФО: строка у КАЖДОГО ответственного комплексной пары, факт и остаток факта - только у основного, A.cx - план соисполнителя',/const owners=_ownersOf\(d,sub\),prim=owners\[0\]\|\|NOOWN,cx=owners\.length>1;/.test(src)&&/const fv=isPrim\?perOf\(expByDirSub\[_ownerKey\(d,sub\)\]\):0,pv=planDirSub\(d,sub,mine\),bv=basePlanDirSub\(d,sub,mine\);/.test(src)&&/if\(isPrim\)\{const fm=expByDirSub\[_ownerKey\(d,sub\)\];A\.remFact\+=fm\?\(fm\[m\]\|\|0\):0;\}/.test(src)&&/const _cxMark=A=>/.test(src));
    ok('у строки ОДНА стрелка: направления только там, где сторон нет',/const _dirRowsSub=\(!_canOpen&&_multiDir&&dirExp\)\?/.test(src));
    ok('сторож факта - общий _pfSplitOff, план и утв - с null-дисциплиной',/const off=_pfSplitOff\(parentF,rows\.map\(r=>r\.f\)\)/.test(src)&&/if\(v!=null\)t=\(t\|\|0\)\+v/.test(src));
    ok('сторож зовётся с обоих уровней (подстатья и сторона)',(_pfArtSrc.match(/_dirSplitWarn\(/g)||[]).length===2,(_pfArtSrc.match(/_dirSplitWarn\(/g)||[]).length);
@@ -11704,7 +11709,7 @@ function pfRunTests(){
    //   компанией, и сторож кричал бы на штатной картине.
    ok('контейнер «ЦФО не указан» присутствует всегда',/containers:\[\.\.\.pfOwners,NOOWN\]/.test(_cutBlk));
    // ⚠ Принадлежность факта ЦФО - через общий примитив `_ownerOf`, своей копии правила нет.
-   ok('принадлежность факта ЦФО - через _ownerOf, копий нет',/dirsOf:\(sub,O\)=>ownDirsOf\(sub\)\.filter\(d=>\(_ownerOf\(d,sub\)\|\|NOOWN\)===O\)/.test(_cutBlk)
+   ok('принадлежность пары контейнеру ЦФО - через _ownersOf (комплексная пара у каждого своего человека), факт - только у основного (factOk через _ownerOf), копий нет',/dirsOf:\(sub,O\)=>ownDirsOf\(sub\)\.filter\(d=>\{const ow=_ownersOf\(d,sub\);return ow\.length\?ow\.indexOf\(O\)>=0:O===NOOWN;\}\),/.test(_cutBlk)&&/factOk:\(sub,d,O\)=>!_isComplex\(d,sub\)\|\|_ownerOf\(d,sub\)===O,/.test(_cutBlk)&&/if\(_CUT\.factOk\(sub,d,C\)\)s\+=_dSubFactP\(kind,sub,d\);/.test(_cutBlk) // ИЗМЕНЁН 03.10.2026: был литерал (_ownerOf(d,sub)||NOOWN)===O - один человек на пару
       &&!/_planOwners/.test(_cutBlk));
    // ⚠ Колонка «Ответственный» в разрезе ЦФО ОТСУТСТВУЕТ (не пустая - её нет): шапка, тело и
    //   секции решают это одним признаком `_noOwnerCol`, ширина отдана первой колонке, Σ = 100.0.
@@ -12752,23 +12757,30 @@ function renderPlanFact(f){
   // фильтр «ЦФО» (ответственный из редактора планов, _planOwners dir||подстатья); NOOWN - строки без ответственного
   const NOOWN='(не назначен)';
   const selOwn=new Set(_tabFilters.planfact.owners||[]);
-  const ownersOfSub=sub=>{const s=new Set();dirsToAgg.forEach(d=>{const o=_ownerOf(d,sub);if(o)s.add(o);});return s;};
+  const ownersOfSub=sub=>{const s=new Set();dirsToAgg.forEach(d=>{_ownersOf(d,sub).forEach(o=>s.add(o));});return s;}; // комплексная пара: все её ответственные (03.10.2026)
   const subOwnerPass=sub=>{if(!selOwn.size)return true;const os=ownersOfSub(sub);if(!os.size)return selOwn.has(NOOWN);return [...os].some(o=>selOwn.has(o));};
   // ── Точный per-(dir,подстатья) owner-cut под фильтром ЦФО: подстатья агрегируется ТОЛЬКО по направлениям, где её владелец проходит selOwn.
   //    Без фильтра (selOwn пуст) аксессоры отдают полную подстатью (per-sub) - поведение прежнее. Все потребители (строки/матрица/остаток/модал/ответственный) идут через эти примитивы. subOwnerPass остаётся для ВИДИМОСТИ строки.
-  const _dirSubPass=(d,sub)=>{if(!selOwn.size)return true;const o=_ownerOf(d,sub);return o?selOwn.has(o):selOwn.has(NOOWN);};
+  const _dirSubPass=(d,sub)=>{if(!selOwn.size)return true;const ow=_ownersOf(d,sub);return ow.length?ow.some(o=>selOwn.has(o)):selOwn.has(NOOWN);}; // пара проходит по ЛЮБОМУ из своих ответственных
   const ownDirsOf=sub=>dirsToAgg.filter(d=>_dirSubPass(d,sub)); // owner-passing направления подстатьи
+  // ── КОМПЛЕКСНЫЕ ПАРЫ в сводной (03.10.2026, docs/DECISIONS.md#d-complex-pairs): план пары режется ПО ЛЮДЯМ ОДНИМ
+  //    фильтром записей, факт - только у основного. Чья запись: owner записи, у безымянной - основной владелец пары.
+  //    _recsOwnF режет ТОЛЬКО комплексные пары: у прочих набор записей тот же (разметка побайтно прежняя - стенд-инвариант).
+  //    people=null → без среза (нет фильтра ЦФО и это не контейнер ЦФО).
+  const _recOwner=p=>String(p.owner||'').trim()||_ownerOf(p.dir,p.code);
+  const _recsOwnF=(recsFn,people)=>!people?recsFn:((d,lvl,sub)=>{const rs=recsFn(d,lvl,sub);if(!rs.length||!_isComplex(d,sub))return rs;return rs.filter(p=>people.has(_recOwner(p)));});
+  const _cxPeople=people=>people||(selOwn.size?selOwn:null); // явный набор (контейнер ЦФО) либо фильтр ЦФО
   const _pdFactMap=kind=>kind==='inc'?_pdInc:kind==='vyv'?_pdVyv:_pdExp;
   const _factSubMap=kind=>kind==='inc'?incSubN:kind==='vyv'?vyvodSubN:factSubN;
   const _pdPlanMonth=(recsFn,cvt,lvl,d,sub,mo)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(_planSlot))];sides.forEach(sd=>{const r2=rs.filter(p=>_planSlot(p)===sd);let hit=false;r2.forEach(r=>{if(r.month===mo){tot=(tot||0)+cvt(r,mo);hit=true;}});if(hit)return;if(!r2.some(p=>p.month>=1)){const yr=r2.find(p=>p.month===0);if(yr)tot=(tot||0)+cvt(yr,0)/12;}});return tot;};
   const _pdPlanYear=(recsFn,cvt,lvl,d,sub)=>{const rs=recsFn(d,lvl,sub);if(!rs.length)return null;let tot=null;const sides=[...new Set(rs.map(_planSlot))];sides.forEach(sd=>{const r2=rs.filter(p=>_planSlot(p)===sd);const yr=r2.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else{for(let mm=1;mm<=12;mm++){const r=r2.find(p=>p.month===mm);if(r)v=(v||0)+cvt(r,mm);}}if(v!=null)tot=(tot||0)+v;});return tot;};
   const _subFactP=(kind,sub)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];if(!a)return 0;if(isYear){let s=0;for(let mm=1;mm<=12;mm++)s+=a[mm];return s;}return a[+period]||0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[_ownerKey(d,sub)];if(a){if(isYear){for(let mm=1;mm<=12;mm++)s+=a[mm];}else s+=a[+period]||0;}});return s;};
   const _subFactM=(kind,sub,mo)=>{if(!selOwn.size){const a=_factSubMap(kind)[sub];return a?(a[mo]||0):0;}let s=0;const mp=_pdFactMap(kind);ownDirsOf(sub).forEach(d=>{const a=mp[_ownerKey(d,sub)];if(a)s+=a[mo]||0;});return s;};
-  const _subPlanP=(recsFn,cvt,planOfFn,lvl,sub)=>{if(!selOwn.size)return planOfFn(lvl,sub);let tot=null;ownDirsOf(sub).forEach(d=>{const v=isYear?_pdPlanYear(recsFn,cvt,lvl,d,sub):_pdPlanMonth(recsFn,cvt,lvl,d,sub,+period);if(v!=null)tot=(tot||0)+v;});return tot;};
+  const _subPlanP=(recsFn,cvt,planOfFn,lvl,sub)=>{if(!selOwn.size)return planOfFn(lvl,sub);const rf=_recsOwnF(recsFn,selOwn);let tot=null;ownDirsOf(sub).forEach(d=>{const v=isYear?_pdPlanYear(rf,cvt,lvl,d,sub):_pdPlanMonth(rf,cvt,lvl,d,sub,+period);if(v!=null)tot=(tot||0)+v;});return tot;};
   // dirs (необязательный) - считать ровно по этим направлениям (4-й уровень: строка одного направления).
   // ⚠ Ранний выход по !selOwn.size при заданном dirs НЕ применяется: без фильтра ЦФО planMonthFn отдаёт
   //   подстатью целиком по всем направлениям, то есть ровно не то, что просит строка направления.
-  const _subPlanM=(recsFn,cvt,planMonthFn,lvl,sub,mo,dirs)=>{if(!dirs&&!selOwn.size)return planMonthFn(lvl,sub,mo);let tot=null;(dirs||ownDirsOf(sub)).forEach(d=>{const v=_pdPlanMonth(recsFn,cvt,lvl,d,sub,mo);if(v!=null)tot=(tot||0)+v;});return tot;};
+  const _subPlanM=(recsFn,cvt,planMonthFn,lvl,sub,mo,dirs,people)=>{if(!dirs&&!selOwn.size)return planMonthFn(lvl,sub,mo);const rf=_recsOwnF(recsFn,_cxPeople(people));let tot=null;(dirs||ownDirsOf(sub)).forEach(d=>{const v=_pdPlanMonth(rf,cvt,lvl,d,sub,mo);if(v!=null)tot=(tot||0)+v;});return tot;};
   function ownerPass(code){ // hoisted - используется в codePasses ниже
     if(!selOwn.size)return true;
     if(level==='subarticle')return subOwnerPass(code);
@@ -13352,7 +13364,7 @@ function renderPlanFact(f){
   //   для ОТБОРА (subOwnerPass / фильтр ЦФО) и здесь не зовётся: показ и отбор - разные вопросы.
   const ownersOfRow=(kind,code,isChild,dirOverride)=>{
     const o=_ownerOf(dirOverride,code);
-    if(!o||(selOwn.size&&!selOwn.has(o)))return []; // при фильтре ЦФО - только выбранный
+    if(!o||(selOwn.size&&!_ownersOf(dirOverride,code).some(x=>selOwn.has(x))))return []; // при фильтре ЦФО - только выбранный (у комплексной пары - любой из её людей)
     return [o];};
   const ownerTd=(kind,code,isChild,dirOverride,isGGrand)=>{
     // ⚠ Пусто у ИТОГО/ЧП/ВЫВОДА (dRow зовут с kind=null) И У СТРОКИ СТАТЬИ: у неё своего
@@ -13364,9 +13376,10 @@ function renderPlanFact(f){
     if(!os.length)return `<td style="${td};text-align:left;color:var(--text3);cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" ${_tipAttr([],null,'Ответственный не назначен в редакторе планов')}>-</td>`;
     // ПЕРВЫЙ по алфавиту + счётчик остальных («Данилова А.П. +7»); полный список - в title. Жёсткая ширина + ellipsis, одна строка - колонка не выдавливает Δ/Остаток/Статус за край
     const lbl=esc(_fioInit(os[0])); // владелец один по построению (пара направление||код) - счётчика «+N» больше нет
+    const _cxO=_isComplex(dirOverride,code)?_ownersOf(dirOverride,code):null; // комплексная пара: основной + соисполнители ОДНОЙ пары, пометка 👥 (решение Олега 03.10.2026) - не склейка владельцев разных пар
     // Список - ПО СТРОКЕ НА ФИО в единой подсказке (через запятую длинные списки рвались посреди имени, фамилии сливались).
     // ⚠ ФИО передаём СЫРЫМИ, без esc: _tipAttr эскейпит сам, двойной эскейп дал бы «&amp;amp;» в именах.
-    return `<td style="${td};text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" ${_tipAttr(os.map(o=>[o,'']),null,'Ответственный')}>${lbl}</td>`; // владелец один по паре направление||код
+    return `<td style="${td};text-align:left;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default" onclick="event.stopPropagation()" data-label="Ответственный" ${_cxO?_tipAttr(_cxO.map((o,i)=>[o,i?'планирует':'основной · факт на нём']),null,'Комплексная пара: планируют несколько'):_tipAttr(os.map(o=>[o,'']),null,'Ответственный')}>${lbl}${_cxO?' <span style="color:var(--text3)">👥</span>':''}</td>`; // владелец один по паре направление||код; у комплексной - основной + 👥
   };
   // колонки: Ответственный | Утверждено (baseline) | Тек. план | Факт | Остаток к утв. | Остаток к тек. | Статус.
   // ⚠ Δ считается от baseline, СТАТУС - от текущего плана (03.09.2026). Базы разные намеренно: Δ отвечает
@@ -13479,7 +13492,7 @@ function renderPlanFact(f){
   //   направления обязана мериться от плана СВОЕГО направления, а не от суммы по всем. Параметр,
   //   а не вторая функция: правила «утв или тек, без фолбэка» и «под фильтром «Контрагент» база -
   //   план по стороне» одни и те же на всех уровнях, и разъехаться им нельзя.
-  const _subOneBaseM=(lvl,sub,m,utv,dirs)=>{
+  const _subOneBaseM=(lvl,sub,m,utv,dirs,people)=>{ // people - набор людей (комплексные пары): контейнер ЦФО или фильтр ЦФО
     if(utv&&!PB)return{v:null,src:null};
     // ⚠ Под фильтром «Контрагент» база остатка И СТАТУСА - ТОТ ЖЕ план, что показан в строке.
     //   Без этой развилки в одной строке жили два разных плана: показанный (по стороне) и тот, от
@@ -13497,7 +13510,7 @@ function renderPlanFact(f){
       const v=utv?_sd(PB.recsOf,_blSideMD):_sd(recsOf,_fcSideMD);
       return{v,src:v==null?null:(utv?'utv':'prog')};
     }
-    const v=utv?_subPlanM(PB.recsOf,PB.cvtD,PB.planMonth,lvl,sub,m,dirs):_subPlanM(recsOf,cvtD,planMonth,lvl,sub,m,dirs);
+    const v=utv?_subPlanM(PB.recsOf,PB.cvtD,PB.planMonth,lvl,sub,m,dirs,people):_subPlanM(recsOf,cvtD,planMonth,lvl,sub,m,dirs,people);
     return{v,src:v==null?null:(utv?'utv':'prog')};};
   // остаток по произвольной помесячной базе; #1 (факт только за месяцы, где ЕСТЬ база) живёт внутри цикла и переносится на обе стороны сам
   // factM (необязательный) - факт того же среза, что и база. Нужен 4-му уровню: у строки направления
@@ -13590,10 +13603,10 @@ function renderPlanFact(f){
   //   планов направлений и заговорил на первом же прогоне под фильтром по стороне.
   const _dSidePlanFor=(md,kind,sub,d,m)=>{if(kind==='inc'||!_slPlanSide(sub))return null;
     let t=null;selSide.forEach(sv=>{const v=md(d,sub,sv,m);if(v!=null)t=(t||0)+v;});return t;};
-  const _dSubPlanM=(kind,sub,d,m)=>selSide.size?_dSidePlanFor(_fcSideMD,kind,sub,d,m):_pdPlanMonth(recsOf,cvtD,_dLvl(kind),d,sub,m);
-  const _dSubBaseM=(kind,sub,d,m)=>!PB?null:(selSide.size?(_blSideMD?_dSidePlanFor(_blSideMD,kind,sub,d,m):null):_pdPlanMonth(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub,m));
-  const _dSubPlanP=(kind,sub,d)=>selSide.size?_dPer(m=>_dSubPlanM(kind,sub,d,m)):(isYear?_pdPlanYear(recsOf,cvtD,_dLvl(kind),d,sub):_pdPlanMonth(recsOf,cvtD,_dLvl(kind),d,sub,+period));
-  const _dSubBaseP=(kind,sub,d)=>!PB?null:(selSide.size?_dPer(m=>_dSubBaseM(kind,sub,d,m)):(isYear?_pdPlanYear(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub):_pdPlanMonth(PB.recsOf,PB.cvtD,_dLvl(kind),d,sub,+period)));
+  const _dSubPlanM=(kind,sub,d,m,people)=>selSide.size?_dSidePlanFor(_fcSideMD,kind,sub,d,m):_pdPlanMonth(_recsOwnF(recsOf,_cxPeople(people)),cvtD,_dLvl(kind),d,sub,m);
+  const _dSubBaseM=(kind,sub,d,m,people)=>!PB?null:(selSide.size?(_blSideMD?_dSidePlanFor(_blSideMD,kind,sub,d,m):null):_pdPlanMonth(_recsOwnF(PB.recsOf,_cxPeople(people)),PB.cvtD,_dLvl(kind),d,sub,m));
+  const _dSubPlanP=(kind,sub,d,people)=>{const rf=_recsOwnF(recsOf,_cxPeople(people));return selSide.size?_dPer(m=>_dSubPlanM(kind,sub,d,m,people)):(isYear?_pdPlanYear(rf,cvtD,_dLvl(kind),d,sub):_pdPlanMonth(rf,cvtD,_dLvl(kind),d,sub,+period));};
+  const _dSubBaseP=(kind,sub,d,people)=>{if(!PB)return null;const rf=_recsOwnF(PB.recsOf,_cxPeople(people));return selSide.size?_dPer(m=>_dSubBaseM(kind,sub,d,m,people)):(isYear?_pdPlanYear(rf,PB.cvtD,_dLvl(kind),d,sub):_pdPlanMonth(rf,PB.cvtD,_dLvl(kind),d,sub,+period));};
   // сторона × направление (третий уровень, разложенный по направлениям)
   const _dSideFactM=(sub,side,d,m)=>{const SK=_sfIdx[_ownerKey(d,sub)];return (SK&&SK[side])?(SK[side][m]||0):0;};
   const _dSideFactP=(sub,side,d)=>{if(isYear){let s=0;for(let m=1;m<=12;m++)s+=_dSideFactM(sub,side,d,m);return s;}return _dSideFactM(sub,side,d,+period);};
@@ -13617,9 +13630,9 @@ function renderPlanFact(f){
   //   берутся ПО ОДНОМУ направлению (параметры dirs / factM).
   // ⚠ Статус приходит из того же opts.rem, что у всех строк, поэтому база вердикта у направления -
   //   текущий план ЭТОГО направления (_pfStatusBase), и «Остаток к тек.» с бейджем сходятся сами.
-  const _dSubRemFor=(kind,sub,d)=>({
-    u:remOfSubBy(kind,sub,(l,sb,m)=>_subOneBaseM(l,sb,m,true,[d]),m=>_dSubFactM(kind,sub,d,m)),
-    t:remOfSubBy(kind,sub,(l,sb,m)=>_subOneBaseM(l,sb,m,false,[d]),m=>_dSubFactM(kind,sub,d,m))});
+  const _dSubRemFor=(kind,sub,d,people,factOk)=>({ // factOk===false - контейнер соисполнителя: факт комплексной пары у основного, здесь ноль
+    u:remOfSubBy(kind,sub,(l,sb,m)=>_subOneBaseM(l,sb,m,true,[d],people),m=>factOk===false?0:_dSubFactM(kind,sub,d,m)),
+    t:remOfSubBy(kind,sub,(l,sb,m)=>_subOneBaseM(l,sb,m,false,[d],people),m=>factOk===false?0:_dSubFactM(kind,sub,d,m))});
   // ⚠ СТОРОЖ РАСКЛАДА ПО НАПРАВЛЕНИЯМ. Разрез, не сходящийся со строкой, которую человек раскрыл,
   //   заставляет искать потерянные деньги там, где их нет, - тот же довод, что у _pfSplitOff на
   //   третьем уровне, и сторож тот же. Молчит, пока сходится.
@@ -13764,21 +13777,24 @@ function renderPlanFact(f){
       pre:'cfo|',setCut:'_pfCutExpC',setArt:'_pfArtExpC',setSub:'_pfSubExpC',setDir:'_pfDirExpC',
       expCut:_cutExpC,expArt:_cutArtExpC,expSub:_cutSubExpC,expDir:_cutDirExpC,lvl4:true,
       containers:[...pfOwners,NOOWN],
-      dirsOf:(sub,O)=>ownDirsOf(sub).filter(d=>(_ownerOf(d,sub)||NOOWN)===O),
+      // комплексная пара лежит в контейнере КАЖДОГО своего ответственного: план - его (people), факт - только у основного (factOk)
+      dirsOf:(sub,O)=>ownDirsOf(sub).filter(d=>{const ow=_ownersOf(d,sub);return ow.length?ow.indexOf(O)>=0:O===NOOWN;}),
+      people:O=>new Set([O]),factOk:(sub,d,O)=>!_isComplex(d,sub)||_ownerOf(d,sub)===O,
       tog:'Клик - развернуть/свернуть ЦФО',what:'разрез ЦФО'}
     :{pre:'dir|',setCut:'_pfCutExp',setArt:'_pfArtExpD',setSub:'_pfSubExpD',setDir:null,
       expCut:_cutExp,expArt:_cutArtExp,expSub:_cutSubExp,expDir:null,lvl4:false,
       containers:dirsToAgg,
       dirsOf:(sub,d)=>ownDirsOf(sub).includes(d)?[d]:[],
+      people:()=>null,factOk:()=>true,
       tog:'Клик - развернуть/свернуть направление',what:'разрез по направлениям'};
   const _cutSubs=(kind,code,C)=>subsOfArt(kind,code).filter(subOwnerPass).filter(sub=>_subAlive(kind,sub)).filter(sub=>_CUT.dirsOf(sub,C).length>0);
   // сумма по направлениям контейнера: факт - число, план/утв - с NULL-ДИСЦИПЛИНОЙ («плана нет» ≠
   // «план равен нулю»; складываем только заданные, сумма пустых остаётся null - как sumOrNull)
   const _cutSumD=(dirs,fn)=>{let t=null;dirs.forEach(d=>{const v=fn(d);if(v!=null)t=(t||0)+v;});return t;};
-  const _cutSubF=(kind,sub,C)=>{let s=0;_CUT.dirsOf(sub,C).forEach(d=>{s+=_dSubFactP(kind,sub,d);});return s;};
-  const _cutSubP=(kind,sub,C)=>_cutSumD(_CUT.dirsOf(sub,C),d=>_dSubPlanP(kind,sub,d));
-  const _cutSubB=(kind,sub,C)=>_cutSumD(_CUT.dirsOf(sub,C),d=>_dSubBaseP(kind,sub,d));
-  const _cutSubRem=(kind,sub,C)=>_remMergeP(kind,_CUT.dirsOf(sub,C).map(d=>_dSubRemFor(kind,sub,d)));
+  const _cutSubF=(kind,sub,C)=>{let s=0;_CUT.dirsOf(sub,C).forEach(d=>{if(_CUT.factOk(sub,d,C))s+=_dSubFactP(kind,sub,d);});return s;};
+  const _cutSubP=(kind,sub,C)=>_cutSumD(_CUT.dirsOf(sub,C),d=>_dSubPlanP(kind,sub,d,_CUT.people(C)));
+  const _cutSubB=(kind,sub,C)=>_cutSumD(_CUT.dirsOf(sub,C),d=>_dSubBaseP(kind,sub,d,_CUT.people(C)));
+  const _cutSubRem=(kind,sub,C)=>_remMergeP(kind,_CUT.dirsOf(sub,C).map(d=>_dSubRemFor(kind,sub,d,_CUT.people(C),_CUT.factOk(sub,d,C))));
   const _cutSideF=(sub,side,C)=>{let s=0;_CUT.dirsOf(sub,C).forEach(d=>{s+=_dSideFactP(sub,side,d);});return s;};
   const _cutSideP=(sub,side,C)=>_cutSumD(_CUT.dirsOf(sub,C),d=>_dSidePlanP(sub,side,d));
   const _cutSideB=(sub,side,C)=>_cutSumD(_CUT.dirsOf(sub,C),d=>_dSideBaseP(sub,side,d));
@@ -13823,13 +13839,14 @@ function renderPlanFact(f){
       const sKey=_CUT.pre+C+'|'+kind+'|'+sub,sOpen=_sideRows.length>0&&_CUT.expSub.has(sKey);
       // ⚠ У СТРОКИ ОДНА СТРЕЛКА: либо стороны (у _slFactSide), либо направления (четвёртый уровень,
       //   только в разрезе ЦФО и только в своде - `_multiDir`, то же правило, что в «Статьях»).
-      const _dirRowsSub=(_CUT.lvl4&&!_sideRows.length&&_multiDir)?dirs.filter(d=>!_rowDead(_dSubFactP(kind,sub,d),_dSubPlanP(kind,sub,d),_dSubBaseP(kind,sub,d))):[];
+      const _cF=d=>_CUT.factOk(sub,d,C)?_dSubFactP(kind,sub,d):0,_cP=d=>_dSubPlanP(kind,sub,d,_CUT.people(C)),_cB=d=>_dSubBaseP(kind,sub,d,_CUT.people(C)); // строка направления в контейнере - те же правила, что у строки подстатьи
+      const _dirRowsSub=(_CUT.lvl4&&!_sideRows.length&&_multiDir)?dirs.filter(d=>!_rowDead(_cF(d),_cP(d),_cB(d))):[];
       const dOpen=_dirRowsSub.length>0&&_CUT.expDir.has(sKey);
       h+=dRow(sub,sb,sp,sf,revenue,false,kind,sub,Object.assign({child:true,rem:_cutSubRem(kind,sub,C),subExpandable:_sideRows.length>0,subExpanded:sOpen,pfkey:sKey,
         keyToggle:_sideRows.length?{set:_CUT.setSub,key:sKey,title:'Клик - расшифровка по сторонам'}:(_dirRowsSub.length?{set:_CUT.setDir,key:sKey,title:'Клик - разрез по направлениям'}:null),
         dirExpandable:_dirRowsSub.length>0,dirExpanded:dOpen},_cutClick(kind,sub,C,[sub])));
-      if(dOpen){const _dRows=_dirRowsSub.map(d=>({d,f:_dSubFactP(kind,sub,d),p:_dSubPlanP(kind,sub,d),b:_dSubBaseP(kind,sub,d)}));
-        _dRows.forEach(x=>{h+=dRow(x.d,x.b,x.p,x.f,revenue,false,kind,sub,{ggrand:true,dir:x.d,rem:_dSubRemFor(kind,sub,x.d),pfkey:sKey+'|'+x.d});});
+      if(dOpen){const _dRows=_dirRowsSub.map(d=>({d,f:_cF(d),p:_cP(d),b:_cB(d)}));
+        _dRows.forEach(x=>{h+=dRow(x.d,x.b,x.p,x.f,revenue,false,kind,sub,{ggrand:true,dir:x.d,rem:_dSubRemFor(kind,sub,x.d,_CUT.people(C),_CUT.factOk(sub,x.d,C)),pfkey:sKey+'|'+x.d});});
         _dirSplitWarn(sub+' ('+C+')',sf,sp,sb,_dRows);}
       if(!sOpen)return;
       const _disp=_pfTrimCommon(_sideRows),_note=_slPlanSide(sub)?'':'ведётся по направлению',_facts=[];
@@ -14056,42 +14073,41 @@ function renderPlanFact(f){
     const subPass=sub=>{if(selArt.size&&!selArtC3.has(c3(sub)))return false;if(selSub.size&&!selSub.has(sub))return false;return subOwnerPass(sub);};
     const perOf=arr=>{if(!arr)return 0;if(isYear){let s=0;for(let m=1;m<=12;m++)s+=arr[m];return s;}return arr[+period]||0;};
     // план (d,подстатья) за период отчёта из произвольного набора записей+конвертера; %/%ЧП → рубли, по сотрудникам суммируется
-    const planDirSubFrom=(recSet,cvt,d,sub)=>{
-      const all=recSet.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub); if(!all.length)return null;
+    const planDirSubFrom=(recSet,cvt,d,sub,people)=>{ // people - срез по людям у КОМПЛЕКСНОЙ пары (безымянная запись - основному)
+      const all=recSet.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub&&(!people||!_isComplex(d,sub)||people.has(_recOwner(p)))); if(!all.length)return null;
       if(!isYear){let tot=null;all.filter(p=>p.month===+period).forEach(r=>{tot=(tot||0)+cvt(r,+period);});return tot;}
       const sides=[...new Set(all.map(_planSlot))];let tot=null;
       sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);const yr=recs.find(p=>p.month===0);let v=null;if(yr)v=cvt(yr,0);else recs.forEach(r=>{if(r.month>=1)v=(v||0)+cvt(r,r.month);});if(v!=null)tot=(tot||0)+v;});
       return tot;
     };
-    const planDirSub=(d,sub)=>planDirSubFrom(plans,cvtD,d,sub);
-    const basePlanDirSub=(d,sub)=>PB?planDirSubFrom(PB.R,PB.cvtD,d,sub):null;
+    const planDirSub=(d,sub,people)=>planDirSubFrom(plans,cvtD,d,sub,people);
+    const basePlanDirSub=(d,sub,people)=>PB?planDirSubFrom(PB.R,PB.cvtD,d,sub,people):null;
     // baseline-план (d,подстатья) за КОНКРЕТНЫЙ месяц - для остатка лимита (аналог planMonth по одному направлению)
-    const basePlanDirSubM=(d,sub,m)=>{if(!PB)return null;const all=PB.R.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
-    const planDirSubM=(d,sub,m)=>{const all=plans.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub);if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;}; // прогноз (напр./подстатья) помесячно - для devBase остатка незамороженного месяца
+    const basePlanDirSubM=(d,sub,m,people)=>{if(!PB)return null;const all=PB.R.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub&&(!people||!_isComplex(d,sub)||people.has(_recOwner(p))));if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+PB.cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+PB.cvtD(yr,0)/12;}});return tot;};
+    const planDirSubM=(d,sub,m,people)=>{const all=plans.filter(p=>p.dir===d&&p.level==='subarticle'&&p.code===sub&&(!people||!_isComplex(d,sub)||people.has(_recOwner(p))));if(!all.length)return null;let tot=null;const sides=[...new Set(all.map(_planSlot))];sides.forEach(sd=>{const recs=all.filter(p=>_planSlot(p)===sd);let hit=false;recs.forEach(r=>{if(r.month===m){tot=(tot||0)+cvtD(r,m);hit=true;}});if(hit)return;if(!recs.some(p=>p.month>=1)){const yr=recs.find(p=>p.month===0);if(yr)tot=(tot||0)+cvtD(yr,0)/12;}});return tot;}; // прогноз (напр./подстатья) помесячно - для devBase остатка незамороженного месяца
     const subsExp=new Set();Object.keys(expByDirSub).forEach(K=>subsExp.add(K.split('||')[1]));
     plans.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))subsExp.add(p.code);});
     if(PB)PB.R.forEach(p=>{if(p.level==='subarticle'&&!isVyvodCode(p.code))subsExp.add(p.code);}); // подстатьи из baseline тоже дают строку ЦФО
     const agg={};
     dirsToAgg.forEach(d=>{subsExp.forEach(sub=>{
       if(isVyvodCode(sub)||!subPass(sub))return;
-      const fv=perOf(expByDirSub[_ownerKey(d,sub)]),pv=planDirSub(d,sub),bv=basePlanDirSub(d,sub);
-      if(!fv&&pv==null&&bv==null)return;
-      const o=_ownerOf(d,sub)||NOOWN;
-      const A=agg[o]||(agg[o]={plan:null,fact:0,base:null,remPlan:null,remFact:0});
-      if(pv!=null)A.plan=(A.plan||0)+pv; if(bv!=null)A.base=(A.base||0)+bv; A.fact+=fv;
-      // Остаток за ВЫБРАННЫЙ период, факт ТОЛЬКО за месяцы, где база ЕСТЬ (#1).
-      // ⚠ БАЗА - ТА ЖЕ, ЧТО У «СТАТУСА» ЭТОЙ ЖЕ СТРОКИ, и берётся тем же `_pfStatusBase` (03.09.2026).
-      //   Была девбаза помесячно (заморожен → утверждённое, иначе текущий), и после перевода статуса на
-      //   текущий план в ОДНОЙ строке стояли два числа от ДВУХ баз: бейдж мерил от текущего, остаток от
-      //   утверждённого. Остаток отвечает «сколько ещё можно потратить» - он обязан мериться от того же
-      //   плана, по которому вынесен вердикт.
-      // ⚠ Второй колонки («к утв.») здесь НЕ заводим: свод ЦФО - персональный экран, лишняя колонка
-      //   дороже пользы, а след пересмотра плана уже стоит припиской в бейдже рядом.
-      // ⚠ Нет текущего плана - нет и остатка: месяц просто не копится, и «Статус» в той же строке
-      //   скажет «план не задан». Прежний фолбэк на утверждённое вернул бы вторую базу через заднюю дверь.
-      remMonths.forEach(m=>{const b=basePlanDirSubM(d,sub,m),p=planDirSubM(d,sub,m);
-        const v=_pfStatusBase(b,p); if(v==null)return;
-        A.remPlan=(A.remPlan||0)+v;const fm=expByDirSub[_ownerKey(d,sub)];A.remFact+=fm?(fm[m]||0):0;});
+      // ⚠ КОМПЛЕКСНАЯ ПАРА (03.10.2026): строка у КАЖДОГО её ответственного - план свой (безымянные записи - основному),
+      //   ФАКТ и остаток факта - ТОЛЬКО у основного (иначе рубль посчитался бы столько раз, сколько людей); A.cx - план
+      //   соисполнителя по комплексным парам, называется пометкой 👥 в строке. Некомплексная пара - один человек, как раньше.
+      const owners=_ownersOf(d,sub),prim=owners[0]||NOOWN,cx=owners.length>1;
+      (cx?owners:[prim]).forEach(o=>{const mine=cx?new Set([o]):null,isPrim=o===prim;
+        const fv=isPrim?perOf(expByDirSub[_ownerKey(d,sub)]):0,pv=planDirSub(d,sub,mine),bv=basePlanDirSub(d,sub,mine);
+        if(!fv&&pv==null&&bv==null)return;
+        const A=agg[o]||(agg[o]={plan:null,fact:0,base:null,remPlan:null,remFact:0,cx:0});
+        if(pv!=null)A.plan=(A.plan||0)+pv; if(bv!=null)A.base=(A.base||0)+bv; A.fact+=fv; if(cx&&!isPrim&&pv!=null)A.cx+=pv;
+        // Остаток за ВЫБРАННЫЙ период, факт ТОЛЬКО за месяцы, где база ЕСТЬ (#1).
+        // ⚠ БАЗА - ТА ЖЕ, ЧТО У «СТАТУСА» ЭТОЙ ЖЕ СТРОКИ, и берётся тем же `_pfStatusBase` (03.09.2026): остаток отвечает
+        //   «сколько ещё можно потратить» - он обязан мериться от того же плана, по которому вынесен вердикт.
+        // ⚠ Второй колонки («к утв.») здесь НЕ заводим; нет текущего плана - нет и остатка.
+        remMonths.forEach(m=>{const b=basePlanDirSubM(d,sub,m,mine),p=planDirSubM(d,sub,m,mine);
+          const v=_pfStatusBase(b,p); if(v==null)return;
+          A.remPlan=(A.remPlan||0)+v;if(isPrim){const fm=expByDirSub[_ownerKey(d,sub)];A.remFact+=fm?(fm[m]||0):0;}});
+      });
     });});
     const names=Object.keys(agg);
     if(names.length&&!(names.length===1&&names[0]===NOOWN)){ // показываем, только если ответственные вообще назначены
@@ -14113,9 +14129,10 @@ function renderPlanFact(f){
           <td style="${td};text-align:right;color:${dc}">${d2!=null?((d2>0?'+':d2<0?'−':'')+fmt(Math.abs(d2))):'-'}</td>
           ${remTd(A.remPlan,A.remFact,true,'exp','prog',null,false,undefined,true)}
           <td style="${td};text-align:left">${statusCell(_pfStatusBase(A.base,A.plan),A.fact,false,_pfPlanRevNote(A.base,A.plan))}</td>`;};
-      const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0});
-      const addA=(dst,src)=>{if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;return dst;};
+      const emptyA=()=>({plan:null,fact:0,base:null,remPlan:null,remFact:0,cx:0});
+      const addA=(dst,src)=>{dst.cx=(dst.cx||0)+(src.cx||0);if(src.plan!=null)dst.plan=(dst.plan||0)+src.plan;if(src.base!=null)dst.base=(dst.base||0)+src.base;dst.fact+=src.fact;if(src.remPlan!=null)dst.remPlan=(dst.remPlan||0)+src.remPlan;dst.remFact+=src.remFact;return dst;};
       const sizeA=A=>(A.base||A.plan||A.fact||0);
+      const _cxMark=A=>(A&&A.cx)?` <span style="color:var(--text3);cursor:default" ${_tipAttr([['план соисполнителя по комплексным парам',fmt(A.cx)],['факт по ним','у основного ответственного']],null,'Комплексные пары')}>👥</span>`:''; // пометка: в плане этого человека есть доля комплексных пар, факта по ним у него нет
       // дерево (строго один уровень; защита от цикла в _cfoMgrOf): подчинённый уходит под руководителя.
       // Руководитель блока показывается ВСЕГДА (даже без своих подстатей - тогда его строка = только сумма подчинённых).
       const persons=names.filter(o=>o!==NOOWN);
@@ -14145,9 +14162,9 @@ function renderPlanFact(f){
           const sum=addA(emptyA(),own);kids.forEach(c=>addA(sum,ownAgg(c)));
           const gid='cfo'+(ci++);
           body+=`<tr style="cursor:pointer" onclick="cfoToggleMgr('${gid}',this)"><td style="${td};text-align:left;font-weight:600"><span class="cfo-arr">▸</span> ${cfoNameLink(o)} <span style="color:var(--text3);font-weight:400;font-size:10px">· ${kids.length} подч.</span></td>${cfoCells(sum)}</tr>`;
-          kids.forEach(c=>{body+=`<tr data-cfopar="${gid}" style="display:none"><td style="${td};text-align:left;padding-left:26px;color:var(--text2)">${cfoNameLink(c)}</td>${cfoCells(ownAgg(c))}</tr>`;});
+          kids.forEach(c=>{body+=`<tr data-cfopar="${gid}" style="display:none"><td style="${td};text-align:left;padding-left:26px;color:var(--text2)">${cfoNameLink(c)}${_cxMark(ownAgg(c))}</td>${cfoCells(ownAgg(c))}</tr>`;});
         }else{ // ЦФО без подчинённых
-          body+=`<tr><td style="${td};text-align:left">${cfoNameLink(o)}</td>${cfoCells(own)}</tr>`;
+          body+=`<tr><td style="${td};text-align:left">${cfoNameLink(o)}${_cxMark(own)}</td>${cfoCells(own)}</tr>`;
         }
       });
       if(agg[NOOWN])body+=`<tr><td style="${td};text-align:left;color:var(--text3)">${cfoNameLink('__none__',NOOWN)}</td>${cfoCells(agg[NOOWN])}</tr>`; // (не назначен) - внизу плоско
