@@ -1283,6 +1283,18 @@ const _vyvodCodeF=seen=>code=>!!(seen&&seen[code])||_slC3(code)==='127';
 const _ownerKey=(dir,code)=>String(dir||'')+'||'+String(code||'');
 const _ownCodeOf=r=>String(r[COL.ARTICLE_NAME]||'').trim()||String(r[COL.ARTICLE_CODE]||'').trim();
 const _ownerOf=(dir,code)=>String((_planOwners||{})[_ownerKey(dir,code)]||'').trim();
+// ══ КОМПЛЕКСНЫЕ ПАРЫ: НЕСКОЛЬКО ОТВЕТСТВЕННЫХ НА ОДНУ ПАРУ (решения Олега 03.10.2026, docs/DECISIONS.md#d-complex-pairs) ═══
+// Основной владелец - прежняя _planOwners (все потребители _ownerOf работают как раньше), соисполнители -
+// config/planCoOwners {dir||code:[ФИО,…]} БЕЗ основного. Комплексность = больше одного ответственного, флага нет.
+// ⚠ Потребители переводятся на _ownerHas ТОЧЕЧНО; подменять _ownerOf НЕЛЬЗЯ: String(['А','Б']) дал бы фальшивого
+//   человека «А,Б» во всех === (выписка, фильтр ЦФО, свод, селекты) - молчаливая смена смысла.
+// ⚠ Порядок в _ownersOf фиксирован: основной первым - на нём считается факт (решение 2), соисполнители - как записаны.
+const _coOwnersNormList=v=>{const a=Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);return a.map(x=>String(x||'').trim()).filter((x,i,arr)=>x&&arr.indexOf(x)===i);}; // RTDB отдаёт массив объектом с числовыми ключами - читаем обе формы
+const _coOwnersOf=(dir,code)=>{const o=_ownerOf(dir,code);return _coOwnersNormList((_planCoOwners||{})[_ownerKey(dir,code)]).filter(x=>x!==o);};
+const _ownersOf=(dir,code)=>{const o=_ownerOf(dir,code),co=_coOwnersOf(dir,code);return o?[o].concat(co):co;};
+const _ownerHas=(dir,code,fio)=>{fio=String(fio||'').trim();return !!fio&&_ownersOf(dir,code).indexOf(fio)>=0;};
+const _isComplex=(dir,code)=>_ownersOf(dir,code).length>1;
+const _complexLabel=(dir,code)=>_isComplex(dir,code)?('комплексная, планируют: '+_ownersOf(dir,code).join(', ')):'';
 let RAW=[];
 let activeTab='bank';
 // ── Третий уровень: расшифровка РАСХОДНОЙ подстатьи по стороне (ФОТ→сотрудник 👤, аренда→объект 🏢, консалтинг→контрагент 👤). ЕДИНЫЙ источник для Выписки ЦФО, редактора планов и сводной БДР - иначе две копии классификации разъедутся (как было бы с OPIU_CATS). Матрицу «все месяцы» это не касается.
@@ -11095,6 +11107,12 @@ function pfRunTests(){
    const idxCopies=(top.match(/_planOwners\|\|\{\}\)\[/g)||[]).length;
    ok('прямая индексация _planOwners по паре - только в _ownerOf',idxCopies===1,idxCopies);
    ok('_ownerKey определён один раз',top.split('const _owner'+'Key=').length-1===1); // иголка из половин: литерал целиком нашёл бы сам себя
+   // ── Комплексные пары (03.10.2026): основной в _planOwners, соисполнители в _planCoOwners, _ownerOf НЕ подменён ──
+   ok('комплексные пары: _ownersOf = основной первым + соисполнители без дублей и пустых; _ownerHas/_isComplex/_complexLabel',(function(){const sv=_planOwners,sc=_planCoOwners;try{_planOwners={'БФЛ||244_Мебель':'Иванов И.И.'};_planCoOwners={'БФЛ||244_Мебель':[' Петров П.П. ','Иванов И.И.','Сидоров С.С.',''],'БФЛ||220_ФОТ':['Кто-то']};
+     return _ownersOf('БФЛ','244_Мебель').join('|')==='Иванов И.И.|Петров П.П.|Сидоров С.С.'&&_ownerHas('БФЛ','244_Мебель','Петров П.П.')&&_ownerHas('БФЛ','244_Мебель','Иванов И.И.')&&!_ownerHas('БФЛ','244_Мебель','Козлов')&&!_ownerHas('БФЛ','244_Мебель','')&&_isComplex('БФЛ','244_Мебель')&&!_isComplex('БФЛ','220_ФОТ')&&_ownersOf('БФЛ','220_ФОТ').join('|')==='Кто-то'&&_complexLabel('БФЛ','244_Мебель')==='комплексная, планируют: Иванов И.И., Петров П.П., Сидоров С.С.'&&_complexLabel('БФЛ','220_ФОТ')==='';}finally{_planOwners=sv;_planCoOwners=sc;}})());
+   ok('комплексные пары: форма RTDB (объект с числовыми ключами) читается как массив',_coOwnersNormList({0:'А',1:'Б'}).join('|')==='А|Б'&&_coOwnersNormList(null).length===0);
+   ok('комплексные пары: _ownerOf не подменён - основной остаётся строкой',(function(){const sv=_planOwners,sc=_planCoOwners;try{_planOwners={'БФЛ||244':'Иванов'};_planCoOwners={'БФЛ||244':['Петров']};return _ownerOf('БФЛ','244')==='Иванов'&&typeof _ownerOf('БФЛ','244')==='string';}finally{_planOwners=sv;_planCoOwners=sc;}})());
+   ok('комплексные пары: миграция переименования правит соисполнителей и owner ТЕКУЩЕГО плана, baseline не трогает',/_planCoOwners/.test(String(accessSavePanel))&&/p\.owner=renameMap/.test(String(accessSavePanel))&&!/_plansBaseline/.test(String(accessSavePanel)));
    // ⚠ Все три потребителя берут код владения ОДНОЙ функцией - вот где раньше расходился ключ.
    ok('сводная берёт код владения примитивом',/const sn=_ownCodeOf\(r\);/.test(String(renderPlanFact))&&/if\(sp&&sn\)\{const K=_ownerKey\(rd,sn\);\(expByDirSub/.test(String(renderPlanFact)));
    ok('выписка ЦФО берёт код владения примитивом и строку без подстатьи не отбрасывает',/const an=_ownCodeOf\(r\); if\(!an\)return;/.test(String(_cfoStmtData))
@@ -16600,14 +16618,17 @@ window.accessSavePanel=function(btn){
   });
   if(dup&&!confirm('Есть повторяющиеся email - будут учтены только первые. Сохранить?'))return;
   // Миграция при переименовании ФИО: иерархия ЦФО (ключ=подчинённый, значение=руководитель) + ответственные по подстатьям (значение)
-  let ownersChanged=false;
+  let ownersChanged=false,coChanged=false,plansChanged=false;
   if(Object.keys(renameMap).length){
     const nh={};Object.keys(_cfoHierarchy||{}).forEach(k=>{let kk=renameMap[k]||k;let vv=String((_cfoHierarchy||{})[k]||'');if(renameMap[vv])vv=renameMap[vv];nh[kk]=vv;});_cfoHierarchy=nh;
     Object.keys(_planOwners||{}).forEach(k=>{const v=String(_planOwners[k]||'').trim();if(renameMap[v]){_planOwners[k]=renameMap[v];ownersChanged=true;}});
+    // комплексные пары: соисполнители и поле owner у записей ТЕКУЩЕГО плана; утверждённый план (plansBaseline) не трогаем ни при каких правках
+    Object.keys(_planCoOwners||{}).forEach(k=>{const a=_coOwnersNormList(_planCoOwners[k]);let ch=false;const b=a.map(v=>{if(renameMap[v]){ch=true;return renameMap[v];}return v;});if(ch){_planCoOwners[k]=b;coChanged=true;}});
+    (_planRecords||[]).forEach(p=>{const v=String(p.owner||'').trim();if(v&&renameMap[v]){p.owner=renameMap[v];plansChanged=true;}});
   }
   // Применяем правки руководителя из панели (значения дропдаунов - через renameMap, если руководителя тоже переименовали)
   rowsData.forEach(r=>{if(!r.nm)return;let mg=r.mg;if(mg&&renameMap[mg])mg=renameMap[mg];if(mg&&mg!==r.nm)_cfoHierarchy[r.nm]=mg;else delete _cfoHierarchy[r.nm];});
-  _cfoHierSave(); if(ownersChanged)_ownersSave();
+  _cfoHierSave(); if(ownersChanged)_ownersSave(); if(coChanged)_coOwnersSave(); if(plansChanged)_plansSave();
   // Условия персональных листов (config/cfoQueries): своя запись (_accessQueriesSave) - отказ правил у этой ветки
   // не роняет сохранение доступа, но панель ЖДЁТ её результата и называет его: «сохранено записей N» либо почему нет.
   if(btn){btn.disabled=true;btn.textContent='Сохранение…';}
@@ -17724,6 +17745,16 @@ function _ownersSave(){
   try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){_lsWarn('finPlanOwners',e)}
   return _fbSetSafe('config/planOwners',_rtdbEncObj(_planOwners),'Ответственные по планам'); // ключ dir||подстатья кодируем (слэш в подстатьях ломал .set всего объекта)
 }
+// ===== Соисполнители комплексных пар - config/planCoOwners (03.10.2026, docs/DECISIONS.md#d-complex-pairs) =====
+// ключ = `${dir}||${code}` (тот же _ownerKey); значение = МАССИВ ФИО соисполнителей БЕЗ основного (основной - в planOwners).
+// ⚠ Правило записи ветки в RTDB заводится ДО первого сохранения - иначе _fbSetSafe откажет (CLAUDE.md, «Правила RTDB»).
+let _planCoOwners=(()=>{try{return JSON.parse(localStorage.getItem('finPlanCoOwners')||'{}')}catch(e){return{}}})();
+function _coOwnersNorm(o){const out={};Object.keys(o||{}).forEach(k=>{const a=_coOwnersNormList(o[k]);if(a.length)out[k]=a;});return out;} // пустые списки не храним: «нет соисполнителей» = нет ключа
+function _coOwnersSave(){
+  _planCoOwners=_coOwnersNorm(_planCoOwners);
+  try{localStorage.setItem('finPlanCoOwners',JSON.stringify(_planCoOwners));}catch(e){_lsWarn('finPlanCoOwners',e)}
+  return _fbSetSafe('config/planCoOwners',_rtdbEncObj(_planCoOwners),'Соисполнители комплексных пар'); // ключи кодируем, как у planOwners (слэш в подстатьях)
+}
 function startOwnersSync(){
   if(window._ownersSyncStarted)return; window._ownersSyncStarted=true;
   try{
@@ -17731,6 +17762,9 @@ function startOwnersSync(){
     firebase.database().ref('config/planOwners').on('value',s=>{if(window._planEditorOpen)return; // пока открыт редактор - не затираем несохранённые локальные правки владельцев (правки пишутся сразу через onchange; на закрытии слушатель подхватит облако)
       const v=s.val();_planOwners=_rtdbDecObj((v&&typeof v==='object')?v:{},'planOwners'); // декодируем ключи обратно в dir||подстатья
       try{localStorage.setItem('finPlanOwners',JSON.stringify(_planOwners));}catch(e){_lsWarn('finPlanOwners',e)}});
+    firebase.database().ref('config/planCoOwners').on('value',s=>{if(window._planEditorOpen)return; // тот же гейт, что у planOwners
+      const v=s.val();_planCoOwners=_coOwnersNorm(_rtdbDecObj((v&&typeof v==='object')?v:{},'planCoOwners'));
+      try{localStorage.setItem('finPlanCoOwners',JSON.stringify(_planCoOwners));}catch(e){_lsWarn('finPlanCoOwners',e)}});
   }catch(e){console.warn('[owners] sync',e&&e.message);}
 }
 // ===== Скрытые направления свода БДР - config/pfHiddenDirs =====
