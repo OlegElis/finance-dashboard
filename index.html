@@ -19172,6 +19172,124 @@ function _chatRenderMono(M){
   return L.join('\n');
 }
 function _chatTextBuild(D,o){const M=_chatModelBuild(D,o);return M.mono?_chatRenderMono(M):_chatRenderPlain(M);}
+// ══ РЕНДЕР PNG (задача «Скопировать как картинку», 03.10.2026, docs/DECISIONS.md#d-chat-png) ═══════════════════════
+// Берёт ТУ ЖЕ модель, что текст (_chatModelBuild → _chatModelLines за последний выбранный месяц); сумм не считает.
+// Раскладка (_chatPngLayout) - чистая: строки и сегменты в ЗНАКАХ моношрифта (x - колонка знака), цвета и начертания; рисование
+// (_chatPng) - масштаб S=2 под devicePixelRatio, шрифт 15px·S, межстрочный 1.42, поля 18px·S, ширина знака CW = measureText('0').
+// Полотно 47 знаков + поля. Правые края колонок в знаках: имя 0..9 | утв. 17 | текущий 26 | факт 35 | откл. 44 | маркер «!» 46.
+const CHAT_PNG={S:2,FS:15,LH:1.42,PAD:18,COLS:47,R_UTV:17,R_CUR:26,R_FACT:35,R_DEV:44,X_MARK:46,
+  FONT:'"JetBrains Mono","DejaVu Sans Mono","Menlo","Consolas",monospace',
+  BLACK:'#1c2026',GRAY:'#828a94',RED:'#c4342c',GREEN:'#2c8c60',ORANGE:'#d67614',RULE:'#d7dce2',HDR:'#5a626c',BG:'#ffffff'};
+// откл. = fact − cur: текст со знаком, цвет и маркер «!» (порог - те же CHAT_BRIEF_MIN_SUM / CHAT_BRIEF_MIN_SHARE)
+function _chatPngCol(cur,fact,kind){const c=Math.round(cur||0),f=Math.round(fact||0),d=f-c;const N=v=>String(Math.round(v));
+  if(c===0&&f>0)return{text:'+'+N(f),color:CHAT_PNG.RED,mark:true};
+  const text=d>0?'+'+N(d):d<0?'-'+N(-d):'0';
+  const beyond=Math.abs(d)>=CHAT_BRIEF_MIN_SUM&&(c===0||Math.abs(d)/Math.abs(c)>=CHAT_BRIEF_MIN_SHARE);
+  if(!beyond)return{text,color:CHAT_PNG.GREEN,mark:false};
+  const bad=kind==='exp'?d>0:d<0;return{text,color:bad?CHAT_PNG.RED:CHAT_PNG.ORANGE,mark:true};}
+// перенос длинной сноски по словам: не длиннее width знаков, продолжение с отступом indent
+function _chatPngWrap(text,width,indent){width=width||CHAT_PNG.COLS;indent=indent==null?2:indent;const out=[];let cur='';const pre=' '.repeat(indent);
+  String(text).split(/\s+/).forEach(w=>{if(!w)return;const line=cur?cur+' '+w:w;const lim=out.length?width-indent:width;if([...line].length<=lim||!cur)cur=line;else{out.push(out.length?pre+cur:cur);cur=w;}});
+  if(cur)out.push(out.length?pre+cur:cur);return out;}
+// раскладка: массив строк {h: высота в межстрочных (1 или 0.5), rule?:bool, seg:[{x:знак, right?:true, text, color, bold?, italic?, underline?}]}
+function _chatPngLayout(M){
+  const months=M.months||[];if(!months.length)return null;const m=months[months.length-1];
+  const P=CHAT_PNG,N=v=>(v==null||isNaN(v))?null:String(Math.round(v));
+  const rows=[];const txt=(x,text,color,st)=>Object.assign({x,text,color:color||P.BLACK},st||{});
+  const add=(seg,h)=>rows.push({h:h==null?1:h,seg:seg||[]});
+  const rule=()=>rows.push({h:0.5,seg:[]},{h:0,rule:true,seg:[]},{h:0.5,seg:[]});
+  const who=M.mode==='dir'?M.dirLabel:(_fioGreet(M.who)||String(M.who||''));
+  add([txt(0,who+', план-факт'+(M.isMgr?' блока':'')+' на '+M.cutDMY,P.BLACK,{bold:true})]);
+  add([txt(0,CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+(M.closed[m]?'закрыт':'по '+M.cutDM)+' · числа в рублях',P.GRAY)]);
+  if(M.anyUtvDiff){add([txt(0,'серым подчёркнуто - план правили',P.GRAY,{italic:true})]);add([txt(0,'после утверждения',P.GRAY,{italic:true})]);}
+  add([txt(P.R_UTV,'утв.',P.HDR,{right:true}),txt(P.R_CUR,'текущий',P.HDR,{right:true}),txt(P.R_FACT,'факт',P.HDR,{right:true}),txt(P.R_DEV,'откл.',P.HDR,{right:true})]);
+  rows.push({h:0,rule:true,seg:[]});
+  const numRow=(label,x,bold,indent)=>{const seg=[txt(indent?2:0,label,P.BLACK,{bold:!!bold})];
+    const utv=N(x.utv),cur=N(x.cur),fact=N(x.fact);
+    const utvDiff=x.utv!=null&&Math.round(x.utv)!==Math.round(x.cur||0);
+    seg.push(utv==null?txt(P.R_UTV,'-',P.GRAY,{right:true}):txt(P.R_UTV,utv,utvDiff?P.GRAY:P.BLACK,{right:true,bold:!!bold&&!utvDiff,italic:utvDiff,underline:utvDiff}));
+    seg.push(cur==null?txt(P.R_CUR,'-',P.GRAY,{right:true}):txt(P.R_CUR,cur,P.BLACK,{right:true,bold:!!bold}));
+    seg.push(fact==null?txt(P.R_FACT,'-',P.GRAY,{right:true}):txt(P.R_FACT,fact,P.BLACK,{right:true,bold:!!bold}));
+    const c=_chatPngCol(x.cur,x.fact,x.kind);seg.push(txt(P.R_DEV,c.text,c.color,{right:true,bold:!!bold||c.mark}));if(c.mark)seg.push(txt(P.X_MARK,'!',c.color,{bold:true}));
+    add(seg);};
+  _chatModelLines(M,m).forEach(x=>{
+    if(x.t==='P'){rule();add([txt(0,x.label,P.BLACK,{bold:true})]);}
+    else if(x.t==='S')add([txt(0,x.label,P.GRAY)]);
+    else if(x.t==='H')add([txt(0,x.title,P.BLACK,{bold:true})]);
+    else if(x.t==='R')numRow(x.label,x,false,true);
+    else if(x.t==='T')numRow(x.label,x,x.label==='ИТОГО'||x.label==='итого'||x.sub,x.label!=='ИТОГО');
+    else if(x.t==='B'){rule();add([txt(0,x.label,P.BLACK,{bold:true})]);}
+    else if(x.t==='X'){if(x.gap)add([],0.5);add([txt(0,String(x.text).trim(),x.hdr?P.BLACK:P.GRAY,{bold:!!x.hdr})]);}});
+  const notes=M.cxNotes.map(n=>'* '+n.title+' '+n.dir+' - общий факт, планируют: '+n.owners.join(', '));
+  notes.push('! - за порогом (от '+_chatNum(CHAT_BRIEF_MIN_SUM)+' и от '+Math.round(CHAT_BRIEF_MIN_SHARE*100)+'% плана)');
+  rule();notes.forEach(n=>{_chatPngWrap(n,P.COLS,2).forEach(l=>add([txt(0,l,P.GRAY)]));});
+  return{month:m,rows};
+}
+// рисование: canvas нужной высоты (считается после раскладки), Blob PNG
+function _chatPng(M){return new Promise((resolve,reject)=>{try{
+  const Lo=_chatPngLayout(M);if(!Lo){reject(new Error('месяц не выбран'));return;}
+  const P=CHAT_PNG,S=P.S,FS=P.FS*S,LH=FS*P.LH,PAD=P.PAD*S;
+  const probe=document.createElement('canvas').getContext('2d');probe.font=FS+'px '+P.FONT;const CW=probe.measureText('0').width;
+  const W=Math.round(P.COLS*CW+2*PAD);let H=PAD*2;Lo.rows.forEach(r=>{H+=r.rule?0:r.h*LH;});H=Math.round(H);
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;const ctx=cv.getContext('2d');
+  ctx.fillStyle=P.BG;ctx.fillRect(0,0,W,H);ctx.textBaseline='alphabetic';
+  let y=PAD;
+  Lo.rows.forEach(r=>{
+    if(r.rule){ctx.strokeStyle=P.RULE;ctx.lineWidth=Math.max(1,S*0.75);ctx.beginPath();ctx.moveTo(PAD,y+0.5);ctx.lineTo(W-PAD,y+0.5);ctx.stroke();return;}
+    const base=y+FS*0.95;
+    r.seg.forEach(s=>{ctx.font=(s.italic?'italic ':'')+(s.bold?'700 ':'400 ')+FS+'px '+P.FONT;ctx.fillStyle=s.color;
+      const w=ctx.measureText(s.text).width;const x=PAD+(s.right?s.x*CW-w:s.x*CW);ctx.fillText(s.text,x,base);
+      if(s.underline){ctx.strokeStyle=s.color;ctx.lineWidth=Math.max(1,S*0.6);ctx.beginPath();ctx.moveTo(x,y+FS*1.05);ctx.lineTo(x+w,y+FS*1.05);ctx.stroke();}});
+    y+=r.h*LH;});
+  cv.toBlob(b=>b?resolve(b):reject(new Error('toBlob')),'image/png');
+}catch(e){reject(e);}});}
+// ── ТЕСТЫ PNG: фиксированная модель из трёх человек, ничего не пишут ──
+function pngRunTests(){
+  const {R,ok}=_pfTestBed();const P=CHAT_PNG;
+  const c1=_chatPngCol(0,500,'exp'),c2=_chatPngCol(100000,115000,'exp'),c3=_chatPngCol(100000,85000,'exp'),c4=_chatPngCol(100000,105000,'exp'),c5=_chatPngCol(100000,100000,'exp'),c6=_chatPngCol(100000,85000,'inc'),c7=_chatPngCol(100000,109999,'exp');
+  ok('png col(): план 0 и факт > 0 - «+факт», красный, «!»',c1.text==='+500'&&c1.color===P.RED&&c1.mark);
+  ok('png col(): за порогом и плохо (расход +15 000 = 15%) - красный, «!»',c2.text==='+15000'&&c2.color===P.RED&&c2.mark);
+  ok('png col(): за порогом и хорошо (расход -15 000) - оранжевый, «!»; у дохода недобор - красный',c3.text==='-15000'&&c3.color===P.ORANGE&&c3.mark&&c6.color===P.RED&&c6.mark);
+  ok('png col(): в пределах порога (+5 000, 5%) - зелёный без маркера; 9 999 - тоже в пределах',c4.text==='+5000'&&c4.color===P.GREEN&&!c4.mark&&c7.color===P.GREEN&&!c7.mark);
+  ok('png col(): ноль - «0», зелёный, без маркера',c5.text==='0'&&c5.color===P.GREEN&&!c5.mark);
+  ok('png col(): строка откл. для d=0, d>0, d<0, cur=0',_chatPngCol(10,10,'exp').text==='0'&&_chatPngCol(10,12,'exp').text==='+2'&&_chatPngCol(12,10,'exp').text==='-2'&&_chatPngCol(0,7,'exp').text==='+7'&&_chatPngCol(null,0,'exp').text==='0');
+  const w=_chatPngWrap('* 244 Офисная мебель БФЛ - общий факт, планируют: Иванов И.И., Петров П.П., Сидоров С.С.',47,2);
+  ok('png перенос сноски длиннее 47 - по словам, продолжения с отступом 2, все строки не длиннее 47',w.length>=2&&w.every(l=>[...l].length<=47)&&w.slice(1).every(l=>/^  \S/.test(l))&&w[0]==='* 244 Офисная мебель БФЛ - общий факт,',w.join(' | '));
+  ok('png перенос: короткая сноска - одна строка',_chatPngWrap('! - за порогом',47,2).length===1);
+  // фиксированная модель: три человека (руководитель с двумя подчинёнными), один с комплексной парой, один без правок утверждённого
+  const mkS=(label,kind,groups)=>{const tot={9:{p:null,f:0,bl:null}};groups.forEach(g=>{const s=g.sum[9];if(s.p!=null)tot[9].p=(tot[9].p||0)+s.p;tot[9].f+=s.f;if(s.bl!=null)tot[9].bl=(tot[9].bl||0)+s.bl;});return{label,kind,groups,tot,pass:groups,rest:0};};
+  const mkG=(code,dirs)=>{const sum={9:{p:null,f:0,bl:null}};dirs.forEach(x=>{const v=x.v[9];if(v.p!=null)sum[9].p=(sum[9].p||0)+v.p;sum[9].f+=v.f;if(v.bl!=null)sum[9].bl=(sum[9].bl||0)+v.bl;});return{code,title:_chatCode(code),dirs,sum};};
+  const dir=(label,p,f,bl,cx,owners)=>({d:label,label,cx:!!cx,owners:owners||[],v:{9:{p,f,bl:bl==null?null:bl,pa:cx?p:null}}});
+  const mkP=(fio,own,exp)=>{const sums={9:{inc:{p:null,f:0,bl:null},exp:exp.tot[9]}};return{fio,own,inc:null,exp,zeros:[],sums};};
+  const p1=mkP('Иванов Иван Иванович',true,mkS('РАСХОДЫ','exp',[mkG('244_Офисная мебель',[dir('АП',3950,4687,3950),dir('БФЛ*',5700,3900,null,true,['Иванов И.И.','Петров П.П.'])]),mkG('220_Аренда',[dir('АП',21000,24500,20000)])]));
+  const p2=mkP('Петров Пётр Петрович',false,mkS('РАСХОДЫ','exp',[mkG('111_ЗП',[dir('АП',77000,75200,77000)])]));
+  const p3=mkP('Сидоров С.С.',false,mkS('РАСХОДЫ','exp',[mkG('250_Связь',[dir('САУ',0,700,null)])]));
+  const mk=(people,anyUtvDiff)=>({mode:'mgr',brief:false,isMgr:true,months:[9],short:true,year:2026,cut:new Date(2026,9,15),closed:{9:true},cutDM:'15.10',cutDMY:'15.10.2026',who:'Иванов Иван Иванович',dirLabel:'',greet:'',intro:'',dirsLabel:'',showBl:true,mono:true,wrap:'tg',newMonth:0,plan:true,fact:true,dev:true,people,blockSums:{9:{inc:{p:null,f:0,bl:null},exp:{p:107650,f:108987,bl:120950}}},cxNotes:[{code:'244_Офисная мебель',title:'244 Офисная мебель',dir:'БФЛ',owners:['Иванов И.И.','Петров П.П.']}],anyUtvDiff});
+  const M=mk([p1,p2,p3],true),Lo=_chatPngLayout(M);
+  const texts=Lo.rows.map(r=>r.seg.map(s=>s.text).join('|'));
+  ok('png шапка: имя-отчество + «план-факт блока на дд.мм.гггг» жирным, месяц «закрыт», строки 3-4 курсивом при правках утверждённого',texts[0]==='Иван Иванович, план-факт блока на 15.10.2026'&&Lo.rows[0].seg[0].bold&&texts[1]==='СЕНТЯБРЬ 2026, закрыт · числа в рублях'&&texts[2]==='серым подчёркнуто - план правили'&&Lo.rows[2].seg[0].italic&&texts[3]==='после утверждения'&&texts[4]==='утв.|текущий|факт|откл.',texts.slice(0,5).join(' || '));
+  const M0=mk([p2],false),Lo0=_chatPngLayout(M0);const t0=Lo0.rows.map(r=>r.seg.map(s=>s.text).join('|'));
+  ok('png шапка без строк 3-4, когда ни одной правки после утверждения',t0[2]==='утв.|текущий|факт|откл.'&&!t0.some(t=>/правили|после утверждения/.test(t)),t0.slice(0,3).join(' || '));
+  const r244=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='АП'&&r.seg[2]&&r.seg[2].text==='3950');
+  ok('png строка направления: отступ 2 знака, числа по правым краям 17/26/35/44, утв. совпадает - обычным; +737 в пределах - зелёный без «!»',!!r244&&r244.seg[0].x===2&&r244.seg[1].x===P.R_UTV&&r244.seg[1].right&&!r244.seg[1].italic&&r244.seg[2].x===P.R_CUR&&r244.seg[3].x===P.R_FACT&&r244.seg[4].x===P.R_DEV&&r244.seg[4].text==='+737'&&r244.seg[4].color===P.GREEN&&r244.seg.length===5,r244?JSON.stringify(r244.seg):'нет строки');
+  const r220=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='АП'&&r.seg[2]&&r.seg[2].text==='21000');
+  ok('png утв. отличается от текущего - серым курсивом с подчёркиванием; +3500 (17%, но < 10 000) - в пределах, зелёный',!!r220&&r220.seg[1].text==='20000'&&r220.seg[1].italic&&r220.seg[1].underline&&r220.seg[1].color===P.GRAY&&r220.seg[4].color===P.GREEN,r220?JSON.stringify(r220.seg[1]):'');
+  const rSau=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='САУ');
+  ok('png план 0 и факт > 0 - «+700» красным, маркер «!» на знаке 46, число жирным; утв. нет - «-» серым',!!rSau&&rSau.seg[1].text==='-'&&rSau.seg[1].color===P.GRAY&&rSau.seg[4].text==='+700'&&rSau.seg[4].color===P.RED&&rSau.seg[4].bold&&rSau.seg[5]&&rSau.seg[5].text==='!'&&rSau.seg[5].x===P.X_MARK,rSau?JSON.stringify(rSau.seg):'');
+  const rI=Lo.rows.filter(r=>r.seg[0]&&r.seg[0].text==='ИТОГО');
+  ok('png ИТОГО секции: без отступа, жирным; перед каждым человеком и перед ИТОГО ПО БЛОКУ - линия',rI.length===3&&rI.every(r=>r.seg[0].x===0&&r.seg[0].bold)&&Lo.rows.filter(r=>r.rule).length>=5&&texts.some(t=>t==='ИТОГО ПО БЛОКУ'),rI.length+' / '+Lo.rows.filter(r=>r.rule).length);
+  const last=texts[texts.length-1];
+  ok('png сноски после линии: звёздочка комплексной, последняя - «! - за порогом (от 10 000 и от 10% плана)»',last==='! - за порогом (от 10 000 и от 10% плана)'&&texts.some(t=>/^\* 244 Офисная мебель БФЛ - общий факт/.test(t)));
+  ok('png модель без месяцев - раскладки нет (отказ, не пустая картинка)',_chatPngLayout(Object.assign({},M,{months:[]}))===null);
+  const probe=document.createElement('canvas').getContext('2d');probe.font=(P.FS*P.S)+'px '+P.FONT;const CW=probe.measureText('0').width;
+  const W=Math.round(P.COLS*CW+2*P.PAD*P.S);
+  const bad=R.filter(r=>!r.pass);
+  return _chatPng(M).then(b=>new Promise(res=>{const img=new Image();img.onload=()=>{ok('png canvas: ширина = (47·CW + 2·PAD)·S, высота > 0, blob image/png',img.width===W&&img.height>0&&b.type==='image/png',img.width+'×'+img.height+' vs '+W);URL.revokeObjectURL(img.src);res();};img.onerror=()=>{ok('png canvas: картинка декодируется',false);res();};img.src=URL.createObjectURL(b);})).catch(e=>{ok('png canvas: _chatPng не бросает',false,String(e));}).then(()=>{
+    const bad=R.filter(r=>!r.pass);
+    console.log('[PNG] pngRunTests (фиксированная модель, с любой вкладки): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
+    bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
+    return{total:R.length,failed:bad.length,tests:R};});
+}
 // ── Диалог: год, месяцы, факт «на дату», адресаты (ЦФО / руководитель с подчинёнными / направления), что печатать, результат ──
 window.pfChatOpen=function(){
   if(!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
