@@ -5970,12 +5970,16 @@ function renderDDS(f){
     </div>`;
 }
 
-function renderOPIU(f){
-  const el=document.getElementById('tabOpiu');
+// ══ РАСЧЁТ ОПиУ - ЧИСТАЯ ФУНКЦИЯ (шаг 2 задачи «ОПиУ в чат», 04.10.2026). Всё, что раньше считалось внутри renderOPIU до слоя динамики
+//    включительно: фильтры (applyBaseFilters, годы/месяцы/направления), ключи и календарь периодов, усечение текущего периода, aggregate,
+//    injectPost (транзит почты), derive, агрегат базы для динамики и сторож знака. rows = RAW параметром, «сегодня» - opts.today.
+//    DOM здесь НЕТ: renderOPIU зовёт её и только рисует; модель «Текста для чата» для ОПиУ (_opiuChatModel) зовёт её же -
+//    второго расчёта сумм нет. Инвариант правки - снимки ОПиУ в стенде (11 наборов фильтров) побайтно прежние. ══
+function _opiuCalc(f,rows,opts){
   const mode=f.periodType;
 
   // --- filter data using DATE_OPIU ---
-  const baseData=applyBaseFilters(RAW,f).filter(r=>{
+  const baseData=applyBaseFilters(rows,f).filter(r=>{
     const type=String(r[COL.TYPE]||'').trim().toLowerCase();
     if(type==='перемещение')return false;
     const d=parseDate(r[COL.DATE_OPIU]);
@@ -6065,7 +6069,7 @@ function renderOPIU(f){
   const basePkOf=pk=>{const a=anchorOf(pk);return a?pkOfDate(shiftBackO(a)):null;};
   // ⚠ Закрыт = период истёк ПОЛНОСТЬЮ. Незакрытый больше не даёт прочерк: он сравнивается
   //   по усечённому отрезку (см. дату отсечки ниже).
-  const _dynToday=(()=>{const t=new Date();t.setHours(0,0,0,0);return t;})();
+  const _dynToday=(()=>{const t=(opts&&opts.today)?new Date(opts.today):new Date();t.setHours(0,0,0,0);return t;})(); // «сегодня» - параметром (тесты и модель чата)
   const pkClosed=pk=>{
     const a=anchorOf(pk);if(!a)return false;
     const e=new Date(a);
@@ -6126,7 +6130,7 @@ function renderOPIU(f){
     const rev=agg.rev,exp=agg.exp,periodsSet=agg.periodsSet;
     // квалифицирующие БФЛ-кейсы: подстатья «112_Депозиты и госпошлины», |списание| 25000/50000, ID_Offer непустой; те же фильтры периода; дедуп по ID → период по DATE_OPIU
     const qual={};
-    applyBaseFilters(RAW,f).forEach(row=>{
+    applyBaseFilters(rows,f).forEach(row=>{
       if(String(row[COL.TYPE]||'').trim().toLowerCase()==='перемещение')return;
       if(String(row[COL.ACTIVITY_DIR]||'').trim()!==BFL_DIR)return;
       const d=parseDate(row[COL.DATE_OPIU]); if(!d)return;
@@ -6260,6 +6264,13 @@ function renderOPIU(f){
     }
   }
   const _tBase=performance.now()-_tB0;
+  const allOpiuDirs=[...new Set(rows.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru')); // список направлений для бара - тоже из rows
+  return {allOpiuDirs,mode,baseData,data,opiuSelYears,opiuSelMonths,postEligible,postOn,postIsBFL,postIsAU,pkOfDate,getOPIUPeriodKey,opiuSortKey,dyn,anchorOf,shiftBackO,basePkOf,_dynToday,pkClosed,CATS,aggregate,injectPost,dRows,dynCut,capCur,capBase,AGG,rev,exp,periodsSet,periods,nPeriods,totalCols,inclBelow,flat,aboveCats,belowCats,mergeArts,derive,MAPS,DYNA,DYNM,dynPeriods,dynSignOk,_tAgg,_tBase};
+}
+function renderOPIU(f){
+  const el=document.getElementById('tabOpiu');
+  const K=_opiuCalc(f,RAW);
+  const {allOpiuDirs,mode,baseData,data,opiuSelYears,opiuSelMonths,postEligible,postOn,postIsBFL,postIsAU,pkOfDate,getOPIUPeriodKey,opiuSortKey,dyn,anchorOf,shiftBackO,basePkOf,_dynToday,pkClosed,CATS,aggregate,injectPost,dRows,dynCut,capCur,capBase,AGG,rev,exp,periodsSet,periods,nPeriods,totalCols,inclBelow,flat,aboveCats,belowCats,mergeArts,derive,MAPS,DYNA,DYNM,dynPeriods,dynSignOk,_tAgg,_tBase}=K;
   const _tD0=performance.now(); // дальше только сборка разметки - её и меряем отдельно от агрегатов
   // Дата ВНУТРИ периода по его ключу. От неё считается и шаг назад, и конец периода:
   // позиция в массиве колонок для этого не годится - колонки пустого месяца просто нет,
@@ -6401,7 +6412,6 @@ function renderOPIU(f){
   </div>`;
 
   // --- extra filter bar (как в ДДС) ---
-  const allOpiuDirs=[...new Set(RAW.map(r=>String(r[COL.ACTIVITY_DIR]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
   const selOpiuDirs=f.activityDirs||[];
 
   // Годы и месяцы из данных по DATE_OPIU
@@ -11256,6 +11266,7 @@ function pfRunTests(){
       ok('вводная, прошлый незакрытый: «План-факт за сентябрь 2026, факт на 04.10, до выплаты ЗП. Вып. - …»; закрытый (11.10): «План-факт за сентябрь 2026, месяц закрыт. Вып. - …»',_chatIntroText(_chatIntroState(2026,[9],new Date(2026,9,4),0,true,true,false))==='План-факт за сентябрь 2026, факт на 04.10, до выплаты ЗП. Вып. - факт в % от текущего плана.'&&_chatIntroText(_chatIntroState(2026,[9],new Date(2026,9,11),0,true,true,false))==='План-факт за сентябрь 2026, месяц закрыт. Вып. - факт в % от текущего плана.');
       ok('вводная: предложение «Утв. - план на момент утверждения, текущий - после корректировок.» только при правленных планах; обычный текст - без «Вып.», с «Формат: план / факт.» при 1-3 месяцах',/ Утв\. - план на момент утверждения, текущий - после корректировок\.$/.test(_chatIntroText(_chatIntroState(2026,[9],new Date(2026,9,11),0,true,true,true)))&&!/Утв\./.test(_chatIntroText(_chatIntroState(2026,[9],new Date(2026,9,11),0,true,true,false)))&&_chatIntroText(_chatIntroState(2026,[9],new Date(2026,9,11),0,false,true,false))==='План-факт за сентябрь 2026, месяц закрыт. Формат: план / факт.'&&!/Откл|больше/.test(_chatIntroText(_chatIntroState(2026,[9],new Date(2026,9,11),0,true,false,false))));
       ok('вводная через builder: intro не задан → из модели (Dm: планы правлены - есть «Утв.»); intro:\'\' → без вводной; диалог отдаёт текст только правленный (dataset.edited)',(()=>{const Mi=withOwn(()=>_chatModelBuild(Object.assign({},Dm,{year:2026,upTo:new Date(2026,9,15)}),{months:[9],plan:true,fact:true,dev:true,greet:false,mode:'mgr',mono:true}));const Me=withOwn(()=>_chatModelBuild(Object.assign({},Dm,{year:2026,upTo:new Date(2026,9,15)}),{months:[9],plan:true,fact:true,dev:true,greet:false,intro:'',mode:'mgr',mono:true}));return Mi.anyUtvDiff===true&&Mi.intro==='План-факт за сентябрь 2026, месяц закрыт. Вып. - факт в % от текущего плана. Утв. - план на момент утверждения, текущий - после корректировок.'&&Me.intro===''&&/dataset\.edited==='1'\)\?t\.value:undefined/.test(String(window.pfChatBuild))&&/_chatIntroState\(/.test(String(window.pfChatIntroReset));})());
+      ok('ОПиУ: расчёт вынесен в _opiuCalc - renderOPIU зовёт её и только рисует (в теле нет aggregate(/applyBaseFilters(/derive(/injectPost( и RAW кроме вызова _opiuCalc), в _opiuCalc нет document/window/innerHTML',(()=>{const r=String(renderOPIU),c=String(_opiuCalc);const body=r.replace(/const K=_opiuCalc\(f,RAW\);/,'');return /const K=_opiuCalc\(f,RAW\);/.test(r)&&!/\b(aggregate|applyBaseFilters|derive|injectPost)\(/.test(body)&&!/\bRAW\b/.test(body.replace(/\/\/[^\n]*/g,''))&&!/\b(document|window|innerHTML)\b/.test(c.replace(/\/\/[^\n]*/g,''))&&/opts&&opts\.today/.test(c);})());
       ok('моно: утверждённый в диалоге всегда (галочки нет); «Куда» в localStorage',/showBl:true/.test(String(window.pfChatBuild))&&!/pfchat-bl\b/.test(String(window.pfChatOpen))&&/o\.mono=o\.wrap!=='plain';/.test(String(window.pfChatBuild))&&/localStorage\.setItem\('finChatDest'/.test(String(window.pfChatDestChange)));
       const Tb24=withOwn(()=>_chatTextBuild(Dmo,{months:[9],plan:true,fact:true,dev:true,greet:true,intro:'В.',mode:'cfo',mono:true,wrap:'b24'}));
       ok('9-доп: Битрикс24 - таблицы в [code]…[/code], приветствие и вводная снаружи; Telegram - в ```',Tb24.split('\n')[2]==='[code]'&&Tb24.indexOf('\n[/code]\n')>0&&Tb24.split('\n')[0]==='Пётр Петрович, здравствуйте!'&&!/```/.test(Tb24),Tb24.split('\n').slice(0,4).join(' | '));
@@ -11656,7 +11667,7 @@ function pfRunTests(){
       // (3е) barRunTests на боевых 25/30 (15.09.2026): три причины, каждая держится проверкой
       {const ro=String(renderOPIU),bt=String(barRunTests),bd=String(_barDiag);
        ok('3е: ОПиУ при пустой выборке рисует ТОТ ЖЕ бар (.dds-extra-filters), а не голый renderFilterBar',ro.indexOf("renderFilterBar('opiu')+emptyState")<0&&/el\.innerHTML=extraFiltersOPIU\+emptyState\(/.test(ro)&&ro.indexOf('const extraFiltersOPIU=')<ro.indexOf('el.innerHTML=extraFiltersOPIU+emptyState('));
-       ok('3е: списки года/месяца/направлений ОПиУ строятся от baseData/RAW, не от отфильтрованной data',/allOpiuDirs=\[\.\.\.new Set\(RAW\.map/.test(ro)&&/allOpiuYears=\[\.\.\.new Set\(baseData\.map/.test(ro));
+       ok('3е: списки года/месяца/направлений ОПиУ строятся от baseData/RAW (rows в _opiuCalc), не от отфильтрованной data',/allOpiuDirs=\[\.\.\.new Set\(rows\.map/.test(String(_opiuCalc))&&/allOpiuYears=\[\.\.\.new Set\(baseData\.map/.test(ro));
        ok('3е: _barDiag различает «не найден» и «не влезло» и печатает, что нарисовано вместо бара',/НЕ НАЙДЕН/.test(bd)&&/Ошибка построения/.test(bd)&&/state-box/.test(bd)&&/notFound:true/.test(bd));
        ok('3е: barRunTests гасит пресеты по умолчанию на время прогона и возвращает снимок',/PRESET_TABS\.forEach\(\(\[k\]\)=>\{_presetDefDone\[k\]=1;\}\)/.test(bt)&&/Object\.assign\(_presetDefDone,sv\.def\)/.test(bt));
        ok('3е: barRunTests зовёт _barDiag и при -1 (бар не найден), с контекстом вкладки',/if\(h!==exp\)_barDiag\(bar,[\s\S]*?\{cont:document\.getElementById\(cont\),sel,tab\}\)/.test(bt));
