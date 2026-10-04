@@ -19189,12 +19189,15 @@ function _chatTextBuild(D,o){const M=_chatModelBuild(D,o);return M.mono?_chatRen
 // Берёт ТУ ЖЕ модель, что текст (_chatModelBuild → _chatModelLines за последний выбранный месяц); сумм не считает.
 // Шрифт - Roboto (Google Fonts, подключён в <head> ТОЛЬКО для холста; у Roboto цифры табличные - числа выравниваются), при недоступности
 // сети - fallback "Segoe UI", Arial, sans-serif. Раскладка (_chatPngLayout) - чистая от canvas: ей передаётся измеритель (mt, CW);
-// сетка в пикселях: CW = measureText('0'); колонки чисел утв./текущий/факт - по W_NUM CW + GAP CW зазор, откл. - W_DEV CW, маркер - W_MARK CW;
+// сетка в пикселях: CW = measureText('0'); колонки чисел утв./текущий/факт - measureText(NUM_MAX) + GAP CW зазор, откл. - W_DEV CW, маркер - W_MARK CW;
 // колонка имени = max(ширина подписи R/T с отступом) + 1 CW, не меньше NAME_MIN CW; ширина холста = имя + 4 колонки + маркер + 2 поля.
 // Строки H и P - от левого поля на всю ширину, на колонку имени не влияют; шире холста - перенос по словам с отступом. Масштаб S=2.
-const CHAT_PNG={S:2,FS:15,LH:1.42,PAD:18,W_NUM:8,GAP:1,W_DEV:6,W_MARK:1.5,NAME_MIN:9,IND:2,
+const CHAT_PNG={S:2,FS:15,LH:1.42,PAD:18,NUM_MAX:'88\u202f888\u202f888',GAP:1,W_DEV:6,W_MARK:1.5,NAME_MIN:9,IND:2, // NUM_MAX - образец ширины числовой колонки: 8 цифр с двумя разделителями (04.10.2026)
   FONT:'Roboto, "Segoe UI", Arial, sans-serif',
   BLACK:'#1c2026',GRAY:'#828a94',RED:'#c4342c',GREEN:'#2c8c60',ORANGE:'#d67614',RULE:'#d7dce2',HDR:'#5a626c',BG:'#ffffff'};
+// рубли на холсте - с разделением тысяч узким неразрывным пробелом U+202F («1 761 155», «-13 398», «500», «0»); одна функция, не Intl -
+// чтобы не зависеть от локали браузера. В «Тексте для чата» (моно) разрядов НЕТ - там ширина 42/43 знака
+function _fmtThousands(n){n=Math.round(n);const neg=n<0;let d=String(Math.abs(n)),out='';while(d.length>3){out='\u202f'+d.slice(-3)+out;d=d.slice(0,-3);}return (neg?'-':'')+d+out;}
 function _chatPngFont(st){return (st&&st.italic?'italic ':'')+(st&&st.bold?'700 ':'400 ')+(CHAT_PNG.FS*CHAT_PNG.S)+'px '+CHAT_PNG.FONT;}
 function _chatPngFontsReady(){const f=document.fonts,P=CHAT_PNG;if(!f||!f.load)return Promise.resolve();return Promise.all([f.load(P.FS+'px Roboto'),f.load('bold '+P.FS+'px Roboto'),f.load('italic '+P.FS+'px Roboto')]).catch(()=>{});}
 function _chatPngMeasurer(){const ctx=document.createElement('canvas').getContext('2d');const mt=(text,st)=>{ctx.font=_chatPngFont(st);return ctx.measureText(String(text)).width;};return{mt,CW:mt('0')};}
@@ -19214,10 +19217,11 @@ function _chatPngWrap(text,maxW,mt,indentW,st){const out=[];let cur='';
 function _chatPngLayout(M,ms){
   const months=M.months||[];if(!months.length)return null;const m=months[months.length-1];
   ms=ms||_chatPngMeasurer();const mt=ms.mt,CW=ms.CW,P=CHAT_PNG,PAD=P.PAD*P.S,IND=P.IND*CW;
-  const N=v=>(v==null||isNaN(v))?null:String(Math.round(v));
+  const N=v=>(v==null||isNaN(v))?null:_fmtThousands(v);
   const lines=_chatModelLines(M,m);
   let nameW=P.NAME_MIN*CW;lines.forEach(x=>{if(x.t==='R'||x.t==='T'){const w=(x.label==='ИТОГО'?0:IND)+mt(x.label,{bold:x.t==='T'})+CW;if(w>nameW)nameW=w;}});
-  const C={CW,PAD,nameW};C.utvR=PAD+nameW+(P.GAP+P.W_NUM)*CW;C.curR=C.utvR+(P.GAP+P.W_NUM)*CW;C.factR=C.curR+(P.GAP+P.W_NUM)*CW;C.devR=C.factR+(P.GAP+P.W_DEV)*CW;
+  const numW=Math.max(mt(P.NUM_MAX),mt(P.NUM_MAX,{bold:true})); // ширина числовой колонки - под 8 цифр с двумя разделителями (итоги жирные - берём шире)
+  const C={CW,PAD,nameW,numW};C.utvR=PAD+nameW+P.GAP*CW+numW;C.curR=C.utvR+P.GAP*CW+numW;C.factR=C.curR+P.GAP*CW+numW;C.devR=C.factR+(P.GAP+P.W_DEV)*CW;
   C.markX=C.devR+0.4*CW;C.W=Math.round(C.devR+P.W_MARK*CW+PAD);C.textW=C.W-2*PAD;
   const rows=[];const txt=(x,text,color,st)=>Object.assign({x,text,color:color||P.BLACK,w:mt(text,st)},st||{});
   const add=(seg,h,k)=>{const r={h:h==null?1:h,seg:seg||[]};if(k)r.k=k;rows.push(r);return r;};
@@ -19298,14 +19302,16 @@ function pngRunTests(){
   ok('png шапка: имя-отчество + «план-факт блока на дд.мм.гггг» жирным (k=h1), месяц «закрыт» (k=h2, с переносом по ширине), строка про правки курсивом (k=h3), затем заголовок колонок',kj(Lo,'h1')==='Иван Иванович, план-факт блока на 15.10.2026'&&Lo.rows[0].seg[0].bold&&kj(Lo,'h2')==='СЕНТЯБРЬ 2026, закрыт · числа в рублях, откл. в % от текущего плана'&&kj(Lo,'h3')==='серым подчёркнуто - план правили после утверждения'&&Lo.rows.filter(r=>r.k==='h3').every(r=>r.seg[0].italic&&r.seg[0].color===P.GRAY)&&texts[Lo.rows.findIndex(r=>r.k==='th')]==='утв.|текущий|факт|откл.'&&Lo.rows.findIndex(r=>r.k==='th')>Lo.rows.findIndex(r=>r.k==='h3'),texts.slice(0,6).join(' || '));
   const M0=mk([p2],false),Lo0=_chatPngLayout(M0,ms);const t0=Lo0.rows.map(r=>r.seg.map(s=>s.text).join('|'));
   ok('png шапка без строки про правки, когда ни одной правки после утверждения',!Lo0.rows.some(r=>r.k==='h3')&&!t0.some(t=>/правили|после утверждения/.test(t))&&Lo0.rows.findIndex(r=>r.k==='th')>0,t0.slice(0,3).join(' || '));
-  ok('png сетка в пикселях: ширина холста = поле + имя + 3·(зазор+8)·CW + (зазор+6)·CW + 1.5·CW + поле; имя ≥ 9·CW; все строки не шире холста',C.W===Math.round(C.PAD+C.nameW+3*(P.GAP+P.W_NUM)*CW+(P.GAP+P.W_DEV)*CW+P.W_MARK*CW+C.PAD)&&C.nameW>=9*CW-0.01&&C.W>0&&Lo.rows.every(r=>r.seg.every(s=>(s.right?s.x:s.x+s.w)<=C.W-C.PAD+0.01)),C.W+' / nameW '+C.nameW.toFixed(1)+' / CW '+CW.toFixed(2));
-  ok('png цифры табличные: 8 цифр не шире 8·CW; правый край «факт» строго левее левого края «откл.» при «-100%» и «б/п» жирным',mt('88888888')<=8*CW+0.01&&C.factR<C.devR-mt('-100%',{bold:true})&&C.factR<C.devR-mt('б/п',{bold:true}),(C.devR-C.factR).toFixed(1)+' vs '+mt('-100%',{bold:true}).toFixed(1));
+  ok('png сетка в пикселях: ширина холста = поле + имя + 3·(зазор·CW + numW) + (зазор+6)·CW + 1.5·CW + поле; имя ≥ 9·CW; все строки не шире холста',C.W===Math.round(C.PAD+C.nameW+3*(P.GAP*CW+C.numW)+(P.GAP+P.W_DEV)*CW+P.W_MARK*CW+C.PAD)&&C.nameW>=9*CW-0.01&&C.W>0&&Lo.rows.every(r=>r.seg.every(s=>(s.right?s.x:s.x+s.w)<=C.W-C.PAD+0.01)),C.W+' / nameW '+C.nameW.toFixed(1)+' / CW '+CW.toFixed(2));
+  ok('png числовая колонка под 8 цифр с разделителями: «88 888 888» жирным не шире numW; правый край «факт» строго левее левого края «откл.» при «-100%» и «б/п» жирным',mt(_fmtThousands(88888888),{bold:true})<=C.numW+0.01&&C.factR<C.devR-mt('-100%',{bold:true})&&C.factR<C.devR-mt('б/п',{bold:true}),(C.devR-C.factR).toFixed(1)+' vs '+mt('-100%',{bold:true}).toFixed(1));
+  ok('_fmtThousands: 0 → «0», 500 → «500», 1000 → «1 000», 61250 → «61 250», 1761155 → «1 761 155», -13398 → «-13 398» (разделитель U+202F), дробное округляется',_fmtThousands(0)==='0'&&_fmtThousands(500)==='500'&&_fmtThousands(1000)==='1\u202f000'&&_fmtThousands(61250)==='61\u202f250'&&_fmtThousands(1761155)==='1\u202f761\u202f155'&&_fmtThousands(-13398)==='-13\u202f398'&&_fmtThousands(999.6)==='1\u202f000'&&!/ /.test(_fmtThousands(1761155)));
+  ok('png числа на холсте - через _fmtThousands («30 650»), а не голые; текст для чата разрядов не содержит',(()=>{const r=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='ИТОГО');return !!r&&r.seg[2].text==='30\u202f650'&&r.seg[3].text==='33\u202f087'&&!/\u202f/.test(String(_chatRenderMono));})());
   ok('png имя «СИБСУДЭКС» помещается в колонку имени (с отступом), ширина имени растёт от самой широкой подписи R/T',(()=>{const Ms=mk([mkP('X Y Z',true,mkS('РАСХОДЫ','exp',[mkG('300_Ж',[dir('СИБСУДЭКС',10,12,null),dir('ООО Длинное Название Контрагента',10,12,null)])]))],false);const L2=_chatPngLayout(Ms,ms),c2=L2.cols;const r=L2.rows.find(r=>r.seg[0]&&r.seg[0].text==='СИБСУДЭКС');return !!r&&r.seg[0].x+r.seg[0].w<=c2.PAD+c2.nameW&&c2.nameW>=P.IND*CW+mt('ООО Длинное Название Контрагента')+CW-0.01&&c2.nameW>C.nameW;})());
   ok('png заголовок подстатьи шире холста - перенос по словам, продолжение с отступом',(()=>{const Mh=mk([mkP('X Y Z',true,mkS('РАСХОДЫ','exp',[mkG('300_Очень длинное название подстатьи, которое заведомо не помещается в ширину холста целиком',[dir('АП',10,12,null)])]))],false);const L2=_chatPngLayout(Mh,ms);const hh=L2.rows.filter(r=>r.k==='hh');return hh.length>=2&&hh[0].seg[0].x===L2.cols.PAD&&hh[1].seg[0].x===L2.cols.PAD+P.IND*CW&&hh.every(r=>r.seg[0].x+r.seg[0].w<=L2.cols.W-L2.cols.PAD+0.01);})());
-  const r244=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='АП'&&r.seg[2]&&r.seg[2].text==='3950');
+  const r244=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='АП'&&r.seg[2]&&r.seg[2].text==='3\u202f950');
   ok('png строка направления: отступ 2·CW от поля, числа по правым краям utvR/curR/factR/devR, утв. совпадает - обычным; +737 (19%) в пределах - «+19%» зелёный без «!»',!!r244&&r244.seg[0].x===C.PAD+P.IND*CW&&r244.seg[1].x===C.utvR&&r244.seg[1].right&&!r244.seg[1].italic&&r244.seg[2].x===C.curR&&r244.seg[3].x===C.factR&&r244.seg[4].x===C.devR&&r244.seg[4].text==='+19%'&&r244.seg[4].color===P.GREEN&&r244.seg.length===5,r244?JSON.stringify(r244.seg):'нет строки');
-  const r220=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='АП'&&r.seg[2]&&r.seg[2].text==='21000');
-  ok('png утв. отличается от текущего - серым курсивом с подчёркиванием шириной measureText; +3500 (17%, но < 10 000) - в пределах, зелёный',!!r220&&r220.seg[1].text==='20000'&&r220.seg[1].italic&&r220.seg[1].underline&&r220.seg[1].color===P.GRAY&&Math.abs(r220.seg[1].w-mt('20000',{italic:true}))<0.01&&r220.seg[4].color===P.GREEN,r220?JSON.stringify(r220.seg[1]):'');
+  const r220=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='АП'&&r.seg[2]&&r.seg[2].text==='21\u202f000');
+  ok('png утв. отличается от текущего - серым курсивом с подчёркиванием шириной measureText; +3500 (17%, но < 10 000) - в пределах, зелёный',!!r220&&r220.seg[1].text==='20\u202f000'&&r220.seg[1].italic&&r220.seg[1].underline&&r220.seg[1].color===P.GRAY&&Math.abs(r220.seg[1].w-mt('20\u202f000',{italic:true}))<0.01&&r220.seg[4].color===P.GREEN,r220?JSON.stringify(r220.seg[1]):'');
   const rSau=Lo.rows.find(r=>r.seg[0]&&r.seg[0].text==='САУ');
   ok('png план 0 и факт > 0 - «б/п» красным жирным, маркер «!» в колонке маркера (markX, правее devR); утв. нет - «-» серым',!!rSau&&rSau.seg[1].text==='-'&&rSau.seg[1].color===P.GRAY&&rSau.seg[4].text==='б/п'&&rSau.seg[4].color===P.RED&&rSau.seg[4].bold&&rSau.seg[5]&&rSau.seg[5].text==='!'&&rSau.seg[5].x===C.markX&&C.markX>C.devR,rSau?JSON.stringify(rSau.seg):'');
   const rI=Lo.rows.filter(r=>r.seg[0]&&r.seg[0].text==='ИТОГО');
