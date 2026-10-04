@@ -19034,6 +19034,7 @@ function _chatModelBuild(D,o){
     who:D.fio,dirLabel:D.dirLabel,greet:o.mode==='dir'?'':(o.greet!==false?((_fioGreet(D.fio)||'')+(_fioGreet(D.fio)?', здравствуйте!':'Здравствуйте!')):null),
     intro:o.intro===undefined?null:String(o.intro||'').trim(),dirsLabel:o.dirsLabel||'',showBl:!!o.showBl,mono:!!o.mono,wrap:o.wrap||'',newMonth,
     plan:o.plan!==false,fact:o.fact!==false,dev:o.dev!==false,people:[],blockSums:{},cxNotes:[]};
+  _chatPfColsAttach(M); // колонки БДР, ширина имени, сноски холста
   const cxSeen=new Set();
   const secSum=(sec,m)=>{let p=null,f=0,bl=null;(sec?sec.codes:[]).forEach(c=>{const v=sec.fcMonth(c,m);if(v!=null)p=(p||0)+v;f+=sec.factMonthOwn?sec.factMonthOwn(c,m):sec.factMonth(c,m);if(sec.blMonth){const w=sec.blMonth(c,m);if(w!=null)bl=(bl||0)+w;}});return{p,f,bl};}; // ИТОГО секции: факт комплексной пары один раз (как выписка)
   // группы подстатей секции: направления этого человека (без нулевых пар); порядок ПО КОДУ (три цифры) по возрастанию, как в БДР,
@@ -19078,11 +19079,31 @@ const PF_REV_LOOSE='#2563eb',PF_REV_TIGHT='#7b8ba3';
 function _pfPlanRevArrow(plan,base,revenue){if(base==null||plan==null||Math.abs(plan-base)<=0.005)return null;const dm=Math.abs(plan)-Math.abs(base);if(Math.abs(dm)<=0.005)return null;const loose=revenue?(dm<0):(dm>0);return{ar:dm>0?'↑':'↓',dm,loose,color:loose?PF_REV_LOOSE:PF_REV_TIGHT};}
 const _chatExecPct=(cur,fact)=>{const c=Math.round(cur||0),f=Math.round(fact||0);if(c===0)return null;const v=Math.round(f/Math.abs(c)*100);return v===0?0:v;}; // v===0 гасит «-0»
 const _chatExecStr=(v,fact)=>v==null?(fact>0.005?'б/п':'-'):v+'%';
+// ── КОЛОНКИ ИЗ МОДЕЛИ (шаг 1 задачи ОПиУ, 04.10.2026): M.cols=[{key,label,kind:'num'|'pct',w,sign?}], строки R/T/RES несут vals:{key:число|null|строка}
+//    (undefined - колонка пустая, строка печатается как есть - «б/п»), mark={col,ar,color} - стрелка перед числом колонки, col={key:{color,bold,mark}} -
+//    цвет/жирность/«!» процентной колонки; bold и ind - свойства строки. Рендеры о смысле колонок не знают. ──
+// колонки БДР (утв. / текущий / факт / вып.), ширина имени 9 (под «СИБСУДЭКС») и сноски холста - одним местом, его же зовут фикстуры тестов
+function _chatPfColsAttach(M){
+  M.cols=[{key:'utv',label:'утв.',kind:'num',w:8},{key:'cur',label:M.plan?'текущий':'',kind:'num',w:8},{key:'fact',label:M.fact?'факт':'',kind:'num',w:8},{key:'exec',label:M.newMonth?'НОВЫЙ':'вып.',kind:'pct',w:6}];
+  M.nameW=9;
+  M.notes=m=>{const n=(M.cxNotes||[]).map(x=>'* '+x.title+' '+x.dir+' - общий факт, планируют: '+x.owners.join(', '));
+    if(_chatModelLines(M,m).some(x=>x.mark))n.push('↑↓ - план правили после утверждения'); // только при помеченных строках, перед сноской про «!»
+    n.push('! - за порогом (от '+_chatNum(CHAT_BRIEF_MIN_SUM)+' и от '+Math.round(CHAT_BRIEF_MIN_SHARE*100)+'% плана)');return n;};
+  return M;}
+function _chatCellStr(c,x,dst){const v=x.vals?x.vals[c.key]:undefined;if(v===undefined)return '';if(v===null)return '-';if(typeof v==='string')return v;
+  if(c.kind==='pct'){if(dst==='mono'&&Math.abs(v)>9999)return '***%';return (c.sign&&v>0?'+':'')+String(Math.round(v))+'%';}
+  const ar=(x.mark&&x.mark.col===c.key)?x.mark.ar:'';return ar+(dst==='png'?_fmtThousands(v):String(Math.round(v)));}
 // ── Плоские строки модели за ОДИН месяц - для моно-текста и PNG: {t:'P'|'S'|'H'|'R'|'T'|'B'|'X', …}. Числа сырые; у R/T - dev (₽), execPct (вып., %) и rev (↑/↓ правленного плана или null). ──
 //    R - направление: label (с «*» у комплексной), cur = план ПО ПАРЕ у комплексной (Σ планов всех), fact общий; T - «итого» подстатьи,
 //    «ИТОГО» секции, «доходы»/«расходы» блока или сводки; B - заголовок «ИТОГО ПО БЛОКУ»/«ИТОГО»; X - текст без чисел.
 function _chatModelLines(M,m){
-  const L=[];const dv=o=>Object.assign(o,{dev:Math.round(o.fact||0)-Math.round(o.cur||0),execPct:_chatExecPct(o.cur,o.fact),rev:_pfPlanRevArrow(o.cur,o.utv,o.kind==='inc')}); // rev - стрелка правленного плана (как в БДР), по суммам у итогов
+  const L=[];const dv=o=>{Object.assign(o,{dev:Math.round(o.fact||0)-Math.round(o.cur||0),execPct:_chatExecPct(o.cur,o.fact),rev:_pfPlanRevArrow(o.cur,o.utv,o.kind==='inc')}); // rev - стрелка правленного плана (как в БДР), по суммам у итогов
+    // колонки из модели: vals по ключам M.cols, mark - стрелка у «текущего», col.exec - цвет/«!» вып. («б/п» красным, «-» серым, иначе по рублёвому порогу _chatPngCol)
+    const es=_chatExecStr(o.execPct,o.fact),np=es==='б/п',nn=es==='-',c=_chatPngCol(o.cur,o.fact,o.kind);
+    o.vals={utv:o.utv,cur:M.plan?o.cur:undefined,fact:M.fact?o.fact:undefined,exec:M.newMonth?undefined:(np?'б/п':o.execPct)};
+    o.mark=(o.rev&&M.plan)?{col:'cur',ar:o.rev.ar,color:o.rev.color}:null;
+    o.col={exec:{color:np?CHAT_PNG.RED:nn?CHAT_PNG.GRAY:c.color,bold:!nn&&(c.mark||np),mark:!nn&&(c.mark||np)}};
+    o.bold=o.t==='T'&&(o.label==='ИТОГО'||o.label==='итого'||!!o.sub);o.ind=(o.t==='R'||o.label!=='ИТОГО')?1:0;return o;};
   const pv=x=>x.cx?{utv:x.v[m].bl,cur:x.v[m].pa,fact:x.v[m].f}:{utv:x.v[m].bl,cur:x.v[m].p,fact:x.v[m].f};
   const groupLines=(S,g,kind)=>{L.push({t:'H',title:g.title,kind});let p=null,f=0,bl=null;
     g.dirs.forEach(x=>{const v=pv(x);L.push(dv(Object.assign({t:'R',label:x.label+(x.cx?'*':''),cx:x.cx,kind},v)));if(v.cur!=null)p=(p||0)+v.cur;f+=v.fact;if(v.utv!=null)bl=(bl||0)+v.utv;});
@@ -19167,27 +19188,24 @@ function _chatRenderMono(M){
   if(M.mode==='dir')L.push('Направление: '+M.dirLabel);else if(M.greet!=null)L.push(M.greet);
   if(M.intro)L.push(M.intro);
   if(M.dirsLabel)L.push('Направления: '+M.dirsLabel);
-  const W_NAME=9,W_NUM=8,W_DEV=6,W_LINE=W_NAME+1+W_NUM+1+W_NUM+1+W_NUM+1+W_DEV; // 43: вып. в % - 6 знаков («1234%», «-100%», «б/п»; длиннее 4 цифр - «***%»)
+  const cols=M.cols||[],W_NAME=M.nameW||9,W_LINE=W_NAME+cols.reduce((a,c)=>a+1+c.w,0); // БДР: 9 + (1+8)·3 + (1+6) = 43 (вып. - 6 знаков: «1234%», «-100%», «б/п»; длиннее 4 цифр - «***%»)
   const RULE='-'.repeat(W_LINE);
   const N=v=>(v==null||isNaN(v))?'-':String(Math.round(v));
   const cleanName=t=>String(t).replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE0F}]/gu,'').replace(/\s+$/,'');
   const padR=(t,w)=>{t=String(t);const n=[...t].length;return n>=w?t:t+' '.repeat(w-n);},padL=(t,w)=>{t=String(t);const n=[...t].length;return n>=w?t:' '.repeat(w-n)+t;};
-  // «текущий» со стрелкой правленного плана («↑2500000» = 8 знаков); 8 цифр плюс стрелка = 9 - колонка не расширяется, стрелка встаёт в зазор перед ней
-  const mrow=(name,bl,pl,fa,c4)=>{const cur=padL(pl,W_NUM),gap=[...cur].length>W_NUM?'':' ';return (padR(cleanName(name),W_NAME)+' '+padL(bl,W_NUM)+gap+cur+' '+padL(fa,W_NUM)+' '+padL(c4,W_DEV)).replace(/\s+$/,'');};
+  // строка таблицы из колонок модели: имя W_NAME, затем каждая колонка шириной c.w через пробел; значение шире колонки (8 цифр плюс стрелка
+  // правленного плана = 9) - колонка не расширяется, лишний знак встаёт в зазор перед ней
+  const mrow=(name,cells)=>{let line=padR(cleanName(name),W_NAME);cols.forEach((c,i)=>{const cell=padL(cells[i]==null?'':cells[i],c.w);line+=([...cell].length>c.w?'':' ')+cell;});return line.replace(/\s+$/,'');};
   const trow=t=>String(t).replace(/\s+$/,'');
-  // четвёртая колонка - вып. = факт в % от текущего плана (x.execPct из модели; «б/п» - плана не было, «-» - ни плана, ни факта);
-  // больше 4 цифр в колонку не влезает - «***%»; в режиме «НОВЫЙ =» - пустая
-  const col4=x=>M.newMonth?'':(x.execPct!=null&&Math.abs(x.execPct)>9999?'***%':_chatExecStr(x.execPct,x.fact));
-  const hdr4=m=>M.newMonth?'НОВЫЙ':'вып.';
-  const nrowRaw=(name,x,m)=>mrow(name,x.utv!=null?N(x.utv):'-',M.plan?((x.rev?x.rev.ar:'')+N(x.cur)):'',M.fact?N(x.fact):'',col4(x));
-  const nrow=(name,x,m)=>{const nm=cleanName(name);return [...nm].length>W_NAME?[trow(nm),nrowRaw('',x,m)]:[nrowRaw(nm,x,m)];};
-  const thead=m=>mrow('','утв.',M.plan?'текущий':'',M.fact?'факт':'',hdr4(m));
-  const monthHead=m=>CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+_chatMonthState(M,m)+' · вып. - факт в % от текущего плана';
+  const nrowRaw=(name,x)=>mrow(name,cols.map(c=>_chatCellStr(c,x,'mono')));
+  const nrow=(name,x)=>{const nm=cleanName(name);const ind=M.indMono?' '.repeat(x.ind||0):'';return [...(ind+nm)].length>W_NAME?[trow(ind+nm),nrowRaw('',x)]:[nrowRaw(ind+nm,x)];};
+  const thead=m=>mrow('',cols.map(c=>c.label));
+  const monthHead=m=>M.textHead?M.textHead(m):(CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+_chatMonthState(M,m)+' · вып. - факт в % от текущего плана');
   const B=[];
   const emit=(m)=>{_chatModelLines(M,m).forEach(x=>{
     if(x.t==='P'){if(x.plain)B.push(trow(x.label));else B.push('',RULE,trow(x.label));}
     else if(x.t==='S'||x.t==='H')B.push(trow(x.t==='S'?x.label:x.title));
-    else if(x.t==='R'||x.t==='T')B.push(...nrow(x.label,x,m));
+    else if(x.t==='R'||x.t==='T'||x.t==='RES')B.push(...nrow(x.label,x));
     else if(x.t==='B')B.push('',RULE,trow(x.label));
     else if(x.t==='X'){if(x.gap)B.push('');B.push(trow(x.text));if(x.hdr)B.push(thead(m));}});};
   if(M.brief&&M.months.length){const bm=M.months[0];B.push(monthHead(bm));const lines=_chatModelLines(M,bm);
@@ -19198,7 +19216,7 @@ function _chatRenderMono(M){
       else if(x.t==='P'){if(x.plain)B.push(trow(x.label));else B.push('',RULE,trow(x.label));}
       else if(x.t==='B')B.push('',RULE,trow(x.label));
       else if(x.t==='S'||x.t==='H')B.push(trow(x.t==='S'?x.label:x.title));
-      else B.push(...nrow(x.label,x,bm));});
+      else B.push(...nrow(x.label,x));});
   }else{
     M.months.forEach((m,mi)=>{if(mi)B.push('');B.push(monthHead(m),thead(m));emit(m);});
     if(!M.months.length&&M.newMonth)B.push(trow('Месяцы не выбраны - строки для плана:'));
@@ -19207,7 +19225,7 @@ function _chatRenderMono(M){
   const Bw=M.wrap==='b24'?B.map(l=>l.replace(/ /g,' ')):B; // Битрикс24: пробелы в строках таблицы - U+00A0, иначе он их схлопывает
   if(B.length)L.push(WR[0],...Bw,WR[1]);
   M.cxNotes.forEach(n=>L.push('* '+n.title+' '+n.dir+' - общий факт, планируют: '+n.owners.join(', ')));
-  if(M.months.some(m=>_chatModelLines(M,m).some(x=>x.rev)))L.push('↑↓ - план правили после утверждения'); // сноска только при помеченных строках
+  if(M.months.some(m=>_chatModelLines(M,m).some(x=>x.mark)))L.push('↑↓ - план правили после утверждения'); // сноска только при помеченных строках
   const zeros=[...new Set(M.people.flatMap(P=>P.zeros))];
   if(!M.brief&&zeros.length&&M.months.length)L.push('Нулевые за '+M.months.map(m=>CHAT_MONS[m-1]).join(', ')+(M.newMonth?', впишите, если нужно: ':': ')+zeros.join(', '));
   return L.join('\n');
@@ -19220,6 +19238,7 @@ function _chatTextBuild(D,o){const M=_chatModelBuild(D,o);return M.mono?_chatRen
 // сетка в пикселях: CW = measureText('0'); колонки чисел утв./текущий/факт - measureText(NUM_MAX) + GAP CW зазор, вып. - не уже W_DEV CW (растёт по самому широкому значению в модели), маркер - W_MARK CW;
 // колонка имени = max(ширина подписи R/T с отступом) + 1 CW, не меньше NAME_MIN CW; ширина холста = имя + 4 колонки + маркер + 2 поля.
 // Строки H и P - от левого поля на всю ширину, на колонку имени не влияют; шире холста - перенос по словам с отступом. Масштаб S=2.
+// Колонки - из M.cols (num / pct), значения - vals строки, стрелка - mark, цвет процентной колонки - col: холст о смысле колонок не знает (04.10.2026).
 // Правленный план: утв. обычным, перед текущим стрелка ↑/↓ цветом по направлению (общий с БДР _pfPlanRevArrow), сноска «↑↓ - …» при наличии.
 const CHAT_PNG={S:2,FS:15,LH:1.42,PAD:18,NUM_MAX:'88\u202f888\u202f888',GAP:1,W_DEV:6,W_MARK:1.5,NAME_MIN:9,IND:2, // NUM_MAX - образец ширины числовой колонки: 8 цифр с двумя разделителями; W_DEV - МИНИМУМ колонки «вып.» (04.10.2026)
   FONT:'Roboto, "Segoe UI", Arial, sans-serif',
@@ -19247,46 +19266,49 @@ function _chatPngLayout(M,ms){
   const months=M.months||[];if(!months.length)return null;const m=months[months.length-1];
   ms=ms||_chatPngMeasurer();const mt=ms.mt,CW=ms.CW,P=CHAT_PNG,PAD=P.PAD*P.S,IND=P.IND*CW;
   const N=v=>(v==null||isNaN(v))?null:_fmtThousands(v);
-  const lines=_chatModelLines(M,m);
-  let nameW=P.NAME_MIN*CW;lines.forEach(x=>{if(x.t==='R'||x.t==='T'){const w=(x.label==='ИТОГО'?0:IND)+mt(x.label,{bold:x.t==='T'})+CW;if(w>nameW)nameW=w;}});
+  const lines=_chatModelLines(M,m),cols=M.cols||[];
+  const isNum=x=>x.t==='R'||x.t==='T'||x.t==='RES';
+  let nameW=P.NAME_MIN*CW;lines.forEach(x=>{if(isNum(x)){const w=(x.ind||0)*IND+mt(x.label,{bold:x.t!=='R'})+CW;if(w>nameW)nameW=w;}}); // подписи итогов меряются жирными (как и раньше), даже если сама строка не жирная
   const numW=Math.max(mt(P.NUM_MAX),mt(P.NUM_MAX,{bold:true})); // ширина числовой колонки - под 8 цифр с двумя разделителями (итоги жирные - берём шире)
-  let devW=P.W_DEV*CW;lines.forEach(x=>{if(x.t==='R'||x.t==='T'){const w=mt(_chatExecStr(x.execPct,x.fact),{bold:true});if(w>devW)devW=w;}}); // колонка «вып.» растягивается по самому широкому значению
-  const anyRev=lines.some(x=>x.rev),arrW=anyRev?Math.max(mt('↑',{bold:true}),mt('↓',{bold:true})):0; // стрелка правленного плана - в ширине колонки «текущий»
-  const C={CW,PAD,nameW,numW,devW,arrW,curW:numW+arrW};C.utvR=PAD+nameW+P.GAP*CW+numW;C.curR=C.utvR+P.GAP*CW+C.curW;C.factR=C.curR+P.GAP*CW+numW;C.devR=C.factR+P.GAP*CW+devW;
-  C.markX=C.devR+0.4*CW;C.W=Math.round(C.devR+P.W_MARK*CW+PAD);C.textW=C.W-2*PAD;
+  const arrW=Math.max(mt('↑',{bold:true}),mt('↓',{bold:true}));
+  // ── КОЛОНКИ ИЗ МОДЕЛИ (шаг 1 задачи ОПиУ, 04.10.2026): num - по NUM_MAX плюс стрелка, если в этой колонке есть помеченные строки;
+  //    pct - не уже W_DEV CW, растягивается по самому широкому значению. Правые края считаются слева направо от колонки имени.
+  const C={CW,PAD,nameW,numW,arrW:0,colR:{},colW:{}};let xr=PAD+nameW;
+  cols.forEach(c=>{let w;if(c.kind==='pct'){w=P.W_DEV*CW;lines.forEach(x=>{if(isNum(x)){const t=_chatCellStr(c,x,'png');if(t){const tw=mt(t,{bold:true});if(tw>w)w=tw;}}});}
+    else{const anyM=lines.some(x=>isNum(x)&&x.mark&&x.mark.col===c.key);w=numW+(anyM?arrW:0);if(anyM)C.arrW=arrW;}
+    xr+=P.GAP*CW+w;C.colW[c.key]=w;C.colR[c.key]=xr;});
+  const lastPct=cols.filter(c=>c.kind==='pct').pop();
+  C.devR=lastPct?C.colR[lastPct.key]:xr;C.devW=lastPct?C.colW[lastPct.key]:0;C.markX=C.devR+0.4*CW;
+  C.utvR=C.colR.utv;C.curR=C.colR.cur;C.factR=C.colR.fact;C.curW=C.colW.cur; // прежние имена - их читают тесты и БДР
+  C.W=Math.round(xr+P.W_MARK*CW+PAD);C.textW=C.W-2*PAD;
   const rows=[];const txt=(x,text,color,st)=>Object.assign({x,text,color:color||P.BLACK,w:mt(text,st)},st||{});
   const add=(seg,h,k)=>{const r={h:h==null?1:h,seg:seg||[]};if(k)r.k=k;rows.push(r);return r;};
   const rule=()=>rows.push({h:0.5,seg:[]},{h:0,rule:true,seg:[]},{h:0.5,seg:[]});
   const para=(text,color,st,k)=>{_chatPngWrap(text,C.textW,mt,IND,st).forEach((l,i)=>add([txt(PAD+(i?IND:0),l,color,st)],1,k));}; // текст на всю ширину с переносом
-  const who=M.mode==='dir'?M.dirLabel:(_fioGreet(M.who)||String(M.who||''));
-  para(who+', план-факт'+(M.isMgr?' блока':'')+' на '+M.cutDMY,P.BLACK,{bold:true},'h1');
-  para(CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+_chatMonthState(M,m)+' · числа в рублях, вып. - факт в % от текущего плана',P.GRAY,null,'h2');
-  add([txt(C.utvR,'утв.',P.HDR,{right:true}),txt(C.curR,'текущий',P.HDR,{right:true}),txt(C.factR,'факт',P.HDR,{right:true}),txt(C.devR,'вып.',P.HDR,{right:true})],1,'th');
+  const H=M.pngHead?M.pngHead(m):{h1:(M.mode==='dir'?M.dirLabel:(_fioGreet(M.who)||String(M.who||'')))+', план-факт'+(M.isMgr?' блока':'')+' на '+M.cutDMY,
+    h2:CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+_chatMonthState(M,m)+' · числа в рублях, вып. - факт в % от текущего плана'};
+  para(H.h1,P.BLACK,{bold:true},'h1');para(H.h2,P.GRAY,null,'h2');
+  add(cols.map(c=>txt(C.colR[c.key],c.label,P.HDR,{right:true})),1,'th');
   rows.push({h:0,rule:true,seg:[]});
-  const numRow=(label,x,bold,indent)=>{const seg=[txt(PAD+(indent?IND:0),label,P.BLACK,{bold:!!bold})];
-    const utv=N(x.utv),cur=N(x.cur),fact=N(x.fact);
-    // утв. - всегда обычным начертанием и цветом (жирным в итогах); правленный план помечает СТРЕЛКА перед текущим, как в БДР (_pfPlanRevArrow)
-    seg.push(utv==null?txt(C.utvR,'-',P.GRAY,{right:true}):txt(C.utvR,utv,P.BLACK,{right:true,bold:!!bold}));
-    const curSeg=cur==null?txt(C.curR,'-',P.GRAY,{right:true}):txt(C.curR,cur,P.BLACK,{right:true,bold:!!bold});seg.push(curSeg);
-    seg.push(fact==null?txt(C.factR,'-',P.GRAY,{right:true}):txt(C.factR,fact,P.BLACK,{right:true,bold:!!bold}));
-    // «вып.» - факт в % от текущего плана (x.execPct); «б/п» (план 0, факт > 0) - красным жирным с «!», «-» (ни плана, ни факта) - серым;
-    // цвет и маркер «!» у процента - как раньше, по рублёвому dev и порогу (_chatPngCol)
-    const c=_chatPngCol(x.cur,x.fact,x.kind),es=_chatExecStr(x.execPct,x.fact),np=es==='б/п',nn=es==='-';
-    seg.push(txt(C.devR,es,np?P.RED:nn?P.GRAY:c.color,{right:true,bold:!nn&&(!!bold||c.mark||np)}));if(!nn&&(c.mark||np))seg.push(txt(C.markX,'!',np?P.RED:c.color,{bold:true}));
-    if(x.rev&&cur!=null)seg.push(txt(C.curR-curSeg.w,x.rev.ar,x.rev.color,{right:true,bold:!!bold,arrow:true})); // вплотную слева от числа, цвет по направлению (как в БДР)
-    add(seg);};
+  const numRow=x=>{const bold=!!x.bold;const seg=[txt(PAD+(x.ind||0)*IND,x.label,P.BLACK,{bold})];let arrow=null,mark=null;
+    cols.forEach(c=>{const v=x.vals?x.vals[c.key]:undefined;const R=C.colR[c.key];
+      if(v===undefined){seg.push(txt(R,'',P.BLACK,{right:true}));return;}
+      if(c.kind==='pct'){const st=(x.col&&x.col[c.key])||{};const t=_chatCellStr(c,x,'png');const nn=(v===null);
+        seg.push(txt(R,t,nn?P.GRAY:(st.color||P.BLACK),{right:true,bold:!nn&&(bold||!!st.bold)}));
+        if(!nn&&st.mark)mark=txt(C.markX,'!',st.color||P.BLACK,{bold:true});return;}
+      const s=(v===null)?txt(R,'-',P.GRAY,{right:true}):txt(R,N(v),P.BLACK,{right:true,bold});seg.push(s);
+      if(v!==null&&x.mark&&x.mark.col===c.key)arrow=txt(R-s.w,x.mark.ar,x.mark.color,{right:true,bold,arrow:true});}); // вплотную слева от числа, цвет по направлению (как в БДР)
+    if(mark)seg.push(mark);if(arrow)seg.push(arrow);
+    const r=add(seg);if(x.t==='RES')r.band=true;return r;};
   lines.forEach(x=>{
     if(x.t==='P'){rule();para(x.label,P.BLACK,{bold:true},'p');}
     else if(x.t==='S')add([txt(PAD,x.label,P.GRAY)]);
     else if(x.t==='H')para(x.title,P.BLACK,{bold:true},'hh');
-    else if(x.t==='R')numRow(x.label,x,false,true);
-    else if(x.t==='T')numRow(x.label,x,x.label==='ИТОГО'||x.label==='итого'||x.sub,x.label!=='ИТОГО');
+    else if(x.t==='R'||x.t==='T'||x.t==='RES')numRow(x);
     else if(x.t==='B'){rule();para(x.label,P.BLACK,{bold:true},'b');}
     else if(x.t==='X'){if(x.gap)add([],0.5);para(String(x.text).trim(),x.hdr?P.BLACK:P.GRAY,{bold:!!x.hdr});}});
-  const notes=M.cxNotes.map(n=>'* '+n.title+' '+n.dir+' - общий факт, планируют: '+n.owners.join(', '));
-  if(anyRev)notes.push('↑↓ - план правили после утверждения'); // вместо строки шапки; только при помеченных строках, перед сноской про «!»
-  notes.push('! - за порогом (от '+_chatNum(CHAT_BRIEF_MIN_SUM)+' и от '+Math.round(CHAT_BRIEF_MIN_SHARE*100)+'% плана)');
-  rule();notes.forEach(n=>para(n,P.GRAY,null,'note'));
+  const notes=(M.notes?M.notes(m):[]);
+  if(notes.length){rule();notes.forEach(n=>para(n,P.GRAY,null,'note'));}
   return{month:m,cols:C,rows};
 }
 // рисование: ждёт шрифт (fallback при недоступности сети), canvas нужной высоты (считается после раскладки), Blob PNG
@@ -19330,7 +19352,7 @@ function pngRunTests(){
   const p1=mkP('Иванов Иван Иванович',true,mkS('РАСХОДЫ','exp',[mkG('244_Офисная мебель',[dir('АП',3950,4687,3950),dir('БФЛ*',5700,3900,null,true,['Иванов И.И.','Петров П.П.'])]),mkG('220_Аренда',[dir('АП',21000,24500,20000)])]));
   const p2=mkP('Петров Пётр Петрович',false,mkS('РАСХОДЫ','exp',[mkG('111_ЗП',[dir('АП',77000,75200,77000)])]));
   const p3=mkP('Сидоров С.С.',false,mkS('РАСХОДЫ','exp',[mkG('250_Связь',[dir('САУ',0,700,null),dir('АУ',0,0,null)]),mkG('260_Прочее',[dir('АП',10000,1234567,null)])]));
-  const mk=(people,anyUtvDiff)=>({mode:'mgr',brief:false,isMgr:true,months:[9],short:true,year:2026,cut:new Date(2026,9,15),closed:{9:true},cutDM:'15.10',cutDMY:'15.10.2026',who:'Иванов Иван Иванович',dirLabel:'',greet:'',intro:'',dirsLabel:'',showBl:true,mono:true,wrap:'tg',newMonth:0,plan:true,fact:true,dev:true,people,blockSums:{9:{inc:{p:null,f:0,bl:null},exp:people.reduce((a,P)=>{const x=P.sums[9].exp;if(x.p!=null)a.p=(a.p||0)+x.p;a.f+=x.f;if(x.bl!=null)a.bl=(a.bl||0)+x.bl;return a;},{p:null,f:0,bl:null})}},cxNotes:[{code:'244_Офисная мебель',title:'244 Офисная мебель',dir:'БФЛ',owners:['Иванов И.И.','Петров П.П.']}],anyUtvDiff});
+  const mk=(people,anyUtvDiff)=>_chatPfColsAttach({mode:'mgr',brief:false,isMgr:true,months:[9],short:true,year:2026,cut:new Date(2026,9,15),closed:{9:true},cutDM:'15.10',cutDMY:'15.10.2026',who:'Иванов Иван Иванович',dirLabel:'',greet:'',intro:'',dirsLabel:'',showBl:true,mono:true,wrap:'tg',newMonth:0,plan:true,fact:true,dev:true,people,blockSums:{9:{inc:{p:null,f:0,bl:null},exp:people.reduce((a,P)=>{const x=P.sums[9].exp;if(x.p!=null)a.p=(a.p||0)+x.p;a.f+=x.f;if(x.bl!=null)a.bl=(a.bl||0)+x.bl;return a;},{p:null,f:0,bl:null})}},cxNotes:[{code:'244_Офисная мебель',title:'244 Офисная мебель',dir:'БФЛ',owners:['Иванов И.И.','Петров П.П.']}],anyUtvDiff});
   const M=mk([p1,p2,p3],true),Lo=_chatPngLayout(M,ms),C=Lo.cols;
   const texts=Lo.rows.map(r=>r.seg.map(s=>s.text).join('|'));const kj=(L,k)=>L.rows.filter(r=>r.k===k).map(r=>r.seg[0].text).join(' ');
   ok('png шапка: имя-отчество + «план-факт блока на дд.мм.гггг» жирным (k=h1), месяц «закрыт» (k=h2, с переносом по ширине), строки про серый НЕТ даже при правках, затем заголовок колонок',kj(Lo,'h1')==='Иван Иванович, план-факт блока на 15.10.2026'&&Lo.rows[0].seg[0].bold&&kj(Lo,'h2')==='СЕНТЯБРЬ 2026, закрыт · числа в рублях, вып. - факт в % от текущего плана'&&!Lo.rows.some(r=>r.k==='h3')&&!texts.some(t=>/серым|подчёркнуто/.test(t))&&texts[Lo.rows.findIndex(r=>r.k==='th')]==='утв.|текущий|факт|вып.',texts.slice(0,6).join(' || '));
