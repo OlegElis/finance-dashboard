@@ -19004,7 +19004,10 @@ function _chatModelBuild(D,o){
   const people0=D.people||[];
   const isMgr=o.mode==='mgr'&&people0.length>1;
   const year=+D.year||new Date().getFullYear(),cut=D.upTo||new Date();
-  const closed={};months.forEach(m=>{closed[m]=cut>new Date(year,m,0,23,59,59,999);});
+  // «закрыт» - по правилу ЗП, не по календарю (правка Олега 04.10.2026): ЗП за месяц платится 10-го следующего, месяц закрыт,
+  // когда «сегодня» (cut = «факт на дату» или сегодня) ПОЗЖЕ 10-го числа следующего месяца; сентябрь 2026 закрыт с 11.10.2026.
+  // Текущий месяц не закрыт никогда. Родня правила «месяц закрывается после 10-го» (docs/DECISIONS.md#d-month-closes-after-10th).
+  const closed={};months.forEach(m=>{closed[m]=_chatMonthClosed(year,m,cut);});
   const p2=n=>String(n).padStart(2,'0');
   const M={mode:o.mode,brief,isMgr,months,short:months.length>0&&months.length<=3,year,cut,closed,
     cutDM:p2(cut.getDate())+'.'+p2(cut.getMonth()+1),cutDMY:p2(cut.getDate())+'.'+p2(cut.getMonth()+1)+'.'+cut.getFullYear(),
@@ -19043,6 +19046,9 @@ function _chatModelBuild(D,o){
 }
 // откл. в ПРОЦЕНТАХ от текущего плана (правка Олега 04.10.2026): cur≠0 → round((fact−cur)/|cur|·100) целым со знаком; cur=0 и fact=0 → 0;
 // cur=0 и fact>0 → null («б/п», плана не было). Только отображение: цвет и маркер «!» по-прежнему от рублёвого dev и порога (_chatPngCol).
+const _chatMonthClosed=(year,m,cut)=>!(cut.getFullYear()===year&&cut.getMonth()+1===m)&&cut>new Date(year,m,10,23,59,59,999); // m 1-based: Date(year,m,10) - 10-е СЛЕДУЮЩЕГО месяца
+// подпись состояния месяца в шапке: «закрыт» / «факт на дд.мм, до выплаты ЗП» (прошлый, ещё не закрыт) / «факт на дд.мм» (текущий)
+const _chatMonthState=(M,m)=>M.closed[m]?'закрыт':('факт на '+M.cutDM+((M.cut.getFullYear()===M.year&&M.cut.getMonth()+1===m)?'':', до выплаты ЗП'));
 const _chatDevPct=(cur,fact)=>{const c=Math.round(cur||0),f=Math.round(fact||0);if(c===0)return f>0?null:0;const v=Math.round((f-c)/Math.abs(c)*100);return v===0?0:v;}; // v===0 гасит «-0»
 const _chatDevPctStr=v=>v==null?'б/п':(v>0?'+'+v+'%':v+'%');
 // ── Плоские строки модели за ОДИН месяц - для моно-текста и PNG: {t:'P'|'S'|'H'|'R'|'T'|'B'|'X', …}. Числа сырые; у R/T - dev (₽) и devPct. ──
@@ -19147,7 +19153,7 @@ function _chatRenderMono(M){
   const nrowRaw=(name,x,m)=>mrow(name,x.utv!=null?N(x.utv):'-',M.plan?N(x.cur):'',M.fact?N(x.fact):'',col4(x));
   const nrow=(name,x,m)=>{const nm=cleanName(name);return [...nm].length>W_NAME?[trow(nm),nrowRaw('',x,m)]:[nrowRaw(nm,x,m)];};
   const thead=m=>mrow('','утв.',M.plan?'текущий':'',M.fact?'факт':'',hdr4(m));
-  const monthHead=m=>CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+(M.closed[m]?'закрыт':'факт на '+M.cutDM)+' · откл. в % от текущего плана';
+  const monthHead=m=>CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+_chatMonthState(M,m)+' · откл. в % от текущего плана';
   const B=[];
   const emit=(m)=>{_chatModelLines(M,m).forEach(x=>{
     if(x.t==='P'){if(x.plain)B.push(trow(x.label));else B.push('',RULE,trow(x.label));}
@@ -19205,7 +19211,7 @@ function _chatPngLayout(M){
   const rule=()=>rows.push({h:0.5,seg:[]},{h:0,rule:true,seg:[]},{h:0.5,seg:[]});
   const who=M.mode==='dir'?M.dirLabel:(_fioGreet(M.who)||String(M.who||''));
   add([txt(0,who+', план-факт'+(M.isMgr?' блока':'')+' на '+M.cutDMY,P.BLACK,{bold:true})]);
-  add([txt(0,CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+(M.closed[m]?'закрыт':'по '+M.cutDM)+' · числа в рублях, откл. в % от текущего плана',P.GRAY)]);
+  add([txt(0,CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+_chatMonthState(M,m)+' · числа в рублях, откл. в % от текущего плана',P.GRAY)]);
   if(M.anyUtvDiff){add([txt(0,'серым подчёркнуто - план правили',P.GRAY,{italic:true})]);add([txt(0,'после утверждения',P.GRAY,{italic:true})]);}
   add([txt(P.R_UTV,'утв.',P.HDR,{right:true}),txt(P.R_CUR,'текущий',P.HDR,{right:true}),txt(P.R_FACT,'факт',P.HDR,{right:true}),txt(P.R_DEV,'откл.',P.HDR,{right:true})]);
   rows.push({h:0,rule:true,seg:[]});
@@ -19258,6 +19264,8 @@ function pngRunTests(){
   ok('png col(): за порогом и хорошо (расход -15 000) - оранжевый, «!»; у дохода недобор - красный',c3.text==='-15000'&&c3.color===P.ORANGE&&c3.mark&&c6.color===P.RED&&c6.mark);
   ok('png col(): в пределах порога (+5 000, 5%) - зелёный без маркера; 9 999 - тоже в пределах',c4.text==='+5000'&&c4.color===P.GREEN&&!c4.mark&&c7.color===P.GREEN&&!c7.mark);
   ok('png col(): ноль - «0», зелёный, без маркера',c5.text==='0'&&c5.color===P.GREEN&&!c5.mark);
+  ok('месяц «закрыт» по правилу ЗП: сентябрь 2026 при «сегодня» 09.10 - не закрыт, 10.10 - не закрыт, 11.10 - закрыт; текущий месяц (октябрь при 15.10, 31.10) - не закрыт; август при 11.10 - закрыт',!_chatMonthClosed(2026,9,new Date(2026,9,9))&&!_chatMonthClosed(2026,9,new Date(2026,9,10,23,59))&&_chatMonthClosed(2026,9,new Date(2026,9,11))&&!_chatMonthClosed(2026,10,new Date(2026,9,15))&&!_chatMonthClosed(2026,10,new Date(2026,9,31,23,59))&&_chatMonthClosed(2026,8,new Date(2026,9,11))&&!_chatMonthClosed(2026,12,new Date(2027,0,10))&&_chatMonthClosed(2026,12,new Date(2027,0,11)));
+  ok('шапка месяца: закрыт → «закрыт»; прошлый незакрытый → «факт на 04.10, до выплаты ЗП»; текущий → «факт на 04.10»',(()=>{const c=new Date(2026,9,4),Mx={year:2026,cut:c,cutDM:'04.10',closed:{9:_chatMonthClosed(2026,9,c),10:_chatMonthClosed(2026,10,c),8:_chatMonthClosed(2026,8,c)}};return _chatMonthState(Mx,9)==='факт на 04.10, до выплаты ЗП'&&_chatMonthState(Mx,10)==='факт на 04.10'&&_chatMonthState(Mx,8)==='закрыт';})());
   ok('devPct: cur>0 → +66%, cur<0 (|cur| в знаменателе) → +22%, cur=0&fact=0 → 0%, cur=0&fact>0 → б/п, округление 0,4→0 и 0,5→1, «-0%» не печатается',_chatDevPct(100,166)===66&&_chatDevPctStr(66)==='+66%'&&_chatDevPct(-100,-78)===22&&_chatDevPct(100,78)===-22&&_chatDevPctStr(-22)==='-22%'&&_chatDevPct(0,0)===0&&_chatDevPctStr(0)==='0%'&&_chatDevPct(0,5)===null&&_chatDevPctStr(null)==='б/п'&&_chatDevPct(1000,1004)===0&&_chatDevPct(1000,1005)===1&&_chatDevPct(1000,996)===0&&_chatDevPctStr(_chatDevPct(1000,996))==='0%');
   ok('png col(): строка откл. для d=0, d>0, d<0, cur=0',_chatPngCol(10,10,'exp').text==='0'&&_chatPngCol(10,12,'exp').text==='+2'&&_chatPngCol(12,10,'exp').text==='-2'&&_chatPngCol(0,7,'exp').text==='+7'&&_chatPngCol(null,0,'exp').text==='0');
   const w=_chatPngWrap('* 244 Офисная мебель БФЛ - общий факт, планируют: Иванов И.И., Петров П.П., Сидоров С.С.',47,2);
