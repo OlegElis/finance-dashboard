@@ -19108,6 +19108,7 @@ function _chatCellStr(c,x,dst){const v=x.vals?x.vals[c.key]:undefined;if(v===und
 //    R - направление: label (с «*» у комплексной), cur = план ПО ПАРЕ у комплексной (Σ планов всех), fact общий; T - «итого» подстатьи,
 //    «ИТОГО» секции, «доходы»/«расходы» блока или сводки; B - заголовок «ИТОГО ПО БЛОКУ»/«ИТОГО»; X - текст без чисел.
 function _chatModelLines(M,m){
+  if(M.lines)return M.lines; // модель с готовыми строками (ОПиУ) - без разбора людей/секций
   const L=[];const dv=o=>{Object.assign(o,{dev:Math.round(o.fact||0)-Math.round(o.cur||0),execPct:_chatExecPct(o.cur,o.fact),rev:_pfPlanRevArrow(o.cur,o.utv,o.kind==='inc')}); // rev - стрелка правленного плана (как в БДР), по суммам у итогов
     // колонки из модели: vals по ключам M.cols, mark - стрелка у «текущего», col.exec - цвет/«!» вып. («б/п» красным, «-» серым, иначе по рублёвому порогу _chatPngCol)
     const es=_chatExecStr(o.execPct,o.fact),np=es==='б/п',nn=es==='-',c=_chatPngCol(o.cur,o.fact,o.kind);
@@ -19212,35 +19213,47 @@ function _chatRenderMono(M){
   const nrow=(name,x)=>{const nm=cleanName(name);const ind=M.indMono?' '.repeat(x.ind||0):'';return [...(ind+nm)].length>W_NAME?[trow(ind+nm),nrowRaw('',x)]:[nrowRaw(ind+nm,x)];};
   const thead=m=>mrow('',cols.map(c=>c.label));
   const monthHead=m=>M.textHead?M.textHead(m):(CHAT_MONS_FULL[m-1].toUpperCase()+' '+M.year+', '+_chatMonthState(M,m)+' · вып. - факт в % от текущего плана');
-  const B=[];
+  const B=[],Bt=[];const put=(t,...ls)=>{ls.forEach(l=>{B.push(l);Bt.push(t);});}; // Bt - тип строки: границы для резки на части (S / RES)
   const emit=(m)=>{_chatModelLines(M,m).forEach(x=>{
-    if(x.t==='P'){if(x.plain)B.push(trow(x.label));else B.push('',RULE,trow(x.label));}
-    else if(x.t==='S'||x.t==='H')B.push(trow(x.t==='S'?x.label:x.title));
-    else if(x.t==='R'||x.t==='T'||x.t==='RES')B.push(...nrow(x.label,x));
-    else if(x.t==='B')B.push('',RULE,trow(x.label));
-    else if(x.t==='X'){if(x.gap)B.push('');B.push(trow(x.text));if(x.hdr)B.push(thead(m));}});};
-  if(M.brief&&M.months.length){const bm=M.months[0];B.push(monthHead(bm));const lines=_chatModelLines(M,bm);
+    if(x.t==='P'){if(x.plain)put('P',trow(x.label));else put('P','',RULE,trow(x.label));}
+    else if(x.t==='S'||x.t==='H')put(x.t,trow(x.t==='S'?x.label:x.title));
+    else if(x.t==='R'||x.t==='T'||x.t==='RES')put(x.t,...nrow(x.label,x));
+    else if(x.t==='B')put('B','',RULE,trow(x.label));
+    else if(x.t==='X'){if(x.gap)put('X','');put('X',trow(x.text));if(x.hdr)put('X',thead(m));}});};
+  if(M.brief&&M.months.length){const bm=M.months[0];put('X',...[].concat(monthHead(bm)));const lines=_chatModelLines(M,bm);
     // сводка: заголовок «СВОДКА…» + шапка, затем люди; «ОТКЛОНЕНИЯ …» + шапка; порядок строк - из модели
     lines.forEach((x,i)=>{
-      if(x.t==='X'&&x.hdr){if(x.gap)B.push('');B.push(trow(x.text),thead(bm));}
-      else if(x.t==='X')B.push(trow(x.text));
-      else if(x.t==='P'){if(x.plain)B.push(trow(x.label));else B.push('',RULE,trow(x.label));}
-      else if(x.t==='B')B.push('',RULE,trow(x.label));
-      else if(x.t==='S'||x.t==='H')B.push(trow(x.t==='S'?x.label:x.title));
-      else B.push(...nrow(x.label,x));});
+      if(x.t==='X'&&x.hdr){if(x.gap)put('X','');put('X',trow(x.text),thead(bm));}
+      else if(x.t==='X')put('X',trow(x.text));
+      else if(x.t==='P'){if(x.plain)put('P',trow(x.label));else put('P','',RULE,trow(x.label));}
+      else if(x.t==='B')put('B','',RULE,trow(x.label));
+      else if(x.t==='S'||x.t==='H')put(x.t,trow(x.t==='S'?x.label:x.title));
+      else put(x.t,...nrow(x.label,x));});
   }else{
-    M.months.forEach((m,mi)=>{if(mi)B.push('');B.push(monthHead(m),thead(m));emit(m);});
-    if(!M.months.length&&M.newMonth)B.push(trow('Месяцы не выбраны - строки для плана:'));
+    M.months.forEach((m,mi)=>{if(mi)put('X','');put('X',...[].concat(monthHead(m)));if(cols.length)put('X',thead(m));emit(m);}); // шапка модели - строка или массив строк; без колонок (пустой отбор) шапки колонок нет
+    if(!M.months.length&&M.newMonth)put('X',trow('Месяцы не выбраны - строки для плана:'));
   }
+  const parts=_chatMonoSplit(B,Bt,M.partMax,M.months.length?thead(M.months[M.months.length-1]):'');
+  if(M.__parts){M.__parts={B,parts};} // для тестов резки
   const WR=M.wrap==='b24'?['[code]','[/code]']:['```','```'];
-  const Bw=M.wrap==='b24'?B.map(l=>l.replace(/ /g,' ')):B; // Битрикс24: пробелы в строках таблицы - U+00A0, иначе он их схлопывает
-  if(B.length)L.push(WR[0],...Bw,WR[1]);
+  const wrapL=l=>M.wrap==='b24'?l.replace(/ /g,' '):l; // Битрикс24: пробелы в строках таблицы - U+00A0, иначе он их схлопывает
+  parts.forEach((pt,i)=>{if(i)L.push('');L.push(WR[0],...pt.map(wrapL),WR[1]);}); // каждая часть - в своей обёртке, между частями пустая строка
   M.cxNotes.forEach(n=>L.push('* '+n.title+' '+n.dir+' - общий факт, планируют: '+n.owners.join(', ')));
   if(M.months.some(m=>_chatModelLines(M,m).some(x=>x.mark)))L.push('↑↓ - план правили после утверждения'); // сноска только при помеченных строках
   const zeros=[...new Set(M.people.flatMap(P=>P.zeros))];
   if(!M.brief&&zeros.length&&M.months.length)L.push('Нулевые за '+M.months.map(m=>CHAT_MONS[m-1]).join(', ')+(M.newMonth?', впишите, если нужно: ':': ')+zeros.join(', '));
   return L.join('\n');
 }
+// резка длинного моно-блока на части (ОПиУ, 3900 знаков под лимит сообщения): границы - перед S и после RES; первая строка части «(k/n)»,
+// в частях после первой - шапка колонок. Без partMax или если влезает - одна часть.
+function _chatMonoSplit(B,Bt,max,thead){if(!B.length)return [];if(!max||B.join('\n').length<=max)return [B];
+  const parts=[];let cur=[],len=0,lastCut=-1;
+  for(let i=0;i<B.length;i++){if(cur.length&&(Bt[i]==='S'||Bt[i-1]==='RES'))lastCut=cur.length;
+    cur.push(B[i]);len+=B[i].length+1;
+    if(len>max&&lastCut>0){parts.push(cur.slice(0,lastCut));cur=cur.slice(lastCut);len=cur.join('\n').length;lastCut=-1;}}
+  if(cur.length)parts.push(cur);const n=parts.length;
+  return parts.map((p,k)=>['('+(k+1)+'/'+n+')'].concat(k?[thead]:[]).concat(p));}
+function _chatMonoParts(M){const Mx=Object.assign({},M,{__parts:true});_chatRenderMono(Mx);return Mx.__parts;} // {B, parts} - для тестов
 function _chatTextBuild(D,o){const M=_chatModelBuild(D,o);return M.mono?_chatRenderMono(M):_chatRenderPlain(M);}
 // ══ РЕНДЕР PNG (задача «Скопировать как картинку», 03.10.2026; с 04.10.2026 - Roboto и сетка в ПИКСЕЛЯХ, docs/DECISIONS.md#d-chat-png-roboto) ═══
 // Берёт ТУ ЖЕ модель, что текст (_chatModelBuild → _chatModelLines за последний выбранный месяц); сумм не считает.
@@ -19307,7 +19320,7 @@ function _chatPngLayout(M,ms){
       if(c.kind==='pct'){const st=(x.col&&x.col[c.key])||{};const t=_chatCellStr(c,x,'png');const nn=(v===null);
         seg.push(txt(R,t,nn?P.GRAY:(st.color||P.BLACK),{right:true,bold:!nn&&(bold||!!st.bold)}));
         if(!nn&&st.mark)mark=txt(C.markX,'!',st.color||P.BLACK,{bold:true});return;}
-      const s=(v===null)?txt(R,'-',P.GRAY,{right:true}):txt(R,N(v),P.BLACK,{right:true,bold});seg.push(s);
+      const stN=(x.col&&x.col[c.key])||{};const s=(v===null)?txt(R,'-',P.GRAY,{right:true}):txt(R,N(v),stN.color||P.BLACK,{right:true,bold});seg.push(s);
       if(v!==null&&x.mark&&x.mark.col===c.key)arrow=txt(R-s.w,x.mark.ar,x.mark.color,{right:true,bold,arrow:true});}); // вплотную слева от числа, цвет по направлению (как в БДР)
     if(mark)seg.push(mark);if(arrow)seg.push(arrow);
     const r=add(seg);if(x.t==='RES')r.band=true;return r;};
@@ -19332,6 +19345,7 @@ function _chatPng(M){return _chatPngFontsReady().then(()=>new Promise((resolve,r
   let y=PAD;
   Lo.rows.forEach(r=>{
     if(r.rule){ctx.strokeStyle=P.RULE;ctx.lineWidth=Math.max(1,S*0.75);ctx.beginPath();ctx.moveTo(PAD,y+0.5);ctx.lineTo(W-PAD,y+0.5);ctx.stroke();return;}
+    if(r.band){ctx.fillStyle=P.RULE;ctx.fillRect(PAD,y,W-2*PAD,r.h*LH);} // RES-строки ОПиУ - лёгкая подложка цвета линий
     const base=y+FS*0.95;
     r.seg.forEach(s=>{ctx.font=_chatPngFont(s);ctx.fillStyle=s.color;const x=s.right?s.x-s.w:s.x;ctx.fillText(s.text,x,base);
       if(s.underline){ctx.strokeStyle=s.color;ctx.lineWidth=Math.max(1,S*0.6);ctx.beginPath();ctx.moveTo(x,y+FS*1.05);ctx.lineTo(x+s.w,y+FS*1.05);ctx.stroke();}});
@@ -19398,6 +19412,120 @@ function pngRunTests(){
     console.log('[PNG] pngRunTests (фиксированная модель, с любой вкладки): '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
     bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
     return{total:R.length,failed:bad.length,tests:R};});});
+}
+// ══ МОДЕЛЬ ОПиУ ДЛЯ ЧАТА (шаг 3 задачи «ОПиУ в чат», 04.10.2026): та же форма, что у БДР - M.cols + строки с vals, рендеры общие
+//    (_chatRenderMono, _chatPng). Суммы - из _opiuCalc (второго расчёта нет): cur = ПОСЛЕДНИЙ период отбора, base = предыдущий по
+//    календарю (basePkOf; при dyn='yoy' в фильтре - год назад), база из агрегата по baseData без фильтра лет/месяцев (DYNA), усечение
+//    текущего периода как у «Динамики». Расходы - МОДУЛЕМ (конвенция хранения не трогается), Δ% = round((cur−base)/|base|·100), base = 0 → null.
+//    Глубина: 'sub' | 'art' | 'tot'. RES - результат: жирная, доля в выручке в скобках, убыток с минусом красным. Порога и «!» нет. ══
+const CHAT_MONS_DAT=['январю','февралю','марту','апрелю','маю','июню','июлю','августу','сентябрю','октябрю','ноябрю','декабрю'];
+const _opiuChatDelta=(cur,base)=>{const c=Math.round(cur||0),b=Math.round(base||0);if(b===0)return null;const v=Math.round((c-b)/Math.abs(b)*100);return v===0?0:v;}; // v===0 гасит «-0»
+function _opiuPeriodLbl(mode,pk,K){ // подпись колонки: «сен 26», «Q3 26», «2026», «н37 26», «04.10»
+  const a=K.anchorOf(pk);if(!a)return String(pk);const y2=String(a.getFullYear()).slice(2);
+  if(mode==='year')return String(a.getFullYear());
+  if(mode==='quarter')return 'Q'+(Math.floor(a.getMonth()/3)+1)+' '+y2;
+  if(mode==='week'){const m=String(pk).match(/Нед (\d+) (\d{4})/);return 'н'+(m?+m[1]:'?')+' '+y2;}
+  if(mode==='day')return String(a.getDate()).padStart(2,'0')+'.'+String(a.getMonth()+1).padStart(2,'0');
+  return CHAT_MONS[a.getMonth()]+' '+y2;}
+function _opiuPeriodWord(mode,pk,K,dat){ // для шапки: «СЕНТЯБРЬ 2026» / «АВГУСТУ 2026» (дательный), прочие разрезы - как подпись колонки с полным годом
+  const a=K.anchorOf(pk);if(!a)return String(pk);
+  if(mode==='month')return (dat?CHAT_MONS_DAT:CHAT_MONS_FULL)[a.getMonth()].toUpperCase()+' '+a.getFullYear();
+  if(mode==='quarter')return 'Q'+(Math.floor(a.getMonth()/3)+1)+' '+a.getFullYear();
+  return _opiuPeriodLbl(mode,pk,K);}
+// шапка моно-текста: длинную строку резать по разделителю « · » на куски не длиннее max (под ширину таблицы); кусок длиннее max остаётся как есть
+function _chatHeadWrap(str,max){const out=[];let cur='';String(str).split(' · ').forEach(tk=>{const nx=cur?cur+' · '+tk:tk;if(!cur||[...nx].length<=max)cur=nx;else{out.push(cur);cur=tk;}});if(cur)out.push(cur);return out;}
+function _opiuChatModel(f,o){
+  o=o||{};const today=o.today?new Date(o.today):new Date();const yoy=f.dyn==='yoy';const p2=n=>String(n).padStart(2,'0');
+  const K=_opiuCalc(Object.assign({},f,{dyn:yoy?'yoy':'prev'}),RAW,{today});
+  const mode=K.mode,periods=K.periods,depth=['sub','art','tot'].includes(o.depth)?o.depth:'sub',P=CHAT_PNG;
+  const M={kind:'opiu',mode:'opiu',brief:false,isMgr:false,months:[],short:true,year:today.getFullYear(),cut:today,closed:{},cutDM:p2(today.getDate())+'.'+p2(today.getMonth()+1),cutDMY:p2(today.getDate())+'.'+p2(today.getMonth()+1)+'.'+today.getFullYear(),
+    who:'',dirLabel:'',greet:o.greet?'Здравствуйте!':null,intro:o.intro===undefined?'':String(o.intro||'').trim(),dirsLabel:'',showBl:false,mono:true,wrap:o.wrap||'',newMonth:0,plan:true,fact:true,dev:true,
+    people:[],blockSums:{},cxNotes:[],anyUtvDiff:false,lines:[],nameW:14,indMono:true,partMax:o.partMax===undefined?3900:o.partMax,depth,yoy,K,notes:()=>[]};
+  const dirs=(f.activityDirs||[]).map(d=>_regCode(d)),dirsTxt=dirs.length?dirs.join(', '):'все направления';
+  if(!periods.length){M.empty=true;M.months=[1];M.cols=[];M.h1='ОПиУ · '+dirsTxt;M.h2='по этому отбору операций нет';M.textHead=()=>[M.h1,M.h2];M.pngHead=()=>({h1:M.h1,h2:M.h2});return M;}
+  const cur=periods[periods.length-1],bpk=K.basePkOf(cur),trunc=!!(K.dynCut&&K.dynCut.pk===cur);
+  M.months=[1];M.cur=cur;M.base=bpk;M.trunc=trunc;
+  M.cols=[{key:'cur',label:_opiuPeriodLbl(mode,cur,K),kind:'num',w:8},{key:'base',label:bpk?_opiuPeriodLbl(mode,bpk,K):'-',kind:'num',w:8},{key:'d',label:'Δ%',kind:'pct',w:5,sign:true}];
+  const AGG=K.AGG,DYNA=K.DYNA,MAPS=K.MAPS,DYNM=K.DYNM,ru=(a,b)=>a.localeCompare(b,'ru');
+  const gv=(map,pk)=>(map&&pk&&map[pk])||0,z=v=>Math.abs(Math.round(v))===0;
+  const revCur=gv(AGG.rev.perInc,cur);
+  // цвет Δ%: доходы и результаты - рост зелёный, падение красный; расходы - наоборот; |Δ| < 10 - чёрный; null - серый «-»
+  const dcol=(d,kind)=>{if(d==null)return{color:P.GRAY};if(Math.abs(d)<10)return{color:P.BLACK};const good=kind==='exp'?d<0:d>0;return{color:good?P.GREEN:P.RED};};
+  const line=(t,label,kind,c,b,opt)=>{const cv=kind==='exp'?Math.abs(c):c,bv=kind==='exp'?Math.abs(b):b;
+    if(t!=='RES'&&z(cv)&&z(bv))return null; // пустые строки не печатаем
+    const d=_opiuChatDelta(cv,bv);
+    const x=Object.assign({t,label,kind,vals:{cur:Math.round(cv),base:bpk?Math.round(bv):null,d},col:{d:dcol(d,kind)},bold:t==='T'||t==='RES',ind:0,mark:null},opt||{});
+    if(t==='RES'&&Math.round(cv)<0)x.col.cur={color:P.RED}; // убыток - с минусом, красным
+    M.lines.push(x);return x;};
+  const S=l=>M.lines.push({t:'S',label:l,kind:'exp'}),H=l=>M.lines.push({t:'H',title:l});
+  const RES=(label,map,bmap)=>{const c=gv(map,cur),b=gv(bmap,bpk);const sh=z(revCur)?null:Math.round(c/Math.abs(revCur)*100);line('RES',label+(sh==null?'':' ('+sh+'%)'),'res',c,b,{ind:0});};
+  S('ВЫРУЧКА');
+  if(depth!=='tot')Object.keys(AGG.rev.arts).sort(ru).forEach(sub=>line('R',sub,'inc',gv(AGG.rev.arts[sub].perInc,cur),gv((DYNA.rev.arts[sub]||{}).perInc,bpk),{ind:1}));
+  line('T','ВЫРУЧКА','inc',revCur,gv(DYNA.rev.perInc,bpk),{bold:true,ind:0});
+  const subRows=(ad,da)=>Object.keys(ad.subs).sort(ru).forEach(sub=>line('R',sub,'exp',gv(ad.subs[sub].perOut,cur),gv(da&&da.subs&&da.subs[sub]&&da.subs[sub].perOut,bpk),{ind:2}));
+  const catBlock=cat=>{const cd=AGG.exp[cat],dc=DYNA.exp[cat];if(!cd)return;const c=gv(cd.perOut,cur),b=gv(dc&&dc.perOut,bpk);if(z(c)&&z(b))return;
+    if(depth==='tot'){line('T',cat,'exp',c,b,{ind:0});return;}
+    H(cat);Object.keys(cd.arts).sort(ru).forEach(art=>{const ad=cd.arts[art],da=dc&&dc.arts?dc.arts[art]:null;line('R',art,'exp',gv(ad.perOut,cur),gv(da&&da.perOut,bpk),{ind:1});if(depth==='sub')subRows(ad,da);});
+    line('T','итого','exp',c,b,{ind:1});};
+  const artBlock=(obj,dobj,secLabel)=>{S(secLabel);Object.keys(obj.arts).sort(ru).forEach(art=>{const ad=obj.arts[art],da=dobj&&dobj.arts?dobj.arts[art]:null;const c=gv(ad.perOut,cur),b=gv(da&&da.perOut,bpk);if(z(c)&&z(b))return;
+    if(depth==='tot'){line('T',art,'exp',c,b,{ind:0});return;}
+    if(depth==='art'){line('R',art,'exp',c,b,{ind:1});return;}
+    H(art);subRows(ad,da);line('T','итого','exp',c,b,{ind:1});});};
+  if(K.flat){artBlock(MAPS.above,DYNM.above,'РАСХОДЫ ДО EBITDA');RES('EBITDA',MAPS.ebitda,DYNM.ebitda);
+    if(Object.keys(MAPS.below.arts).length)artBlock(MAPS.below,DYNM.below,'РАСХОДЫ НИЖЕ EBITDA');RES('ЧИСТАЯ ПРИБЫЛЬ',MAPS.net,DYNM.net);}
+  else{S('ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ');catBlock('Прямые / Переменные');RES('МАРЖИНАЛЬНЫЙ ДОХОД',MAPS.marginal,DYNM.marginal);catBlock('Прямые / Постоянные');RES('ВАЛОВАЯ ПРИБЫЛЬ',MAPS.gross,DYNM.gross);
+    S('КОСВЕННЫЕ РАСХОДЫ');catBlock('Косвенные / Переменные');catBlock('Косвенные / Постоянные');if(K.inclBelow)catBlock('EBITDA-корректировки');RES('EBITDA',MAPS.ebitda,DYNM.ebitda);
+    S('РАСХОДЫ НИЖЕ EBITDA');catBlock('Налоги / проценты / амортизация');if(!K.inclBelow)catBlock('EBITDA-корректировки');RES('ЧИСТАЯ ПРИБЫЛЬ',MAPS.net,DYNM.net);}
+  {const cd=AGG.exp['Вывод чистой прибыли'],dc=DYNA.exp['Вывод чистой прибыли'];if(cd&&!(z(gv(cd.perOut,cur))&&z(gv(dc&&dc.perOut,bpk)))){S('РАСПРЕДЕЛЕНИЕ');catBlock('Вывод чистой прибыли');}} // вывод 127 - ниже ЧП, в ЧП не входит; только если есть
+  M.lines=M.lines.filter((x,i,A)=>x.t!=='S'||(A[i+1]&&!['S','RES'].includes(A[i+1].t))); // секция без строк не печатается
+  // шапка
+  M.h1='ОПиУ · '+dirsTxt+' · '+_opiuPeriodWord(mode,cur,K,false)+(bpk?' к '+_opiuPeriodWord(mode,bpk,K,true):'');
+  let st;if(mode==='month'){const a=K.anchorOf(cur),mm=a.getMonth()+1,yy=a.getFullYear();st=_chatMonthState({year:yy,cut:today,cutDM:M.cutDM,closed:{[mm]:_chatMonthClosed(yy,mm,today)}},mm);}else st='факт на '+M.cutDM;
+  const dm=d=>p2(d.getDate())+'.'+p2(d.getMonth()+1);
+  M.h2=st+' · рубли · Δ% к '+(yoy?'прошлому году':'предыдущему периоду')+(trunc?' · оба периода по '+dm(K.dynCut.cutD)+' и '+dm(K.dynCut.baseCutD):'');
+  M.textHead=()=>_chatHeadWrap(M.h1,38).concat(_chatHeadWrap(M.h2,38)); // в тексте шапка режется по « · » на строки не длиннее ширины таблицы
+  M.pngHead=()=>({h1:M.h1,h2:M.h2});
+  return M;
+}
+function _opiuChatText(f,o){return _chatRenderMono(_opiuChatModel(f,o));}
+// ── ТЕСТЫ ОПиУ-ЧАТА: на RAW (стендовом или боевом); без RAW честно отказываются ──
+function opiuChatRunTests(){
+  const {R,ok}=_pfTestBed();
+  if(typeof RAW==='undefined'||!RAW||!RAW.length){console.log('[ОПиУ-чат] opiuChatRunTests: RAW нет - проверять не на чем');return{skipped:true};}
+  const f0={dateFrom:'',dateTo:'',periodType:'month',fotDetail:'direction',preset:'all',rel:'',activityDirs:[],years:[],months:[],ebitdaInclBelow:false,expFlat:false,postSplit:false,dyn:''};
+  const today=new Date(2026,9,4);
+  const M=_opiuChatModel(f0,{today}),K=M.K,cur=M.cur,bpk=M.base,r0=v=>Math.round(v||0);
+  const T=l=>M.lines.find(x=>x.t==='T'&&x.label===l),RESo=l=>M.lines.find(x=>x.t==='RES'&&x.label.indexOf(l)===0);
+  ok('ОПиУ-чат: cur - последний период отбора (opiuSortKey), base - предыдущий по календарю (basePkOf), колонки cur/base/Δ%',!M.empty&&cur===K.periods[K.periods.length-1]&&bpk===K.basePkOf(cur)&&M.cols.map(c=>c.key).join()==='cur,base,d'&&M.cols[2].kind==='pct'&&M.cols[2].sign===true);
+  ok('ОПиУ-чат: ВЫРУЧКА в модели = AGG.rev.perInc[cur], база = DYNA.rev.perInc[bpk] того же _opiuCalc',!!T('ВЫРУЧКА')&&T('ВЫРУЧКА').vals.cur===r0(K.AGG.rev.perInc[cur])&&T('ВЫРУЧКА').vals.base===r0(K.DYNA.rev.perInc[bpk]),T('ВЫРУЧКА')&&JSON.stringify(T('ВЫРУЧКА').vals));
+  const iDist=M.lines.findIndex(x=>x.t==='S'&&x.label==='РАСПРЕДЕЛЕНИЕ');const expT=M.lines.filter((x,i)=>x.t==='T'&&x.kind==='exp'&&(iDist<0||i<iDist));
+  ok('ОПиУ-чат: Σ итогов расходных категорий = |MAPS.totalExp[cur]| (вывод 127 не входит); по базе = |DYNM.totalExp[bpk]|',expT.length>0&&expT.reduce((a,x)=>a+x.vals.cur,0)===r0(Math.abs(K.MAPS.totalExp[cur]||0))&&expT.reduce((a,x)=>a+(x.vals.base||0),0)===r0(Math.abs(K.DYNM.totalExp[bpk]||0)),expT.map(x=>x.vals.cur).join('+')+' vs '+r0(Math.abs(K.MAPS.totalExp[cur]||0)));
+  ok('ОПиУ-чат: EBITDA и ЧИСТАЯ ПРИБЫЛЬ (RES) = MAPS.ebitda/net[cur], база = DYNM[bpk]; доля в выручке в скобках',!!RESo('EBITDA')&&RESo('EBITDA').vals.cur===r0(K.MAPS.ebitda[cur])&&RESo('EBITDA').vals.base===r0(K.DYNM.ebitda[bpk])&&!!RESo('ЧИСТАЯ ПРИБЫЛЬ')&&RESo('ЧИСТАЯ ПРИБЫЛЬ').vals.cur===r0(K.MAPS.net[cur])&&/^EBITDA \(-?\d+%\)$/.test(RESo('EBITDA').label)&&RESo('EBITDA').bold,RESo('EBITDA')&&RESo('EBITDA').label);
+  ok('ОПиУ-чат: расходы в модели модулем (≥ 0 у всех строк kind=exp, cur и base)',M.lines.filter(x=>x.kind==='exp'&&x.vals).every(x=>x.vals.cur>=0&&(x.vals.base==null||x.vals.base>=0)));
+  ok('ОПиУ-чат: Δ% - base=0 → null («-» серым), рост +10, падение -10, знак от разности при отрицательной базе, печать «+10%»/«-10%»/«0%»',_opiuChatDelta(100,0)===null&&_opiuChatDelta(110,100)===10&&_opiuChatDelta(90,100)===-10&&_opiuChatDelta(-50,-100)===50&&_opiuChatDelta(100,100)===0&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:10}},'mono')==='+10%'&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:-10}},'mono')==='-10%'&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:0}},'mono')==='0%'&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:null}},'mono')==='-');
+  const dl=M.lines.find(x=>x.vals&&x.vals.d!=null&&Math.abs(x.vals.d)>=10&&x.kind==='exp'),dinc=M.lines.find(x=>x.vals&&x.vals.d!=null&&Math.abs(x.vals.d)>=10&&x.kind!=='exp'),dsm=M.lines.find(x=>x.vals&&x.vals.d!=null&&Math.abs(x.vals.d)<10);
+  ok('ОПиУ-чат: цвет Δ% - расход: рост красный / падение зелёный; доход и результат: наоборот; |Δ| < 10 - чёрный; порога в рублях и «!» нет',(!dl||dl.col.d.color===(dl.vals.d>0?CHAT_PNG.RED:CHAT_PNG.GREEN))&&(!dinc||dinc.col.d.color===(dinc.vals.d>0?CHAT_PNG.GREEN:CHAT_PNG.RED))&&(!dsm||dsm.col.d.color===CHAT_PNG.BLACK)&&M.lines.every(x=>!x.col||!x.col.d||!x.col.d.mark)&&!/CHAT_BRIEF_MIN|_chatPngCol/.test(String(_opiuChatModel)));
+  const Ma=_opiuChatModel(f0,{today,depth:'art'}),Mt=_opiuChatModel(f0,{today,depth:'tot'});
+  const Tv=(Mx,l)=>{const x=Mx.lines.find(y=>y.t==='T'&&y.label===l);return x&&JSON.stringify(x.vals);},Rv=(Mx,l)=>{const x=Mx.lines.find(y=>y.t==='RES'&&y.label.indexOf(l)===0);return x&&JSON.stringify(x.vals);};
+  ok('ОПиУ-чат: глубина art (без подстатей) и tot (только S/T/RES) не меняет итоги и результаты',Tv(Ma,'ВЫРУЧКА')===Tv(M,'ВЫРУЧКА')&&Tv(Mt,'ВЫРУЧКА')===Tv(M,'ВЫРУЧКА')&&Rv(Ma,'EBITDA')===Rv(M,'EBITDA')&&Rv(Mt,'EBITDA')===Rv(M,'EBITDA')&&Rv(Mt,'ЧИСТАЯ')===Rv(M,'ЧИСТАЯ')&&!Ma.lines.some(x=>x.ind===2)&&Mt.lines.every(x=>['S','T','RES'].includes(x.t))&&M.lines.some(x=>x.ind===2));
+  const Mp=_opiuChatModel(f0,{today,partMax:400}),PP=_chatMonoParts(Mp),P1=_chatMonoParts(M);
+  const strip=parts=>parts.flatMap((p,k)=>p.filter((l,i)=>!(i===0&&/^\(\d+\/\d+\)$/.test(l))&&!(k>0&&i===1)));
+  ok('ОПиУ-чат: текст длиннее partMax режется на части по границам S/RES, первая строка части «(k/n)», строки не теряются',PP.parts.length>=2&&PP.parts.every((p,k)=>p[0]==='('+(k+1)+'/'+PP.parts.length+')')&&strip(PP.parts).join('\n')===P1.parts[0].join('\n')&&P1.parts.length===1,PP.parts.length+' частей');
+  const tx=_opiuChatText(f0,{today}),tl=tx.split('\n');const numRows=tl.filter(l=>/\d%$|-$/.test(l)&&!/^ОПиУ|^факт на|закрыт/.test(l));
+  ok('ОПиУ-чат текст: моно, имя 14 + 8 + 8 + 5 = 38, строки с числами не длиннее 38, рубли без разрядов, шапка внутри блока и порезана по « · » не длиннее 38',numRows.length>5&&numRows.every(l=>[...l].length<=38)&&numRows.some(l=>[...l].length===38)&&!numRows.some(l=>/\d \d{3}\b/.test(l))&&tl[0]==='```'&&/^ОПиУ · все направления/.test(tl[1])&&tl.slice(1,5).every(l=>[...l].length<=38)&&_chatHeadWrap('a · b · c',5).join('|')==='a · b|c',numRows.filter(l=>[...l].length>38).concat(tl.slice(1,5).filter(l=>[...l].length>38)).slice(0,3).join(' | '));
+  ok('ОПиУ-чат: шапка - направления коротко («БФЛ»), «все направления» без фильтра; «СЕНТЯБРЬ 2026 к АВГУСТУ 2026»; строка 2 - состояние месяца и «Δ% к предыдущему периоду»',/^ОПиУ · все направления · [А-Я]+ \d{4} к [А-Я]+ \d{4}$/.test(M.h1)&&/^ОПиУ · БФЛ · /.test(_opiuChatModel(Object.assign({},f0,{activityDirs:['БФЛ']}),{today}).h1)&&/факт на 04\.10|закрыт/.test(M.h2)&&/ · рубли · Δ% к предыдущему периоду/.test(M.h2)&&/Δ% к прошлому году/.test(_opiuChatModel(Object.assign({},f0,{dyn:'yoy'}),{today}).h2),M.h1+' | '+M.h2);
+  ok('ОПиУ-чат: подписи периодов - месяц «сен 26», квартал «Q3 26», год «2026», неделя «н37 26», день «04.10»',(()=>{const Kq=_opiuCalc(Object.assign({},f0,{periodType:'quarter'}),RAW,{today}),Ky=_opiuCalc(Object.assign({},f0,{periodType:'year'}),RAW,{today}),Kw=_opiuCalc(Object.assign({},f0,{periodType:'week'}),RAW,{today}),Kd=_opiuCalc(Object.assign({},f0,{periodType:'day'}),RAW,{today});
+    return _opiuPeriodLbl('month','Сентябрь 2026',K)==='сен 26'&&_opiuPeriodLbl('quarter','Q3 2026',Kq)==='Q3 26'&&_opiuPeriodLbl('year','2026',Ky)==='2026'&&_opiuPeriodLbl('week','Нед 37 2026',Kw)==='н37 26'&&_opiuPeriodLbl('day','04.10.2026',Kd)==='04.10'&&_opiuPeriodWord('month','Август 2026',K,true)==='АВГУСТУ 2026';})());
+  ok('ОПиУ-чат: пустые строки (0 и 0) не печатаются; приветствия по умолчанию нет, с o.greet - «Здравствуйте!»',M.lines.every(x=>x.t==='RES'||!x.vals||!(x.vals.cur===0&&(x.vals.base||0)===0))&&M.greet===null&&_opiuChatModel(f0,{today,greet:true}).greet==='Здравствуйте!');
+  ok('ОПиУ-чат: отбор без операций - модель пустая, текст говорит об этом, не падает',(()=>{const Me=_opiuChatModel(Object.assign({},f0,{years:[1999]}),{today});return Me.empty===true&&/операций нет/.test(_chatRenderMono(Me));})());
+  const bad0=R.filter(r=>!r.pass);
+  return _chatPngFontsReady().then(()=>{const ms=_chatPngMeasurer();const Lo=_chatPngLayout(M,ms);
+    ok('ОПиУ-чат картинка: та же _chatPng через M.cols - три колонки, RES-строки с подложкой, шапка из модели',!!Lo&&Object.keys(Lo.cols.colR).join()==='cur,base,d'&&Lo.rows.some(r=>r.band)&&Lo.rows.filter(r=>r.k==='h1').map(r=>r.seg[0].text).join(' ')===M.h1);
+    return _chatPng(M);}).then(b=>{ok('ОПиУ-чат картинка: blob image/png',b&&b.type==='image/png');}).catch(e=>{ok('ОПиУ-чат картинка: не бросает',false,String(e));}).then(()=>{
+    const bad=R.filter(r=>!r.pass);
+    console.log('[ОПиУ-чат] opiuChatRunTests: '+(R.length-bad.length)+'/'+R.length+(bad.length?' - ПРОВАЛЫ:':' - все прошли'));
+    bad.forEach(r=>console.log('  ✗ '+r.n+(r.got!==undefined?'  получено: '+r.got:'')));
+    return{total:R.length,failed:bad.length,tests:R};});
 }
 // ── Диалог: год, месяцы, факт «на дату», адресаты (ЦФО / руководитель с подчинёнными / направления), что печатать, результат ──
 window.pfChatOpen=function(){
