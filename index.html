@@ -11236,6 +11236,7 @@ function pfRunTests(){
       const Ta=_chatArtText(Dart,{months:[9],codes:[SUB],ownerData}),tl=Ta.split('\n');const numRows=tl.filter(l=>/\d%$|-$/.test(l)&&!/^[А-Я]+ \(/.test(l));
       ok('разрез статья, текст: имя 14 + 8 + 8 + 8 + 5 = 47, строки с числами ровно 47, заголовок колонок утв./текущий/факт/вып., блок начинается с линии и «300 Маркетинг прочее · сен»',numRows.length>=5&&numRows.every(l=>[...l].length===47)&&tl.some(l=>/^ +утв\. +текущий +факт +вып\.$/.test(l)&&[...l].length===47)&&tl.includes('-'.repeat(47))&&tl.includes('300 Маркетинг прочее · сен')&&tl.some(l=>/^ АП Петров +90000 +↑100000 +105000 +105%$/.test(l))&&tl.some(l=>/^ БФЛ Сидоров\* +200000 +200000 +- +-$/.test(l)),numRows.filter(l=>[...l].length!==47).concat(tl.filter(l=>/Петров|Сидоров/.test(l))).slice(0,4).join(' | '));
       ok('разрез статья, текст: сноска комплексной пары печатается после блока, картинка - те же четыре колонки через M.cols (utv/cur/fact/exec) и блоки P с линией',/^\* БФЛ 300 Маркетинг прочее - общий факт у основного/m.test(Ta)&&Ta.indexOf('* БФЛ')>Ta.lastIndexOf('```')&&_chatArtModel(Dart,{months:[9],codes:[SUB],ownerData}).cols.map(c=>c.key).join()==='utv,cur,fact,exec'&&typeof _chatArtModel(Dart,{months:[9],codes:[SUB],ownerData}).pngHead==='function');
+      ok('разрез статья, диалог: радио «статья / подстатья» (value art), список кодов за год из секций _cfoStmtData (статьи «300 Имя» и подстатьи с отступом, мультивыбор .pfchat-who, поиск pfChatArtFilter), приветствие по умолчанию выкл, сборка через _chatArtText/_chatArtModel с anyOwner и фильтром направлений',(()=>{const o=String(window.pfChatOpen),m=String(window.pfChatMode),b=String(window.pfChatBuild);return /value="art"/.test(o)&&/_cfoStmtData\(\{year:yr,allMonths:true,anyOwner:true,dirs:\[\]\}\)/.test(m)&&/pfchat-art-q/.test(m)&&/value="A:\$\{esc\(a\.c3\)\}"/.test(m)&&/g\.checked=\(mode!=='art'\)/.test(m)&&typeof window.pfChatArtFilter==='function'&&/if\(mode==='art'\)\{/.test(b)&&/_cfoStmtData\(\{year,allMonths:true,upTo,anyOwner:true,dirs:dirsF\}\)/.test(b)&&/_chatArtText\(D,Object\.assign\(\{\},oA,\{wrap\}\)\)/.test(b)&&/model:\(\)=>_chatArtModel\(D,oA\)/.test(b);})());
       ok('разрез статья: не ходит в RAW/_planRecords, владельцы - через _ownersOf/_ownerOf, план соисполнителей - через o.ownerData',!/\bRAW\b|_planRecords/.test(String(_chatArtModel))&&/_ownersOf\(d,code\)/.test(String(_chatArtModel))&&/o\.ownerData\?o\.ownerData\(fio\):_cfoStmtData\(/.test(String(_chatArtModel)));
       }finally{_planOwners=svO;_planCoOwners=svC;}}
      ok('чат: в 250 строка САУ без плана с фактом - «вне плана», нулевая 223 - только в хвосте',Rl.indexOf('250 Связь   сен 10 / 17 · перерасход 7 · окт - / 0 · плана нет')>Rl.indexOf('244 Офисная мебель   сен 4 450 / 8 587 · перерасход 4 137 · окт - / 0 · плана нет')&&Rl.indexOf('  САУ   сен - / 7 · вне плана · окт - / 0 · вне плана')>0&&R.indexOf('223')<0||/Нулевые за сен, окт: САУ Аренда$/.test(T),Rl.slice(4,8).join(' | '));
@@ -19713,6 +19714,7 @@ window.pfChatOpen=function(){
       <label><input type="radio" name="pfchat-mode" value="cfo" checked onchange="pfChatMode()"> ЦФО (ответственные и соисполнители)</label>
       <label><input type="radio" name="pfchat-mode" value="mgr" onchange="pfChatMode()"> руководитель с подчинёнными</label>
       <label><input type="radio" name="pfchat-mode" value="dir" onchange="pfChatMode()"> направления</label>
+      <label title="Все ответственные по выбранным кодам, по месяцам, с ИТОГО за период; статья - три цифры, подстатья - точный код"><input type="radio" name="pfchat-mode" value="art" onchange="pfChatMode()"> статья / подстатья</label>
     </div>
     <div id="pfchat-who" style="margin-top:6px;max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px"></div>
     <label style="${lbl}">Направления <span id="pfchat-dirs-note" style="font-weight:400;color:var(--text3)">(пусто или все - без ограничения; выбраны - в тексте только пары этих направлений)</span></label>
@@ -19723,7 +19725,7 @@ window.pfChatOpen=function(){
       <label><input type="checkbox" id="pfchat-fact" checked> факт</label>
       <label><input type="checkbox" id="pfchat-dev" checked> отклонение</label>
       <label><input type="checkbox" id="pfchat-new" onchange="pfChatIntroReset()"> строка «НОВЫЙ =» для сбора плана на</label><select id="pfchat-newm" style="${inp};padding:3px 6px" onchange="pfChatIntroReset()">${nmOpts}</select>
-      <label><input type="checkbox" id="pfchat-greet" checked> приветствие по имени-отчеству</label>
+      <label><input type="checkbox" id="pfchat-greet" checked onchange="this.dataset.touched='1'"> приветствие по имени-отчеству</label>
       <label title="Сводка по людям и отклонения по порогу (сумма и доля плана) за последний из выбранных месяцев; «НОВЫЙ =» недоступен"><input type="checkbox" id="pfchat-brief" onchange="pfChatBriefToggle()"> кратко</label>
     </div>
     <label style="${lbl}">Вводная строка <span style="font-weight:400;color:var(--text3)">(меняется здесь, без кода)</span></label>
@@ -19733,17 +19735,30 @@ window.pfChatOpen=function(){
     </div>
     <div id="pfchat-out" style="margin-top:12px"></div>`;
   document.body.appendChild(ov);
-  window._pfChatLists={people,mgrs,dirs};
+  const artNames={};(RAW||[]).forEach(r=>{const ac=String(r[COL.ARTICLE_CODE]||'').trim();const c3=_slC3(ac);if(c3&&!artNames[c3]&&/^\d{3}_/.test(ac))artNames[c3]=ac.replace(/^\d{3}_/,'');}); // имя статьи по первым трём цифрам
+  window._pfChatLists={people,mgrs,dirs,artNames,codesByYear:{}};
   pfChatMode();pfChatIntroReset();
 };
 window.pfChatMode=function(){const L=window._pfChatLists||{};const mode=(document.querySelector('input[name="pfchat-mode"]:checked')||{}).value||'cfo';const box=document.getElementById('pfchat-who');if(!box)return;
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  if(mode==='art'){ // статьи (три цифры + имя) и под ними подстатьи с отступом; мультивыбор, поиск по строке
+    const yr=+(document.getElementById('pfchat-year')||{}).value||new Date().getFullYear();
+    if(!L.codesByYear[yr]){const D=_cfoStmtData({year:yr,allMonths:true,anyOwner:true,dirs:[]});const P=D.people&&D.people[0];const codes=P?[...new Set([P.exp,P.inc,P.vyv].filter(Boolean).flatMap(S=>S.codes||[]))]:[];
+      const byC3={};codes.forEach(c=>{const c3=_slC3(c)||'???';(byC3[c3]=byC3[c3]||[]).push(c);});L.codesByYear[yr]=Object.keys(byC3).sort().map(c3=>({c3,name:L.artNames[c3]||'',subs:byC3[c3].sort((a,b)=>a.localeCompare(b,'ru'))}));}
+    const arts=L.codesByYear[yr];
+    box.innerHTML=`<input type="text" id="pfchat-art-q" placeholder="поиск по коду или названию" oninput="pfChatArtFilter(this.value)" style="width:100%;box-sizing:border-box;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans);margin-bottom:6px">`+
+      (arts.length?arts.map(a=>`<label class="pfchat-art-row" data-q="${esc((a.c3+' '+a.name).toLowerCase())}" style="display:block;margin:2px 0;font-weight:600;white-space:nowrap"><input type="checkbox" class="pfchat-who" value="A:${esc(a.c3)}"> ${esc(a.c3)} ${esc(a.name)}</label>`+
+        a.subs.map(c=>`<label class="pfchat-art-row" data-q="${esc(_chatCode(c).toLowerCase())}" style="display:block;margin:2px 0 2px 18px;white-space:nowrap"><input type="checkbox" class="pfchat-who" value="${esc(c)}"> ${esc(_chatCode(c))}</label>`).join('')).join(''):'<span style="color:var(--text3)">кодов с планом или фактом за год нет</span>');
+    const q=document.getElementById('pfchat-art-q');if(q)q.focus();
+  }else{
   const list=mode==='cfo'?L.people:mode==='mgr'?L.mgrs:L.dirs;
   box.innerHTML=(list&&list.length)?list.map(v=>`<label style="display:inline-block;margin:2px 10px 2px 0;white-space:nowrap"><input type="checkbox" class="pfchat-who" value="${esc(v)}"> ${esc(v)}${mode==='mgr'?' <span style="color:var(--text3)">(+'+_cfoSubsOf(v).length+')</span>':''}</label>`).join(''):'<span style="color:var(--text3)">'+(mode==='mgr'?'руководителей с подчинёнными в config/cfoHierarchy нет':'список пуст')+'</span>';
-  const g=document.getElementById('pfchat-greet');if(g)g.disabled=(mode==='dir');
+  }
+  const g=document.getElementById('pfchat-greet');if(g){g.disabled=(mode==='dir');if(g.dataset.touched!=='1')g.checked=(mode!=='art');} // у разреза «статья» приветствие по умолчанию выкл
   const br=document.getElementById('pfchat-brief');if(br&&br.dataset.touched!=='1'){br.checked=(mode==='mgr');pfChatBriefToggle(true);} // умолчание: ВКЛ у руководителя с подчинёнными, ВЫКЛ у ЦФО и направления
   const dn=document.getElementById('pfchat-dirs-note');if(dn)dn.textContent=mode==='dir'?'(в режиме направлений адресаты и есть направления - фильтр не применяется)':'(пусто или все - без ограничения; выбраны - в тексте только пары этих направлений)';
   document.querySelectorAll('.pfchat-dir').forEach(c=>{c.disabled=(mode==='dir');});};
+window.pfChatArtFilter=function(q){q=String(q||'').trim().toLowerCase();document.querySelectorAll('.pfchat-art-row').forEach(l=>{l.style.display=(!q||l.dataset.q.indexOf(q)>=0||l.querySelector('input').checked)?'':'none';});}; // поиск: оставляет совпавшие и уже выбранные
 window.pfChatBriefToggle=function(auto){const br=document.getElementById('pfchat-brief'),nw=document.getElementById('pfchat-new'),nm=document.getElementById('pfchat-newm');if(!br)return;if(auto!==true)br.dataset.touched='1';
   if(nw){if(br.checked)nw.checked=false;nw.disabled=br.checked;}if(nm)nm.disabled=br.checked;pfChatIntroReset();};
 window._pfChatDest=function(){const st=window._chatRes&&window._chatRes.pfchat;if(st&&st.wrap)return st.wrap;try{const v=localStorage.getItem('finChatDest');return ['tg','b24','plain'].includes(v)?v:'tg';}catch(e){return 'tg';}}; // обёртка: переключатель над результатом, последний выбор в localStorage, по умолчанию Telegram
@@ -19767,6 +19782,11 @@ window.pfChatBuild=function(){
   o.mono=o.wrap!=='plain'; // Telegram и Битрикс24 - таблицы, обычный текст - строками
   if(!who.length){out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите, кому собрать текст.</div>';return;}
   if(!months.length&&!o.newMonth){out.innerHTML='<div style="font-size:11px;color:var(--outcome)">Выберите хотя бы один месяц (или строку «НОВЫЙ =»).</div>';return;}
+  if(mode==='art'){ // разрез «статья / подстатья»: все ответственные по кодам, по месяцам, ИТОГО за период
+    const D=_cfoStmtData({year,allMonths:true,upTo,anyOwner:true,dirs:dirsF});const L=window._pfChatLists||{};
+    const oA={months,codes:who,brief:o.brief,greet:o.greet,intro:o.intro,dirsLabel:o.dirsLabel,artNames:L.artNames||{}};
+    const items=[{who:'по статьям',text:wrap=>_chatArtText(D,Object.assign({},oA,{wrap})),model:()=>_chatArtModel(D,oA),pngName:()=>'план-факт_статьи_'+year+'-'+String(months.length?Math.max(...months):0).padStart(2,'0')+'.png'}];
+    _chatResultWidget('pfchat-out','pfchat',{items,wraps:[{v:'tg',l:'Telegram'},{v:'b24',l:'Битрикс'}],wrap:o.wrap==='b24'?'b24':'tg',onWrap:pfChatDestChange,note:o.brief?_chatBriefMonth(months).warn:''});return;}
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   const bm=months.length?Math.max(...months):0,stamp=year+'-'+String(bm).padStart(2,'0');
   // результат - общий виджет (Д4): текст по обёртке (Telegram / Битрикс / обычный текст), картинка - та же модель _chatModelBuild
