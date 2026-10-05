@@ -11235,6 +11235,7 @@ function pfRunTests(){
       ok('разрез статья, «кратко»: остаются R за порогом - сентябрь: БФЛ Иванов (+220 000, 73%) и САУ (-30 000, план без факта); октябрь: АП (-109 000) и БФЛ Иванов (-300 000); АП сентября (+5 000, 5%) и соисполнитель без факта сняты; S и итоги остаются',Lb.filter(x=>x.t==='R').map(x=>x.label).join('|')==='БФЛ Иванов*|САУ (не назначен)|АП Петров|БФЛ Иванов*'&&Lb.filter(x=>x.t==='S').length===2&&Lb.filter(x=>x.t==='T').length===3,lab(Lb).join(' | '));
       const Ta=_chatArtText(Dart,{months:[9],codes:[SUB],ownerData}),tl=Ta.split('\n');const numRows=tl.filter(l=>/\d%$|-$/.test(l)&&!/^[А-Я]+ \(/.test(l));
       ok('разрез статья, текст: имя 14 + 8 + 8 + 8 + 5 = 47, строки с числами ровно 47, заголовок колонок утв./текущий/факт/вып., блок начинается с линии и «300 Маркетинг прочее · сен»',numRows.length>=5&&numRows.every(l=>[...l].length===47)&&tl.some(l=>/^ +утв\. +текущий +факт +вып\.$/.test(l)&&[...l].length===47)&&tl.includes('-'.repeat(47))&&tl.includes('300 Маркетинг прочее · сен')&&tl.some(l=>/^ АП Петров +90000 +↑100000 +105000 +105%$/.test(l))&&tl.some(l=>/^ БФЛ Сидоров\* +200000 +200000 +- +-$/.test(l)),numRows.filter(l=>[...l].length!==47).concat(tl.filter(l=>/Петров|Сидоров/.test(l))).slice(0,4).join(' | '));
+      ok('разрез статья, текст: сноска комплексной пары печатается после блока, картинка - те же четыре колонки через M.cols (utv/cur/fact/exec) и блоки P с линией',/^\* БФЛ 300 Маркетинг прочее - общий факт у основного/m.test(Ta)&&Ta.indexOf('* БФЛ')>Ta.lastIndexOf('```')&&_chatArtModel(Dart,{months:[9],codes:[SUB],ownerData}).cols.map(c=>c.key).join()==='utv,cur,fact,exec'&&typeof _chatArtModel(Dart,{months:[9],codes:[SUB],ownerData}).pngHead==='function');
       ok('разрез статья: не ходит в RAW/_planRecords, владельцы - через _ownersOf/_ownerOf, план соисполнителей - через o.ownerData',!/\bRAW\b|_planRecords/.test(String(_chatArtModel))&&/_ownersOf\(d,code\)/.test(String(_chatArtModel))&&/o\.ownerData\?o\.ownerData\(fio\):_cfoStmtData\(/.test(String(_chatArtModel)));
       }finally{_planOwners=svO;_planCoOwners=svC;}}
      ok('чат: в 250 строка САУ без плана с фактом - «вне плана», нулевая 223 - только в хвосте',Rl.indexOf('250 Связь   сен 10 / 17 · перерасход 7 · окт - / 0 · плана нет')>Rl.indexOf('244 Офисная мебель   сен 4 450 / 8 587 · перерасход 4 137 · окт - / 0 · плана нет')&&Rl.indexOf('  САУ   сен - / 7 · вне плана · окт - / 0 · вне плана')>0&&R.indexOf('223')<0||/Нулевые за сен, окт: САУ Аренда$/.test(T),Rl.slice(4,8).join(' | '));
@@ -19279,6 +19280,7 @@ function _chatRenderMono(M){
   const wrapL=l=>M.wrap==='b24'?l.replace(/ /g,' '):l; // Битрикс24: пробелы в строках таблицы - U+00A0, иначе он их схлопывает
   parts.forEach((pt,i)=>{if(i)L.push('');L.push(WR[0],...pt.map(wrapL),WR[1]);}); // каждая часть - в своей обёртке, между частями пустая строка
   M.cxNotes.forEach(n=>L.push('* '+n.title+' '+n.dir+' - общий факт, планируют: '+n.owners.join(', ')));
+  if(M.textNotes)L.push(...M.textNotes()); // сноски чужой модели (разрез «статья»: комплексные пары)
   if(M.months.some(m=>_chatModelLines(M,m).some(x=>x.mark)))L.push('↑↓ - план правили после утверждения'); // сноска только при помеченных строках
   const zeros=[...new Set(M.people.flatMap(P=>P.zeros))];
   if(!M.brief&&zeros.length&&M.months.length)L.push('Нулевые за '+M.months.map(m=>CHAT_MONS[m-1]).join(', ')+(M.newMonth?', впишите, если нужно: ':': ')+zeros.join(', '));
@@ -19512,7 +19514,7 @@ function _chatArtModel(D,o){
     A=A.filter((x,i,arr)=>x.t!=='H'||hasR(arr,i,['H','S','P']));A=A.filter((x,i,arr)=>x.t!=='S'||hasR(arr,i,['S','P']));
     M.lines=A;}
   M.anyUtvDiff=M.lines.some(x=>x.mark);
-  M.textHead=()=>[];
+  M.textHead=()=>[];M.textNotes=()=>notes.map(n=>n.text); // текст: сноски комплексных пар после блока (↑↓ печатает общий рендер)
   M.pngHead=()=>({h1:'План-факт по статьям на '+M.cutDMY,h2:'рубли · вып. - факт в % от текущего плана'+(M.brief?' · кратко: строки за порогом':'')});
   M.notes=()=>notes.map(n=>n.text).concat(M.lines.some(x=>x.mark)?['↑↓ - план правили после утверждения']:[],['! - за порогом (от '+_chatNum(CHAT_BRIEF_MIN_SUM)+' и от '+Math.round(CHAT_BRIEF_MIN_SHARE*100)+'% плана)']);
   return M;
