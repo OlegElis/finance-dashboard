@@ -19420,6 +19420,7 @@ function pngRunTests(){
 //    Глубина: 'sub' | 'art' | 'tot'. RES - результат: жирная, доля в выручке в скобках, убыток с минусом красным. Порога и «!» нет. ══
 const CHAT_MONS_DAT=['январю','февралю','марту','апрелю','маю','июню','июлю','августу','сентябрю','октябрю','ноябрю','декабрю'];
 const _opiuChatDelta=(cur,base)=>{const c=Math.round(cur||0),b=Math.round(base||0);if(b===0)return null;const v=Math.round((c-b)/Math.abs(b)*100);return v===0?0:v;}; // v===0 гасит «-0»
+const CHAT_OPIU_CAT_SHORT={'Прямые / Переменные':'Прямые перем.','Прямые / Постоянные':'Прямые пост.','Косвенные / Переменные':'Косвенные перем.','Косвенные / Постоянные':'Косвенные пост.','Налоги / проценты / амортизация':'Налоги, %, аморт.','EBITDA-корректировки':'EBITDA-корр.','Вывод чистой прибыли':'Вывод прибыли'}; // Д3: категории коротко (влезают в 19 знаков)
 function _opiuPeriodLbl(mode,pk,K){ // подпись колонки: «сен 26», «Q3 26», «2026», «н37 26», «04.10»
   const a=K.anchorOf(pk);if(!a)return String(pk);const y2=String(a.getFullYear()).slice(2);
   if(mode==='year')return String(a.getFullYear());
@@ -19443,7 +19444,10 @@ function _opiuChatModel(f,o){
     people:[],blockSums:{},cxNotes:[],anyUtvDiff:false,lines:[],nameW:14,indMono:true,partMax:o.partMax===undefined?3900:o.partMax,depth,yoy,K,notes:()=>[]};
   const dirs=(f.activityDirs||[]).map(d=>_regCode(d)),dirsTxt=dirs.length?dirs.join(', '):'все направления';
   if(!periods.length){M.empty=true;M.months=[1];M.cols=[];M.h1='ОПиУ · '+dirsTxt;M.h2='по этому отбору операций нет';M.textHead=()=>[M.h1,M.h2];M.pngHead=()=>({h1:M.h1,h2:M.h2});return M;}
-  const cur=periods[periods.length-1],bpk=K.basePkOf(cur),trunc=!!(K.dynCut&&K.dynCut.pk===cur);
+  // Д1 (приёмка 05.10.2026): cur - последний период ИЗ ОТФИЛЬТРОВАННЫХ данных (periods - после фильтра лет/месяцев/направлений) и НЕ ПОЗЖЕ
+  // сегодня: периоды с датой ОПиУ в будущем (начисления вперёд) не берутся, если только отбор не состоит из них целиком
+  const notFuture=periods.filter(pk=>{const a=K.anchorOf(pk);return a&&a<=today;});
+  const cur=(notFuture.length?notFuture:periods).slice(-1)[0],bpk=K.basePkOf(cur),trunc=!!(K.dynCut&&K.dynCut.pk===cur);
   M.months=[1];M.cur=cur;M.base=bpk;M.trunc=trunc;
   M.cols=[{key:'cur',label:_opiuPeriodLbl(mode,cur,K),kind:'num',w:8},{key:'base',label:bpk?_opiuPeriodLbl(mode,bpk,K):'-',kind:'num',w:8},{key:'d',label:'Δ%',kind:'pct',w:5,sign:true}];
   const AGG=K.AGG,DYNA=K.DYNA,MAPS=K.MAPS,DYNM=K.DYNM,ru=(a,b)=>a.localeCompare(b,'ru');
@@ -19459,25 +19463,32 @@ function _opiuChatModel(f,o){
     M.lines.push(x);return x;};
   const S=l=>M.lines.push({t:'S',label:l,kind:'exp'}),H=l=>M.lines.push({t:'H',title:l});
   const RES=(label,map,bmap)=>{const c=gv(map,cur),b=gv(bmap,bpk);const sh=z(revCur)?null:Math.round(c/Math.abs(revCur)*100);line('RES',label+(sh==null?'':' ('+sh+'%)'),'res',c,b,{ind:0});};
+  // ВЫРУЧКА: S → R подстатьи → T; при глубине art/tot - только T
   S('ВЫРУЧКА');
-  if(depth!=='tot')Object.keys(AGG.rev.arts).sort(ru).forEach(sub=>line('R',sub,'inc',gv(AGG.rev.arts[sub].perInc,cur),gv((DYNA.rev.arts[sub]||{}).perInc,bpk),{ind:1}));
+  if(depth==='sub')Object.keys(AGG.rev.arts).sort(ru).forEach(sub=>line('R',_chatCode(sub),'inc',gv(AGG.rev.arts[sub].perInc,cur),gv((DYNA.rev.arts[sub]||{}).perInc,bpk),{ind:1}));
   line('T','ВЫРУЧКА','inc',revCur,gv(DYNA.rev.perInc,bpk),{bold:true,ind:0});
-  const subRows=(ad,da)=>Object.keys(ad.subs).sort(ru).forEach(sub=>line('R',sub,'exp',gv(ad.subs[sub].perOut,cur),gv(da&&da.subs&&da.subs[sub]&&da.subs[sub].perOut,bpk),{ind:2}));
-  const catBlock=cat=>{const cd=AGG.exp[cat],dc=DYNA.exp[cat];if(!cd)return;const c=gv(cd.perOut,cur),b=gv(dc&&dc.perOut,bpk);if(z(c)&&z(b))return;
-    if(depth==='tot'){line('T',cat,'exp',c,b,{ind:0});return;}
-    H(cat);Object.keys(cd.arts).sort(ru).forEach(art=>{const ad=cd.arts[art],da=dc&&dc.arts?dc.arts[art]:null;line('R',art,'exp',gv(ad.perOut,cur),gv(da&&da.perOut,bpk),{ind:1});if(depth==='sub')subRows(ad,da);});
+  // Д2 (приёмка 05.10.2026): статья - H + подстатьи R + T «итого»; при art - H статьи + T «итого» (без R); при tot - только T
+  const artRows=(art,ad,da)=>{const c=gv(ad.perOut,cur),b=gv(da&&da.perOut,bpk);if(z(c)&&z(b))return;
+    if(depth==='tot'){line('T',_chatCode(art),'exp',c,b,{ind:1});return;}
+    H(_chatCode(art));
+    if(depth==='sub')Object.keys(ad.subs).sort(ru).forEach(sub=>line('R',_chatCode(sub),'exp',gv(ad.subs[sub].perOut,cur),gv(da&&da.subs&&da.subs[sub]&&da.subs[sub].perOut,bpk),{ind:1}));
     line('T','итого','exp',c,b,{ind:1});};
-  const artBlock=(obj,dobj,secLabel)=>{S(secLabel);Object.keys(obj.arts).sort(ru).forEach(art=>{const ad=obj.arts[art],da=dobj&&dobj.arts?dobj.arts[art]:null;const c=gv(ad.perOut,cur),b=gv(da&&da.perOut,bpk);if(z(c)&&z(b))return;
-    if(depth==='tot'){line('T',art,'exp',c,b,{ind:0});return;}
-    if(depth==='art'){line('R',art,'exp',c,b,{ind:1});return;}
-    H(art);subRows(ad,da);line('T','итого','exp',c,b,{ind:1});});};
+  const catBlock=cat=>{const cd=AGG.exp[cat],dc=DYNA.exp[cat];if(!cd)return;const c=gv(cd.perOut,cur),b=gv(dc&&dc.perOut,bpk);if(z(c)&&z(b))return;
+    const short=CHAT_OPIU_CAT_SHORT[cat]||cat;
+    if(depth==='tot'){line('T',short,'exp',c,b,{ind:0});return;}
+    H(short);Object.keys(cd.arts).sort(ru).forEach(art=>artRows(art,cd.arts[art],dc&&dc.arts?dc.arts[art]:null));
+    line('T',short,'exp',c,b,{ind:0});}; // итог категории
+  const artBlock=(obj,dobj,secLabel)=>{S(secLabel);Object.keys(obj.arts).sort(ru).forEach(art=>{const ad=obj.arts[art],da=dobj&&dobj.arts?dobj.arts[art]:null;
+    if(depth==='tot'){const c=gv(ad.perOut,cur),b=gv(da&&da.perOut,bpk);if(!(z(c)&&z(b)))line('T',_chatCode(art),'exp',c,b,{ind:0});return;}
+    artRows(art,ad,da);});};
   if(K.flat){artBlock(MAPS.above,DYNM.above,'РАСХОДЫ ДО EBITDA');RES('EBITDA',MAPS.ebitda,DYNM.ebitda);
     if(Object.keys(MAPS.below.arts).length)artBlock(MAPS.below,DYNM.below,'РАСХОДЫ НИЖЕ EBITDA');RES('ЧИСТАЯ ПРИБЫЛЬ',MAPS.net,DYNM.net);}
-  else{S('ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ');catBlock('Прямые / Переменные');RES('МАРЖИНАЛЬНЫЙ ДОХОД',MAPS.marginal,DYNM.marginal);catBlock('Прямые / Постоянные');RES('ВАЛОВАЯ ПРИБЫЛЬ',MAPS.gross,DYNM.gross);
+  else{S('ПРОИЗВОДСТВЕННЫЕ РАСХОДЫ');catBlock('Прямые / Переменные');RES('МАРЖ. ДОХОД',MAPS.marginal,DYNM.marginal);catBlock('Прямые / Постоянные');RES('ВАЛОВАЯ',MAPS.gross,DYNM.gross);
     S('КОСВЕННЫЕ РАСХОДЫ');catBlock('Косвенные / Переменные');catBlock('Косвенные / Постоянные');if(K.inclBelow)catBlock('EBITDA-корректировки');RES('EBITDA',MAPS.ebitda,DYNM.ebitda);
     S('РАСХОДЫ НИЖЕ EBITDA');catBlock('Налоги / проценты / амортизация');if(!K.inclBelow)catBlock('EBITDA-корректировки');RES('ЧИСТАЯ ПРИБЫЛЬ',MAPS.net,DYNM.net);}
   {const cd=AGG.exp['Вывод чистой прибыли'],dc=DYNA.exp['Вывод чистой прибыли'];if(cd&&!(z(gv(cd.perOut,cur))&&z(gv(dc&&dc.perOut,bpk)))){S('РАСПРЕДЕЛЕНИЕ');catBlock('Вывод чистой прибыли');}} // вывод 127 - ниже ЧП, в ЧП не входит; только если есть
-  M.lines=M.lines.filter((x,i,A)=>x.t!=='S'||(A[i+1]&&!['S','RES'].includes(A[i+1].t))); // секция без строк не печатается
+  // секция без строк R/H (только итоги) не печатается - остаётся T (Д3: дубль «ВЫРУЧКА»)
+  M.lines=M.lines.filter((x,i,A)=>{if(x.t!=='S')return true;for(let j=i+1;j<A.length&&!['S','RES'].includes(A[j].t);j++){if(A[j].t==='R'||A[j].t==='H')return true;}return false;});
   // шапка
   M.h1='ОПиУ · '+dirsTxt+' · '+_opiuPeriodWord(mode,cur,K,false)+(bpk?' к '+_opiuPeriodWord(mode,bpk,K,true):'');
   let st;if(mode==='month'){const a=K.anchorOf(cur),mm=a.getMonth()+1,yy=a.getFullYear();st=_chatMonthState({year:yy,cut:today,cutDM:M.cutDM,closed:{[mm]:_chatMonthClosed(yy,mm,today)}},mm);}else st='факт на '+M.cutDM;
@@ -19498,16 +19509,26 @@ function opiuChatRunTests(){
   const T=l=>M.lines.find(x=>x.t==='T'&&x.label===l),RESo=l=>M.lines.find(x=>x.t==='RES'&&x.label.indexOf(l)===0);
   ok('ОПиУ-чат: cur - последний период отбора (opiuSortKey), base - предыдущий по календарю (basePkOf), колонки cur/base/Δ%',!M.empty&&cur===K.periods[K.periods.length-1]&&bpk===K.basePkOf(cur)&&M.cols.map(c=>c.key).join()==='cur,base,d'&&M.cols[2].kind==='pct'&&M.cols[2].sign===true);
   ok('ОПиУ-чат: ВЫРУЧКА в модели = AGG.rev.perInc[cur], база = DYNA.rev.perInc[bpk] того же _opiuCalc',!!T('ВЫРУЧКА')&&T('ВЫРУЧКА').vals.cur===r0(K.AGG.rev.perInc[cur])&&T('ВЫРУЧКА').vals.base===r0(K.DYNA.rev.perInc[bpk]),T('ВЫРУЧКА')&&JSON.stringify(T('ВЫРУЧКА').vals));
-  const iDist=M.lines.findIndex(x=>x.t==='S'&&x.label==='РАСПРЕДЕЛЕНИЕ');const expT=M.lines.filter((x,i)=>x.t==='T'&&x.kind==='exp'&&(iDist<0||i<iDist));
+  const iDist=M.lines.findIndex(x=>x.t==='S'&&x.label==='РАСПРЕДЕЛЕНИЕ');const expT=M.lines.filter((x,i)=>x.t==='T'&&x.kind==='exp'&&x.ind===0&&(iDist<0||i<iDist)); // итоги КАТЕГОРИЙ (ind 0), не статей («итого», ind 1)
   ok('ОПиУ-чат: Σ итогов расходных категорий = |MAPS.totalExp[cur]| (вывод 127 не входит); по базе = |DYNM.totalExp[bpk]|',expT.length>0&&expT.reduce((a,x)=>a+x.vals.cur,0)===r0(Math.abs(K.MAPS.totalExp[cur]||0))&&expT.reduce((a,x)=>a+(x.vals.base||0),0)===r0(Math.abs(K.DYNM.totalExp[bpk]||0)),expT.map(x=>x.vals.cur).join('+')+' vs '+r0(Math.abs(K.MAPS.totalExp[cur]||0)));
-  ok('ОПиУ-чат: EBITDA и ЧИСТАЯ ПРИБЫЛЬ (RES) = MAPS.ebitda/net[cur], база = DYNM[bpk]; доля в выручке в скобках',!!RESo('EBITDA')&&RESo('EBITDA').vals.cur===r0(K.MAPS.ebitda[cur])&&RESo('EBITDA').vals.base===r0(K.DYNM.ebitda[bpk])&&!!RESo('ЧИСТАЯ ПРИБЫЛЬ')&&RESo('ЧИСТАЯ ПРИБЫЛЬ').vals.cur===r0(K.MAPS.net[cur])&&/^EBITDA \(-?\d+%\)$/.test(RESo('EBITDA').label)&&RESo('EBITDA').bold,RESo('EBITDA')&&RESo('EBITDA').label);
+  ok('ОПиУ-чат: EBITDA и ЧИСТАЯ ПРИБЫЛЬ (RES) = MAPS.ebitda/net[cur], база = DYNM[bpk]; доля в выручке в скобках («МАРЖ. ДОХОД», «ВАЛОВАЯ» коротко)',!!RESo('EBITDA')&&RESo('EBITDA').vals.cur===r0(K.MAPS.ebitda[cur])&&RESo('EBITDA').vals.base===r0(K.DYNM.ebitda[bpk])&&!!RESo('ЧИСТАЯ ПРИБЫЛЬ')&&RESo('ЧИСТАЯ ПРИБЫЛЬ').vals.cur===r0(K.MAPS.net[cur])&&/^EBITDA \(-?\d+%\)$/.test(RESo('EBITDA').label)&&RESo('EBITDA').bold,RESo('EBITDA')&&RESo('EBITDA').label);
   ok('ОПиУ-чат: расходы в модели модулем (≥ 0 у всех строк kind=exp, cur и base)',M.lines.filter(x=>x.kind==='exp'&&x.vals).every(x=>x.vals.cur>=0&&(x.vals.base==null||x.vals.base>=0)));
   ok('ОПиУ-чат: Δ% - base=0 → null («-» серым), рост +10, падение -10, знак от разности при отрицательной базе, печать «+10%»/«-10%»/«0%»',_opiuChatDelta(100,0)===null&&_opiuChatDelta(110,100)===10&&_opiuChatDelta(90,100)===-10&&_opiuChatDelta(-50,-100)===50&&_opiuChatDelta(100,100)===0&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:10}},'mono')==='+10%'&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:-10}},'mono')==='-10%'&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:0}},'mono')==='0%'&&_chatCellStr({key:'d',kind:'pct',sign:true},{vals:{d:null}},'mono')==='-');
   const dl=M.lines.find(x=>x.vals&&x.vals.d!=null&&Math.abs(x.vals.d)>=10&&x.kind==='exp'),dinc=M.lines.find(x=>x.vals&&x.vals.d!=null&&Math.abs(x.vals.d)>=10&&x.kind!=='exp'),dsm=M.lines.find(x=>x.vals&&x.vals.d!=null&&Math.abs(x.vals.d)<10);
   ok('ОПиУ-чат: цвет Δ% - расход: рост красный / падение зелёный; доход и результат: наоборот; |Δ| < 10 - чёрный; порога в рублях и «!» нет',(!dl||dl.col.d.color===(dl.vals.d>0?CHAT_PNG.RED:CHAT_PNG.GREEN))&&(!dinc||dinc.col.d.color===(dinc.vals.d>0?CHAT_PNG.GREEN:CHAT_PNG.RED))&&(!dsm||dsm.col.d.color===CHAT_PNG.BLACK)&&M.lines.every(x=>!x.col||!x.col.d||!x.col.d.mark)&&!/CHAT_BRIEF_MIN|_chatPngCol/.test(String(_opiuChatModel)));
   const Ma=_opiuChatModel(f0,{today,depth:'art'}),Mt=_opiuChatModel(f0,{today,depth:'tot'});
   const Tv=(Mx,l)=>{const x=Mx.lines.find(y=>y.t==='T'&&y.label===l);return x&&JSON.stringify(x.vals);},Rv=(Mx,l)=>{const x=Mx.lines.find(y=>y.t==='RES'&&y.label.indexOf(l)===0);return x&&JSON.stringify(x.vals);};
-  ok('ОПиУ-чат: глубина art (без подстатей) и tot (только S/T/RES) не меняет итоги и результаты',Tv(Ma,'ВЫРУЧКА')===Tv(M,'ВЫРУЧКА')&&Tv(Mt,'ВЫРУЧКА')===Tv(M,'ВЫРУЧКА')&&Rv(Ma,'EBITDA')===Rv(M,'EBITDA')&&Rv(Mt,'EBITDA')===Rv(M,'EBITDA')&&Rv(Mt,'ЧИСТАЯ')===Rv(M,'ЧИСТАЯ')&&!Ma.lines.some(x=>x.ind===2)&&Mt.lines.every(x=>['S','T','RES'].includes(x.t))&&M.lines.some(x=>x.ind===2));
+  const isArtH=x=>x.t==='H'&&/^\d{3} /.test(x.title);
+  ok('ОПиУ-чат, глубина sub (по аналитике): S ВЫРУЧКА → R подстатьи → T ВЫРУЧКА; H категория → H статья (код) → R подстатьи → T «итого» статьи → T категории',(()=>{const L=M.lines;const iS=L.findIndex(x=>x.t==='S'&&x.label==='ВЫРУЧКА'),iT=L.findIndex(x=>x.t==='T'&&x.label==='ВЫРУЧКА');const revR=L.slice(iS+1,iT);
+    const iH=L.findIndex(x=>x.t==='H'&&x.title==='Прямые перем.'),iA=L.findIndex((x,i)=>i>iH&&isArtH(x));const afterA=L.slice(iA+1);const iTot=afterA.findIndex(x=>x.t==='T'&&x.label==='итого');
+    return iS>=0&&iT>iS&&revR.length>0&&revR.every(x=>x.t==='R'&&x.kind==='inc')&&iH>=0&&iA>iH&&iTot>0&&afterA.slice(0,iTot).every(x=>x.t==='R'&&x.kind==='exp')&&L.some(x=>x.t==='T'&&x.label==='Прямые перем.')&&L.filter(x=>x.t==='R').length>3;})(),M.lines.map(x=>x.t+':'+(x.label||x.title)).slice(0,14).join(' | '));
+  ok('ОПиУ-чат, глубина art: есть H статей, строк R нет, T «итого» у статей и T категорий; tot: только S/T/RES; итоги и результаты во всех трёх одинаковы',Ma.lines.some(isArtH)&&!Ma.lines.some(x=>x.t==='R')&&Ma.lines.some(x=>x.t==='T'&&x.label==='итого')&&Mt.lines.every(x=>['S','T','RES'].includes(x.t))&&!Mt.lines.some(x=>x.t==='H')&&Tv(Ma,'ВЫРУЧКА')===Tv(M,'ВЫРУЧКА')&&Tv(Mt,'ВЫРУЧКА')===Tv(M,'ВЫРУЧКА')&&Rv(Ma,'EBITDA')===Rv(M,'EBITDA')&&Rv(Mt,'EBITDA')===Rv(M,'EBITDA')&&Rv(Mt,'ЧИСТАЯ')===Rv(M,'ЧИСТАЯ')&&Tv(Ma,'Прямые перем.')===Tv(M,'Прямые перем.'),Ma.lines.map(x=>x.t+':'+(x.label||x.title)).slice(0,10).join(' | '));
+  ok('ОПиУ-чат Д1: cur - последний период из ОТФИЛЬТРОВАННЫХ данных и не позже сегодня (будущие начисления не берутся), если только отбор не из них целиком',(()=>{const n0=RAW.length;const mk=(d,sub,v)=>{const r=RAW[0].slice();r[COL.DATE_DDS]=d;r[COL.DATE_OPIU]=d;r[COL.TYPE]='Списание';r[COL.INCOME]=0;r[COL.OUTCOME]=-v;r[COL.ARTICLE_CODE]='244_Прочие';r[COL.ARTICLE_NAME]=sub;r[COL.ANALYTICS]='Прямые / Переменные';r[COL.ACTIVITY_DIR]='БФЛ';return r;};
+    RAW.push(mk('05.11.2026','244_Реклама вперёд',1000),mk('05.12.2026','244_Реклама вперёд',2000));
+    try{const A=_opiuChatModel(Object.assign({},f0,{years:[2026],months:[1,2,3,4,5,6,7,8,9],activityDirs:['БФЛ']}),{today}),B=_opiuChatModel(Object.assign({},f0,{activityDirs:['БФЛ']}),{today}),C=_opiuChatModel(Object.assign({},f0,{months:[11,12]}),{today});
+      return A.cur==='Сентябрь 2026'&&A.base==='Август 2026'&&/СЕНТЯБРЬ 2026 к АВГУСТУ 2026/.test(A.h1)&&B.cur==='Сентябрь 2026'&&B.K.periods.includes('Декабрь 2026')&&C.cur==='Декабрь 2026';}
+    finally{RAW.length=n0;}})());
+  ok('ОПиУ-чат Д1: диалог читает фильтры В МОМЕНТ нажатия (_opiuChatFilters → getFilters() на активной вкладке ОПиУ), а не при открытии',/_opiuChatFilters\(\)/.test(String(window.opiuChatBuild))&&/_opiuChatFilters\(\)/.test(String(window.opiuChatPng))&&/getFilters\(\)/.test(String(window._opiuChatFilters))&&!/_tabFilters\.opiu/.test(String(window.opiuChatBuild)));
   const Mp=_opiuChatModel(f0,{today,partMax:400}),PP=_chatMonoParts(Mp),P1=_chatMonoParts(M);
   const strip=parts=>parts.flatMap((p,k)=>p.filter((l,i)=>!(i===0&&/^\(\d+\/\d+\)$/.test(l))&&!(k>0&&i===1)));
   ok('ОПиУ-чат: текст длиннее partMax режется на части по границам S/RES, первая строка части «(k/n)», строки не теряются',PP.parts.length>=2&&PP.parts.every((p,k)=>p[0]==='('+(k+1)+'/'+PP.parts.length+')')&&strip(PP.parts).join('\n')===P1.parts[0].join('\n')&&P1.parts.length===1,PP.parts.length+' частей');
@@ -19517,7 +19538,7 @@ function opiuChatRunTests(){
   ok('ОПиУ-чат: подписи периодов - месяц «сен 26», квартал «Q3 26», год «2026», неделя «н37 26», день «04.10»',(()=>{const Kq=_opiuCalc(Object.assign({},f0,{periodType:'quarter'}),RAW,{today}),Ky=_opiuCalc(Object.assign({},f0,{periodType:'year'}),RAW,{today}),Kw=_opiuCalc(Object.assign({},f0,{periodType:'week'}),RAW,{today}),Kd=_opiuCalc(Object.assign({},f0,{periodType:'day'}),RAW,{today});
     return _opiuPeriodLbl('month','Сентябрь 2026',K)==='сен 26'&&_opiuPeriodLbl('quarter','Q3 2026',Kq)==='Q3 26'&&_opiuPeriodLbl('year','2026',Ky)==='2026'&&_opiuPeriodLbl('week','Нед 37 2026',Kw)==='н37 26'&&_opiuPeriodLbl('day','04.10.2026',Kd)==='04.10'&&_opiuPeriodWord('month','Август 2026',K,true)==='АВГУСТУ 2026';})());
   ok('ОПиУ-чат: пустые строки (0 и 0) не печатаются; приветствия по умолчанию нет, с o.greet - «Здравствуйте!»',M.lines.every(x=>x.t==='RES'||!x.vals||!(x.vals.cur===0&&(x.vals.base||0)===0))&&M.greet===null&&_opiuChatModel(f0,{today,greet:true}).greet==='Здравствуйте!');
-  ok('ОПиУ-чат кнопка: строка «Текст для чата» под «⋯» на ОПиУ четвёртой (_barMoreRow), диалог opiuChatOpen берёт _tabFilters.opiu, кнопки Telegram / Битрикс / Картинка, глубина и приветствие, картинка через общую _chatPngDeliver; ничего не пишет',(()=>{const r=String(renderOPIU),o=String(window.opiuChatOpen),b=String(window.opiuChatBuild),g=String(window.opiuChatPng);return /_barMoreRow\('Текст для чата','<button class="bar-ctl" onclick="opiuChatOpen\(\)"/.test(r)&&r.indexOf("_barMoreRow('Текст для чата'")>r.indexOf("_barMoreRow('Разделение БФЛ")&&/opiuChatBuild\('tg'\)/.test(o)&&/opiuChatBuild\('b24'\)/.test(o)&&/opiuChatPng\(\)/.test(o)&&/opiuchat-depth/.test(o)&&/opiuchat-greet/.test(o)&&/_opiuChatText\(f,_opiuChatOpts\(wrap\)\)/.test(b)&&/_tabFilters\.opiu/.test(b)&&/_chatPngDeliver\(/.test(g)&&!/_fbSetSafe|localStorage\.setItem/.test(o+b+g);})());
+  ok('ОПиУ-чат кнопка: строка «Текст для чата» под «⋯» на ОПиУ четвёртой (_barMoreRow), диалог берёт фильтры вкладки в момент нажатия, кнопки Telegram / Битрикс / Картинка, глубина и приветствие, картинка через общую _chatPngDeliver; ничего не пишет',(()=>{const r=String(renderOPIU),o=String(window.opiuChatOpen),b=String(window.opiuChatBuild),g=String(window.opiuChatPng);return /_barMoreRow\('Текст для чата','<button class="bar-ctl" onclick="opiuChatOpen\(\)"/.test(r)&&r.indexOf("_barMoreRow('Текст для чата'")>r.indexOf("_barMoreRow('Разделение БФЛ")&&/opiuChatBuild\('tg'\)/.test(o)&&/opiuChatBuild\('b24'\)/.test(o)&&/opiuChatPng\(\)/.test(o)&&/opiuchat-depth/.test(o)&&/opiuchat-greet/.test(o)&&/_opiuChatText\(f,_opiuChatOpts\(wrap\)\)/.test(b)&&/_opiuChatFilters\(\)/.test(b)&&/_chatPngDeliver\(/.test(g)&&!/_fbSetSafe|localStorage\.setItem/.test(o+b+g);})());
   ok('ОПиУ-чат кнопка: сводка фильтров диалога называет период, направления, представление расходов и базу Δ%',(()=>{const t=_opiuChatFilterSummary(Object.assign({},f0,{years:[2026],months:[9],activityDirs:['БФЛ - Банкротство физических лиц'],expFlat:true,ebitdaInclBelow:true,dyn:'yoy'}));return /период по месяцам/.test(t)&&/годы 2026/.test(t)&&/месяцы сен/.test(t)&&/направления БФЛ/.test(t)&&/расходы по статьям/.test(t)&&/корректировки в EBITDA/.test(t)&&/Δ% к прошлому году/.test(t)&&/все направления/.test(_opiuChatFilterSummary(f0));})());
   ok('ОПиУ-чат: отбор без операций - модель пустая, текст говорит об этом, не падает',(()=>{const Me=_opiuChatModel(Object.assign({},f0,{years:[1999]}),{today});return Me.empty===true&&/операций нет/.test(_chatRenderMono(Me));})());
   const bad0=R.filter(r=>!r.pass);
@@ -19674,7 +19695,7 @@ function _opiuChatFilterSummary(f){const p=[];const pt={day:'по дням',week
 window.opiuChatOpen=function(){
   if(typeof RAW==='undefined'||!RAW||!RAW.length){alert('Сначала загрузите данные');return;}
   if(document.getElementById('opiuChatOverlay'))return;
-  const f=_tabFilters.opiu||_TAB_BLANK.opiu();const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const f=_opiuChatFilters();const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const lbl='display:block;font-size:11px;font-weight:600;color:var(--text2);margin:10px 0 4px',btn='font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans)';
   const ov=document.createElement('div');ov.id='opiuChatOverlay';
   ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center';
@@ -19701,13 +19722,14 @@ window.opiuChatOpen=function(){
   document.body.appendChild(ov);
 };
 window._opiuChatOpts=function(wrap){const d=(document.querySelector('input[name="opiuchat-depth"]:checked')||{}).value||'sub';const g=document.getElementById('opiuchat-greet');return{depth:d,greet:!!(g&&g.checked),wrap:wrap||'tg'};};
+window._opiuChatFilters=function(){return (typeof activeTab!=='undefined'&&activeTab==='opiu'&&typeof getFilters==='function')?getFilters():(_tabFilters.opiu||_TAB_BLANK.opiu());}; // фильтры вкладки В МОМЕНТ нажатия, не при открытии
 window.opiuChatBuild=function(wrap){const out=document.getElementById('opiuchat-out');if(!out)return;
-  const f=_tabFilters.opiu||_TAB_BLANK.opiu();const text=_opiuChatText(f,_opiuChatOpts(wrap));window._opiuChatLast=text;
+  const f=_opiuChatFilters();const text=_opiuChatText(f,_opiuChatOpts(wrap));window._opiuChatLast=text;
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;');const parts=(text.match(/^\(\d+\/\d+\)$/gm)||[]).length;
   out.innerHTML=`<div style="font-size:11px;color:var(--text3)">${wrap==='b24'?'Битрикс24: [code], пробелы U+00A0':'Telegram: моноширинный блок'}${parts>1?' · текст разбит на '+parts+' частей, кнопка копирует все разом (через пустую строку)':''}</div>
     <textarea readonly rows="${Math.min(22,Math.max(6,text.split('\n').length))}" style="width:100%;box-sizing:border-box;margin-top:4px;font-size:11.5px;line-height:1.35;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font-family:var(--mono);white-space:pre;overflow:auto">${esc(text)}</textarea>`;
   const cp=document.getElementById('opiuchat-cp');if(cp)cp.style.display='';};
-window.opiuChatPng=async function(){const f=_tabFilters.opiu||_TAB_BLANK.opiu();const M=_opiuChatModel(f,_opiuChatOpts('tg'));
+window.opiuChatPng=async function(){const f=_opiuChatFilters();const M=_opiuChatModel(f,_opiuChatOpts('tg'));
   if(M.empty){_chatToast('по этому отбору операций нет');return;}
   let blob;try{blob=await _chatPng(M);}catch(e){_chatToast('картинка не собралась: '+(e&&e.message||e));return;}
   const dirs=(f.activityDirs||[]).map(_regCode).join('+')||'все';
