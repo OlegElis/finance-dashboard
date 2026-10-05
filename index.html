@@ -19560,8 +19560,18 @@ function opiuChatRunTests(){
       ok('Д4 headless: переключатель «Битрикс» меняет обёртку в textarea ([code], U+00A0), буфер при этом не трогается',/^\[code\]/.test(ta.value)&&/\u00a0/.test(ta.value)&&calls.length===1);
       await _chatResPng('opiuchat',0);const img=document.querySelector('#opiuchat-png-0 img'),pc=document.getElementById('opiuchat-pc-0');
       ok('Д4 headless: «Показать картинку» → превью <img> в диалоге и кнопка «Скопировать картинку»',!!img&&/^blob:/.test(img.src)&&!!pc&&pc.style.display!=='none');
+      // Д5: оболочка txn-card - крестик есть, кнопки «Закрыть» нет, Esc закрывает, клик по затемнению закрывает, буфер не трогается
+      const ov1=document.getElementById('opiuChatOverlay');const noClose=o=>![...o.querySelectorAll('button')].some(b=>/^Закрыть$/.test(b.textContent.trim()));
+      ok('Д5 headless (ОПиУ): overlay - .txn-card-overlay с .txn-card и крестиком .txn-card-close в шапке, кнопки «Закрыть» нет',!!ov1&&ov1.classList.contains('txn-card-overlay')&&!!ov1.querySelector('.txn-card > .txn-card-head > .txn-card-close')&&noClose(ov1));
+      document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+      ok('Д5 headless (ОПиУ): Esc закрывает диалог, буфер не тронут',!document.getElementById('opiuChatOverlay')&&calls.length===1);
+      opiuChatOpen();const ov2=document.getElementById('opiuChatOverlay');ov2.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+      ok('Д5 headless (ОПиУ): клик по затемнению вне окна закрывает; клик внутри окна - нет',!document.getElementById('opiuChatOverlay')&&(()=>{opiuChatOpen();const o=document.getElementById('opiuChatOverlay');o.querySelector('.txn-card').dispatchEvent(new MouseEvent('click',{bubbles:true}));const still=!!document.getElementById('opiuChatOverlay');o.querySelector('.txn-card-close').click();return still&&!document.getElementById('opiuChatOverlay');})());
+      document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); // закрытого диалога слушатель Esc снят - второй Esc ничего не ломает
+      pfChatOpen();const ov3=document.getElementById('pfChatOverlay');
+      ok('Д5 headless (БДР): та же оболочка - крестик, без «Закрыть», Esc закрывает, буфер не тронут',!!ov3&&ov3.classList.contains('txn-card-overlay')&&!!ov3.querySelector('.txn-card-head > .txn-card-close')&&noClose(ov3)&&(document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})),!document.getElementById('pfChatOverlay'))&&calls.length===1);
       _tabFilters.opiu=was;}
-    finally{if(hadOwn){}else delete navigator.clipboard;const ov=document.getElementById('opiuChatOverlay');if(ov)ov.remove();}};
+    finally{if(hadOwn){}else delete navigator.clipboard;['opiuChatOverlay','pfChatOverlay'].forEach(id=>{const o=document.getElementById(id);if(o)(o._close||(()=>o.remove()))();});}};
   return dlgTest().catch(e=>{ok('Д4 headless: диалог не бросает',false,String(e));}).then(()=>_chatPngFontsReady()).then(()=>{const ms=_chatPngMeasurer();const Lo=_chatPngLayout(M,ms);
     ok('ОПиУ-чат картинка: та же _chatPng через M.cols - три колонки, RES-строки с подложкой, шапка из модели',!!Lo&&Object.keys(Lo.cols.colR).join()==='cur,base,d'&&Lo.rows.some(r=>r.band)&&Lo.rows.filter(r=>r.k==='h1').map(r=>r.seg[0].text).join(' ')===M.h1);
     return _chatPng(M);}).then(b=>{ok('ОПиУ-чат картинка: blob image/png',b&&b.type==='image/png');}).catch(e=>{ok('ОПиУ-чат картинка: не бросает',false,String(e));}).then(()=>{
@@ -19587,10 +19597,8 @@ window.pfChatOpen=function(){
   const yOpts=years.map(y=>`<option value="${y}"${y===year0?' selected':''}>${y}</option>`).join('');
   const nmOpts=CHAT_MONS_FULL.map((m,i)=>`<option value="${i+1}"${(i+1)===(cm%12+1)?' selected':''}>${m}</option>`).join('');
   const lbl='display:block;font-size:11px;font-weight:600;color:var(--text2);margin:10px 0 4px',inp='font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:var(--sans)';
-  const ov=document.createElement('div');ov.id='pfChatOverlay';
-  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center';
-  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:720px;max-width:96vw;max-height:92vh;overflow:auto;padding:18px 22px;font-family:var(--sans)">
-    <div style="font-size:15px;font-weight:700;color:var(--text)">💬 Текст для чата</div>
+  const ov=_chatDlgShell('pfChatOverlay','💬 Текст для чата','720px');
+  ov.querySelector('.chat-dlg-body').innerHTML=`
     <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Сводки план-факт по людям или направлениям для WhatsApp и Telegram. Числа - из выписки ЦФО; ничего не записывается.</div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
       <div><label style="${lbl}">Год</label><select id="pfchat-year" style="${inp}">${yOpts}</select></div>
@@ -19618,11 +19626,9 @@ window.pfChatOpen=function(){
     <label style="${lbl}">Вводная строка <span style="font-weight:400;color:var(--text3)">(меняется здесь, без кода)</span></label>
     <textarea id="pfchat-intro" rows="3" oninput="this.dataset.edited='1'" title="Собирается из модели по состоянию месяца; если планы правили после утверждения, при сборке добавится предложение про утв. Правка здесь - как есть" style="${inp};width:100%;box-sizing:border-box;resize:vertical"></textarea>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px">
-      <button onclick="document.getElementById('pfChatOverlay').remove()" style="font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text2);cursor:pointer;font-family:var(--sans)">Закрыть</button>
       <button onclick="pfChatBuild()" style="font-size:12px;font-weight:700;padding:8px 18px;border:none;border-radius:7px;background:var(--accent);color:#fff;cursor:pointer;font-family:var(--sans)">Собрать</button>
     </div>
-    <div id="pfchat-out" style="margin-top:12px"></div>
-  </div>`;
+    <div id="pfchat-out" style="margin-top:12px"></div>`;
   document.body.appendChild(ov);
   window._pfChatLists={people,mgrs,dirs};
   pfChatMode();pfChatIntroReset();
@@ -19686,6 +19692,20 @@ window._chatPngDeliver=async function(items){
 //    ВНУТРИ диалога: переключатель обёртки (Telegram | Битрикс [| Текст]) над textarea, «Скопировать текст», «Показать картинку» → превью
 //    под ширину диалога и «Скопировать картинку» (буфер, откат в файл - _chatPngDeliver). Автоматически ничего не копируется.
 //    cfg: {items:[{who, text:(wrap)=>строка, model:()=>M, pngName:(M)=>имя файла}], wraps:[{v,l}], wrap, onWrap(v), note} ──
+// ── ОБОЛОЧКА ДИАЛОГОВ «ТЕКСТ ДЛЯ ЧАТА» (Д5, приёмка Олега 05.10.2026): та же модалка, что у остальных окон дашборда - .txn-card-overlay /
+//    .txn-card / .txn-card-head с крестиком .txn-card-close; закрытие крестиком, Esc (слушатель снимается при закрытии) и кликом по
+//    затемнению вне окна. Кнопки «Закрыть» в подвале нет. Тело - .chat-dlg-body. ──
+function _chatDlgShell(id,title,width){
+  const ov=document.createElement('div');ov.className='txn-card-overlay';ov.id=id;
+  ov.innerHTML=`<div class="txn-card" style="width:${width};max-width:96vw;max-height:92vh;font-family:var(--sans)">
+    <div class="txn-card-head"><h3>${title}</h3><button class="txn-card-close" title="Закрыть (Esc)">✕</button></div>
+    <div class="chat-dlg-body" style="padding:10px 20px 18px"></div></div>`;
+  const close=()=>{ov.remove();document.removeEventListener('keydown',onKey);};
+  const onKey=e=>{if(e.key==='Escape')close();};
+  ov.querySelector('.txn-card-close').addEventListener('click',close);
+  ov.addEventListener('click',e=>{if(e.target===ov)close();});
+  document.addEventListener('keydown',onKey);
+  ov._close=close;return ov;}
 window._chatRes={};
 function _chatResultWidget(outId,prefix,cfg){
   const out=document.getElementById(outId);if(!out)return;
@@ -19726,10 +19746,8 @@ window.opiuChatOpen=function(){
   if(document.getElementById('opiuChatOverlay'))return;
   const f=_opiuChatFilters();const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const lbl='display:block;font-size:11px;font-weight:600;color:var(--text2);margin:10px 0 4px',btn='font-size:12px;padding:8px 16px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer;font-family:var(--sans)';
-  const ov=document.createElement('div');ov.id='opiuChatOverlay';
-  ov.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(20,25,40,.45);display:flex;align-items:center;justify-content:center';
-  ov.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:640px;max-width:96vw;max-height:92vh;overflow:auto;padding:18px 22px;font-family:var(--sans)">
-    <div style="font-size:15px;font-weight:700;color:var(--text)">💬 Текст для чата · ОПиУ</div>
+  const ov=_chatDlgShell('opiuChatOverlay','💬 Текст для чата · ОПиУ','640px');
+  ov.querySelector('.chat-dlg-body').innerHTML=`
     <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Последний период отбора, предыдущий и Δ% - те же суммы, что в таблице. Берёт текущие фильтры вкладки; ничего не записывается.</div>
     <div style="font-size:11px;color:var(--text2);padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2)">Фильтры: ${esc(_opiuChatFilterSummary(f))}</div>
     <label style="${lbl}">Глубина</label>
@@ -19740,11 +19758,9 @@ window.opiuChatOpen=function(){
       <label style="margin-left:auto"><input type="checkbox" id="opiuchat-greet"> с приветствием</label>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap">
-      <button onclick="document.getElementById('opiuChatOverlay').remove()" style="${btn};color:var(--text2)">Закрыть</button>
       <button onclick="opiuChatBuild()" style="${btn};font-weight:700;border:none;background:var(--accent);color:#fff">Собрать</button>
     </div>
-    <div id="opiuchat-out" style="margin-top:12px"></div>
-  </div>`;
+    <div id="opiuchat-out" style="margin-top:12px"></div>`;
   document.body.appendChild(ov);
 };
 window._opiuChatOpts=function(wrap){const d=(document.querySelector('input[name="opiuchat-depth"]:checked')||{}).value||'sub';const g=document.getElementById('opiuchat-greet');return{depth:d,greet:!!(g&&g.checked),wrap:wrap||'tg'};};
