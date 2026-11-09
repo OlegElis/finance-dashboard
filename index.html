@@ -15073,6 +15073,40 @@ function _mktUpdateCalc(pk){
   if(convEl){const mt=+(c.meetings||0),or=+(c.orders||0);convEl.textContent=mt>0?fmtPct(or/mt):'-';}
 }
 
+let _mktBflSnapshot;
+let _mktBflRequest;
+const _mktBflLoopback=['localhost','127.0.0.1','[::1]'].includes(location.hostname);
+const _mktBflMonthFmt=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Novosibirsk',year:'numeric',month:'2-digit'});
+function _mktBflViewer(){
+  if(_mktBflLoopback)return 'local';
+  return window._dataSheet==='RawData'&&_fbCloudOn()&&typeof firebase.auth==='function'
+    ?firebase.auth().currentUser:null;
+}
+function _mktLoadBflSnapshot(){
+  const viewer=_mktBflViewer();
+  if(_mktBflRequest?.viewer===viewer)return;
+  _mktBflSnapshot=null;
+  _mktBflRequest=null;
+  if(!viewer)return;
+  const request=_mktBflRequest={viewer};
+  const read=_mktBflLoopback
+    ?fetch('_report/cpo-bfl-local.json',{cache:'no-store'}).then(r=>r.ok?r.json():null)
+    :_snapRead('reports/cpoBfl',6000);
+  read.then(data=>{
+      if(_mktBflRequest!==request||_mktBflViewer()!==viewer)return;
+      if(!data?.counts||typeof data.counts!=='object'||Array.isArray(data.counts)
+        ||typeof data.snapshotAt!=='string'||!Number.isFinite(Date.parse(data.snapshotAt)))return;
+      const date=new Date(data.snapshotAt);
+      const month=_mktBflMonthFmt.format(date);
+      const entries=Object.entries(data.counts);
+      if(!entries.length||entries.some(([key,n])=>
+        !/^\d{4}-(0[1-9]|1[0-2])$/.test(key)||key>month||!Number.isSafeInteger(n)||n<0))return;
+      const label=new Intl.DateTimeFormat('ru-RU',{timeZone:'Asia/Novosibirsk',dateStyle:'short',timeStyle:'short'}).format(date);
+      _mktBflSnapshot={month,counts:new Map(entries),label};
+      if(activeTab==='marketing'&&_mktDirKey.startsWith('БФЛ'))renderMarketing(getFilters());
+    }).catch(()=>{}); // Недоступный источник не мешает остальным показателям.
+}
+
 function renderMarketing(f){
   const el=document.getElementById('tabMarketing');
   const mode=f.periodType||'month';
@@ -15086,6 +15120,8 @@ function renderMarketing(f){
     _tabFilters.marketing.activityDir=selDir;
   }
   _mktDirKey=selDir||'__all__';
+  const isBfl=selDir.startsWith('БФЛ');
+  if(isBfl)_mktLoadBflSnapshot();
   // Год/Месяц (как в ОПиУ), по дате ОПиУ
   const selYears=(f.years||[]).map(Number);
   const selMonths=(f.months||[]).map(Number);
@@ -15122,6 +15158,7 @@ function renderMarketing(f){
   // Агрегируем расходы по подстатьям + сохраняем строки для расшифровки (клик по «Расходы»)
   const costs={cpf:{},cpl:{},cpo:{},cpoFot:{},meetFot:{},mktShare:{}};
   const periodsSet=new Set();
+  const cpoByMonth=new Map();
   window._mktTxn={};
   // Расходы на маркетинг для «Доли в выручке» = все 300_* + ЗП ОМ (отдел маркетинга)
   const mktSpendMatch=sub=>sub.startsWith('300_')||sub==='111_Заработная плата ОМ';
@@ -15131,6 +15168,7 @@ function renderMarketing(f){
     //   должна находиться грепом по expOf и здесь (возврат уменьшает CPF/CPO и долю в выручке).
     const out=-expOf(row);if(!out)return;
     const sub=String(row[COL.ARTICLE_NAME]||'').trim();
+    const isCpoFot=mktFotCpoMatch(sub);
     if(mktSpendMatch(sub)){
       costs.mktShare[pk]=(costs.mktShare[pk]||0)+out;
       (window._mktTxn['mktShare|'+pk]=window._mktTxn['mktShare|'+pk]||[]).push(row);
@@ -15140,6 +15178,14 @@ function renderMarketing(f){
         costs[m][pk]=(costs[m][pk]||0)+out;
         (window._mktTxn[m+'|'+pk]=window._mktTxn[m+'|'+pk]||[]).push(row);
         periodsSet.add(pk); // период попадает в отчёт только если есть маркетинговый расход (не любое списание)
+        if(isBfl&&m==='cpo'){
+          const d=parseDate(row[COL.DATE_OPIU]);
+          const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          const byMonth=cpoByMonth.get(key)||{cpo:0,cpoFot:0};
+          byMonth.cpo+=out;
+          if(isCpoFot)byMonth.cpoFot+=out;
+          cpoByMonth.set(key,byMonth);
+        }
       }
     });
     // ФОТ-часть: встреча = КО + ОМ; сделка = КО + ОМ + ОП (КО/ОМ попадают в оба бакета)
@@ -15147,7 +15193,7 @@ function renderMarketing(f){
       costs.meetFot[pk]=(costs.meetFot[pk]||0)+out;
       (window._mktTxn['meetFot|'+pk]=window._mktTxn['meetFot|'+pk]||[]).push(row);
     }
-    if(mktFotCpoMatch(sub)){
+    if(isCpoFot){
       costs.cpoFot[pk]=(costs.cpoFot[pk]||0)+out;
       (window._mktTxn['cpoFot|'+pk]=window._mktTxn['cpoFot|'+pk]||[]).push(row);
     }
@@ -15168,7 +15214,6 @@ function renderMarketing(f){
   const periods=[...periodsSet].sort((a,b)=>sortKey(a).localeCompare(sortKey(b)));
 
   // Авто-количества из RawData_BFL (для направления БФЛ): лиды = создание сделки, сделки = вход в оплату
-  const isBfl=selDir.startsWith('БФЛ');
   const pkOfDate=d=>{const y=d.getFullYear(),m=d.getMonth()+1;if(mode==='year')return String(y);if(mode==='quarter')return`Q${Math.ceil(m/3)} ${y}`;return`${MONTHS_FULL[m-1]} ${y}`;};
   const auto={leads:null,orders:null,fulfilled:null,meetings:null};
   if(isBfl&&RAW_BFL){
@@ -15221,6 +15266,75 @@ function renderMarketing(f){
   const n0=v=>Math.round(Math.abs(v)).toLocaleString('ru-RU');
   const kpiVal=(cost,cnt)=>cnt>0?n0(Math.abs(cost)/cnt):'-';
   const metricAt=(m,field,pk)=>{const n=countOf(pk,field);const c=Math.abs(costs[m][pk]||0);return n>0?c/n:null;};
+  // Одинаковая база для карточки, таблицы и графиков. Пропуск любого месяца делает итог неполным.
+  const bflCpo={key:'cpo',label:'CPO БФЛ',color:'--accent'};
+  const bflFot={key:'cpoFot',label:'CPO по ФОТ БФЛ',color:'--income'};
+  const bflSource=_mktBflSnapshot;
+  const bflPeriods=new Map();
+  const bflPeriod=months=>{
+    const values=months.map(key=>bflSource?.counts.get(key));
+    return {
+      count:values.length&&values.every(n=>n!==undefined)?values.reduce((sum,n)=>sum+n,0):null,
+      partial:months.includes(bflSource?.month)
+    };
+  };
+  let bflTotal=null;
+  let bflCoveredMonths=[];
+  let bflCoveredLabel='';
+  if(isBfl){
+    const currentMonth=_mktBflMonthFmt.format(new Date());
+    const selectedByPeriod=new Map();
+    const years=new Set(periods.map(pk=>Number(pk.slice(-4))));
+    for(const y of years){
+      for(let m=1;m<=12;m++){
+        if(selMonths.length&&!selMonths.includes(m))continue;
+        const key=`${y}-${String(m).padStart(2,'0')}`;
+        // Будущие месяцы без расходов не мешают посчитать текущий квартал или год.
+        if(key>currentMonth&&!cpoByMonth.has(key))continue;
+        const pk=pkOfDate(new Date(y,m-1,1));
+        if(!selectedByPeriod.has(pk))selectedByPeriod.set(pk,[]);
+        selectedByPeriod.get(pk).push(key);
+      }
+    }
+    const selected=periods.map(pk=>selectedByPeriod.get(pk)||[]);
+    periods.forEach((pk,i)=>bflPeriods.set(pk,bflPeriod(selected[i])));
+    bflCoveredMonths=selected.flat().filter(key=>bflSource?.counts.has(key)).sort();
+    bflTotal=bflPeriod(bflCoveredMonths);
+    if(bflCoveredMonths.length&&[...bflPeriods.values()].some(p=>p.count===null)){
+      const ranges=[];
+      for(const key of bflCoveredMonths){
+        const [year,month]=key.split('-').map(Number);
+        const index=year*12+month;
+        const last=ranges.at(-1);
+        if(last&&index===last.index+1){last.end=key;last.index=index;}
+        else ranges.push({start:key,end:key,index});
+      }
+      const monthLabel=key=>key.slice(5)+'.'+key.slice(0,4);
+      bflCoveredLabel='За '+ranges.map(({start,end})=>start===end?monthLabel(start):monthLabel(start)+'-'+monthLabel(end)).join(', ');
+    }
+  }
+  const bflCount=p=>p.count===null?'-':p.count.toLocaleString('ru-RU');
+  const bflNote=p=>[
+    p.count===null?(bflSource?'Нет данных БФЛ за часть или весь выбранный период':'Источник количества сделок БФЛ не подключён'):'',
+    p.partial?`Снимок на ${bflSource.label} (Новосибирск)`:''
+  ].filter(Boolean).join(' · ');
+  const bflValue=(metric,pk)=>{
+    const n=bflPeriods.get(pk).count;
+    return n>0?Math.abs(costs[metric][pk]||0)/n:null;
+  };
+  const bflTotalValue=metric=>{
+    const cost=bflCoveredLabel
+      ?bflCoveredMonths.reduce((sum,month)=>sum+(cpoByMonth.get(month)?.[metric]||0),0)
+      :totalCost(metric);
+    return kpiVal(cost,bflTotal.count);
+  };
+  const bflTotalNote=()=>[bflCoveredLabel,bflNote(bflTotal)].filter(Boolean).join(' · ');
+  const bflCard=({key,label,color})=>`<div class="kpi-card" style="border-left:3px solid var(${color})">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-value" style="color:var(${color})">${bflTotalValue(key)}</div>
+      <div class="kpi-sub" style="font-size:9px">Количество сделок БФЛ: ${bflCount(bflTotal)}</div>
+      ${bflTotalNote()?`<div class="kpi-sub" style="font-size:9px">${bflTotalNote()}</div>`:''}
+    </div>`;
   // KPI с динамикой: сравниваем два последних ЗАПОЛНЕННЫХ периода (где метрика считается), а не пустой будущий месяц
   const kpiCard=(m,field,label,color)=>{
     const filled=periods.filter(pk=>metricAt(m,field,pk)!=null);
@@ -15277,8 +15391,8 @@ function renderMarketing(f){
     ${shareCard()}
     ${kpiCard('meet','meetings','CPMT - стоимость встречи','#0ea5e9')}
     ${kpiCard('meetFot','meetings','CPMT по ФОТ - встреча (ЗП КО+ОМ)','#0e7490')}
-    ${kpiCard('cpo','orders','CPO - стоимость сделки','#9333ea')}
-    ${kpiCard('cpoFot','orders','CPO по ФОТ - сделка (CPO без рекламы 300_)','#6b21a8')}
+    ${kpiCard('cpo','orders','CPO - стоимость сделки','#9333ea')}${isBfl?bflCard(bflCpo):''}
+    ${kpiCard('cpoFot','orders','CPO по ФОТ - сделка (CPO без рекламы 300_)','#6b21a8')}${isBfl?bflCard(bflFot):''}
     ${kpiCard('cpf','fulfilled','CPF - стоимость исполнения','#16a34a')}
     ${convCard()}
   </div>`;
@@ -15290,7 +15404,7 @@ function renderMarketing(f){
     <div class="chart-row chart-row-4" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;align-items:start">
       <div style="min-width:0"><div class="mkt-legend">${mktChip('#d97706','Доля маркетинга в выручке')}</div><div style="height:240px;cursor:zoom-in" title="Нажмите, чтобы увеличить" onclick="mktEnlarge('_mktChartShare','Доля маркетинга в выручке')"><canvas id="mktChartShare"></canvas></div></div>
       <div style="min-width:0"><div class="mkt-legend">${mktChip('#0ea5e9','CPMT')}${mktChip('#0e7490','CPMT по ФОТ')}</div><div style="height:240px;cursor:zoom-in" title="Нажмите, чтобы увеличить" onclick="mktEnlarge('_mktChartMeet','CPMT - стоимость встречи (полная и по ФОТ)')"><canvas id="mktChartMeet"></canvas></div></div>
-      <div style="min-width:0"><div class="mkt-legend">${mktChip('#9333ea','CPO')}${mktChip('#6b21a8','CPO по ФОТ')}${mktChip('#0891b2','Конверсия %')}</div><div style="height:240px;cursor:zoom-in" title="Нажмите, чтобы увеличить" onclick="mktEnlarge('_mktChartCpo','CPO - стоимость сделки + конверсия встреча→сделка')"><canvas id="mktChartCpo"></canvas></div></div>
+      <div style="min-width:0"><div class="mkt-legend"${isBfl?' style="height:auto;min-height:34px"':''}>${mktChip('#9333ea','CPO')}${isBfl?mktChip(`var(${bflCpo.color})`,bflCpo.label):''}${mktChip('#6b21a8','CPO по ФОТ')}${isBfl?mktChip(`var(${bflFot.color})`,bflFot.label):''}${mktChip('#0891b2','Конверсия %')}</div><div style="height:240px;cursor:zoom-in" title="Нажмите, чтобы увеличить" onclick="mktEnlarge('_mktChartCpo','CPO - стоимость сделки + конверсия встреча→сделка')"><canvas id="mktChartCpo"></canvas></div></div>
       <div style="min-width:0"><div class="mkt-legend">${mktChip('#16a34a','CPF - исполнение')}</div><div style="height:240px;cursor:zoom-in" title="Нажмите, чтобы увеличить" onclick="mktEnlarge('_mktChartCpf','CPF - стоимость исполнения')"><canvas id="mktChartCpf"></canvas></div></div>
     </div>
     <div id="mkt-chart-note" style="font-size:10px;color:#9a6700;margin-top:4px"></div>
@@ -15338,6 +15452,26 @@ function renderMarketing(f){
     </tr>`;
   };
 
+  const bflCountRow=()=>{
+    const countCell=p=>tdS(bflCount(p),false,`var(${bflCpo.color})`);
+    return`
+    <tr>
+      ${tdL('Количество сделок БФЛ','color:var(--text3);font-size:10px')}
+      ${periods.map(pk=>countCell(bflPeriods.get(pk))).join('')}
+      ${countCell(bflTotal)}
+    </tr>`;
+  };
+  const bflMetricRow=({key,label,color})=>{
+    const bflColor=`var(${color})`;
+    const valCell=(v,note)=>tdS(v,true,bflColor)
+      .replace('<td ',`<td title="${_htmlEsc(note)}" `);
+    return`
+    <tr style="background:var(${color}-light)">
+      ${tdL(label,`font-weight:700;color:${bflColor}`)}
+      ${periods.map(pk=>{const value=bflValue(key,pk);return valCell(value===null?'-':n0(value),bflNote(bflPeriods.get(pk)));}).join('')}
+      ${valCell(bflTotalValue(key)+(bflCoveredLabel?`<span style="display:block;white-space:normal;font-size:9px;font-weight:400;color:var(--text2)">${_htmlEsc(bflCoveredLabel)}</span>`:''),bflTotalNote())}
+    </tr>`;
+  };
   const convRows=()=>{
     const tM=totalCounts('meetings'),tO=totalCounts('orders');
     return`
@@ -15371,8 +15505,8 @@ function renderMarketing(f){
     ${shareRows()}
     ${mkMetricRows('meet','CPMT - Стоимость встречи (Cost Per Meeting)','meetings','Количество встреч','#0ea5e9','#eef7fc')}
     ${mkMetricRows('meetFot','CPMT по ФОТ - стоимость встречи (ЗП КО колл-центр + ОМ маркетинг)','meetings','Количество встреч','#0e7490','#e6f3f6')}
-    ${mkMetricRows('cpo','CPO - Cost Per Order','orders','Количество сделок','#9333ea','#f7f0fd')}
-    ${mkMetricRows('cpoFot','CPO по ФОТ - стоимость сделки (всё из CPO, кроме рекламы 300_)','orders','Количество сделок','#6b21a8','#f1ebf9')}
+    ${mkMetricRows('cpo','CPO - Cost Per Order','orders','Количество сделок','#9333ea','#f7f0fd')}${isBfl?bflCountRow()+bflMetricRow(bflCpo):''}
+    ${mkMetricRows('cpoFot','CPO по ФОТ - стоимость сделки (всё из CPO, кроме рекламы 300_)','orders','Количество сделок','#6b21a8','#f1ebf9')}${isBfl?bflMetricRow(bflFot):''}
     ${convRows()}
     ${mkMetricRows('cpf','CPF - Cost Per Fulfillment','fulfilled','Завершённых дел','#16a34a','#edf7f0')}
   </tbody>`;
@@ -15391,11 +15525,11 @@ function renderMarketing(f){
     <div style="font-weight:700;color:var(--text);font-size:12px;margin-bottom:2px">Как считаются показатели</div>
     ${fGroup('Воронка - полная стоимость')}
     ${fItem('#0ea5e9','CPMT - встреча','стоимость встречи = <b>те же расходы, что у CPO</b> ÷ кол-во встреч <span style="color:var(--text3)">(«Дата создания сделки»)</span>')}
-    ${fItem('#9333ea','CPO - сделка','('+fmlList('cpo')+') ÷ кол-во сделок <span style="color:var(--text3)">(«Дата входа в стадию оплаты»)</span>')}
+    ${fItem('#9333ea','CPO - сделка','('+fmlList('cpo')+') ÷ кол-во сделок <span style="color:var(--text3)">(«Дата входа в стадию оплаты»)</span>')}${isBfl?fItem(`var(${bflCpo.color})`,bflCpo.label,`Расходы CPO ÷ сделки «Банкротство» и «Реструктуризация». Источник количества - ${_mktBflLoopback?'локальный снимок B24 Raw Data':'снимок B24 Raw Data в Firebase'} по дате входа в оплату.`) : ''}
     ${fItem('#0891b2','Конверсия встреча→сделка','кол-во сделок ÷ кол-во встреч &nbsp;<span style="color:var(--text3)">(связь: CPO = CPMT ÷ конверсия)</span>')}
     ${fGroup('По ФОТ - только зарплаты (без рекламы 300_*)')}
     ${fItem('#0e7490','CPMT по ФОТ','(ЗП КО колл-центр + ЗП ОМ маркетинг) ÷ кол-во встреч')}
-    ${fItem('#6b21a8','CPO по ФОТ','(весь набор CPO без рекламы 300_*: ЗП 111_ всех отделов + 226_Контроль качества) ÷ кол-во сделок')}
+    ${fItem('#6b21a8','CPO по ФОТ','(весь набор CPO без рекламы 300_*: ЗП 111_ всех отделов + 226_Контроль качества) ÷ кол-во сделок')}${isBfl?fItem(`var(${bflFot.color})`,bflFot.label,'Расходы CPO по ФОТ ÷ сделки «Банкротство» и «Реструктуризация».'):''}
     ${fGroup('Исполнение')}
     ${fItem('#16a34a','CPF - исполнение','('+fmlList('cpf')+') ÷ завершённые дела <span style="color:var(--text3)">(«Дата завершения сделки», стадии «Акты подписаны»)</span>')}
     ${fGroup('Доля маркетинга')}
@@ -15419,7 +15553,8 @@ function renderMarketing(f){
   // series: [{metric,field,color,label}] или {valueFn,pct:true} - можно вынести несколько метрик + линию % (конверсия) на правой оси
   const buildDyn=(canvasId,series)=>{
     const cvs=document.getElementById(canvasId);if(!cvs||!window.Chart)return null;
-    const datasets=series.map(s=>({label:s.label,data:periods.map(pk=>s.valueFn?s.valueFn(pk):metricAt(s.metric,s.field,pk)),borderColor:s.color,backgroundColor:s.color,tension:.3,spanGaps:true,pointRadius:3,_pct:!!s.pct,yAxisID:s.pct?'y1':'y',borderDash:s.pct?[5,4]:undefined}));
+    const bflLabels=new Set(series.filter(s=>s.bfl).map(s=>s.label));
+    const datasets=series.map(s=>({label:s.label,data:periods.map(pk=>s.valueFn?s.valueFn(pk):metricAt(s.metric,s.field,pk)),borderColor:s.color,backgroundColor:s.color,tension:.3,spanGaps:!s.bfl,pointRadius:3,_pct:!!s.pct,yAxisID:s.pct?'y1':'y',borderDash:s.pct?[5,4]:undefined}));
     const hasPct=datasets.some(d=>d._pct);
     const valid=datasets.filter(d=>!d._pct).flatMap(d=>d.data).filter(v=>v!=null&&v>0).sort((a,b)=>a-b);
     let yMax;
@@ -15443,7 +15578,7 @@ function renderMarketing(f){
             ctx.textBaseline='top';
             ctx.fillText('▲ '+abbr(v),meta.data[i].x,top+2);
           }else{ // обычная точка: 1-я линия - подпись сверху, 2-я - снизу (чтобы не накладывались)
-            const below=multi&&di===1;
+            const below=(multi&&di===1)||ds.label===bflFot.label;
             ctx.textBaseline=below?'top':'bottom';
             ctx.fillText(abbr(v),meta.data[i].x,meta.data[i].y+(below?7:-7));
           }
@@ -15458,7 +15593,11 @@ function renderMarketing(f){
         layout:{padding:{top:16,bottom:2,right:hasPct?0:46}},
         plugins:{legend:{display:false},
           // Числа полные. ⚠ На графике рядом лежат ДЕНЬГИ и КОЛИЧЕСТВА (лиды/сделки/дела): целые показываем без копеек, дробные через fmt - иначе у количеств появилось бы «12,00».
-          tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>c.dataset._pct?`${c.dataset.label}: ${c.raw!=null?Math.round(c.raw*100)+'%':'-'}`:`${c.dataset.label}: `+(c.raw!=null?(Number.isInteger(c.raw)?c.raw.toLocaleString('ru-RU'):fmt(c.raw)):'-')+(yMax&&c.raw>yMax?' (выше шкалы)':'')}}},
+          tooltip:{callbacks:{title:items=>periods[items[0].dataIndex]||'',label:c=>c.dataset._pct?`${c.dataset.label}: ${c.raw!=null?Math.round(c.raw*100)+'%':'-'}`:`${c.dataset.label}: `+(c.raw!=null?(bflLabels.has(c.dataset.label)?n0(c.raw):Number.isInteger(c.raw)?c.raw.toLocaleString('ru-RU'):fmt(c.raw)):'-')+(yMax&&c.raw>yMax?' (выше шкалы)':''),
+            ...(bflLabels.size?{afterBody:items=>{
+              const p=bflPeriods.get(periods[items[0]?.dataIndex]);
+              return p?[`Количество сделок БФЛ: ${bflCount(p)}`,bflNote(p)].filter(Boolean):[];
+            }}:{})}}},
         scales:{x:{grid:{display:false},afterFit:s=>{s.height=58;},ticks:{font:{size:9},autoSkip:false,maxRotation:60,minRotation:60}},
           y:{beginAtZero:true,max:yMax,afterFit:s=>{s.width=52;},grid:{color:'#ebebeb'},ticks:{font:{size:10},callback:v=>{const a=Math.abs(v);return a>=1e6?(v/1e6).toFixed(1)+'М':a>=1e3?(v/1e3).toFixed(0)+'К':v;}}},
           ...(hasPct?{y1:{position:'right',beginAtZero:true,max:1,afterFit:s=>{s.width=46;},grid:{drawOnChartArea:false},ticks:{font:{size:9},color:'#0891b2',callback:v=>Math.round(v*100)+'%'}}}:{})}}});
@@ -15477,7 +15616,14 @@ function renderMarketing(f){
   };
   window._mktChartShare=buildShareChart('mktChartShare');
   window._mktChartMeet=buildDyn('mktChartMeet',[{metric:'meet',field:'meetings',color:'#0ea5e9',label:'CPMT'},{metric:'meetFot',field:'meetings',color:'#0e7490',label:'CPMT по ФОТ'}]);
-  window._mktChartCpo=buildDyn('mktChartCpo',[{metric:'cpo',field:'orders',color:'#9333ea',label:'CPO'},{metric:'cpoFot',field:'orders',color:'#6b21a8',label:'CPO по ФОТ'},{valueFn:pk=>convAt(pk),color:'#0891b2',label:'Конверсия встреча→сделка',pct:true}]);
+  const cpoSeries=[{metric:'cpo',field:'orders',color:'#9333ea',label:'CPO'},{metric:'cpoFot',field:'orders',color:'#6b21a8',label:'CPO по ФОТ'},{valueFn:pk=>convAt(pk),color:'#0891b2',label:'Конверсия встреча→сделка',pct:true}];
+  if(isBfl){
+    const css=getComputedStyle(el);
+    [bflCpo,bflFot].forEach(({key,label,color})=>{
+      cpoSeries.push({valueFn:pk=>bflValue(key,pk),color:css.getPropertyValue(color).trim(),label,bfl:true});
+    });
+  }
+  window._mktChartCpo=buildDyn('mktChartCpo',cpoSeries);
   window._mktChartCpf=buildDyn('mktChartCpf',[{metric:'cpf',field:'fulfilled',color:'#16a34a',label:'CPF'}]);
   const note=document.getElementById('mkt-chart-note');
   if(note)note.textContent=anyClip?'⚠ Шкала ограничена для читаемости при выбросах - пиковое значение подписано числом над графиком (▲)':'';
@@ -21140,6 +21286,8 @@ window.buildInfoShow=function(){
       .catch(err=>{ if(errEl){errEl.textContent=authErrMsg(err);errEl.style.display='block';} });
   });
   auth.onAuthStateChanged(function(user){
+    _mktBflRequest=null;
+    _mktBflSnapshot=null;
     if(user){
       // проверка доступа + определение области данных (вкладки) перед выдачей доступа
       resolveAccess(user).then(acc=>{
